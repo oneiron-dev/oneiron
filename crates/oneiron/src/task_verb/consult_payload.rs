@@ -1,3 +1,6 @@
+//! Typed consult request and recovery payloads for the consult ladder.
+//! Entry [`ConsultPayload`]; built by ask doors, read by `consult_result` and every facade.
+//! Owned by `task_verb`; large artifacts travel by ref, never inline.
 use std::collections::HashSet;
 
 use crate::consult_ladder::{ConsultLineage, ConsultPurpose, EntityDeltaArtifact};

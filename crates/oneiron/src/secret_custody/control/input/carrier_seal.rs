@@ -558,14 +558,14 @@ pub(crate) fn row_carrier(bytes: &[u8]) -> Option<CarrierRef> {
 /// credential's erase. Returns whether any was staged, for the finisher
 /// after the commit.
 pub(crate) fn retire_input_carriers_in_txn(
-    vault: &Vault,
+    store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     carriers: &[CarrierRef],
 ) -> bool {
     let mut staged = false;
     for carrier in carriers {
-        vault.custody_leaves().forget(carrier);
-        match vault.store.stage_carrier_retirement_in_txn(
+        store.custody_leaves().forget(carrier);
+        match store.stage_carrier_retirement_in_txn(
             wtxn,
             carrier.kind,
             &carrier.credential,

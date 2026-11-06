@@ -145,6 +145,7 @@ pub(crate) enum CoreHydrateDeletionReason {
     User,
     #[serde(rename = "user_hard_delete")]
     UserHard,
+    OwnerErase,
     #[serde(rename = "gdpr_delete")]
     Gdpr,
     #[serde(rename = "policy_delete")]
@@ -306,22 +307,26 @@ pub(crate) async fn core_hydrate(
     } else {
         project()
     }?;
-    // The session observes the body under the server's guard, taken once
-    // the projection, and any pick it asked, is done; release it before the
-    // read waits on the write that records the form it served.
+    // Stage the observation after projection and any model pick. Publish
+    // it only after its served forms commit, without replacing a concurrent
+    // session update between staging and publication.
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
-    if let (Some(observations), Some(observe), Some(response)) =
-        (observations.as_deref_mut(), observe, read.value.as_mut())
-        && let Some(successor) = observe.record(observations, &scoped_read)?
+    let mut staged_observations = observations.as_deref().cloned();
+    if let (Some(staged), Some(observe), Some(response)) =
+        (staged_observations.as_mut(), observe, read.value.as_mut())
+        && let Some(successor) = observe.record(staged, &scoped_read)?
     {
         response.narrowing.restrict_with(&successor);
         read.receipt.restrict_with(&successor);
     }
-    drop(observations);
     scoped_read
         .commit_served_forms(&served)
         .map_err(|error| core_engine_error("core short hydrate failed", error))?;
+    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
+        *target = staged;
+    }
+    drop(observations);
     let Some(response) = read.value else {
         return Err(EnvelopedApiError::from(ApiError::not_found(
             "short_id",
@@ -426,15 +431,15 @@ pub(crate) async fn core_batch_short_id_hydrate(
         }
     }
 
-    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
-        *target = staged;
-    }
-    // Every form the batch served is recorded in one write, once the
-    // server's observation guard is released.
-    drop(observations);
+    // A failed observation or receipt write leaves the live read set
+    // unchanged. Keep the guard until the staged batch is published.
     scoped_read
         .commit_served_forms(&served)
         .map_err(|error| core_engine_error("batch hydrate failed", error))?;
+    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
+        *target = staged;
+    }
+    drop(observations);
     Ok(Json(CoreBatchShortIdHydrateResponse {
         narrowing: batch_narrowing,
         results,
@@ -812,6 +817,9 @@ pub(crate) fn core_hydrate_deletion_metadata(
             oneiron::HydratedShortIdDeletionReason::UserDelete => CoreHydrateDeletionReason::User,
             oneiron::HydratedShortIdDeletionReason::UserHardDelete => {
                 CoreHydrateDeletionReason::UserHard
+            }
+            oneiron::HydratedShortIdDeletionReason::OwnerErase => {
+                CoreHydrateDeletionReason::OwnerErase
             }
             oneiron::HydratedShortIdDeletionReason::GdprDelete => CoreHydrateDeletionReason::Gdpr,
             oneiron::HydratedShortIdDeletionReason::PolicyDelete => {

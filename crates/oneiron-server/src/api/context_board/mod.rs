@@ -18,9 +18,13 @@ mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::describe_self_for_run;
+mod layout;
 mod scratchpad;
 mod session;
+mod split;
+pub(crate) use split::next_state_part;
 mod standing;
+mod tasks_budget;
 mod turn_actions;
 
 pub(crate) use board::{
@@ -30,11 +34,12 @@ pub(crate) use board::{
 pub(crate) use cursor::*;
 pub(crate) use explain::*;
 pub(crate) use history::*;
+pub(crate) use layout::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
-pub(crate) use turn_actions::action_board;
+pub(crate) use turn_actions::{action_board, requester_auth};
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;
@@ -104,6 +109,28 @@ pub(crate) struct ContextBoardRequest {
     #[serde(default)]
     #[schema(example = 1200)]
     board_budget_tok: Option<usize>,
+    /// Optional concrete TASK-row token allotment for this explicit render,
+    /// like `board_budget_tok`: concrete rows including their `fits:` rows
+    /// and the overflow footer. Project/fanout lead rows ride outside it.
+    /// `Some(0)` is a literal zero for optional rows; the footer and any
+    /// hook pins may exceed it and are reported, never withheld. `None`
+    /// uses the TASKS share of the actor's board layout (`self.board.size`):
+    /// pending for an explicit TURN, live otherwise. No share keeps the
+    /// 100-row behavior. An explicit value cannot exceed the board cap.
+    #[serde(default)]
+    #[schema(example = 400)]
+    tasks_budget_tok: Option<usize>,
+    /// Server-internal answering agent whose board layout a native chat
+    /// turn renders under (BOARD-LAYOUT); never on the wire. `None` keeps
+    /// the auth-derived caller actor.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_layout_actor: Option<oneiron::EntityId>,
+    /// A live chat turn's own board also renders in two parts (I1 = C):
+    /// [`chat_turn_board`] sets it; never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_split: bool,
 }
 
 /// The assembled context for one turn.
@@ -196,6 +223,11 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     chat_sources: Vec<BoardSectionSource>,
+    /// The same frame as a chat turn's two parts (I1 = C), when it asked
+    /// for them; never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_split: Option<split::ChatSplit>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -296,6 +328,23 @@ pub(crate) async fn context_board_hydrate(
     ),
     EnvelopedApiError,
 > {
+    let (served, response, _) = hydrate_inner(auth, State(server), payload, false).await?;
+    Ok((served, response))
+}
+
+async fn hydrate_inner(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ContextBoardRequest>, JsonRejection>,
+    defer_rider_ack: bool,
+) -> Result<
+    (
+        axum::Extension<crate::idempotency::ServedRows>,
+        Json<ContextBoardResponse>,
+        Option<ChatRiderAck>,
+    ),
+    EnvelopedApiError,
+> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
@@ -332,6 +381,31 @@ pub(crate) async fn context_board_hydrate(
             .into());
         }
         retrieval.cap_serialized_tokens(prefix.other_context_tokens);
+    }
+    // The SAME board budget request the final render reuses (FIX 14248): an
+    // explicit TASKS-row slice above its effective cap is refused before ANY
+    // retrieval runs.
+    let board_budget_request = oneiron::context_board::BoardBudgetRequest {
+        // The owner's board cap stands in for the harness default; a
+        // standing block's remaining budget bounds it further.
+        harness_default_tok: standing.as_ref().map_or_else(
+            || layout::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK),
+            |prefix| {
+                layout::board_cap_tok(&server.vault, prefix.other_context_tokens)
+                    .min(prefix.other_context_tokens)
+            },
+        ),
+        caller_limit_tok: req.board_budget_tok,
+        explicit_override_tok: None,
+    };
+    if let Some(tasks_budget) = req.tasks_budget_tok
+        && tasks_budget > oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok
+    {
+        return Err(crate::error::ApiError::bad_request(
+            "tasks budget exceeds board cap",
+            Some("tasks_budget_tok"),
+        )
+        .into());
     }
     // Identity keys on the authenticated actor, never on a free label: the
     // same key the MEMORIES cursor store already uses.
@@ -468,13 +542,28 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(|pack| pack.capabilities.as_slice())
         .unwrap_or_default();
+    // The actor's own board layout (BOARD-LAYOUT): a TURN, or a native
+    // chat turn's answering agent, projects the pending batch now and the
+    // SAME accepted TURN commit activates the exact candidate; without a
+    // TURN the board renders under the live layout and activates nothing.
+    // An explicit per-request TASKS budget still wins over the TASKS share.
+    let cap_tok = oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok;
+    let layout = layout::hydrate_layout_selection(
+        &server,
+        &auth,
+        board_turn.is_some(),
+        req.chat_layout_actor,
+    )?;
     // PEOPLE: every person by handle, with names inline for those the
-    // caller's cached prefix roster does not hold.
+    // caller's cached prefix roster does not hold; at an epoch boundary the
+    // roster is predicted under the layout's `people` share, as the prefix
+    // emitted beside this board is laid out.
     let (people, resident) = board::board_people(
         &server,
         &auth,
         &read,
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+        layout.layout.share_tok("people", cap_tok),
     )
     .await?;
     let mut parts = board::board_parts(
@@ -487,6 +576,9 @@ pub(crate) async fn context_board_hydrate(
         &observed_reads,
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &hook_pins,
+        req.tasks_budget_tok,
+        &layout,
+        cap_tok,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -509,6 +601,28 @@ pub(crate) async fn context_board_hydrate(
         parts.sections.push(section);
         rows
     });
+    // The layout applies over the assembled sections; each fold its batch
+    // starts keeps the live counts it starts from (BOARD-LAYOUT). An explicit
+    // TASK-row allotment wins over the TASKS share, so this render fits TASKS
+    // to no share; the stored layout keeps it.
+    let explicit_tasks_layout = req
+        .tasks_budget_tok
+        .is_some()
+        .then(|| layout.layout.share_tok("tasks", cap_tok))
+        .flatten()
+        .map(|_| {
+            let mut render = layout.layout.clone();
+            render.edit("tasks", |section| section.share_pct = None);
+            render
+        });
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &parts.sections,
+        explicit_tasks_layout.as_ref().unwrap_or(&layout.layout),
+        cap_tok,
+    );
+    let layout_candidate = layout
+        .candidate
+        .map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
     let board_render = oneiron::context_board::render_board_block(
         &oneiron::context_board::BoardFrame {
             header: &oneiron::context_board::BoardBlockHeader {
@@ -516,25 +630,53 @@ pub(crate) async fn context_board_hydrate(
                 scope: parts.scope.clone(),
             },
             legend: &oneiron::context_board::BoardLegend::canonical(),
-            sections: &parts.sections,
+            sections: &laid_out.sections,
             you: parts.you.as_deref(),
             changes: Some(&changed_line),
         },
-        oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: standing
-                .as_ref()
-                .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
-                    prefix.other_context_tokens
-                }),
-            caller_limit_tok: req.board_budget_tok,
-            explicit_override_tok: None,
-        },
+        board_budget_request,
     )
     .map_err(board::board_frame_error)?;
-    let board_budget = ContextBoardRenderBudget::of(&board_render);
-    // What a chat turn's context records keep of this render (FIX 6921).
-    let chat_context =
-        chat_emit::capture_chat_context(&auth, memories.as_ref(), &parts.authority, &board_render);
+    let board_budget =
+        ContextBoardRenderBudget::of(&board_render, parts.tasks_budget.clone(), &laid_out);
+    // A live chat turn's board as its two parts, read from the same rows
+    // under the same budget (I1 = C); the public frame above is unchanged.
+    let chat_split = if req.chat_split {
+        Some(split::split_board(
+            &split::SplitFrame {
+                header: &oneiron::context_board::BoardBlockHeader {
+                    epoch: cursor.revision,
+                    scope: parts.scope.clone(),
+                },
+                // The laid-out sections, so the actor's layout holds in
+                // both parts (BOARD-LAYOUT).
+                sections: &laid_out.sections,
+                you: parts.you.as_deref(),
+                changes: &changed_line,
+                // The same request the frame above renders under, the
+                // owner's board cap included.
+                budget: board_budget_request,
+            },
+            &split::SplitInputs {
+                memories: memories.as_ref(),
+                hits,
+                reads: &observed_reads,
+            },
+        )?)
+    } else {
+        None
+    };
+    // What a chat turn's context records keep of this render (FIX 6921):
+    // for a split turn, of the two parts its call carries.
+    let chat_context = chat_emit::capture_chat_context(
+        &auth,
+        memories.as_ref(),
+        &parts.authority,
+        chat_split
+            .as_ref()
+            .map_or(&board_render, |split| &split.render.render),
+        layout_candidate.clone(),
+    );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
     // text, which it never changes.
     let chat_sources =
@@ -559,6 +701,9 @@ pub(crate) async fn context_board_hydrate(
         if let Some(run) = runs.get_mut(&key) {
             if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
                 let mut candidate = run.render.clone();
+                // The prefix roster re-lays out only here, at an epoch
+                // boundary: the `people` share of the agent's layout.
+                candidate.set_people_budget_tok(layout.layout.share_tok("people", cap_tok));
                 let card = if run.emitted_epoch.is_none() {
                     candidate.turn_one(&server.vault, &run.state, &observed_reads, Some(&people))
                 } else {
@@ -606,18 +751,20 @@ pub(crate) async fn context_board_hydrate(
         board_turn: None,
         chat_context,
         chat_sources,
+        chat_split,
     };
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
         // check runs inside the recording transaction, with the real record:
         // a refused hydration leaves the turn free to record its board.
         Some(target) => {
-            record_board_turn(
+            record_board_turn_with_layout(
                 &server,
                 &read,
                 target,
                 &parts.authority,
                 &mut response,
+                layout_candidate,
                 within_standing_budget,
             )?;
         }
@@ -651,6 +798,7 @@ pub(crate) async fn context_board_hydrate(
         .collect();
     delivered.extend(hits_of(response.pack.as_ref()));
     delivered.extend(parts.named.iter().copied());
+    let mut rider_key = None;
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
         reads
             .observe_rows(&read, &delivered)
@@ -665,9 +813,13 @@ pub(crate) async fn context_board_hydrate(
             reads.served_on_board(&row.id, tier, row.hook.as_deref());
         }
         reads.observe_pack_inventory(&installed_packs);
-        // The response is final: the rider it carries is delivered, and a
-        // committed prefix now holds the current connector state.
-        if prefix_committed {
+        // Chat defers only the rider's acknowledgement until its answer
+        // admits this board. Other board callers deliver it here as before.
+        if defer_rider_ack {
+            rider_key = session_id
+                .as_deref()
+                .map(|session| memories_cursor_key(&server.vault, caller, session));
+        } else if prefix_committed {
             reads.keyframe_committed(&changed_line);
         } else {
             reads.acknowledge(&changed_line);
@@ -677,7 +829,8 @@ pub(crate) async fn context_board_hydrate(
     // A replay re-admits each row it named beyond its documents: every
     // notification, rider row (those its overflow counts too), pack source,
     // named or stamped contact, named reader definition and discovered
-    // capability, and what each INBOX row rests on (FIX 8145).
+    // capability, what each INBOX row rests on (FIX 8145), and what the
+    // MEMORIES filter chose its rows by (BOARD-LAYOUT).
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -688,6 +841,7 @@ pub(crate) async fn context_board_hydrate(
     admit.extend(named_refs);
     admit.extend(parts.named);
     admit.extend(parts.inbox);
+    admit.extend(parts.memories_filter);
     admit.extend(scratchpad_pad);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
@@ -719,6 +873,10 @@ pub(crate) async fn context_board_hydrate(
             sources: standing_claims,
         }),
         Json(response),
+        rider_key.map(|key| ChatRiderAck {
+            key,
+            line: changed_line,
+        }),
     ))
 }
 
@@ -798,7 +956,7 @@ pub(crate) async fn describe_self_for_auth(
     })?;
     validate_session_id(session_id, "session_id")?;
     let read = super::scoped_read_for_core_auth(&server.vault, auth)?;
-    let (people, _) = board::board_people(server, auth, &read, Some(session_id)).await?;
+    let (people, _) = board::board_people(server, auth, &read, Some(session_id), None).await?;
     let mut runs = server.self_brief_sessions.lock().await;
     let run = runs
         .get_mut(&(actor, session_id.to_owned()))
@@ -823,7 +981,7 @@ pub(crate) async fn describe_self_for_auth(
     Ok((value, sources))
 }
 
-/// The rendered board one live chat turn reads (FIX 6794), and the rows it
+/// The rendered board one chat turn reads (FIX 6794), and the rows it
 /// served.
 pub(crate) struct ChatBoard {
     /// The one board frame, fenced and attributed by its renderer.
@@ -835,6 +993,35 @@ pub(crate) struct ChatBoard {
     pub(crate) context: Option<ChatContextCapture>,
     /// What each section of `block` was read from (DESIGN-V2 R2).
     pub(crate) sections: Vec<BoardSectionSource>,
+    /// The rider's delivery, owed only if an admitted answer carries this board.
+    pub(crate) rider_ack: Option<ChatRiderAck>,
+    /// The board's query part (I1 = C): what the turn's own message read,
+    /// which rides right after it while `block`, the state part, rides
+    /// right before it. `None` for a board read whole, or a turn whose
+    /// message read no row.
+    pub(crate) query: Option<BoardQueryPart>,
+}
+
+/// The query part of a chat turn's board (I1 = C): its text, fenced and
+/// attributed by its renderer, and what each of its sections was read from.
+pub(crate) struct BoardQueryPart {
+    pub(crate) block: String,
+    pub(crate) sections: Vec<BoardSectionSource>,
+}
+
+pub(crate) struct ChatRiderAck {
+    key: String,
+    line: oneiron::context_board::ChangedLine,
+}
+
+impl ChatRiderAck {
+    pub(crate) async fn commit(self, server: &SyncServer) {
+        let mut store = server.memories_cursors.lock().await;
+        // Use the resolved session only; never create or select a new one.
+        if let Some(reads) = store.read_sets.get_mut(&self.key) {
+            reads.acknowledge(&self.line);
+        }
+    }
 }
 
 /// The board for a chat turn's `query`, hydrated as `ai.reply` hydrates its
@@ -842,16 +1029,90 @@ pub(crate) struct ChatBoard {
 /// pack, its MEMORIES projection and the rendered frame, under `auth`'s own
 /// credential where it reads. `reader`, the answering agent's definition,
 /// shapes the optional recall by its profile; `conversation`, when it
-/// exists, narrows the read to its room's audience. A refusal answers its
-/// status.
+/// exists, narrows the read to its room's audience. `chat_layout_actor`, the
+/// answering agent for a native chat turn, selects that agent's board layout
+/// only and never widens content scope; `None` keeps caller behavior.
+/// A refusal answers its status.
 pub(crate) async fn chat_board(
     server: &Arc<SyncServer>,
     auth: CoreAuth,
     conversation: Option<oneiron::EntityId>,
     reader: oneiron::EntityId,
     query: &str,
+    chat_layout_actor: Option<oneiron::EntityId>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
-    let request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
+    read_chat_board(
+        server,
+        auth,
+        conversation,
+        reader,
+        query,
+        false,
+        false,
+        chat_layout_actor,
+    )
+    .await
+}
+
+/// [`chat_board`] for a live chat turn, in two parts (I1 = C, ARCH-0067
+/// turn order): `block` is its state part, which rides right before the
+/// turn's message, and `query` what that message read, which rides right
+/// after it. One hydration under one budget, as the one frame's.
+/// `chat_layout_actor` is as [`chat_board`]'s.
+pub(crate) async fn chat_turn_board(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+    chat_layout_actor: Option<oneiron::EntityId>,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    read_chat_board(
+        server,
+        auth,
+        conversation,
+        reader,
+        query,
+        true,
+        false,
+        chat_layout_actor,
+    )
+    .await
+}
+
+/// A live turn's split board, with its rider acknowledged only after answer admission.
+pub(crate) async fn chat_turn_board_deferred(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+    chat_layout_actor: Option<oneiron::EntityId>,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    read_chat_board(
+        server,
+        auth,
+        conversation,
+        reader,
+        query,
+        true,
+        true,
+        chat_layout_actor,
+    )
+    .await
+}
+
+async fn read_chat_board(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+    reader: oneiron::EntityId,
+    query: &str,
+    split: bool,
+    defer_rider_ack: bool,
+    chat_layout_actor: Option<oneiron::EntityId>,
+) -> Result<ChatBoard, axum::http::StatusCode> {
+    let mut request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
         "retrieval": {
             "conversation_id": conversation.map(|id| id.to_hex()),
             "query": query,
@@ -860,14 +1121,35 @@ pub(crate) async fn chat_board(
         },
     }))
     .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    let (served, Json(context)) =
-        context_board_hydrate(auth, State(Arc::clone(server)), Ok(Json(request)))
-            .await
-            .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
-    Ok(ChatBoard {
-        block: context.board,
-        rows: served.0.rows,
-        context: context.chat_context,
-        sections: context.chat_sources,
+    request.chat_layout_actor = chat_layout_actor;
+    request.chat_split = split;
+    let (served, Json(context), rider_ack) = hydrate_inner(
+        auth,
+        State(Arc::clone(server)),
+        Ok(Json(request)),
+        defer_rider_ack,
+    )
+    .await
+    .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
+    Ok(match context.chat_split {
+        Some(split) => ChatBoard {
+            block: split.render.state,
+            rows: served.0.rows,
+            context: context.chat_context,
+            sections: split.state_sources,
+            rider_ack,
+            query: split.render.query.map(|block| BoardQueryPart {
+                block,
+                sections: split.query_sources,
+            }),
+        },
+        None => ChatBoard {
+            block: context.board,
+            rows: served.0.rows,
+            context: context.chat_context,
+            sections: context.chat_sources,
+            rider_ack,
+            query: None,
+        },
     })
 }

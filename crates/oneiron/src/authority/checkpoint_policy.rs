@@ -9,14 +9,15 @@
 //! Workers, agents and capability holders never vote, and several software
 //! keys never stand in for a hardware root.
 //!
-//! The owner may select the roots and quorum himself, on any host, Hosted
-//! included (mesh PR2c, §A 06, K06): a main-log choice carrying his act
-//! ([`CheckpointPolicySet`], folded by `checkpoint_choice`). While a choice of
-//! his counts, it is the policy in force; the posture's policy is the
-//! default when none does. A selected policy drops only the host-voter
+//! An owner selects roots and quorum through a main-log choice carrying his
+//! act ([`CheckpointPolicySet`], folded by `checkpoint_choice`). Hosted vaults
+//! use their host policy unless the operator explicitly enables the
+//! enterprise/advanced opt-out capability (QUORUM-HOST-ROOT=C). This applies
+//! to replicated choices too; signed history is not rewritten. Self-host and
+//! relay choices are unchanged. An enabled selection drops only the host-voter
 //! requirement: eligibility, the multi-root quorum, the configured floor,
-//! canonical order and hardware-when-eligible all stay. Each refusal names
-//! its rule ([`RecordError::CheckpointPolicyRefused`]).
+//! canonical order and hardware-when-eligible stay. Each refusal names its
+//! rule ([`RecordError::CheckpointPolicyRefused`]).
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -299,16 +300,20 @@ impl CheckpointRootPolicy {
     }
 }
 
-/// The checkpoint root policy in force in `fold` under `posture`, on any
-/// host: the owner's selected roots and quorum while a choice of his counts
-/// there, else the policy the posture fixes (mesh PR2c). Image building,
-/// the adopted build, attestation and the pairing pin all read this one
-/// function, so none re-derives the posture's policy past his choice.
+/// The effective policy, including the operator's hosted opt-out capability.
+/// Image building, rebuilding and countersign receipts use this same choice.
+/// A hosted vault without that capability keeps its default host policy even
+/// when its signed history contains an owner's choice from another install.
 pub(super) fn checkpoint_root_policy_of(
     fold: &AuthorityFold,
     posture: HostingPrivacyPosture,
+    selection_available: bool,
 ) -> Result<CheckpointRootPolicy> {
-    match fold.checkpoint_policy.selected() {
+    let choice = fold
+        .checkpoint_policy
+        .selected()
+        .filter(|_| posture != HostingPrivacyPosture::Hosted || selection_available);
+    match choice {
         Some(choice) => CheckpointRootPolicy::from_choice(
             &fold.roster,
             posture,
@@ -329,7 +334,11 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
     ) -> Result<CheckpointRootPolicy> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        checkpoint_root_policy_of(&fold, self.privacy_posture())
+        checkpoint_root_policy_of(
+            &fold,
+            self.privacy_posture(),
+            self.checkpoint_policy_selection_available(),
+        )
     }
 
     /// Whether `root` is an eligible root of the policy in force. A policy

@@ -159,8 +159,8 @@ pub(super) fn walk_edges(
         return Ok(EdgeWalkResult::default());
     }
 
-    let mut visited = HashSet::with_capacity(budget);
-    let mut ordered_neighbors = Vec::with_capacity(budget);
+    let mut visited = HashSet::new();
+    let mut ordered_neighbors = Vec::new();
     let mut frontier = seed_ids.to_vec();
     frontier.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     let mut scanned_edges = HashMap::<EntityId, Vec<EdgeInfo>>::new();

@@ -178,12 +178,19 @@ impl SyncServer {
                 ))?;
             let config = slot.config();
             let tagger = Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>;
-            let reconciler = TaggingReconciler::new(Arc::clone(server.vault()), tagger)?
-                .with_batch_size(config.batch_size)
-                .with_backoff(TaggingBackoff {
-                    first_secs: config.retry_backoff_secs,
-                    max_secs: config.max_retry_backoff_secs,
-                });
+            let reconciler = match &server.tagger_egress {
+                Some(predicate) => TaggingReconciler::new_with_egress(
+                    Arc::clone(server.vault()),
+                    tagger,
+                    Arc::clone(predicate),
+                ),
+                None => TaggingReconciler::new(Arc::clone(server.vault()), tagger),
+            }?
+            .with_batch_size(config.batch_size)
+            .with_backoff(TaggingBackoff {
+                first_secs: config.retry_backoff_secs,
+                max_secs: config.max_retry_backoff_secs,
+            });
             match reconciler.release_stale_leases_until_paused(&|| pause.paused()) {
                 Ok(0) => {}
                 Ok(released) => tracing::info!(

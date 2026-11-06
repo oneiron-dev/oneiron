@@ -71,7 +71,7 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                 "retrieval loop limit must be greater than zero".into(),
             ));
         }
-        let page_size = requested_limit.min(crate::memory::caps::MAX_SEARCH_LIMIT);
+        let page_size = requested_limit;
         let plan = plan.reading(reader.store_read()).memory_lane_only();
         let seeded =
             reader.retrieval_loop_search(plan.clone(), plan.candidate_filter, requested)?;
@@ -334,7 +334,7 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                     .cloned()
                     .collect();
                 let reads: Vec<_> = selected.iter().map(point_read).collect();
-                let read = self.reader.read(&reads, Some(&requested))?;
+                let read = self.reader.retrieval_loop_read(&reads, &requested)?;
                 let mut retained = HashSet::new();
                 for (handle, row) in selected.into_iter().zip(read.value) {
                     let Some(row) = row else { continue };

@@ -106,6 +106,19 @@ pub struct NapiHostRootProfile {
     pub wrong_root: bool,
 }
 
+/// One kept engine-row crossing on the SDK client's own vault.
+///
+/// Output-only: the host reads crossings, never sends them.
+#[napi(object, object_from_js = false)]
+pub struct NapiNativeLimitQuestion {
+    /// The `[limits]` row key that asked (for example `limits.embedding_dimensions`).
+    pub row: String,
+    /// What the row stood at for the work, exact.
+    pub bound: u64,
+    /// What the work measured, exact.
+    pub measured: u64,
+}
+
 /// The private native handle behind `packages/oneiron`.
 #[napi]
 pub struct NativeClient {
@@ -258,6 +271,25 @@ impl NativeClient {
     #[napi]
     pub fn last_receipt_ref(&self) -> Option<String> {
         self.inner.last_receipt_ref()
+    }
+
+    /// The engine `[limits]` rows this client's own vault crossed, as the
+    /// host kept them: one entry per row that asked, the row's key plus what
+    /// it stood at and what the work measured, both exact `u64` (BigInt).
+    /// `None` on a remote, attached, or rebound view; an empty list where no
+    /// row crossed yet. The PID gate error propagates.
+    #[napi]
+    pub fn native_limit_questions(&self) -> napi::Result<Option<Vec<NapiNativeLimitQuestion>>> {
+        let rows = self.inner.native_limit_questions().map_err(facade_error)?;
+        Ok(rows.map(|rows| {
+            rows.into_iter()
+                .map(|row| NapiNativeLimitQuestion {
+                    row: row.row.to_owned(),
+                    bound: row.bound,
+                    measured: row.measured,
+                })
+                .collect()
+        }))
     }
 
     /// Resends the call a `PENDING_ASK` refusal answered: `verb` with the

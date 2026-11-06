@@ -40,8 +40,8 @@ use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::mcp::{
-    McpQuickJsProvider, ModelCallBackend, PlannedMeter, PlannedModel, PlannedRoute,
-    RunCompactionSeat,
+    McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
+    PlannedRoute, RunCompactionSeat,
 };
 use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
@@ -136,6 +136,15 @@ pub(super) async fn bind(
             }) as Arc<dyn LlmBackend>
         })
     };
+    let model_list_backend: ModelListBackend = {
+        let backend = Arc::clone(&backend);
+        Arc::new(move |listed| {
+            Arc::new(CodeModeBackend {
+                listed,
+                ..backend.as_ref().clone()
+            }) as Arc<dyn LlmBackend>
+        })
+    };
     // Each run's compaction seat reads the rung its step's call is admitted
     // on, at the breakpoint, through this same admission (FIX 4465 C).
     let live_admission = Arc::new(LiveStepAdmission {
@@ -192,7 +201,8 @@ pub(super) async fn bind(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
                   planned: &PlannedModel,
-                  lease: Option<LiveLeaseState>| {
+                  lease: Option<LiveLeaseState>,
+                  listed: Vec<AgentModel>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
@@ -202,7 +212,7 @@ pub(super) async fn bind(
                     lease,
                     browser: Arc::clone(&browser),
                     caller: None,
-                    listed: Vec::new(),
+                    listed,
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -218,10 +228,12 @@ pub(super) async fn bind(
         global_tier: ModelTierRef(ENGINE_EXECUTOR_PURPOSE_NAME.to_owned()),
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
+        wake: None,
     };
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
             .with_model_call_backend(model_call_backend)
+            .with_model_list_backend(model_list_backend)
             .with_clock_from_first_start()
             .with_reader_meter(reader_meter)
             .with_planned_models(planned_route, planned_meter)
@@ -426,7 +438,7 @@ struct CodeModeBackend {
     /// The runs' browser planner states each call is routed by (CUA E5).
     browser: Arc<BrowserPlannerRuns>,
     caller: Option<CodeModeCaller>,
-    /// A reader child's actual frozen list. Other backend paths retain
+    /// The bound run's actual frozen list. Other backend paths retain
     /// their existing unconstrained routing until they carry one too.
     listed: Vec<AgentModel>,
 }
@@ -469,30 +481,32 @@ const CODE_MODE_RUN: &str = "code-mode";
 /// `role` it is admitted here as any other step. A planned child its host
 /// pinned to its pick (`pinned`, FIX 2310) is admitted on that one model as
 /// a seat-bound call is; when that admission refuses now, the call takes
-/// the role's live route as any other does, so nothing new refuses.
+/// the role's live route as any other does, so nothing new refuses. The
+/// third value is the role that actually admitted the call (FIX 6359): the
+/// browser role when its admission took the call, else the chat role.
 fn admit_code_mode_call(
     models: &ModelRuntime,
     vault: &Vault,
     request: LlmRequest,
     pinned: bool,
     role: ModelRole,
-) -> Result<(RoleCall, bool), RoleRefusal> {
+) -> Result<(RoleCall, bool, ModelRole), RoleRefusal> {
     let seat_bound = request.envelope.seat_effort.is_some();
     if pinned
         && !seat_bound
         && let Some(call) = pinned_call(models, vault, &request)
     {
-        return Ok((call, true));
+        return Ok((call, true, CHAT_ROLE));
     }
     if let Some(admitted) = browser_planner::admit_browser_step(models, vault, role, &request) {
-        return admitted.map(|call| (call, false));
+        return admitted.map(|call| (call, false, role));
     }
     let call = if seat_bound {
         models.admit_seat_bound(vault, CHAT_ROLE, request)
     } else {
         models.admit_role(vault, CHAT_ROLE, request)
     }?;
-    Ok((call, seat_bound))
+    Ok((call, seat_bound, CHAT_ROLE))
 }
 
 /// A pinned child's call on its pick alone, as [`ModelRuntime::admit_seat_bound`]
@@ -528,7 +542,7 @@ impl LiveAdmission for LiveStepAdmission {
     fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal> {
         let (role, request, _) = self.browser.route(request, self.pinned);
         admit_code_mode_call(&self.models, &self.vault, request, self.pinned, role)
-            .map(|(call, _)| call)
+            .map(|(call, _, _)| call)
     }
 }
 
@@ -540,12 +554,17 @@ impl CodeModeBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let pinned = self.planned.as_ref().is_some_and(|planned| planned.exact);
+            // The messages as the caller sent them, which a step's capture
+            // staged: routing below only adds host data after them, and
+            // admission leaves them as they are.
+            let staged_len = request.messages.len();
+            let capture_run = browser_planner::step_run(&request);
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
             let (role, request, handoff) = self.browser.route(request, pinned);
-            let (call, seat_bound) =
+            let (call, seat_bound, admitted_role) =
                 admit_code_mode_call(&self.models, &self.vault, request, pinned, role)
-                    .and_then(|(mut call, seat_bound)| {
+                    .and_then(|(mut call, seat_bound, admitted_role)| {
                         if !self.listed.is_empty() {
                             ensure_inherited_model_list(&self.listed, &call.request.model)
                                 .map_err(|error| RoleRefusal::Refused(Box::new(error)))?;
@@ -555,12 +574,27 @@ impl CodeModeBackend {
                                 .map_err(|error| RoleRefusal::Refused(Box::new(error)))?;
                             call.ladder = Arc::new(ladder);
                         }
-                        Ok((call, seat_bound))
+                        Ok((call, seat_bound, admitted_role))
                     })
                     .map_err(|refusal| {
                         tracing::warn!(%refusal, "a code-mode model call was refused");
                         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
                     })?;
+            // FIX 6359: the step's capture keeps the role that admitted this
+            // call, matched by the executor's own messages, so its replays
+            // are admitted on that role's route. The role is noted on the
+            // staged prefix before the refresh below re-keys the capture.
+            if let Some(messages) = call.request.messages.get(..staged_len) {
+                oneiron::code_run::note_step_admission_role(messages, admitted_role);
+            }
+            if let Some(run) = capture_run {
+                oneiron::code_run::refresh_step_capture_request(
+                    &self.vault,
+                    run,
+                    &call.request,
+                    staged_len,
+                );
+            }
             let no_record_at_arrival = self
                 .caller
                 .as_ref()

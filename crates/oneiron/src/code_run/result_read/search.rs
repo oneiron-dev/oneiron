@@ -8,7 +8,8 @@
 //! margin is always found whole, and none is reported twice. A few bytes
 //! before each window are kept, so `\b` and `(?m)^` see the byte before it.
 //! The read stops at the scan bound with a cursor, never with a false "no
-//! match".
+//! match". A scoped child's search also stops at its live cutoff, checked at
+//! each window and each match (FIX 8233).
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, ceil_boundary, count_lf, decode, encoded_len,
@@ -65,6 +66,10 @@ struct SearchInput {
 struct SearchCursor {
     offset: u64,
     line: u64,
+    /// Bytes the resume re-reads that the stopping call already charged
+    /// (FIX 1189). Only scan-bound stops set it; old cursors lack it.
+    #[serde(default)]
+    credit: Option<u64>,
 }
 
 /// `search`: see the module.
@@ -115,7 +120,18 @@ pub(super) fn search(
         offset: begin,
         lfs: input.cursor.as_ref().map_or(0, |cursor| cursor.line),
     };
-    let mut scan = Scan::new(bounds.scan_bytes());
+    // FIX 1189 discount, engine-issued only (#4311 P1-B): a caller-supplied
+    // credit grants extra scan bytes only when it exactly replays the tuple
+    // this vault issued for this window; any other value scans at its own
+    // bound. Credit attests bytes already read, not matches, so the check is
+    // pattern-independent by design.
+    let credit = match input.cursor.as_ref().and_then(|cursor| cursor.credit) {
+        Some(claimed) if body.valid_search_credit(begin, line.lfs, claimed) => {
+            claimed.min(WINDOW + BEHIND)
+        }
+        _ => 0,
+    };
+    let mut scan = Scan::with_credit(bounds.scan_bytes(), credit);
     let mut a = begin;
     let mut hay_start = a.saturating_sub(BEHIND);
     let mut hay: Vec<u8> = Vec::new();
@@ -124,7 +140,13 @@ pub(super) fn search(
     // Where the search stops short of the end, and whether the scan bound
     // stopped it.
     let mut stopped: Option<(LinePos, bool)> = None;
+    // Bytes the resume re-reads that this call already charged (FIX 1189):
+    // the overlap plus the look-behind, on scan-bound stops only.
+    let mut stop_credit: u64 = 0;
     while a < len && stopped.is_none() {
+        // Each window and each match checks the read's live cutoff first
+        // (FIX 8233).
+        body.live_cutoff().check()?;
         // The window: [a, b), with the look-behind before it held.
         let keep = a.saturating_sub(BEHIND).max(hay_start);
         hay.drain(..usize::try_from(keep - hay_start).unwrap_or(hay.len()));
@@ -143,6 +165,7 @@ pub(super) fn search(
         let last = b == len;
         let cut = !last && b < full;
         if !last && b <= a + MARGIN {
+            stop_credit = b.saturating_sub(a.saturating_sub(BEHIND));
             stopped = Some((line, true));
             break;
         }
@@ -158,6 +181,7 @@ pub(super) fn search(
                 }
                 continue;
             }
+            body.live_cutoff().check()?;
             let (s, e) = (
                 hay_start + found.start() as u64,
                 hay_start + found.end() as u64,
@@ -204,6 +228,7 @@ pub(super) fn search(
         line.lfs += count_lf(&hay[at(line.offset)..at(advance)]);
         line.offset = advance;
         if cut {
+            stop_credit = b.saturating_sub(advance.saturating_sub(BEHIND));
             stopped = Some((line, true));
             break;
         }
@@ -221,6 +246,8 @@ pub(super) fn search(
             reply["scanned"] = json!([begin, next.offset]);
             reply["next"] = json!({"offset": next.offset, "line": next.lfs});
             if limited {
+                body.note_search_credit(next.offset, next.lfs, stop_credit);
+                reply["next"]["credit"] = json!(stop_credit);
                 reply["limit"] = scan_limit();
             }
         }

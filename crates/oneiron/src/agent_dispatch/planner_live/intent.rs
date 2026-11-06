@@ -306,13 +306,17 @@ impl PlannedLaunch {
 
     /// Whether this read still holds what `read` was read with: the same
     /// custody fence, placed stamp and plan, and the same frozen start and
-    /// pack.
+    /// pack apart from its erasable retained-revision witness.
     pub(super) fn holds_frozen(&self, read: &Self) -> bool {
         self.row.fence == read.row.fence
             && self.row.placed == read.row.placed
             && self.row.plan == read.row.plan
             && self.row.pattern_launch == read.row.pattern_launch
-            && self.row.pattern_pack == read.row.pattern_pack
+            && match (&self.row.pattern_pack, &read.row.pattern_pack) {
+                (Some(current), Some(read)) => current.same_frozen_pack(read),
+                (None, None) => true,
+                _ => false,
+            }
     }
 }
 

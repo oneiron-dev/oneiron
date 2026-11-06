@@ -239,6 +239,9 @@ pub(crate) enum CredentialDisposition {
     /// Still pending here; this exact image row's source custody already
     /// lacked a live key when the image was captured. Diagnostic only.
     PendingSourceKeyUnavailable,
+    /// Still pending here; this exact image row's source custody held a
+    /// live key when the image was captured. Diagnostic only.
+    PendingSourceKeyLive,
 }
 
 /// A restore's or an activation's credentials, planned: each value whose
@@ -394,6 +397,18 @@ impl PlannedCredentials {
                 && unavailable.contains(&(credential.id, credential.generation))
             {
                 *disposition = CredentialDisposition::PendingSourceKeyUnavailable;
+            }
+        }
+    }
+
+    /// Adds a live-at-capture fact only to still-pending diagnostics.
+    /// Never establishes readability, current custody, or restore authority.
+    pub(crate) fn note_source_key_live(&mut self, live: &BTreeSet<(EntityId, u32)>) {
+        for (credential, disposition) in &mut self.noted {
+            if *disposition == CredentialDisposition::PendingCustody
+                && live.contains(&(credential.id, credential.generation))
+            {
+                *disposition = CredentialDisposition::PendingSourceKeyLive;
             }
         }
     }

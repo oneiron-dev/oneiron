@@ -158,7 +158,7 @@ impl ReadRowRevision for ReadRow {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Compatibility projection of point rows; policy and body share the read snapshot.
     pub fn get_entity_parts_with_receipt(
         &self,
@@ -209,14 +209,39 @@ impl<'v> ScopedRead<'v> {
     ///
     /// Each slot answers its read in order; `None` is a missing target or a
     /// withheld row. Missing targets are not policy exclusions: the receipt
-    /// counts only existing rows this actor may not read. Mixed frontiers and
-    /// mixed id/short-reference slices share the snapshot and the receipt.
+    /// counts only rows the key could read without the request's narrowing.
+    /// Mixed frontiers and id/short-reference slices share the snapshot and receipt.
     pub fn read(
         &self,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
         self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
+    }
+
+    /// Reads every target in ordered frames under one snapshot and receipt.
+    ///
+    /// `offset` is the first input slot in the frame. The callback runs inside
+    /// the original read transaction and body pin; use only in-hand projection
+    /// and accounting, not new vault reads, writes, hooks or model waits.
+    /// Existing body projection may sample host memory telemetry while this
+    /// read is held; the callback is not a blanket no-I/O or no-blocking port.
+    /// Frames use the existing native batch geometry, not a result-count cap.
+    /// A caller that retains rows across callbacks still retains their bodies.
+    pub fn read_frames<S, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        state: S,
+        mut project: impl FnMut(usize, Vec<Option<ReadRow>>, &mut S) -> std::result::Result<(), E>,
+    ) -> std::result::Result<ScopedReadResult<S>, E> {
+        self.read_projected_frames(
+            reads,
+            requested,
+            state,
+            |_, offset, rows, state| project(offset, rows, state),
+            |_, state| Ok(state),
+        )
     }
 
     /// [`Self::read`] under an as-of temporal selection (unix seconds),
@@ -269,14 +294,39 @@ impl<'v> ScopedRead<'v> {
         &self,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
-        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         // A file-plane ASSET's body file is read in the snapshot this read
         // opens, so the bodies are pinned before it opens (FIX 12149).
         let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
         let txn = self.grant_read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        self.read_projected_opaque_in_txn(&txn, reads, requested, opaque, project)
+    }
+
+    /// The ordinary point read and projection in the caller's snapshot.
+    /// Prepare this lane's grant clock and body pins before opening `txn`.
+    pub(crate) fn read_projected_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected_opaque_in_txn(txn, reads, requested, |_, _| Ok(false), project)
+    }
+
+    /// The opaque point read, receipt and projection in a caller-owned snapshot.
+    /// The old wrapper retains its body hold across this complete call.
+    pub(crate) fn read_projected_opaque_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         // One serving txn, one held authority: the reader's relationship
         // context and its own Grants load once for every slot (FIX 7462).
         let authority = HeldAuthority::for_request(requested);
@@ -286,8 +336,8 @@ impl<'v> ScopedRead<'v> {
             let (row, withheld) = match read.target {
                 ReadTarget::Id(id) => {
                     let (row, withheld) =
-                        self.id_row_in(&txn, &policy, &filter, id, read.mode, &authority)?;
-                    if withheld > 0 && opaque(&txn, &id)? {
+                        self.id_row_in(txn, &policy, &filter, id, read.mode, &authority)?;
+                    if withheld > 0 && opaque(txn, &id)? {
                         (row, 0)
                     } else {
                         (row, withheld)
@@ -297,7 +347,7 @@ impl<'v> ScopedRead<'v> {
                     short_id,
                     content_hash,
                 } => self.short_ref_in(
-                    &txn,
+                    txn,
                     &policy,
                     &filter,
                     short_id,
@@ -311,7 +361,7 @@ impl<'v> ScopedRead<'v> {
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
-            value: project(&txn, value)?,
+            value: project(txn, value)?,
             receipt,
         })
     }
@@ -379,17 +429,44 @@ impl<'v> ScopedRead<'v> {
         filter: &crate::gate::ResolvedRetrievalFilter,
         id: EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(Option<ReadRow>, usize)> {
         let admitted = self.admit_in(txn, &id, || {
             self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
         })?;
-        let withheld = admitted.suppression();
+        let withheld =
+            self.point_suppression_in(txn, policy, &id, mode, admitted.suppression(), authority);
         let row = admitted
             .into_option()
             .map(|revision| ReadRow::from_revision(id, revision))
             .transpose()?;
         Ok((row, withheld))
+    }
+
+    /// A request counts an omitted row only if the reader's own floor admits it.
+    /// An unavailable baseline adds no count and never fails the original read.
+    fn point_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        id: &EntityId,
+        mode: ReadMode,
+        suppressed: usize,
+        authority: &HeldAuthority,
+    ) -> usize {
+        if suppressed == 0 {
+            return 0;
+        }
+        let floor_authority = authority.for_peer();
+        let readable = self.actor_retrieval_floor(policy).and_then(|floor| {
+            self.admitted_raw_in(txn, policy, &floor, id, mode, &floor_authority)
+                .map(|raw| raw.is_some())
+        });
+        if readable.unwrap_or(false) {
+            suppressed
+        } else {
+            0
+        }
     }
 
     /// One short reference: the admitted row and whether an existing row was withheld.
@@ -405,7 +482,7 @@ impl<'v> ScopedRead<'v> {
         short_id: &str,
         content_hash: u8,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(Option<ReadRow>, usize)> {
         let hydrated = match mode {
             ReadMode::Pinned(revision) => {
@@ -435,32 +512,44 @@ impl<'v> ScopedRead<'v> {
             return Ok((row.map(|row| ReadRow { deletion, ..row }), withheld));
         }
         // Erased relationship/private bodies cannot prove a scope.
-        let revealed = hydrated.deletion.is_some()
-            && self.audience_readable_in(txn, &hydrated.id)?
-            && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
-            && !(self.relationship_gated_in(txn)?
-                && matches!(
-                    hydrated.entity_type,
-                    crate::registry::ENTITY_TYPE_CLAIM
-                        | crate::registry::ENTITY_TYPE_MESSAGE
-                        | crate::registry::ENTITY_TYPE_SUMMARY
+        let reveals = |filter: &crate::gate::ResolvedRetrievalFilter| -> Result<bool> {
+            Ok(hydrated.deletion.is_some()
+                && self.audience_readable_in(txn, &hydrated.id)?
+                && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
+                && !(self.relationship_gated_in(txn)?
+                    && matches!(
+                        hydrated.entity_type,
+                        crate::registry::ENTITY_TYPE_CLAIM
+                            | crate::registry::ENTITY_TYPE_MESSAGE
+                            | crate::registry::ENTITY_TYPE_SUMMARY
+                    ))
+                && !filter.deny_all
+                && filter.read_scope().bands.contains(&hydrated.entity_type)
+                // Only authority covering every possible old position may reveal
+                // deletion metadata, never a narrow grant.
+                && self.credential_allows_id(&hydrated.id)
+                && self.facets_allow_shell_in(txn, &hydrated.id)?
+                && crate::gate::scoped_read_record_allowed(
+                    policy,
+                    &self.actor_key,
+                    &oneiron_authority::federation::scope_codec::read_preset(),
                 ))
-            && !filter.deny_all
-            && filter.read_scope().bands.contains(&hydrated.entity_type)
-            // Only authority covering every possible old position may reveal
-            // deletion metadata, never a narrow grant.
-            && self.credential_allows_id(&hydrated.id)
-            && self.facets_allow_shell_in(txn, &hydrated.id)?
-            && crate::gate::scoped_read_record_allowed(
-                policy,
-                &self.actor_key,
-                &oneiron_authority::federation::scope_codec::read_preset(),
-            );
-        if !revealed {
+        };
+        if !reveals(filter)? {
             // A withheld private NOTE shell counts exactly like a missing row.
-            let withheld = self
-                .admit_in(txn, &hydrated.id, || Ok(None::<()>))?
-                .suppression();
+            let admitted = self.admit_in(txn, &hydrated.id, || Ok(None::<()>))?;
+            let suppressed = admitted.suppression();
+            let withheld = if suppressed == 0 {
+                0
+            } else if self
+                .actor_retrieval_floor(policy)
+                .and_then(|floor| reveals(&floor))
+                .unwrap_or(false)
+            {
+                suppressed
+            } else {
+                0
+            };
             return Ok((None, withheld));
         }
         let occurred = self

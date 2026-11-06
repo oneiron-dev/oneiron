@@ -13,8 +13,16 @@
 //! Nothing round-trips 100%. The pipeline is **minimal-mutation + passthrough**:
 //! it touches only supported elements and preserves unknown XML parts
 //! byte-for-byte. The passthrough and corruption gates run in the engine (the
-//! `opc` submodule) against the bytes the session produced, so the gate never
-//! trusts the tool that wrote them.
+//! `opc` submodule) against the actual proposed bytes, so the gate never trusts
+//! the tool that wrote them.
+//!
+//! After the Stage 4 OPC read, nonstructural spreadsheet runs restore wholly
+//! missing foreign worksheet-root elements, `extLst` containers and whole
+//! extension records before the manifest, diff and validation. Existing output
+//! cells, formulas and subtrees are not overwritten. Root attributes, nested
+//! unknown XML, partially altered extension payloads and structural relocation
+//! remain outside this repair. Incomplete or ambiguous repairs carry a
+//! nonblocking warning; they do not add a refusal of supported edits.
 //!
 //! # Four mandatory stages
 //!

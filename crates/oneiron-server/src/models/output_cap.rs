@@ -25,7 +25,7 @@ impl OutputCap {
             return;
         };
         let mut asked: Option<u64> = None;
-        for key in LIMIT_KEYS {
+        for key in LIMIT_KEYS.into_iter().chain(std::iter::once(self.field)) {
             // Every spelling leaves the wire, parsed or not: an endpoint that
             // reads a spelling left behind would generate past the ceiling.
             if let Some(limit) = fields.remove(key).as_ref().and_then(token_count) {

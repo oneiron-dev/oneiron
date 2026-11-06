@@ -15,6 +15,9 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
                 Some(crate::task_verb::ask_soft_confirm::SOFT_CONFIRM)
             }
             super::attendee_entry::ATTENDEE_ENTRY => Some(super::attendee_entry::ATTENDEE_ENTRY),
+            super::attendee_late_ask::ATTENDEE_LATE_ASK => {
+                Some(super::attendee_late_ask::ATTENDEE_LATE_ASK)
+            }
             _ => None,
         }
     })
@@ -177,6 +180,18 @@ pub(crate) fn guard_ask_fact_put(
                 || occurred.end != fact.entered_at
                 || learned_at != fact.entered_at
                 || super::attendee_entry::attendee_entry_id(fact.container, &fact.attendee)? != id
+            {
+                return Err(invalid());
+            }
+            fact.validate()?;
+        }
+        Some(super::attendee_late_ask::ATTENDEE_LATE_ASK) => {
+            let fact: super::attendee_late_ask::AttendeeLateAskFact =
+                decode(data, super::attendee_late_ask::ATTENDEE_LATE_ASK)?.ok_or_else(invalid)?;
+            if occurred.start != fact.first_late_at
+                || occurred.end != fact.first_late_at
+                || learned_at != fact.first_late_at
+                || super::attendee_late_ask::late_ask_id(fact.entry_ref)? != id
             {
                 return Err(invalid());
             }

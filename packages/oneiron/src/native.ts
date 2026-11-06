@@ -23,6 +23,7 @@ import type {
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
+  NativeLimitQuestion,
   QueryAffect,
   RecallMedia,
   RecallScope,
@@ -41,6 +42,8 @@ vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
 vaultCommitmentsRelease(input: unknown): unknown
 vaultCommitmentsSupersede(input: unknown): unknown
+vaultCommitmentsReminderRouteGet(input: unknown): unknown
+vaultCommitmentsReminderRouteSet(input: unknown): unknown
 fetch(input: unknown): unknown
 crawl(input: unknown): unknown
 report(input: unknown): unknown
@@ -53,6 +56,12 @@ selfFocusWakes(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
+selfBoardLayout(input: unknown): unknown
+selfBoardFold(input: unknown): unknown
+selfBoardUnfold(input: unknown): unknown
+selfBoardSize(input: unknown): unknown
+selfBoardFilter(input: unknown): unknown
+selfBoardReplace(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -244,6 +253,7 @@ vaultWeaveSettingChangesUndo(input: unknown): unknown
 vaultWeaveDigestFeedbackPut(input: unknown): unknown
 vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
+vaultProactivityDigest(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown
 vaultInboxGroups(input: unknown): unknown
 vaultInboxGroupsResolve(input: unknown): unknown
@@ -277,6 +287,7 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsFitSet(input: unknown): unknown
+vaultSkillsAdvisoryAskSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
 vaultSkillsOptimizeStart(input: unknown): unknown
 vaultSkillsOptimizeResult(input: unknown): unknown
@@ -394,6 +405,7 @@ vaultFederationCoreferenceUnlink(input: unknown): unknown
 vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
+vaultSyncQuarantineHeldEdits(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown
@@ -447,6 +459,7 @@ vaultOffRecordWitness(input: unknown): unknown
 vaultOffRecordDiscard(input: unknown): unknown
 vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
+vaultOffRecordArtifactsSave(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 selfOffRecordResultsList(input: unknown): unknown
@@ -500,6 +513,12 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultDraftersList(input: unknown): unknown
+vaultDraftersListAs(input: unknown): unknown
+vaultDraftersStatus(input: unknown): unknown
+vaultDraftersPolicySet(input: unknown): unknown
+vaultDraftersRevert(input: unknown): unknown
+vaultDraftersRevertAs(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
@@ -1062,6 +1081,8 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultProductivityCreate(input: unknown): unknown
 vaultProductivityTree(input: unknown): unknown
+vaultIngestAgUiImport(input: unknown): unknown
+vaultIngestAgUiRead(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
@@ -1224,6 +1245,21 @@ vaultCustodyMembersDrainBegin(input: unknown): unknown
 vaultCustodyMembersDrainCommit(input: unknown): unknown
 vaultCustodyMembersDrainFolder(input: unknown): unknown
 vaultCustodyMembersReenrol(input: unknown): unknown
+vaultMailPackInstall(input: unknown): unknown
+vaultMailSourcesConnect(input: unknown): unknown
+vaultMailSourcesList(input: unknown): unknown
+vaultMailSourcesSettingsSet(input: unknown): unknown
+vaultMailSourcesMembersSet(input: unknown): unknown
+vaultMailSourcesAudienceEvents(input: unknown): unknown
+vaultMailThreadsShare(input: unknown): unknown
+vaultMailThreadsUnshare(input: unknown): unknown
+vaultMailComplianceSetting(input: unknown): unknown
+vaultMailComplianceSet(input: unknown): unknown
+vaultMailComplianceLog(input: unknown): unknown
+vaultMailSourcesSyncStatus(input: unknown): unknown
+vaultMailInbox(input: unknown): unknown
+vaultMailThreadsRead(input: unknown): unknown
+vaultMailComplianceSearch(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
@@ -1271,6 +1307,8 @@ selfFocusUnsubscribe(input: unknown): unknown
   lastReceiptRef(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
+  /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */
+  nativeLimitQuestions(): NativeLimitQuestion[] | null
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown

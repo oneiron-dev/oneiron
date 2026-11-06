@@ -49,3 +49,16 @@ Conversion changes reproject cells with judged evidence and cells whose captured
 prior contains a judge at any depth. Borrowed runs remain prior weight, never
 own runs, labels, or citations. The frozen donor tally used for measured outcomes
 is unchanged.
+
+## Subject erasure
+
+Hard-erasing a subject removes its registered learning cells, evidence, stored
+priors, and subject-index rows in every scope. The same rule covers person and
+skill subjects. Active, automatically approved observed learning heads retract
+in place; their measurements and frozen folds stay as closed history. Existing
+project rescoping and borrowed-provenance cleanup still apply.
+
+The erase and restore re-scrub can close a head even when its subject row is
+already absent. They do not create a replacement subject or a new claim edge.
+The nightly projection sweep skips a registered cell whose subject is missing,
+so that cell does not stop later cells from being projected.
