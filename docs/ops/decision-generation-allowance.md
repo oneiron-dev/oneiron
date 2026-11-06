@@ -71,6 +71,32 @@ new start, while transport retries share their start. There is no outer pace sho
 that skips a memo, and no second counter update after the response. This does not
 enable stronger reads.
 
+System One supports native captured reads outside the purposes admitted as extraction.
+Its sequential pack checks the allowance after each question's capability,
+remote-posture and key preflights, before binding that question's run. A preflight
+abstention starts no generation. A denied generation leaves its ordinal and later
+questions unstarted; a later provider error still keeps the settled prefix. A
+granted start slot is not proof that the subsequent native admission or send succeeds.
+
+The house reader supports native settlement capture when no generation admission is
+requested. Its existing packed label request, paired and person readouts, clocks,
+reader and single gate settlement stay unchanged. The backend can retry a missing
+label with another full-vocabulary generation, so one packed request or settlement
+is not a generation count. Requests carrying generation admission stay unsupported
+until that actual native boundary and its partial-prefix result are implemented.
+Caller-run handles bind to the capture inside its scope; funded handles are created
+inside that scope. Capture never settles the permit again.
+
+A nonlocal extraction needs its actual request's native extraction admission too.
+System One and the nonlocal house reader do not yet supply that request through
+the captured interface, so those contexts return unsupported before any capture,
+read or send. The existing admitted-purpose normalization also treats both autonomy
+purposes as extraction. The on-device house reader can still capture without a
+generation admission. A run's credential check is not the host's extraction
+predicate. These are unfinished request adapters, not new egress policies or
+ordinary-call refusals. Neither provider's capture support enables the excluded
+stronger Arc path. Local vision remains unsupported through the captured interface.
+
 Settlement inventories also do not establish complete token measurement. Missing usage
 stays unknown; billed reservations and currency charges are not actual token counts.
 Reading a settlement never authorizes settling the model permit a second time.
