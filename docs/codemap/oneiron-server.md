@@ -500,7 +500,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/feedback_inbox/flood.rs` | src | s | 4 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
 | `src/api/git_http/gate.rs` | src | s | 12 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/gate/push.rs` | src | s | 3 crate-vis | — | The push half of the smart-HTTP gate (FIX 6867, G1-PUSH): the pusher's sidecar, built from the credential… |
-| `src/api/git_http/import_relay.rs` | src | m | 1 crate-vis | — | The outside import's per-call transport (FIX 6871, G7 PR1) |
+| `src/api/git_http/import_relay.rs` | src | m | 4 crate-vis | — | The outside import's per-call transport (FIX 6871, G7 PR1) |
+| `src/api/git_http/import_source_relay.rs` | src | m | 2 crate-vis | — | An outside import's bound source fetch through the credential broker (ARCH-0069 OSH-3, FIX 15702) |
 | `src/api/git_http/mod.rs` | src | s | 3 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/projection.rs` | src | s | 4 crate-vis | — | The Git read recipient a host binds, apart from its push caller (FIX 7608 slice 2b-ii-A, ASK 1) |
 | `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
@@ -1410,6 +1411,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/anthropic.rs` | src | m | 3 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
 | `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 19 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
 | `src/models/broker_context.rs` | src | m | 14 crate-vis | — | One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys… |
+| `src/models/broker_context/git.rs` | src | s | 1 crate-vis | — | The vault's broker for git exchanges (ARCH-0069 OSH-3): the same site the vault-secret keys send through… |
 | `src/models/broker_context/secret_use.rs` | src | s | 1 crate-vis | — | A secret-free installed adapter for `self.use`'s broker model listing |
 | `src/models/broker_media.rs` | src | m | 1 crate-vis | — | A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker… |
 | `src/models/broker_responses.rs` | src | m | 2 crate-vis | — | OpenAI Responses through the credential broker, one upgraded socket per call |
