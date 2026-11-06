@@ -305,7 +305,13 @@ impl ServedConnectorCallHost {
             Read::Running {
                 status: "input_required",
                 poll_after_ms,
-            } => match answer_task_input(&live, &task.task_id)? {
+            } => match answer_task_input(
+                &live,
+                &task.task_id,
+                key_ref
+                    .as_ref()
+                    .map(|key_ref| (&self.vault, key_ref, view.tool())),
+            )? {
                 Some(end) => Polled::Ended(end, live),
                 None => Polled::Running {
                     status: "input_required",
@@ -331,11 +337,22 @@ impl ServedConnectorCallHost {
 /// until its provider drops it. The result's own answer settles the task.
 /// `None` when the stream ends or its time runs out first: the task is polled
 /// again, and leaving the stream does not cancel it. Nothing the requests or
-/// the result carry is kept.
+/// the result carry is kept. A keyed call (`issuer`) meets its issuer hold
+/// before the `tasks/result` and before each refusal.
 fn answer_task_input(
     live: &LiveSession,
     task_id: &str,
+    issuer: Option<(&Vault, &EntityId, &str)>,
 ) -> Result<Option<RemoteTaskEnd>, &'static str> {
+    // A keyed call's issuer binding is read again before the kept header
+    // goes out (FIX 12166): while a hold stands nothing more is sent.
+    if let Some((vault, key_ref, tool)) = issuer {
+        match vault.connector_issuer_hold(key_ref, tool) {
+            Ok(None) => {}
+            Ok(Some(_)) => return Err("issuer_held"),
+            Err(_) => return Err("issuer_binding_unread"),
+        }
+    }
     let request = json!({
         "jsonrpc": "2.0",
         "id": RESULT_ID,
@@ -360,7 +377,14 @@ fn answer_task_input(
     };
     loop {
         match stream.next(RESULT_ID) {
-            Ok(StreamEvent::Request(request)) => live.refuse(request),
+            // Each refusal reads the issuer binding again, as a live call's
+            // does: a hold that stood since keeps it from going out.
+            Ok(StreamEvent::Request(request)) => match issuer {
+                Some((vault, key_ref, tool)) => {
+                    live.refuse_unless_held(request, vault, key_ref, tool);
+                }
+                None => live.refuse(request),
+            },
             Ok(StreamEvent::Answer(message, bytes)) => return Ok(Some(settled_by(message, bytes))),
             Ok(StreamEvent::End) | Err(()) => return Ok(None),
         }
