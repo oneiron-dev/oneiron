@@ -364,6 +364,15 @@ impl CalendarEventFacts {
         Some((start, last - start))
     }
 
+    /// Whether this EVENT is all-day (dates), as its admitted time kind
+    /// reads; a floating one names wall times (FIX 17869).
+    pub(in crate::calendar) fn civil_all_day(&self) -> bool {
+        matches!(
+            self.time_kind,
+            LaneFact::Read(kind) if kind.kind == crate::calendar::claims::CalendarTimeKind::AllDay
+        )
+    }
+
     pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {
         match self.origin {
             LaneFact::Absent => Some(CalendarOrigin::Dreamer),
