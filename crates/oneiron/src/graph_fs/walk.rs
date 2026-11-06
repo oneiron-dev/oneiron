@@ -1,7 +1,12 @@
 //! Resumable depth-first walks for `find` and `grep`. A walk's sealed
-//! position names each directory still open, the listing page it reads and
-//! how far into that page it got, and where the next file's lines resume, so
-//! a page that its output or scan limit cut picks up exactly where it stopped.
+//! position names each directory still open and the listing page it reads,
+//! which starts right after the last entry it reached, and the entry a page
+//! ended inside with where its lines resume, so a page that its output or
+//! scan limit cut picks up where it stopped. The next page finishes that
+//! entry first, then the listing goes on after it. An entry written or
+//! removed before the resume point shifts nothing (FIX 4885): the page
+//! resumes by the listing's own cursor, not by a count into a page read
+//! again, and no entry that comes in before the cut one takes its lines.
 
 use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
@@ -30,6 +35,10 @@ enum WalkVerb<'a> {
     Grep { pattern: &'a str },
 }
 
+/// The first byte of a sealed walk position in this format: one sealed
+/// before resume-by-cursor (FIX 4885) does not open.
+const WALK_POSITION_FORMAT: u8 = 2;
+
 /// Where a walk resumes.
 #[derive(Debug, Default)]
 struct WalkPosition {
@@ -37,8 +46,10 @@ struct WalkPosition {
     root_done: bool,
     /// The directories still open, the root first.
     frames: Vec<WalkFrame>,
-    /// Where the next file's lines resume, when a page ended inside it.
-    lines: Option<LinePosition>,
+    /// The entry a page ended inside, by path, and where its lines resume:
+    /// the next page finishes it before it reads any listing, as its frame
+    /// has already passed it (a directory's own frame is open already).
+    lines: Option<(String, LinePosition)>,
 }
 
 #[derive(Debug)]
@@ -46,9 +57,11 @@ struct WalkFrame {
     /// The directory's name in its parent; empty for the root.
     name: String,
     /// The listing page the frame reads: `None` for the first, else the
-    /// cursor the page before it handed out.
+    /// cursor of the page that starts right after the last entry the walk
+    /// finished, or the one the page before it handed out.
     page: Option<String>,
-    /// How many entries of that page the walk has passed.
+    /// How many entries of that page the walk has passed: none when `page`
+    /// starts right after the last one it finished.
     passed: usize,
 }
 
@@ -59,13 +72,20 @@ impl WalkPosition {
         scan_bytes: usize,
     ) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        append_position_bytes(&mut bytes, &[u8::from(self.root_done)], reader, scan_bytes)?;
-        put_optional(
+        append_position_bytes(
             &mut bytes,
-            self.lines.map(|lines| lines.to_bytes()).as_deref(),
+            &[WALK_POSITION_FORMAT, u8::from(self.root_done)],
             reader,
             scan_bytes,
         )?;
+        match &self.lines {
+            Some((path, lines)) => {
+                append_position_bytes(&mut bytes, &[1], reader, scan_bytes)?;
+                put_field(&mut bytes, path.as_bytes(), reader, scan_bytes)?;
+                put_field(&mut bytes, &lines.to_bytes(), reader, scan_bytes)?;
+            }
+            None => append_position_bytes(&mut bytes, &[0], reader, scan_bytes)?,
+        }
         for frame in &self.frames {
             put_field(&mut bytes, frame.name.as_bytes(), reader, scan_bytes)?;
             put_optional(
@@ -90,20 +110,29 @@ impl WalkPosition {
         scan_bytes: usize,
     ) -> Result<Option<Self>> {
         let mut fields = Fields(bytes);
+        if fields.take::<1>() != Some([WALK_POSITION_FORMAT]) {
+            return Ok(None);
+        }
         let root_done = match fields.take::<1>() {
             Some([0]) => false,
             Some([1]) => true,
             _ => return Ok(None),
         };
-        let lines = match fields.optional() {
-            Some(Some(lines)) => {
-                let Some(lines) = LinePosition::from_bytes(lines) else {
+        let lines = match fields.take::<1>() {
+            Some([0]) => None,
+            Some([1]) => {
+                let Some(path) = fields.field() else {
                     return Ok(None);
                 };
-                Some(lines)
+                let Some(path) = copy_utf8_field(path, reader, scan_bytes)? else {
+                    return Ok(None);
+                };
+                let Some(lines) = fields.field().and_then(LinePosition::from_bytes) else {
+                    return Ok(None);
+                };
+                Some((path, lines))
             }
-            Some(None) => None,
-            None => return Ok(None),
+            _ => return Ok(None),
         };
         let mut frames = Vec::new();
         while !fields.0.is_empty() {
@@ -318,10 +347,14 @@ impl GraphFsResolver<'_, '_> {
             if !self.coreutils_path_visible(root, reader)? {
                 return Ok(false);
             }
-            if let Visited::Cut(lines) =
-                self.visit(verb, root, false, at.lines.take(), walk, reader)?
-            {
-                at.lines = lines;
+            let lines = lines_of(&mut at.lines, root);
+            if let Visited::Cut(lines) = self.visit(verb, root, false, lines, walk, reader)? {
+                at.lines = lines
+                    .map(|lines| {
+                        copy_text_parts(&[root], reader, self.options.page_byte_cap)
+                            .map(|path| (path, lines))
+                    })
+                    .transpose()?;
                 return Ok(true);
             }
             if !recursive {
@@ -333,6 +366,17 @@ impl GraphFsResolver<'_, '_> {
                 page: None,
                 passed: 0,
             });
+        } else if let Some((path, lines)) = at.lines.take() {
+            // The entry the last page ended inside: finished first, whatever
+            // came into its listing before it since.
+            steps += 1;
+            if self.coreutils_path_visible(&path, reader)?
+                && let Visited::Cut(lines) =
+                    self.visit(verb, &path, false, Some(lines), walk, reader)?
+            {
+                at.lines = lines.map(|lines| (path, lines));
+                return Ok(true);
+            }
         }
         let mut dirs: Vec<String> = Vec::with_capacity(at.frames.len());
         for frame in &at.frames {
@@ -347,13 +391,15 @@ impl GraphFsResolver<'_, '_> {
             };
             dirs.push(dir);
         }
-        let mut pages: Vec<Option<GraphFsPage>> = at.frames.iter().map(|_| None).collect();
+        // Each open directory's page as read this call, and the index of the
+        // next entry in it.
+        let mut pages: Vec<Option<(GraphFsPage, usize)>> = at.frames.iter().map(|_| None).collect();
         while let Some(depth) = at.frames.len().checked_sub(1) {
             if steps >= GRAPH_FS_MAX_SCAN_ROWS {
                 return Ok(true);
             }
-            let page = match pages[depth].take() {
-                Some(page) => page,
+            let (page, index) = match pages[depth].take() {
+                Some(read) => read,
                 None => {
                     steps += 1;
                     let page = self.readdir_with_reader(
@@ -364,23 +410,26 @@ impl GraphFsResolver<'_, '_> {
                     if let Some(read) = page.read_receipt() {
                         fold_receipt(&mut walk.receipt, read.clone());
                     }
-                    page
+                    (page, at.frames[depth].passed)
                 }
             };
             let entry = page
                 .entries()
-                .get(at.frames[depth].passed)
-                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor);
-            // Lines to resume belong to the entry the walk stopped on, so to
-            // the first one it reaches now.
-            let lines = at.lines.take();
+                .get(index)
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .cloned();
+            let after = page
+                .entry_cursor(index)
+                .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                .transpose()?;
+            let next_page = page
+                .next_cursor()
+                .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                .transpose()?;
+            pages[depth] = Some((page, index));
             let Some(entry) = entry else {
                 // This page is walked: on to the listing's next page, or back up.
-                if let Some(next_page) = page
-                    .next_cursor()
-                    .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
-                    .transpose()?
-                {
+                if let Some(next_page) = next_page {
                     let frame = &mut at.frames[depth];
                     frame.page = Some(next_page);
                     frame.passed = 0;
@@ -401,29 +450,40 @@ impl GraphFsResolver<'_, '_> {
             )?;
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
             if self.coreutils_path_visible(&child, reader)? {
-                if let Visited::Cut(lines) =
-                    self.visit(verb, &child, is_dir, lines, walk, reader)?
-                {
-                    at.lines = lines;
+                if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, None, walk, reader)? {
+                    // The next page finishes this entry, then goes on after
+                    // it: the frame passes it now, and a directory's own
+                    // frame opens, so its tree still follows it.
+                    if let Some(lines) = lines {
+                        pass(&mut at.frames[depth], &mut pages[depth], after);
+                        if is_dir {
+                            at.frames.push(WalkFrame {
+                                name: copy_text_parts(
+                                    &[entry.name()],
+                                    reader,
+                                    self.options.page_byte_cap,
+                                )?,
+                                page: None,
+                                passed: 0,
+                            });
+                        }
+                        at.lines = Some((child, lines));
+                    }
                     return Ok(true);
                 }
                 if is_dir {
-                    let name =
-                        copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?;
-                    at.frames[depth].passed += 1;
+                    pass(&mut at.frames[depth], &mut pages[depth], after);
                     at.frames.push(WalkFrame {
-                        name,
+                        name: copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?,
                         page: None,
                         passed: 0,
                     });
-                    pages[depth] = Some(page);
                     pages.push(None);
                     dirs.push(child);
                     continue;
                 }
             }
-            at.frames[depth].passed += 1;
-            pages[depth] = Some(page);
+            pass(&mut at.frames[depth], &mut pages[depth], after);
         }
         Ok(false)
     }
@@ -471,6 +531,28 @@ impl GraphFsResolver<'_, '_> {
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))
             }
         }
+    }
+}
+
+fn lines_of(saved: &mut Option<(String, LinePosition)>, path: &str) -> Option<LinePosition> {
+    saved
+        .take()
+        .and_then(|(owner, lines)| (owner == path).then_some(lines))
+}
+
+/// Marks the entry at `read`'s index finished: the walk goes on to the next
+/// one in the page it read, and a later call resumes right after this one,
+/// by its listing's own cursor when it gives one (FIX 4885), else by count.
+fn pass(frame: &mut WalkFrame, read: &mut Option<(GraphFsPage, usize)>, after: Option<String>) {
+    if let Some((_, index)) = read {
+        *index += 1;
+    }
+    match after {
+        Some(after) => {
+            frame.page = Some(after);
+            frame.passed = 0;
+        }
+        None => frame.passed += 1,
     }
 }
 

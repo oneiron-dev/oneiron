@@ -190,7 +190,9 @@ impl GraphFsResolver<'_, '_> {
             if after.as_deref().is_some_and(|after| entry.name() <= after) {
                 continue;
             }
-            if !page.try_push(entry.clone()) {
+            let after =
+                scope.seal_bytes_with(entry.name().as_bytes(), quantum, || checkpoint(reader))?;
+            if !page.try_push_after(entry.clone(), after) {
                 next = last
                     .as_ref()
                     .map(|last| {
