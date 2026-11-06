@@ -247,6 +247,7 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
 pub use oneiron_base::posterior;
 pub mod skill;
