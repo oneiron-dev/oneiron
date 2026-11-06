@@ -49,7 +49,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
 use super::session_ops::{
-    AppendSourceCheck, PrepareSourceCheck, PrepareSourceMiss, SnapshotSourceCheck,
+    AppendSourceCheck, ControlSourceCheck, PrepareSourceCheck, PrepareSourceMiss, SnapshotSourceCheck,
     SnapshotSourceMiss,
 };
 use super::wire::{self, Incoming, Outgoing};
@@ -181,6 +181,49 @@ impl Channel {
     ) -> io::Result<()> {
         let bytes = Self::frame(op, request_id, epoch, body)?;
         self.writer.lock().await.write_all(&bytes).await
+    }
+
+    /// Checks the original call and canonical source before every plain write.
+    async fn send_control_checked(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        lease: &oneiron::BudgetLease,
+        source: &ControlSourceCheck<'_>,
+    ) -> Result<(), ControlExchangeError> {
+        let bytes =
+            Self::frame(op, request_id, epoch, body).map_err(ControlExchangeError::Transport)?;
+        let writer = self.writer.lock().await;
+        let stream: &UnixStream = (*writer).as_ref();
+        let mut sent = 0;
+        while sent < bytes.len() {
+            stream
+                .writable()
+                .await
+                .map_err(ControlExchangeError::Transport)?;
+            lease
+                .check_dispatch_release()
+                .map_err(ControlExchangeError::Release)?;
+            let checked = source().await;
+            // A release during the source read wins over that read's verdict.
+            lease
+                .check_dispatch_release()
+                .map_err(ControlExchangeError::Release)?;
+            checked.map_err(ControlExchangeError::Source)?;
+            match stream.try_write(&bytes[sent..]) {
+                Ok(0) => {
+                    return Err(ControlExchangeError::Transport(
+                        io::ErrorKind::WriteZero.into(),
+                    ));
+                }
+                Ok(written) => sent += written,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(ControlExchangeError::Transport(error)),
+            }
+        }
+        Ok(())
     }
 
     /// Sends one frame with `fd` riding on its first byte, then the rest of
@@ -591,6 +634,30 @@ impl Channel {
         }
     }
 
+    pub(super) async fn exchange_control_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        lease: &oneiron::BudgetLease,
+        source: &ControlSourceCheck<'_>,
+    ) -> Result<Incoming, ControlExchangeError> {
+        let request_id = next_request_id();
+        self.send_control_checked(op, request_id, epoch, body, lease, source)
+            .await?;
+        loop {
+            match self.next().await.map_err(ControlExchangeError::Transport)? {
+                Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => {
+                    return Err(ControlExchangeError::Transport(
+                        io::ErrorKind::UnexpectedEof.into(),
+                    ));
+                }
+            }
+        }
+    }
+
     pub(super) async fn exchange_released(
         &mut self,
         op: &str,
@@ -846,6 +913,12 @@ impl CallUpdates {
         )?;
         self.writer.lock().await.write_all(&bytes).await
     }
+}
+
+pub(super) enum ControlExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(oneiron::llm::SessionInvalidation),
 }
 
 pub(super) enum ReleasedExchangeError {

@@ -25,7 +25,7 @@ use super::policy::{self, SuffixPlan};
 use super::prepare;
 use super::registry::{self, Basis, PendingTurn, Phase, Place, send};
 use super::{AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit};
-use super::{append, park};
+use super::{append, control, park};
 use crate::models::native_exl3::AppendSourceFuture;
 
 /// [`super::reply_committed`] on this platform: claims the turn's pending
@@ -274,8 +274,23 @@ async fn advance(
         staged: staged.digest,
         publish: true,
     };
-    let published: Result<SessionCheckpointed, SessionInvalidation> =
-        send(&place, SessionOp::Checkpoint, &body, None).await;
+    let published: Result<SessionCheckpointed, append::Failure> = match dispatch_lease.as_ref() {
+        Some(lease) => {
+            control::send(
+                &place,
+                SessionOp::Checkpoint,
+                &body,
+                lease,
+                &checkpoint_authority,
+                head,
+                message,
+            )
+            .await
+        }
+        None => send(&place, SessionOp::Checkpoint, &body, None)
+            .await
+            .map_err(append::Failure::Invalidation),
+    };
     let published = match published {
         Ok(published) if published.ready && published.checkpoint.as_ref() == Some(&staged) => {
             published
@@ -289,8 +304,12 @@ async fn advance(
             );
             return;
         }
-        Err(reason) => {
+        Err(append::Failure::Invalidation(reason) | append::Failure::Source(reason)) => {
             registry::drop_session(&worker_id, &place.epoch, &binding, reason);
+            return;
+        }
+        Err(append::Failure::Release(error)) => {
+            tracing::debug!(?error, "a model session's successor dispatch ended");
             return;
         }
     };
@@ -422,9 +441,23 @@ async fn stage(
             generation,
         },
     };
-    let staged: SessionSuffixStaged = send(place, SessionOp::SuffixCommit, &suffix, None)
-        .await
-        .map_err(append::Failure::Invalidation)?;
+    let staged: SessionSuffixStaged = match dispatch_lease {
+        Some(lease) => {
+            control::send(
+                place,
+                SessionOp::SuffixCommit,
+                &suffix,
+                lease,
+                authority,
+                commit.head,
+                commit.message,
+            )
+            .await
+        }
+        None => send(place, SessionOp::SuffixCommit, &suffix, None)
+            .await
+            .map_err(append::Failure::Invalidation),
+    }?;
     // The chain: a successor names its base and ends at the reply's HEAD;
     // one that does not is stale, repaired by dropping it, never trusted.
     let chained = staged.staged.parent == base.map(|base| base.digest)

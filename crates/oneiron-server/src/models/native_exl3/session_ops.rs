@@ -139,6 +139,62 @@ pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
     serde_json::from_value(frame.body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))
 }
 
+pub(in crate::models) type ControlSourceFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(), SessionInvalidation>> + Send + 'a>,
+>;
+pub(in crate::models) type ControlSourceCheck<'a> = dyn Fn() -> ControlSourceFuture<'a> + Sync + 'a;
+
+/// A control frame's source rejection is not a worker fault or a live release.
+pub(in crate::models) enum ReleasedControlFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(SessionInvalidation),
+}
+
+pub(in crate::models) async fn control_source_released<B: Serialize, R: DeserializeOwned>(
+    launch: &NativeLaunch,
+    epoch: &str,
+    op: SessionOp,
+    body: &B,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &ControlSourceCheck<'_>,
+) -> Result<R, ReleasedControlFault> {
+    if !lease.has_dispatch_release() {
+        return send(launch, epoch, op, body, None, worker)
+            .await
+            .map_err(ReleasedControlFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedControlFault::Op(OpFault::Cut))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| ReleasedControlFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_control_released(op.wire_name(), Some(epoch), body, lease, source)
+        .await
+        .map_err(|error| match error {
+            super::transport::ControlExchangeError::Transport(_) => {
+                ReleasedControlFault::Op(OpFault::Cut)
+            }
+            super::transport::ControlExchangeError::Release(error) => {
+                ReleasedControlFault::Release(error)
+            }
+            super::transport::ControlExchangeError::Source(reason) => {
+                ReleasedControlFault::Source(reason)
+            }
+        })?;
+    if frame.op == "refused" {
+        return Err(ReleasedControlFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedControlFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedControlFault::Op(OpFault::Cut))
+}
+
 pub(in crate::models) type AppendSourceFuture<'a> = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<(), SessionInvalidation>> + Send + 'a>,
 >;
