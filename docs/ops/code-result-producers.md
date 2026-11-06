@@ -26,12 +26,19 @@ canonical and room publishers set it before publishing the occurrence. Encoding
 requires a nullable field; result cards include only known values. A replayed
 reply keeps its earlier occurrence's exact value, including `None`.
 
+Typed large inference-default, settled-ask, world-privacy and native team-start
+replies also carry the same actual bridge effect. They keep their existing guest
+JSON shape, sweeping sink, source rows, result card and stored-value occurrence
+allocation. Canonical and room routes set the effect before publication; replay
+keeps the earlier occurrence's exact value, including `None`. Storageless and
+inline replies keep their existing behavior.
+
 Generic stored values and direct arbitrary reply publishers do not guess a
-label. Typed spills and other executor output families remain outside this
+label for a new occurrence. Other executor output families remain outside this
 effect slice. Copying supplied effect metadata before byte validation preserves
 all existing byte comparisons; it does not prove the metadata's producer.
 
 MIME, character encoding, grant and fence metadata are not inferred from either
-producer field. Those parts of FIX 4429, and effect coverage outside large JSON
+producer field. Those parts of FIX 4429, and effect coverage outside these large
 bridge replies, remain separate work. No new setting or worker configuration is
 required.

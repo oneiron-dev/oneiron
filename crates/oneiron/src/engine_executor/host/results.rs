@@ -241,10 +241,23 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn bind_stored_sourced(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        self.bind_stored_produced(storage, sink, name, inherit, input_rows, None)
+    }
+
+    /// The ordinary binding path with the native call's effect, when known.
+    pub(super) fn bind_stored_produced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
+        effect: Option<SelfEffect>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -264,6 +277,14 @@ impl RecordingJsHost<'_, '_> {
             .iter()
             .find(|held| held.path == path)
             .map_or(Some(self.step_start), |held| held.producing_step_start);
+        let producing_effect = self
+            .results
+            .iter()
+            .find(|held| held.path == path)
+            .map_or_else(
+                || effect.map(|effect| effect.as_str().to_owned()),
+                |held| held.producing_effect.clone(),
+            );
         let output = storage.publish_code_run_output_produced(
             path,
             sink,
@@ -271,6 +292,7 @@ impl RecordingJsHost<'_, '_> {
             self.run_id,
             input_rows,
             producing_step_start,
+            producing_effect,
         )?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;

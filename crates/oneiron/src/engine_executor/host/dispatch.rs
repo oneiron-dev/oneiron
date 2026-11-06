@@ -24,7 +24,7 @@ impl RecordingJsHost<'_, '_> {
                 | SelfDispatchOutcome::TaskAskStatus(_)
                 | SelfDispatchOutcome::Team(_)
         ) {
-            return self.store_large_typed_reply(outcome);
+            return self.store_large_typed_reply(effect, outcome);
         }
         let answer = match &mut outcome {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
@@ -59,6 +59,7 @@ impl RecordingJsHost<'_, '_> {
     /// result store, the original outcome stays inline, unchanged.
     fn store_large_typed_reply(
         &mut self,
+        effect: SelfEffect,
         outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
         use crate::code_run::{SelfStoredReply, SelfStoredReplyKind};
@@ -108,31 +109,28 @@ impl RecordingJsHost<'_, '_> {
             return Ok(outcome);
         }
         // SAME split as `fit_reply` (`wire.rs`): store `body["output"]` when
-        // the body has one, else the whole body. `Ok(None)` keeps the original
-        // inline; errors propagate, never swallowed.
+        // the body has one, else the whole body. Storage is present, as checked
+        // above; encoding and binding errors propagate, never swallowed.
         let stored = if body.get("output").is_some() {
             &body["output"]
         } else {
             &body
         };
-        let card = if let SelfDispatchOutcome::Team(result) = &outcome {
-            let storage = self.storage.expect("result store checked above");
-            let mut sink = storage.code_run_output_sink()?;
-            write_json(&mut sink, stored)?;
-            Some(
-                self.bind_stored_sourced(storage, sink, None, &[], result.source_rows.clone())?
-                    .1,
-            )
+        let storage = self.storage.expect("result store checked above");
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, stored)?;
+        let input_rows = if let SelfDispatchOutcome::Team(result) = &outcome {
+            result.source_rows.clone()
         } else {
-            self.store_reply(stored)?
+            self.result_rows()
         };
-        match card {
-            Some(card) => Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
-                kind,
-                output: card,
-            })),
-            None => Ok(outcome),
-        }
+        let card = self
+            .bind_stored_produced(storage, sink, None, &[], input_rows, Some(effect))?
+            .1;
+        Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
+            kind,
+            output: card,
+        }))
     }
 
     /// Stores what `write` puts in a sink as a body of the run, bound to the
