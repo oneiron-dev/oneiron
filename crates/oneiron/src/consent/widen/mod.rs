@@ -21,7 +21,8 @@ mod offers;
 mod predecessor;
 mod streamed;
 
-use predecessor::{PredecessorIssuance, predecessors_at_filing, retire_predecessors_in_txn};
+pub(super) use predecessor::forget_widen_predecessor_in_txn;
+use predecessor::{predecessors_at_filing, retire_predecessors_in_txn};
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
@@ -85,9 +86,10 @@ struct StoredProposal {
     #[serde(default)]
     opener_lineage: Vec<[u8; 32]>,
     /// The owner's active grants the proposed bound strictly contained when
-    /// it was filed, each as that issuance: the accept that mints the wider
-    /// grant revokes those still standing so, in the same writer (FIX 9740).
-    predecessors: Vec<PredecessorIssuance>,
+    /// it was filed, less any minted again since: the accept that mints the
+    /// wider grant revokes those still standing so, in the same writer
+    /// (FIX 9740).
+    predecessors: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]

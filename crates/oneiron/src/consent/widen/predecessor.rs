@@ -1,34 +1,13 @@
 //! The narrower grants an accepted widening replaces (FIX 9740).
+//!
+//! Filing records each replaced grant's reference, its bound's digest. A
+//! same-bound mint overwrites that reference with a new issuance, so every
+//! mint takes its reference out of each open proposal's list, in the minting
+//! writer: an accept then revokes only issuances that stood at filing.
 use super::super::codec::GRANTS;
 use super::super::{AuthenticatedOwner, ConsentGrantRow, GrantBound};
-use crate::store::GateDecisionId;
+use super::WIDEN_PROPOSALS;
 use crate::{Result, Vault};
-use serde::{Deserialize, Serialize};
-
-/// One grant a widening replaces, frozen at filing: its reference and the
-/// mint that issued it. A same-bound re-mint overwrites the reference with a
-/// new issuance, which the accept leaves standing.
-#[derive(Serialize, Deserialize)]
-pub(super) struct PredecessorIssuance {
-    grant_ref: String,
-    created_at: u64,
-    minted_under: GateDecisionId,
-}
-
-impl PredecessorIssuance {
-    fn of(row: &ConsentGrantRow) -> Self {
-        Self {
-            grant_ref: row.grant_ref(),
-            created_at: row.created_at,
-            minted_under: row.owner_stamp.decision_id,
-        }
-    }
-
-    /// Whether `row` is still the issuance frozen at filing.
-    fn issued(&self, row: &ConsentGrantRow) -> bool {
-        row.created_at == self.created_at && row.owner_stamp.decision_id == self.minted_under
-    }
-}
 
 /// Whether `row` is one of `owner`'s ordinary active grants that `bound`
 /// strictly widens: an accepted widen replaces it (Engine 11:40).
@@ -47,34 +26,52 @@ pub(super) fn predecessors_at_filing(
     txn: &heed::RoTxn<'_>,
     bound: &GrantBound,
     owner: &str,
-) -> Result<Vec<PredecessorIssuance>> {
+) -> Result<Vec<String>> {
     Ok(GRANTS
         .scan(&vault.store, txn)?
         .into_iter()
         .filter(|(_, row)| is_widen_predecessor(row, bound, owner))
-        .map(|(_, row)| PredecessorIssuance::of(&row))
+        .map(|(_, row)| row.grant_ref())
         .collect())
 }
 
 /// Revoke, each with its own receipt and in the accepting writer, every
-/// grant frozen at filing that is still that same issuance and still one
-/// `bound` replaces. Revoking the wider grant then leaves none behind; a
-/// re-minted or changed grant stays.
+/// grant recorded at filing that is still one `bound` replaces. Revoking the
+/// wider grant then leaves none behind.
 pub(super) fn retire_predecessors_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     owner: &AuthenticatedOwner,
     bound: &GrantBound,
     owner_ref: &str,
-    predecessors: &[PredecessorIssuance],
+    predecessors: &[String],
 ) -> Result<()> {
     for predecessor in predecessors {
-        if let Some(prior) = vault.consent_grant_in_txn(&*wtxn, &predecessor.grant_ref)?
-            && predecessor.issued(&prior)
+        if let Some(prior) = vault.consent_grant_in_txn(&*wtxn, predecessor)?
             && is_widen_predecessor(&prior, bound, owner_ref)
         {
-            vault.revoke_consent_grant_in_txn(wtxn, owner, &predecessor.grant_ref)?;
+            vault.revoke_consent_grant_in_txn(wtxn, owner, predecessor)?;
         }
+    }
+    Ok(())
+}
+
+/// A grant minted under `grant_ref` is a new issuance: no open widening
+/// filed before it may revoke it. Called by every standing-grant mint.
+pub(in crate::consent) fn forget_widen_predecessor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    grant_ref: &str,
+) -> Result<()> {
+    let mut changed = Vec::new();
+    for (reference, mut row) in WIDEN_PROPOSALS.scan(&vault.store, &*wtxn)? {
+        if !row.resolved && row.predecessors.iter().any(|listed| listed == grant_ref) {
+            row.predecessors.retain(|listed| listed != grant_ref);
+            changed.push((reference, row));
+        }
+    }
+    for (reference, row) in changed {
+        WIDEN_PROPOSALS.put(&vault.store, wtxn, &reference, &row)?;
     }
     Ok(())
 }
