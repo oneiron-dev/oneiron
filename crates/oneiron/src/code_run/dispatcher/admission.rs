@@ -76,8 +76,10 @@ impl HostSelfDispatcher<'_> {
         // closes on every exit, and an outer call's frame stays as it was.
         let _seats = self.spawn_capture.open();
         // A hook's view of an earlier call is never this call's, nor is its
-        // read-world capture (FIX 6130).
+        // read-world capture (FIX 6130), nor the skill bodies its producer
+        // witnessed (FIX 3608).
         *self.hook_view.borrow_mut() = None;
+        *self.skill_bodies.borrow_mut() = None;
         self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).
         let _run_writes = self

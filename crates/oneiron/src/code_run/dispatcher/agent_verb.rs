@@ -146,6 +146,10 @@ impl HostSelfDispatcher<'_> {
             Some(capture) => origin.with_read_capture(capture.clone()),
             None => origin,
         };
+        // A skill-library answer's producer witnesses the skill bodies it
+        // carries, which the run's host keeps once its guest reads them (FIX
+        // 3608).
+        let origin = self.with_skill_body_capture(origin, call.verb, site);
         let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             let answer = self.program_door_call(&**door, &call, &origin, invocation);

@@ -1,11 +1,31 @@
 //! A dispatched call's reply as the guest gets it: its JSON measured, and
-//! stored as a result of the run when it is too large for one message.
+//! stored as a result of the run when it is too large for one message. Once
+//! the reply is made, the host hears that its guest got it (FIX 3608).
 
 use serde_json::{Value, json};
 
 use super::admitted;
 use crate::Result;
-use crate::engine_executor::{JsCodeModeHost, RESULT_REPLY_INLINE_BYTES, StepCancellation};
+use crate::engine_executor::{
+    JsCodeModeHost, RESULT_REPLY_INLINE_BYTES, SelfDispatchResponse, StepCancellation,
+};
+
+/// The guest's reply to `answered`, the call `host` answered last: its body
+/// fit to one message ([`fit_reply`]), with its budget envelope and a verb
+/// hook's view in the body's place ([`SelfDispatchResponse::guest_json`]).
+/// Once it is made, `host` hears that its guest got the reply, so a host
+/// keeps a skill body the call's answer carries as delivered only then (FIX
+/// 3608).
+pub(super) fn guest_reply(
+    host: &mut dyn JsCodeModeHost,
+    cancel: &StepCancellation,
+    answered: &SelfDispatchResponse,
+) -> Result<String> {
+    let body = fit_reply(host, cancel, super::reply_body(&answered.outcome)?)?;
+    let reply = answered.guest_json(body).to_string();
+    host.guest_reply_delivered();
+    Ok(reply)
+}
 
 /// Bytes `value` takes as JSON, holding none of them.
 fn encoded_len(value: &Value) -> usize {
@@ -33,7 +53,7 @@ fn encoded_len(value: &Value) -> usize {
 /// the whole reply when it has none). No answer is refused for its size; a
 /// host with no result store sends it as it is, for the message bound to
 /// judge.
-pub(super) fn fit_reply(
+fn fit_reply(
     host: &mut dyn JsCodeModeHost,
     cancel: &StepCancellation,
     mut body: Value,
