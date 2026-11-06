@@ -61,10 +61,7 @@ pub(super) fn initialize(
     })?;
     if !response.status().is_success() {
         return Err(InitializeFailure {
-            sent: Sent::not_sent(
-                OutboundFailureKind::Rejected,
-                Some(response.status().as_u16()),
-            ),
+            sent: Sent::refused_status(response.status(), response.headers()),
             live: None,
         });
     }
@@ -105,10 +102,7 @@ pub(super) fn initialize(
     let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
     let sent = match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
         Ok(response) if response.status().is_success() => return Ok(live),
-        Ok(response) => Sent::not_sent(
-            OutboundFailureKind::Rejected,
-            Some(response.status().as_u16()),
-        ),
+        Ok(response) => Sent::refused_status(response.status(), response.headers()),
         Err(_) => Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
     };
     Err(InitializeFailure {

@@ -56,7 +56,8 @@ use oneiron::outbound_consent::{
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
-    RemoteTaskClientCapabilities, RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll,
+    ProviderWait, RemoteTaskClientCapabilities, RemoteTaskCredential, RemoteTaskHandle,
+    RemoteTaskPoll,
 };
 use oneiron::secret_custody::{KeptSentValue, RunSecretHolder, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
@@ -161,6 +162,9 @@ pub struct ServedConnectorCallHost {
     remote_task: Option<RemoteTaskHandle>,
     /// The hold the last send met at its door, until taken (FIX 9303).
     held: Option<&'static str>,
+    /// The wait the last send's connector asked for when it refused that
+    /// send for rate (FIX 11025).
+    provider_wait: Option<ProviderWait>,
 }
 
 impl ServedConnectorCallHost {
@@ -212,6 +216,7 @@ impl ServedConnectorCallHost {
             resume: None,
             remote_task: None,
             held: None,
+            provider_wait: None,
         })
     }
 
@@ -341,6 +346,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
             poll.credential = RemoteTaskCredential::Record(custody);
         }
         self.held = sent.held;
+        self.provider_wait = sent.provider_wait;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
@@ -406,6 +412,10 @@ impl OutboundResultSender for ServedConnectorCallHost {
             auth,
         };
         live.end();
+    }
+
+    fn provider_wait(&self) -> Option<ProviderWait> {
+        self.provider_wait
     }
 }
 
@@ -748,8 +758,9 @@ impl<'a> Exchange<'a> {
             return Sent::ambiguous("connector_server_error");
         }
         if !status.is_success() {
-            // A refusal at the door: the tool never ran.
-            return Sent::not_sent(OutboundFailureKind::Rejected, Some(status.as_u16()));
+            // A refusal at the door: the tool never ran. A rate refusal
+            // keeps the provider's wait (FIX 11025).
+            return Sent::refused_status(status, response.headers());
         }
         let deadline = asks_on_stream.then(|| Instant::now() + CALL_TIMEOUT);
         let mut stream = match open_reply(response, CALL_ID, deadline) {

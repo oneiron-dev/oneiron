@@ -9073,6 +9073,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_ingest_ag_ui_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.ingest.ag_ui.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_ingest_ag_ui_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.ingest.ag_ui.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.admit", js_json(input))
