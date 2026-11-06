@@ -13,7 +13,7 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, Retrieva
 use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines};
+use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines, text_counts};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -330,8 +330,10 @@ impl GraphFsResolver<'_, '_> {
                 from.lines,
                 &mut out,
                 lines.saturating_sub(from.printed),
+                reader,
+                self.options.page_byte_cap,
                 |line| Some(format!("{line}\n")),
-            );
+            )?;
             next_cursor = next.map(|at| {
                 scope.seal(&HeadPosition {
                     lines: at,
@@ -367,9 +369,7 @@ impl GraphFsResolver<'_, '_> {
         let started_at = self.scoped_read.vault().now_recorded_at();
         let read = self.read_file_with_reader(path, reader)?;
         let bytes = if let Some(file) = &read.value {
-            let text = String::from_utf8_lossy(file.bytes());
-            let lines = text.lines().count();
-            let words = text.split_whitespace().count();
+            let (lines, words) = text_counts(file.bytes(), reader, self.options.page_byte_cap)?;
             format!("{lines} {words} {} {path}\n", file.bytes().len()).into_bytes()
         } else {
             format!("0 0 0 {path}\n").into_bytes()

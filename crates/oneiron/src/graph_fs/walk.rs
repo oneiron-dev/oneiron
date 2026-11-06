@@ -360,8 +360,10 @@ impl GraphFsResolver<'_, '_> {
                     lines.unwrap_or_default(),
                     &mut walk.out,
                     usize::MAX,
+                    reader,
+                    self.options.page_byte_cap,
                     |line| line.contains(pattern).then(|| format!("{path}:{line}\n")),
-                );
+                )?;
                 walk.total += matched;
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))
             }
