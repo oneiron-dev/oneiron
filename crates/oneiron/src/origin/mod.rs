@@ -50,6 +50,7 @@ mod repo_manifest;
 #[cfg(feature = "sync")]
 pub(crate) use repo_manifest::RepoManifestMerge;
 pub(crate) use repo_manifest::erase_repo_manifests_in_txn;
+pub(crate) use repo_manifest::standing_portable_id_for_location_in_txn;
 pub use repo_manifest::{REPO_MANIFEST_VERSION, RepoManifest, RepoManifestWriter, RepoPortableId};
 pub mod residence;
 pub mod secret_manifest;
