@@ -20,6 +20,7 @@ impl McpCodeModeVerbs {
             run_id,
             guests: RunGuests::new(server, run_id),
             collector: crate::api::call_receipt::attempt_collector(),
+            observer: crate::api::admission_observer(),
         }
     }
 
@@ -176,7 +177,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.runtime
             .spawn(crate::api::call_receipt::with_attempt_collector(
                 self.collector.clone(),
-                answered,
+                crate::api::facade::with_admission_observer(self.observer.clone(), answered),
             ));
         let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
