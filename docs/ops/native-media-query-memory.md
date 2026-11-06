@@ -176,11 +176,20 @@ before the lease on success, error and unwind. An unstarted detached write
 keeps its payload and lease together. An unbound terminal keeps the original
 direct put without an added accounting walk or a new memory line.
 
-This charge covers only those final encoded buffers. The newly decoded record,
+After the existing finalizer decodes a retrieval row, the same optional lease
+also records four stable parts of that decoded record: the actual slot
+capacities of its signal, degradation and policy-decision vectors, using their
+native element sizes, and its optional query-expander ID string's actual
+capacity. These buffers stay unchanged until the decoded record drops inside
+the staging call, before the caller's lease. They are distinct from the
+original capture, detached provisional clone and encoded final-row buffers.
+An absent field adds no backing, and an unbound finalizer adds no walk.
+
+These finalization charges do not cover the decoded record's other backing,
 mutation copies, finalizer input storage, hash sets, config-map and number
 internals, serialization scratch, marker/index/retention keys and values,
-construction peaks and pre-growth admission remain outside it. It does not
-establish a full working-set bound or a compiler/runtime result.
+construction peaks or pre-growth admission. They do not establish a full
+working-set bound or a compiler/runtime result.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full

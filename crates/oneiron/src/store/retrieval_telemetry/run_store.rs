@@ -778,7 +778,7 @@ fn stage_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     finalize: RetrievalRunFinalize<'_>,
-    memory: Option<&mut crate::host_memory::MemoryLease>,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     let RetrievalRunFinalize {
         run_id,
@@ -793,6 +793,28 @@ fn stage_context_pack_retrieval_run_finalize(
         RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
         return Ok(());
     };
+    if let Some(memory) = memory.as_deref_mut() {
+        let bytes = (record.signals.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
+            .saturating_add((record.degradation.capacity() as u64).saturating_mul(
+                std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
+            ))
+            .saturating_add(
+                record
+                    .query_expander_id
+                    .as_ref()
+                    .map_or(0, |id| id.capacity() as u64),
+            );
+        let bytes = record.policy_trace.as_ref().map_or(bytes, |trace| {
+            bytes.saturating_add(
+                (trace.decisions.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<
+                        crate::store::retrieval_policy::RetrievalPolicyDecision,
+                    >() as u64),
+            )
+        });
+        memory.materialized(0, bytes);
+    }
     record.elapsed_us = elapsed_us;
     record.total_in_scope = total_in_scope;
     record.claims_suppressed = claims_suppressed;
