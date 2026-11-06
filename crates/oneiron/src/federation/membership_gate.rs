@@ -264,7 +264,8 @@ impl Vault {
     /// snapshot; a deleted vault holds no standing. A live Delegate grant over
     /// this vault is roster standing (FIX 8738), read only when the person
     /// holds no other roster grant, so it never hides an Owner or Admin
-    /// grant; a GitPush grant is purpose-specific and gives no standing. A
+    /// grant; a GitPush grant is purpose-specific and an owner-agent grant is
+    /// the owner's verb grant to his agent, so neither gives standing. A
     /// guest grant is ask-scoped and names no vault, so it is evidence only
     /// for the shared vault whose store holds it: asked about another
     /// `vault_id`, it gives no standing (FIX 1014). `None`: no live grant.
@@ -328,9 +329,12 @@ impl Vault {
                         role: grant.role,
                     }));
                 }
+                // An owner-agent grant is the owner's verb grant to his
+                // agent, never roster standing.
                 FederationGrantRole::Delegate
                     if grant.scope == FederationGrantScope::vault(vault_id)
-                        && !grant.is_git_push() =>
+                        && !grant.is_git_push()
+                        && !grant.owner_agent =>
                 {
                     delegate.get_or_insert(MembershipStanding::Member {
                         grant: id,
