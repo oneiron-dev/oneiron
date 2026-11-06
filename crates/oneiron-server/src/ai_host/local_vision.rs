@@ -125,7 +125,10 @@ impl LocalVisionModel {
             // names, as System One's state holds its asset's.
             let reference = format!("image:{}", image.name);
             state[image.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference, signature: None });
+            content.push(ContentPart::Text {
+                text: reference,
+                signature: None,
+            });
             content.push(ContentPart::Image {
                 media_type: fitted.media_type.clone(),
                 image: ImageContent::Base64 {
@@ -136,16 +139,19 @@ impl LocalVisionModel {
         // The question's criteria triple, as the rubric its contract is
         // judged by (FIX 2181).
         if let Some(rubric) = QuestionCriteria::rubric_in(call.state, &call.question.contract) {
-            content.push(ContentPart::Text { text: rubric, signature: None });
+            content.push(ContentPart::Text {
+                text: rubric,
+                signature: None,
+            });
         }
         content.push(ContentPart::Text {
-            text: json!({"question": call.question.text, "state": state}).to_string(),
+            text: json!({"question": call.question_text(), "state": state}).to_string(),
             signature: None,
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -165,7 +171,11 @@ impl LocalVisionModel {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 
     fn decide_with_context(
@@ -193,10 +203,8 @@ impl LocalVisionModel {
         if let Some(context) = context {
             request.envelope.scope = context.scope.clone();
             request.envelope.purpose = context.purpose.clone();
-            request.envelope.tier = TierPrecedence::for_purpose(
-                context.purpose,
-                ModelTierRef("local-vision".into()),
-            );
+            request.envelope.tier =
+                TierPrecedence::for_purpose(context.purpose, ModelTierRef("local-vision".into()));
         }
         let admitted = match context {
             Some(context) => self.ai.model_runtime().admit_role_with_egress(
@@ -367,12 +375,13 @@ impl DecisionModel for LocalVisionModel {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        self.decide_with_context(call, None).map(|outcome| match outcome {
-            DecisionReadOutcome::Answered(answer) => answer,
-            DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
-                unreachable!("an ordinary decision has no generation gate")
-            }
-        })
+        self.decide_with_context(call, None)
+            .map(|outcome| match outcome {
+                DecisionReadOutcome::Answered(answer) => answer,
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                    unreachable!("an ordinary decision has no generation gate")
+                }
+            })
     }
 }
 
