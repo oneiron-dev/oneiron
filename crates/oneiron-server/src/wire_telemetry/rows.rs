@@ -119,6 +119,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::ImportFolderNotes),
         Self::Engine(EngineLimit::ImportDecodedMessages),
         Self::Engine(EngineLimit::ImportDecodedBytes),
+        Self::Engine(EngineLimit::WitnessMetadataNodes),
+        Self::Engine(EngineLimit::WitnessMetadataBytes),
         Self::Engine(EngineLimit::SignatureDecodeBytes),
         Self::Engine(EngineLimit::PptxCommentPatches),
         Self::Engine(EngineLimit::ImportXlsxLiveCells),

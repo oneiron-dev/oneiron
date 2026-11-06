@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 145] = [
+    pub const ALL: [Self; 147] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -27,6 +27,8 @@ impl EngineLimit {
         Self::ImportFolderNotes,
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
+        Self::WitnessMetadataNodes,
+        Self::WitnessMetadataBytes,
         Self::SignatureDecodeBytes,
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
@@ -177,6 +179,8 @@ impl EngineLimit {
             Self::ImportFolderNotes => "limits.import_folder_notes",
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
+            Self::WitnessMetadataNodes => "limits.witness_metadata_nodes",
+            Self::WitnessMetadataBytes => "limits.witness_metadata_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
@@ -329,6 +333,8 @@ impl EngineLimit {
             Self::ImportFolderNotes => 100_000,
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
+            Self::WitnessMetadataNodes => 1_048_576,
+            Self::WitnessMetadataBytes => 67_108_864,
             Self::SignatureDecodeBytes => 1 << 30,
             Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
