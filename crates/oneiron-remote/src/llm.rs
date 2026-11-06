@@ -12,6 +12,11 @@ use std::{
 };
 
 pub trait OwnServerTransport: Send + Sync {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a>;
     fn generate<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease)
     -> LlmGenerateFuture<'a>;
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a>;
@@ -54,10 +59,16 @@ pub fn classify_status(status: u16, body: &serde_json::Value) -> LlmError {
         _ => FatalLlmError::InvalidRequest.into(),
     }
 }
-impl OwnServerTransport for RemoteLlmClient {
-    fn generate<'a>(
+
+enum RemoteGeneration {
+    Owned(LlmRequest),
+    Prepared(oneiron::LlmResult<crate::remote::PreparedLlmRequest>),
+}
+
+impl RemoteLlmClient {
+    fn generate_on_thread<'a>(
         &'a self,
-        request: LlmRequest,
+        request: RemoteGeneration,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         let remote = self.remote.clone();
@@ -78,7 +89,15 @@ impl OwnServerTransport for RemoteLlmClient {
             runtime.block_on(async {
                 tokio::select! {
                     _ = cancelled => {},
-                    result = read_generate(&remote, &request, &lease) => {
+                    result = async {
+                        match request {
+                            RemoteGeneration::Owned(request) => read_generate(&remote, &request, &lease).await,
+                            RemoteGeneration::Prepared(prepared) => {
+                                let response = remote.llm_post_prepared(prepared?, &lease).await?;
+                                read_generate_response(response).await
+                            }
+                        }
+                    } => {
                         let _ = send.send(result);
                     }
                 }
@@ -91,6 +110,25 @@ impl OwnServerTransport for RemoteLlmClient {
                 .await
                 .map_err(|_| LlmError::from(RetryableLlmError::StreamCut))?
         })
+    }
+
+}
+
+impl OwnServerTransport for RemoteLlmClient {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_on_thread(RemoteGeneration::Prepared(self.remote.prepare_llm_post(request)), lease)
+    }
+
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_on_thread(RemoteGeneration::Owned(request), lease)
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
@@ -142,7 +180,13 @@ async fn read_generate(
     request: &LlmRequest,
     lease: &BudgetLease,
 ) -> oneiron::LlmResult<oneiron::LlmResponse> {
-    let mut response = remote.llm_post(request, lease).await?;
+    let response = remote.llm_post(request, lease).await?;
+    read_generate_response(response).await
+}
+
+async fn read_generate_response(
+    mut response: reqwest::Response,
+) -> oneiron::LlmResult<oneiron::LlmResponse> {
     let status = response.status();
     let limit = if status.is_success() {
         32 * 1024 * 1024

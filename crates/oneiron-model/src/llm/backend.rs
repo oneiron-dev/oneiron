@@ -147,6 +147,15 @@ pub trait SingleRouteBackend: LlmBackend {
         self.generate(request, lease)
     }
 
+    /// Sends a retained request without taking or copying its owner. The
+    /// digest is the same dispatch selection as `generate_bound`.
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &'a str,
+    ) -> LlmGenerateFuture<'a>;
+
     /// Streaming counterpart of `generate_bound`.
     fn stream_bound<'a>(
         &'a self,

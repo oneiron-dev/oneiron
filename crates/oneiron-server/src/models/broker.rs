@@ -594,6 +594,16 @@ impl SingleRouteBackend for BrokerBackend {
     /// same-user child, started here at its first call, which can take a
     /// moment), and the custody binding. Each refuses the call before its
     /// permit starts.
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_borrowed(request, lease)
+    }
+
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         self.build(request, stream, "")?;
         // A call to no broker would fail before anything went out.
@@ -623,20 +633,14 @@ impl SingleRouteBackend for BrokerBackend {
     }
 }
 
-impl LlmBackend for BrokerBackend {
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        self.catalog
-            .get(model)
-            .is_some_and(|entry| entry.supports(&capability))
-    }
-
-    fn generate<'a>(
+impl BrokerBackend {
+    fn generate_borrowed<'a>(
         &'a self,
-        request: LlmRequest,
+        request: &'a LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let (header, body) = self.build(&request, false, lease.id())?;
+            let (header, body) = self.build(request, false, lease.id())?;
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
@@ -649,6 +653,23 @@ impl LlmBackend for BrokerBackend {
                 execution.as_ref(),
             )
         })
+    }
+
+}
+
+impl LlmBackend for BrokerBackend {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.catalog
+            .get(model)
+            .is_some_and(|entry| entry.supports(&capability))
+    }
+
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move { self.generate_borrowed(&request, lease).await })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {

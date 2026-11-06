@@ -31,6 +31,15 @@ impl LlmBackend for NoChat {
 }
 
 impl SingleRouteBackend for NoChat {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async { Err(LlmError::from(FatalLlmError::InvalidRequest)) })
+    }
     fn preflight(&self, _request: &LlmRequest, _stream: bool) -> LlmResult<()> {
         Err(FatalLlmError::InvalidRequest.into())
     }

@@ -20,6 +20,13 @@ pub trait LocalLlmRuntime: Send + Sync {
         request: LlmRequest,
         abort: LocalAbortHandle,
     ) -> LlmResult<LocalGeneration<'a>>;
+
+    /// Generates while its caller keeps the request's owner alive.
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        abort: LocalAbortHandle,
+    ) -> LlmResult<LocalGeneration<'a>>;
 }
 
 /// Adapter from a local in-process runtime into [`LlmBackend`].
@@ -80,11 +87,48 @@ where
     }
 }
 
+async fn finish_generation(mut stream: LlmStream<'_>) -> LlmResult<LlmResponse> {
+    while let Some(event) = stream.next().await {
+        if let LlmStreamEvent::Done {
+            message,
+            usage,
+            finish_reason,
+            reply_assertions,
+        } = event?
+        {
+            return Ok(LlmResponse {
+                message,
+                usage,
+                finish_reason,
+                reply_assertions,
+                token_scores: None,
+            });
+        }
+    }
+
+    Err(RetryableLlmError::StreamCut.into())
+}
+
 /// One generation per call, when the runtime generates once.
 impl<R> oneiron::llm::SingleRouteBackend for LocalLlmBackend<R>
 where
     R: LocalLlmRuntime + oneiron::llm::SingleSend,
 {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        _lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            validate_request(request, &self.descriptor())?;
+            let abort = LocalAbortHandle::new();
+            let generation = self.runtime.generate_borrowed(request, abort.clone())?;
+            let stream = LlmStream::new(LocalEventStream::new(generation, abort.clone()));
+            finish_generation(stream).await
+        })
+    }
     fn preflight(&self, request: &LlmRequest, _stream: bool) -> LlmResult<()> {
         validate_request(request, &self.descriptor())
     }
@@ -105,26 +149,8 @@ where
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let (mut stream, _abort) = self.stream_with_abort(request, lease)?;
-            while let Some(event) = stream.next().await {
-                if let LlmStreamEvent::Done {
-                    message,
-                    usage,
-                    finish_reason,
-                    reply_assertions,
-                } = event?
-                {
-                    return Ok(LlmResponse {
-                        message,
-                        usage,
-                        finish_reason,
-                        reply_assertions,
-                        token_scores: None,
-                    });
-                }
-            }
-
-            Err(RetryableLlmError::StreamCut.into())
+            let (stream, _abort) = self.stream_with_abort(request, lease)?;
+            finish_generation(stream).await
         })
     }
 

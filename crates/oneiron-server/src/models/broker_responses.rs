@@ -465,6 +465,15 @@ impl LlmBackend for BufferedChat {
 }
 
 impl SingleRouteBackend for BufferedChat {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        self.0.generate_borrowed_bound(request, lease, digest)
+    }
     fn preflight(&self, request: &LlmRequest, _stream: bool) -> LlmResult<()> {
         self.0.preflight(request, false)
     }
@@ -507,6 +516,23 @@ impl LlmBackend for BrokerResponses {
 }
 
 impl SingleRouteBackend for BrokerResponses {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        let responses = self.responses_for_digest(request, false, digest);
+        Box::pin(async move {
+            if !responses? {
+                return self.chat.generate_borrowed_bound(request, lease, digest).await;
+            }
+            let turn = self.turn(request, false)?;
+            let stream = self.run(lease, turn).await?;
+            OpenAiResponsesLlmStream::new(stream).into_response().await
+        })
+    }
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         self.preflight_route(request, stream, self.carries(request))
     }

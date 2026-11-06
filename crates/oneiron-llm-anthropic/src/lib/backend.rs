@@ -101,9 +101,41 @@ impl<T> oneiron::llm::SingleRouteBackend for AnthropicMessagesBackend<T>
 where
     T: AnthropicMessagesTransport + oneiron::llm::SingleSend,
 {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_borrowed(request, lease)
+    }
+
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         build_anthropic_messages_request(&self.config, request, stream).map(drop)
     }
+}
+
+impl<T: AnthropicMessagesTransport> AnthropicMessagesBackend<T> {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let wire_request = build_anthropic_messages_request(&self.config, request, false)?;
+            let response = self.transport.execute(wire_request, lease).await?;
+            if !(200..=299).contains(&response.status) {
+                return Err(classify_anthropic_status(
+                    response.status,
+                    &response.headers,
+                    &response.body,
+                ));
+            }
+            parse_anthropic_messages_response(&response.body)
+        })
+    }
+
 }
 
 impl<T> LlmBackend for AnthropicMessagesBackend<T>
@@ -120,18 +152,7 @@ where
         request: LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            let wire_request = build_anthropic_messages_request(&self.config, &request, false)?;
-            let response = self.transport.execute(wire_request, lease).await?;
-            if !(200..=299).contains(&response.status) {
-                return Err(classify_anthropic_status(
-                    response.status,
-                    &response.headers,
-                    &response.body,
-                ));
-            }
-            parse_anthropic_messages_response(&response.body)
-        })
+        Box::pin(async move { self.generate_borrowed(&request, lease).await })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {

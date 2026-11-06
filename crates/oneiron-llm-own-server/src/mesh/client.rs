@@ -180,6 +180,26 @@ impl MeshLlmTransport {
 }
 
 impl OwnServerTransport for MeshLlmTransport {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let body = serde_json::to_vec(request).map_err(|_| FatalLlmError::InvalidRequest);
+        let model = request.model.to_string();
+        let leg = Arc::clone(&self.leg);
+        let task = self.runtime.spawn(async move {
+            leg.generate_bytes(body?, model).await
+        });
+        let guard = AbortOnDrop(task.abort_handle());
+        Box::pin(async move {
+            let _guard = guard;
+            task.await.unwrap_or_else(|error| {
+                Err(RetryableLlmError::io_after_send("generate", error.to_string()).into())
+            })
+        })
+    }
+
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
@@ -303,6 +323,10 @@ impl Leg {
     async fn generate(&self, request: LlmRequest) -> LlmResult<LlmResponse> {
         let body = serde_json::to_vec(&request).map_err(|_| FatalLlmError::InvalidRequest)?;
         let model = request.model.to_string();
+        self.generate_bytes(body, model).await
+    }
+
+    async fn generate_bytes(&self, body: Vec<u8>, model: String) -> LlmResult<LlmResponse> {
         let mut pause = PAUSE_FIRST;
         loop {
             let mut tried = Vec::new();
@@ -554,6 +578,29 @@ impl MeshPeerTransport {
 impl oneiron::llm::SingleSend for MeshPeerTransport {}
 
 impl OwnServerTransport for MeshPeerTransport {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let body = serde_json::to_vec(request);
+        let (leg, machine) = (Arc::clone(&self.leg), self.machine);
+        let task = self.runtime.spawn(async move {
+            match body {
+                Ok(body) => leg.generate_on(machine, &body).await
+                    .unwrap_or_else(|_| Err(RetryableLlmError::ServerError.into())),
+                Err(_) => Err(FatalLlmError::InvalidRequest.into()),
+            }
+        });
+        let guard = AbortOnDrop(task.abort_handle());
+        Box::pin(async move {
+            let _guard = guard;
+            task.await.unwrap_or_else(|error| {
+                Err(RetryableLlmError::io_after_send("generate", error.to_string()).into())
+            })
+        })
+    }
+
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
