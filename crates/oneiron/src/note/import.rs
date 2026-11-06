@@ -465,7 +465,12 @@ impl Vault {
             .iter()
             .map(|link| Ok((end(&link.from)?, end(&link.to)?)))
             .collect::<Result<Vec<_>>>()?;
-        let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+        let mut content = crate::federation::ActorContentTxn::new(
+            self,
+            txn,
+            actor,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
         for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
             let body = encode_note_body(&NoteBody {
                 kind,
@@ -493,7 +498,7 @@ impl Vault {
                 id,
                 RowBirth::written(actor, MadeByClass::Stated, IMPORT_DOOR, &[], &[], at),
             ))?;
-            content.update_note(*id, |txn| {
+            content.update_note(*id, |txn, _lane| {
                 let doc = super::document_store::load(self, txn, *id)?;
                 if let Some(title) = &note.title {
                     // Admitted as an edit's title is (FIX 1098); the record

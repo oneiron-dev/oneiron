@@ -9,6 +9,7 @@ use crate::blob_artifact::{
     encode_blob_artifact_body, read_blob_artifact_head_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
 use crate::federation::ActorContentTxn;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
@@ -75,44 +76,48 @@ impl Vault {
     ) -> Result<StoredMeetingTranscript> {
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
         let artifact = self.new_entity_id()?;
-        self.try_with_actor_content_write_txn(actor, |content: &mut ActorContentTxn<'_, '_, '_>| {
-            owner.revalidate_in_txn(self, content.read())?;
-            let (source_version, audio) = pinned_version(self, content.read(), source_audio)?;
-            check_source_audio(transcript, &audio)?;
-            let source_body = self
-                .get_blob_artifact_in_txn(content.read(), &source_audio.artifact)?
-                .ok_or(Error::EntityNotFound)?;
-            let body = BlobArtifactBody::new(name, "application/json")
-                .with_secret_taint_refs(source_body.secret_taint_refs);
-            let data = encode_blob_artifact_body(&body)?;
-            let at = self.instant_in_txn(content.read())?.secs();
-            let occurred = TimeRange { start: at, end: at };
-            content.apply_batch(self.batch_in().put(
-                &artifact,
-                ENTITY_TYPE_BLOB_ARTIFACT,
-                occurred,
-                at,
-                &data,
-            ))?;
-            let made_by = storage_provenance(actor, &[source_version.claim_id], transcript, at);
-            let version = content.update_artifact(artifact, |txn: &mut RwTxn<'_>| {
-                self.append_blob_artifact_version_made_by_in_txn(
-                    txn,
+        self.try_with_actor_content_write_txn(
+            actor,
+            CoreWriteLaneRef::Unbound,
+            |content: &mut ActorContentTxn<'_, '_, '_>| {
+                owner.revalidate_in_txn(self, content.read())?;
+                let (source_version, audio) = pinned_version(self, content.read(), source_audio)?;
+                check_source_audio(transcript, &audio)?;
+                let source_body = self
+                    .get_blob_artifact_in_txn(content.read(), &source_audio.artifact)?
+                    .ok_or(Error::EntityNotFound)?;
+                let body = BlobArtifactBody::new(name, "application/json")
+                    .with_secret_taint_refs(source_body.secret_taint_refs);
+                let data = encode_blob_artifact_body(&body)?;
+                let at = self.instant_in_txn(content.read())?.secs();
+                let occurred = TimeRange { start: at, end: at };
+                content.apply_batch(self.batch_in().put(
                     &artifact,
-                    None,
-                    transcript.json().as_bytes(),
-                    &BlobVersionProvenance::UserUpload,
-                    &made_by,
-                    actor,
+                    ENTITY_TYPE_BLOB_ARTIFACT,
                     occurred,
                     at,
-                )
-            })?;
-            Ok(StoredMeetingTranscript {
-                source_audio: source_audio.clone(),
-                transcript: MeetingTranscriptVersionPin::from_version(artifact, &version),
-            })
-        })
+                    &data,
+                ))?;
+                let made_by = storage_provenance(actor, &[source_version.claim_id], transcript, at);
+                let version = content.update_artifact(artifact, |txn: &mut RwTxn<'_>, _lane| {
+                    self.append_blob_artifact_version_made_by_in_txn(
+                        txn,
+                        &artifact,
+                        None,
+                        transcript.json().as_bytes(),
+                        &BlobVersionProvenance::UserUpload,
+                        &made_by,
+                        actor,
+                        occurred,
+                        at,
+                    )
+                })?;
+                Ok(StoredMeetingTranscript {
+                    source_audio: source_audio.clone(),
+                    transcript: MeetingTranscriptVersionPin::from_version(artifact, &version),
+                })
+            },
+        )
     }
 
     /// Label the selected stored version as the authenticated owner. Labels
@@ -126,42 +131,49 @@ impl Vault {
         labels: &BTreeMap<String, String>,
     ) -> Result<StoredMeetingTranscript> {
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
-        self.try_with_actor_content_write_txn(actor, |content: &mut ActorContentTxn<'_, '_, '_>| {
-            content.update_artifact(stored.transcript.artifact, |txn: &mut RwTxn<'_>| {
-                owner.revalidate_in_txn(self, txn)?;
-                let (base, source, transcript) = stored_transcript(self, txn, stored)?;
-                let labeled = transcript
-                    .with_speaker_labels(labels)
-                    .map_err(|_| Error::InvalidClaimBody("invalid meeting speaker labels"))?;
-                if labeled.json() == transcript.json() {
-                    return Ok(stored.clone());
-                }
-                let current =
-                    read_blob_artifact_head_in_txn(&self.store, txn, &stored.transcript.artifact)?;
-                let fork_parent = (current.as_ref() != Some(&base)).then_some(base.version);
-                let at = self.instant_in_txn(txn)?.secs();
-                let made_by =
-                    storage_provenance(actor, &[source.claim_id, base.claim_id], &labeled, at);
-                let version = self.append_blob_artifact_version_made_by_in_txn(
-                    txn,
-                    &stored.transcript.artifact,
-                    fork_parent,
-                    labeled.json().as_bytes(),
-                    &BlobVersionProvenance::UserUpload,
-                    &made_by,
-                    actor,
-                    TimeRange { start: at, end: at },
-                    at,
-                )?;
-                Ok(StoredMeetingTranscript {
-                    source_audio: stored.source_audio.clone(),
-                    transcript: MeetingTranscriptVersionPin::from_version(
-                        stored.transcript.artifact,
-                        &version,
-                    ),
+        self.try_with_actor_content_write_txn(
+            actor,
+            CoreWriteLaneRef::Unbound,
+            |content: &mut ActorContentTxn<'_, '_, '_>| {
+                content.update_artifact(stored.transcript.artifact, |txn: &mut RwTxn<'_>, _lane| {
+                    owner.revalidate_in_txn(self, txn)?;
+                    let (base, source, transcript) = stored_transcript(self, txn, stored)?;
+                    let labeled = transcript
+                        .with_speaker_labels(labels)
+                        .map_err(|_| Error::InvalidClaimBody("invalid meeting speaker labels"))?;
+                    if labeled.json() == transcript.json() {
+                        return Ok(stored.clone());
+                    }
+                    let current = read_blob_artifact_head_in_txn(
+                        &self.store,
+                        txn,
+                        &stored.transcript.artifact,
+                    )?;
+                    let fork_parent = (current.as_ref() != Some(&base)).then_some(base.version);
+                    let at = self.instant_in_txn(txn)?.secs();
+                    let made_by =
+                        storage_provenance(actor, &[source.claim_id, base.claim_id], &labeled, at);
+                    let version = self.append_blob_artifact_version_made_by_in_txn(
+                        txn,
+                        &stored.transcript.artifact,
+                        fork_parent,
+                        labeled.json().as_bytes(),
+                        &BlobVersionProvenance::UserUpload,
+                        &made_by,
+                        actor,
+                        TimeRange { start: at, end: at },
+                        at,
+                    )?;
+                    Ok(StoredMeetingTranscript {
+                        source_audio: stored.source_audio.clone(),
+                        transcript: MeetingTranscriptVersionPin::from_version(
+                            stored.transcript.artifact,
+                            &version,
+                        ),
+                    })
                 })
-            })
-        })
+            },
+        )
     }
 }
 
