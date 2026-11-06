@@ -1,0 +1,182 @@
+//! Exact optional position operations of one successful own-device import.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use loro::json::{JsonOpContent, MapOp};
+use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
+
+use super::{ORIGIN_POSITIONS_MAP, bound_position, has_positions};
+use crate::Vault;
+use crate::authority::PeerMachine;
+use crate::error::Result;
+use crate::federation::record_scope::origin_positions::{self as facts, OriginPosition};
+use crate::ports::EntityStoreRead;
+use crate::sync::client::OwnDeviceImport;
+use crate::sync::loro_support::map_for_each_value_bytes;
+use crate::sync::types::WindowKey;
+
+/// Optional position bytes that this exact payload inserted, prepared before
+/// the live import. Only the successful import boundary may finish it; no
+/// recovery pass, later replay or other value in the window borrows its key.
+pub struct OwnDevicePositionImport {
+    vault: PathBuf,
+    window: WindowKey,
+    proof: OwnDeviceImport,
+    values: BTreeMap<String, Vec<u8>>,
+}
+
+/// A source position whose exact incoming bytes, current original key,
+/// canonical incarnation and complete native facts the dedicated writer
+/// checked in its own transaction. Only that writer constructs this value.
+pub(crate) struct VerifiedOriginPosition<'a> {
+    position: &'a OriginPosition,
+}
+
+impl VerifiedOriginPosition<'_> {
+    pub(crate) fn position(&self) -> &OriginPosition {
+        self.position
+    }
+}
+
+pub(in crate::sync) fn prepare(
+    vault: &Vault,
+    proof: Option<&OwnDeviceImport>,
+    window: &WindowKey,
+    doc: &LoroDoc,
+    payload: &[u8],
+) -> Option<OwnDevicePositionImport> {
+    let proof = proof?;
+    if window.world().is_some() {
+        return None;
+    }
+    let meta = LoroDoc::decode_import_blob_meta(payload, true).ok()?;
+    let mut inserted = BTreeMap::new();
+    let candidate = if meta.mode.is_snapshot() {
+        let candidate = LoroDoc::from_snapshot(payload).ok()?;
+        if has_positions(&candidate) {
+            map_for_each_value_bytes(&candidate.get_map(ORIGIN_POSITIONS_MAP), |key, value| {
+                if let Some(bytes) = value {
+                    inserted.insert(key.to_owned(), bytes.to_vec());
+                }
+            });
+        }
+        candidate
+    } else {
+        if doc.oplog_vv().includes_vv(&meta.partial_end_vv) {
+            return None;
+        }
+        let candidate = doc.fork();
+        if candidate.import(payload).ok()?.pending.is_some() {
+            return None;
+        }
+        let positions = ContainerID::new_root(ORIGIN_POSITIONS_MAP, ContainerType::Map);
+        let sent = candidate.export_json_updates(&meta.partial_start_vv, &meta.partial_end_vv);
+        for op in sent.changes.into_iter().flat_map(|change| change.ops) {
+            if op.container == positions
+                && let JsonOpContent::Map(MapOp::Insert {
+                    key,
+                    value: LoroValue::Binary(bytes),
+                }) = op.content
+            {
+                // A payload can contain several writes to one key. Select
+                // only the one that actually stands in its complete state.
+                if bound_position(&candidate, &key)
+                    .is_some_and(|(_, current)| current.as_slice() == bytes.as_slice())
+                {
+                    inserted.insert(key, bytes.to_vec());
+                }
+            }
+        }
+        candidate
+    };
+    inserted.retain(|key, bytes| {
+        bound_position(&candidate, key).is_some_and(|(_, current)| current == *bytes)
+    });
+    if inserted.is_empty() {
+        return None;
+    }
+    Some(OwnDevicePositionImport {
+        vault: vault.store.env.path().to_path_buf(),
+        window: window.clone(),
+        proof: proof.clone(),
+        values: inserted,
+    })
+}
+
+/// Prepares only this own-device socket's admitted payload, never a
+/// federation socket's bytes. `from` is the ORIGINAL connection proof, not
+/// a machine id or a freshly fetched replacement key. Call `finish` only
+/// after the real observed import returned success.
+pub fn prepare_own_device_push_positions(
+    vault: &Vault,
+    from: PeerMachine,
+    window: &WindowKey,
+    doc: &LoroDoc,
+    payload: &[u8],
+) -> Option<OwnDevicePositionImport> {
+    let proof = OwnDeviceImport::proven(vault, from)?;
+    prepare(vault, Some(&proof), window, doc, payload)
+}
+
+impl OwnDevicePositionImport {
+    /// Installs only exact values this successful payload supplied and the
+    /// live document still holds. Missing facts, unknown births, a changed
+    /// key or a peer-origin owner/source leaves ordinary row import alone.
+    /// Result bodies are pinned before the writer and through its commit.
+    pub fn finish(self, vault: &Vault, doc: &LoroDoc) -> Result<()> {
+        if self.vault != vault.store.env.path() {
+            return Ok(());
+        }
+        let _bodies = vault.pin_all_result_bodies();
+        vault.with_write_txn_grouped(|txn| {
+            if !self.proof.stands_in_txn(vault, txn)? {
+                return Ok(());
+            }
+            for (key, sent) in &self.values {
+                let Some((position, current)) = bound_position(doc, key) else {
+                    continue;
+                };
+                if current != *sent
+                    // Unknown birth is data, not an incarnation certificate.
+                    || std::iter::once(&position.row)
+                        .chain(position.sources.iter())
+                        .any(|row| row.birth_digest.is_none())
+                    || !facts::matches_in_txn(vault, txn, &position)?
+                {
+                    continue;
+                }
+                let mut peer = false;
+                for row in std::iter::once(&position.row).chain(position.sources.iter()) {
+                    let Some(raw) = vault.store.port_entity_raw(txn, &row.id)? else {
+                        peer = true;
+                        break;
+                    };
+                    let residence = crate::sync::residence::residence_window_for_blob(&raw)?;
+                    if (row.id == position.row.id && residence != self.window)
+                        || crate::sync::ingest::peer_row_in_txn(
+                            vault,
+                            txn,
+                            residence.as_str(),
+                            &row.id,
+                            &raw,
+                        )?
+                    {
+                        peer = true;
+                        break;
+                    }
+                }
+                if !peer {
+                    facts::install_in_txn(
+                        vault,
+                        txn,
+                        &VerifiedOriginPosition {
+                            position: &position,
+                        },
+                    )?;
+                }
+            }
+            Ok(())
+        })
+    }
+}

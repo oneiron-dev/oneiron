@@ -122,6 +122,13 @@ pub(super) fn dispatch_ambient_alternative<S: OutboundExecutionSink>(
                 ALTERNATIVE_OUTCOME_FIELD.to_owned(),
                 child.outcome.as_str().to_owned(),
             );
+            for field in ["retry_at", "provider_retry_after", "provider_wait"] {
+                if let Some(value) = child.receipt.fields.get(field) {
+                    fields
+                        .entry(field.to_owned())
+                        .or_insert_with(|| value.clone());
+                }
+            }
         }
         Err(error) => {
             tracing::warn!(
