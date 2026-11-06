@@ -1,8 +1,14 @@
 //! Conditional writes plus durable outbox and remote-object cursor store.
 
 mod archived;
+mod collection;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
+pub(super) use self::collection::require_omission_observed;
+pub use self::collection::{
+    CalendarCollectionMember, CalendarRemoteObjectObservation,
+    calendar_collection_members_for_operation,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -277,6 +283,14 @@ pub fn write_calendar_event(
         prior_instance = row.carrier.as_ref().map(|carrier| carrier.instance);
         match row.state {
             CalendarWriteOutboxState::Prepared => {
+                // The replay renders under the collection's zone as it is
+                // now; a zone that moved the staged hashes refuses below
+                // like a local edit does, never restaging (fix list row
+                // 19192).
+                let collection_zone = transport.resource_calendar_timezone(
+                    &seat.config.secret_ref,
+                    &seat.config.calendar_ref,
+                )?;
                 let ics = render_owner_vevent(
                     vault,
                     &event_ref,
@@ -284,13 +298,14 @@ pub fn write_calendar_event(
                     row.sequence,
                     now,
                     source.as_deref(),
+                    collection_zone.as_deref(),
                 )?
                 .ics;
                 let rendered_hash = ics_content_hash(&ics, &uid)?;
                 if rendered_hash != row.content_hash {
                     return Err(CalendarConnectorError::Outbox {
                         outbox_id,
-                        detail: "staged intent no longer matches the local EVENT".to_owned(),
+                        detail: "staged intent no longer matches the EVENT or its zone".to_owned(),
                     });
                 }
                 let request = RemoteWriteRequest {
@@ -343,7 +358,19 @@ pub fn write_calendar_event(
     } else {
         floor
     };
-    let rendered = render_owner_vevent(vault, &event_ref, &uid, sequence, now, source.as_deref())?;
+    // Read once, before the render, so the staged hashes below are those of
+    // the bytes the write sends (fix list row 19192).
+    let collection_zone =
+        transport.resource_calendar_timezone(&seat.config.secret_ref, &seat.config.calendar_ref)?;
+    let rendered = render_owner_vevent(
+        vault,
+        &event_ref,
+        &uid,
+        sequence,
+        now,
+        source.as_deref(),
+        collection_zone.as_deref(),
+    )?;
     let ics = rendered.ics;
     let content_hash = ics_content_hash(&ics, &uid)?;
     let expected_etag = object.as_ref().and_then(|row| row.etag.clone());
@@ -367,7 +394,15 @@ pub fn write_calendar_event(
         updated_at: now,
         carrier: None,
     };
-    write_outbox_row(vault, operation, &mut row, prior_instance)?;
+    {
+        // A full listing's omission of this UID is admitted in the vault's
+        // calendar admission turn once no upsert of it is in flight, so the
+        // prepared row is published in that turn too and a write cannot
+        // begin between that check and the absence (fix list row 19192).
+        // The turn ends before any provider call.
+        let _turn = crate::calendar::ingest::admission_turn(vault)?;
+        write_outbox_row(vault, operation, &mut row, prior_instance)?;
+    }
 
     let request = RemoteWriteRequest {
         href,
