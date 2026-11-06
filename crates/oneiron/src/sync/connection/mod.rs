@@ -35,6 +35,7 @@
 mod batch_admission;
 mod converge;
 mod directives;
+mod document_response;
 mod handshake;
 mod home_handoff;
 mod home_search;

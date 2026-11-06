@@ -267,10 +267,9 @@ impl SyncConnection {
                                 .into_iter()
                                 .filter(|frame| !client.frame_withheld(frame))
                             {
-                                write
-                                    .send(Message::Binary(resp.into()))
+                                self.send_document_response(write, client, resp)
                                     .await
-                                    .map_err(|e| format!("Send response failed: {e}"))?;
+                                    .map_err(super::document_response::response_error)?;
                             }
                         }
                         Err(e) if strict => return Err(format!("Protocol error: {e}")),
