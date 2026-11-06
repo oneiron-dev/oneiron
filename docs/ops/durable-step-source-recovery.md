@@ -47,3 +47,15 @@ The same extraction tally also records prior corrective usage carried by a
 `SpentLlm` or `SpentFallback` error. Those errors return before a response is
 checkpointed. Their own usage is counted once; the original refusal and error
 text stay unchanged. Metered turn-program accounting is not changed.
+
+A native Dreamer admission also keeps its original budget line in an immutable,
+attempt-bound accounting record. Serial and partition-window dispatch carry that
+record on their own deadline clones. The existing crash-owed producer reads this
+record before optional call observation, so an absent or failed observer does not
+suppress the owed row. A child or foreign attempt cannot use the record. Admission,
+reservation reuse and top-up, clocks, cancellation and call observation stay unchanged.
+
+This record is not an execution grant, a paid receipt or a generation-level once fact.
+The existing owed key, codec and settlement rules are unchanged. Late-generation
+settlement, corrective-call identity and atomic exactly-once payment remain separate
+work; this supplier change does not claim to close them.
