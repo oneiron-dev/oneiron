@@ -183,9 +183,9 @@ impl Memory<'_> {
         self
     }
 
-    /// Binds the current request's transport observations for signing audit
-    /// records. Only the host supplies these; they grant no authority and
-    /// are not retained as context for a future request.
+    /// Binds actual request or same-connection upgrade observations for
+    /// signing audit records. Only the host supplies these; they grant no
+    /// authority and never carry across unrelated requests or connections.
     #[must_use]
     pub fn with_signing_request_transport(mut self, transport: SigningRequestTransport) -> Self {
         self.signing_request_transport = Some(transport);
