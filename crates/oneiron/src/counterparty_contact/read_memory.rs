@@ -107,6 +107,10 @@ impl CounterpartyContactRead {
         })
     }
 
+    pub(crate) fn into_counterparty_value(self) -> ClaimValueRead {
+        self.counterparty
+    }
+
     pub(super) fn into_unbound_record(self) -> CounterpartyContactRecord {
         assert!(
             !self.counterparty.is_memory_bound() && !self.notes.is_memory_bound(),

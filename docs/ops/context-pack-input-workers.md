@@ -83,10 +83,18 @@ Their private conversion checks that the retained values have no memory guard,
 including a zero-byte guard, before allocating an unguarded record.
 
 The server's principal-contact check consumes only existence. Explicit
-`ContactRef` resolution borrows status, counterparty and first-touch from the
-opaque read. Its final interlocutor labels are still distinct output copies;
-the input value guards do not account for those labels or their later copies.
-The borrowed contact terminal adds no allocation admission or memory wait.
+`ContactRef` resolution reads status and first-touch, then moves the original
+counterparty value and its guard into a private shared label holder. Both Active
+and Revoked entries retain that backing. Cloning an interlocutor set or a
+disclosure context shares this immutable label; it does not copy its string or
+claim that an input guard accounts for a different allocation. Public ordinary
+label constructors retain their owned-string behavior. Debug, equality and
+serialization still use the same label text.
+
+The shared holder's own allocation is not admitted here. Stamps, notices,
+receipts and response serialization still produce distinct output strings or
+bytes; the retained label's guard does not account for them. The borrowed
+contact terminal and label transfer add no allocation admission or memory wait.
 
 The fold still sees the first duplicate only after every claim has been read,
 so a later native read error retains its original precedence. Ignored heads
