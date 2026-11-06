@@ -5,6 +5,9 @@
 //! is touched here. The outer root commit owns the returned effects.
 
 mod retained;
+mod root;
+
+pub(in crate::sync) use root::IsolatedRootResult;
 
 use std::borrow::Cow;
 
@@ -172,13 +175,18 @@ impl PreparedIsolatedWindow {
         } = self;
         let key = content.key.clone();
         let _import = crate::sync::manager::import_scope();
-        crate::sync::ingest::with_own_device_import(
+        let content = crate::sync::ingest::with_own_device_import(
             vault,
             own_device,
             (&key, &base),
             &update,
             || content.stage_in_txn(vault, txn, entity_effects),
-        )
+        )?;
+        Ok(StagedIsolatedWindow {
+            base,
+            update,
+            content,
+        })
     }
 }
 
@@ -188,7 +196,7 @@ impl IsolatedContent {
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         entity_effects: &mut EntityImportEffects,
-    ) -> Result<StagedIsolatedWindow> {
+    ) -> Result<StagedIsolatedContent> {
         let Self {
             key,
             candidate,
@@ -248,7 +256,7 @@ impl IsolatedContent {
         let tombstones =
             bridge::stage_tombstones_in_txn(vault, &candidate, &tombstones, key.as_str(), txn)?;
         bridge::persist_window_update_in_txn(vault, txn, key.as_str(), &persist)?;
-        Ok(StagedIsolatedWindow {
+        Ok(StagedIsolatedContent {
             key,
             candidate,
             edges,
@@ -264,6 +272,12 @@ impl IsolatedContent {
 /// with the outer caller, including partial-stage and root errors; publish
 /// both only from the real write door's after-commit callback.
 pub(in crate::sync) struct StagedIsolatedWindow {
+    base: LoroDoc,
+    update: Vec<u8>,
+    content: StagedIsolatedContent,
+}
+
+struct StagedIsolatedContent {
     key: WindowKey,
     candidate: LoroDoc,
     edges: EdgeImportEffects,
@@ -282,6 +296,16 @@ pub(in crate::sync) struct PublishedIsolatedWindow {
 
 impl StagedIsolatedWindow {
     pub(in crate::sync) fn publish_after_commit(
+        self,
+        vault: &Vault,
+        entity_effects: EntityImportEffects,
+    ) -> PublishedIsolatedWindow {
+        self.content.publish_after_commit(vault, entity_effects)
+    }
+}
+
+impl StagedIsolatedContent {
+    fn publish_after_commit(
         self,
         vault: &Vault,
         entity_effects: EntityImportEffects,
