@@ -44,7 +44,7 @@ pub(super) fn media_vectors(
         if replica.space_id() != input.space {
             continue;
         }
-        if full_sources_match(server, &selector, &admission, replica.sources())? {
+        if full_sources_match(server, input.id, &selector, &admission, replica.sources())? {
             selected.push(replica);
         }
     }
@@ -62,7 +62,13 @@ pub(super) fn media_vectors(
     let mut released = Vec::new();
     let mut rows = BTreeSet::new();
     for replica in selected {
-        if full_sources_match(server, &selector, &current, replica.sources())? {
+        if full_sources_match(server, input.id, &selector, &current, replica.sources())?
+            && server
+                .vault
+                .text_media_vector_replicas(&input.id, &input.space)
+                .map_err(unavailable)?
+                .contains(&replica)
+        {
             rows.extend(replica.sources().iter().map(|(id, _)| *id));
             released.push(replica);
         }
@@ -83,6 +89,7 @@ pub(super) fn media_vectors(
 
 fn full_sources_match(
     server: &SyncServer,
+    turn: EntityId,
     selector: &SyncSelector,
     admission: &ResidenceAdmission<'_>,
     sources: &[(EntityId, [u8; 32])],
@@ -119,7 +126,15 @@ fn full_sources_match(
             return Ok(false);
         }
     }
-    Ok(true)
+    oneiron::sync::documents::turn_member_documents_releasable(
+        server.vault.as_ref(),
+        turn,
+        sources,
+        crate::handler::selector_scope::selector_grant_scope(),
+        selector,
+        admission.withhold(),
+    )
+    .map_err(unavailable)
 }
 
 fn unavailable(_: oneiron::Error) -> AppError {
