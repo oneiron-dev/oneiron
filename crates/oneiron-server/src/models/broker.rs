@@ -387,7 +387,7 @@ impl BrokerBackend {
         wire_model: &str,
         model: &ModelId,
         execution: Option<&CacheDigest>,
-        publisher: Option<&oneiron::llm::InferencePublisher>,
+        mut inference: Option<&mut super::openai::InferenceUsage>,
     ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
@@ -397,7 +397,7 @@ impl BrokerBackend {
                 .map(|(name, value)| (name.to_ascii_lowercase(), value))
                 .collect();
             let body = parsed.unwrap_or(JsonValue::Null);
-            if let (Wire::OpenAi(_), Some(publisher)) = (&self.wire, publisher) {
+            if let (Wire::OpenAi(_), Some(inference)) = (&self.wire, inference.as_deref_mut()) {
                 let mut observed = body.clone();
                 // As on the plain transport, an error does not establish
                 // an answering alias; only native carried measurements do.
@@ -408,7 +408,7 @@ impl BrokerBackend {
                     None,
                     execution,
                 );
-                super::openai::observe_broker_reply(publisher, &observed, model);
+                inference.record(&mut observed, true);
             }
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
@@ -430,17 +430,15 @@ impl BrokerBackend {
                     answering.as_ref(),
                     execution,
                 );
-                if let Some(publisher) = publisher {
+                if let Some(inference) = inference.as_deref_mut() {
                     // A reply that later fails strict parsing still keeps
                     // the native work its body actually reported.
-                    super::openai::observe_broker_reply(publisher, &body, model);
+                    inference.record(&mut body, true);
                 }
                 let mut answer = parse_openai_chat_response(&body)?;
                 answer.usage.bind_inference_model(model);
-                if let Some(publisher) = publisher {
-                    if let Some(receipt) = answer.usage.inference_calls().pop() {
-                        publisher.finish(receipt);
-                    }
+                if let Some(inference) = inference {
+                    inference.finish(None);
                 }
                 Ok(answer)
             }
@@ -684,17 +682,18 @@ impl LlmBackend for BrokerBackend {
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
-            let publisher = Mutex::new(None);
+            let inference = Mutex::new(None);
             let observe = matches!(&self.wire, Wire::OpenAi(_));
             let release = || {
                 if observe {
-                    *publisher.lock().unwrap_or_else(PoisonError::into_inner) =
-                        Some(oneiron::llm::InferencePublisher::begin(lease));
+                    *inference.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+                        super::openai::InferenceUsage::new(lease, Some(request.model.clone())),
+                    );
                 }
                 Ok(())
             };
             let reply = self.send(&header, &body, &release).await?;
-            let publisher = publisher
+            let mut inference = inference
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
@@ -704,7 +703,7 @@ impl LlmBackend for BrokerBackend {
                 &header.wire_model,
                 &request.model,
                 execution.as_ref(),
-                publisher.as_ref(),
+                inference.as_mut(),
             )
         })
     }
