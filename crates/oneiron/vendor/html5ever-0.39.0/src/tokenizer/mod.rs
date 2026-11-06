@@ -38,6 +38,9 @@ use crate::{Attribute, LocalName, QualName, SmallCharSet};
 mod char_ref;
 mod interface;
 pub mod states;
+mod temporary_buffer;
+
+use self::temporary_buffer::TemporaryBuffer;
 
 /// The result of invoking the tokenizer once.
 pub enum ProcessResult<Handle> {
@@ -171,7 +174,7 @@ pub struct Tokenizer<Sink> {
     last_start_tag_name: RefCell<Option<LocalName>>,
 
     /// The "temporary buffer" mentioned in the spec.
-    temp_buf: RefCell<StrTendril>,
+    temp_buf: RefCell<TemporaryBuffer>,
 
     /// Record of how many ns we spent in each state, if profiling is enabled.
     state_profile: RefCell<BTreeMap<states::State, u64>>,
@@ -213,11 +216,28 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             current_comment: RefCell::new(StrTendril::new()),
             current_doctype: RefCell::new(Doctype::default()),
             last_start_tag_name: RefCell::new(start_tag_name),
-            temp_buf: RefCell::new(StrTendril::new()),
+            temp_buf: RefCell::new(TemporaryBuffer::new()),
             state_profile: RefCell::new(BTreeMap::new()),
             time_in_sink: Cell::new(0),
             current_line: Cell::new(1),
         }
+    }
+
+    pub(crate) fn set_temporary_buffer_reservation(
+        &mut self,
+        reservation: Box<dyn Fn(&mut String, usize) -> bool + Send>,
+    ) {
+        if !self.temp_buf.get_mut().install(reservation) {
+            self.stopped.set(true);
+        }
+    }
+
+    fn push_temp(&self, character: char) -> bool {
+        if !self.temp_buf.borrow_mut().push_char(character) {
+            self.stopped.set(true);
+            return false;
+        }
+        true
     }
 
     /// Feed an input string into the tokenizer.
@@ -367,12 +387,14 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             }
         }
 
-        input.push_front(mem::take(&mut self.temp_buf.borrow_mut()));
+        input.push_front(self.temp_buf.borrow_mut().take());
         match input.eat(pat, eq) {
             None if self.at_eof.get() => Some(false),
             None => {
                 while let Some(data) = input.next() {
-                    self.temp_buf.borrow_mut().push_char(data);
+                    if !self.push_temp(data) {
+                        return None;
+                    }
                 }
                 None
             },
@@ -533,7 +555,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
         trace!("  emit_temp");
 
         // FIXME: Make sure that clearing on emit is spec-compatible.
-        let buf = mem::take(&mut *self.temp_buf.borrow_mut());
+        let buf = self.temp_buf.borrow_mut().take();
         self.emit_chars(buf);
     }
 
@@ -676,7 +698,11 @@ macro_rules! shorthand (
     ( $me:ident : push_tag $c:expr                 ) => ( $me.current_tag_name.borrow_mut().push_char($c)     );
     ( $me:ident : discard_tag                      ) => ( $me.discard_tag()                                   );
     ( $me:ident : discard_char $input:expr         ) => ( $me.discard_char($input)                            );
-    ( $me:ident : push_temp $c:expr                ) => ( $me.temp_buf.borrow_mut().push_char($c)             );
+    ( $me:ident : push_temp $c:expr                ) => ({
+        if !$me.push_temp($c) {
+            return ProcessResult::Suspend;
+        }
+    });
     ( $me:ident : clear_temp                       ) => ( $me.clear_temp_buf()                                );
     ( $me:ident : create_attr $c:expr              ) => ( $me.create_attribute($c)                            );
     ( $me:ident : push_name $c:expr                ) => ( $me.current_attr_name.borrow_mut().push_char($c)    );
@@ -1071,7 +1097,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
                 let c = get_char!(self, input);
                 match c {
                     '\t' | '\n' | '\x0C' | ' ' | '/' | '>' => {
-                        let esc = if &**self.temp_buf.borrow() == "script" {
+                        let esc = if self.temp_buf.borrow().as_str() == "script" {
                             DoubleEscaped
                         } else {
                             Escaped
@@ -1169,7 +1195,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
                 let c = get_char!(self, input);
                 match c {
                     '\t' | '\n' | '\x0C' | ' ' | '/' | '>' => {
-                        let esc = if &**self.temp_buf.borrow() == "script" {
+                        let esc = if self.temp_buf.borrow().as_str() == "script" {
                             Escaped
                         } else {
                             DoubleEscaped

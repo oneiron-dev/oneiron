@@ -47,6 +47,14 @@ Local production changes (FIX 9615):
   script, head-reentry and adoption paths. Its owned callback is the last
   tree-builder field, so the stack frees before the reservation is released
   at parser completion, rather than retaining that charge during rendering.
+- `CheckedParser::with_temporary_buffer_reservation` uses a caller-reserved
+  UTF-8 String for the spec temporary buffer only. Each push admits a whole
+  replacement while the old allocation remains live, then settles actual
+  capacity. The String drops before its owned callback releases admission.
+  Taking text copies it into a native tendril, then clears the retained,
+  still-admitted scratch capacity. The output tendril has separate unadmitted
+  backing; no reservation is transferred to it or to DOM payload. The ordinary
+  tokenizer keeps its original StrTendril operations and take/clear behavior.
 - The ordinary driver and checked driver share the existing feed loop. The
   ordinary `Parser`, `parse_document`, fragment APIs and `Document::from` keep
   their signatures and algorithms. The new checked API is re-exported at root.
