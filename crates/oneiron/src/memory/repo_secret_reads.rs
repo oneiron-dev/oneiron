@@ -60,7 +60,10 @@ pub(crate) fn repo_asset_body_in_txn(
     if marks.is_empty() {
         return Ok(None);
     }
-    project_repo_bytes_in_txn(vault, txn, &marks, body.to_vec())
+    // In the caller's snapshot, which may be a writer's: the stored spans
+    // alone (FIX 8966 wires the known-value pass at the reads that own
+    // their snapshot).
+    project_repo_bytes_in_txn(vault, txn, &marks, body.to_vec(), None)
         .map(|projected| Some(projected.into_bytes()))
 }
 
@@ -102,9 +105,12 @@ pub(crate) fn masked_asset_body(
 /// # Errors
 /// A store failure, or a mark that does not decode.
 pub(crate) fn project_repo_file(vault: &Vault, bytes: Vec<u8>) -> Result<RepoBodyProjection> {
-    let txn = vault.store.env.read_txn()?;
-    let marks = repo_secret_marks_for_hash_in_txn(vault, &txn, blake3::hash(&bytes).as_bytes())?;
-    project_repo_bytes_in_txn(vault, &txn, &marks, bytes)
+    vault.with_known_values(|known| {
+        let txn = vault.store.env.read_txn()?;
+        let marks =
+            repo_secret_marks_for_hash_in_txn(vault, &txn, blake3::hash(&bytes).as_bytes())?;
+        project_repo_bytes_in_txn(vault, &txn, &marks, bytes, known)
+    })
 }
 
 /// The placeholder a masked reader reads for `bytes`, a code view's file
@@ -201,7 +207,12 @@ impl RepoReadMasks {
         if marks.is_empty() {
             return Ok(ServedText::stored(text));
         }
-        project_repo_bytes_in_txn(vault, &txn, &marks, text.into_bytes())
+        drop(txn);
+        vault
+            .with_known_values(|known| {
+                let txn = vault.store.env.read_txn()?;
+                project_repo_bytes_in_txn(vault, &txn, &marks, text.into_bytes(), known)
+            })
             .map(ServedText::projection)
     }
 
@@ -241,8 +252,11 @@ impl RepoReadMasks {
         if marks.is_empty() {
             return Ok(Cow::Borrowed(bytes));
         }
-        let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, &marks, bytes.to_vec())
+        vault
+            .with_known_values(|known| {
+                let txn = vault.store.env.read_txn()?;
+                project_repo_bytes_in_txn(vault, &txn, &marks, bytes.to_vec(), known)
+            })
             .map(|projected| Cow::Owned(projected.into_bytes()))
     }
 }
