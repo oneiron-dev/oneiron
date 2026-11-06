@@ -3,6 +3,7 @@
 //! Only the terminal reply escapes this consumer. Admission, retries, source
 //! checks, live spend looks and settlement stay on the original call's walk.
 use futures_util::StreamExt;
+use oneiron::code_run::HOST_PROVIDER_OPTIONS;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     FatalLlmError, LlmCapability, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
@@ -59,11 +60,17 @@ impl OfferLadder {
     }
 }
 
-/// Custom output parameters keep the buffered reply: Done carries no token
-/// scores. The code-mode step producer supplies empty maps on its native path.
+/// Native seat effort and host cache descriptors do not request extra response
+/// fields. Other custom parameters keep the buffered reply, including scores.
 pub(super) fn can_stream(rung: &LadderRung, request: &LlmRequest) -> bool {
-    request.params.is_empty()
-        && request.provider_options.is_empty()
+    request
+        .params
+        .keys()
+        .all(|param| param == "reasoning_effort")
+        && request
+            .provider_options
+            .keys()
+            .all(|namespace| namespace == HOST_PROVIDER_OPTIONS)
         && rung
             .offer
             .backend
