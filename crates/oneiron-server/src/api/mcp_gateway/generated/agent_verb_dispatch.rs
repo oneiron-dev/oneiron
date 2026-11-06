@@ -497,6 +497,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
         "vault.members.invitations" => a.spec.clone().ok_or_else(invalid),
         "vault.members.accept" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.accept_with_credential" => a.spec.clone().ok_or_else(invalid),
         "vault.members.decline" => a.spec.clone().ok_or_else(invalid),
         "vault.members.withdraw_invitation" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.object" => a.spec.clone().ok_or_else(invalid),
@@ -2645,6 +2646,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.accept" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.accept_with_credential" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.decline" => {
@@ -11567,6 +11571,26 @@ async fn execute_agent_verb_row_on(
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_accept(
                 server, auth, input,
             ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.accept_with_credential" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.accept_with_credential", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_members_accept_with_credential(
+                    server, auth, input,
+                ),
+            )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

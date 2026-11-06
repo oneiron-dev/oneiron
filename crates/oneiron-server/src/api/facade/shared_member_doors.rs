@@ -26,8 +26,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, ActAnswer, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
     RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest,
-    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationRequest,
-    SharedInvitationWithdrawRequest, SharedVaultRequest,
+    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest,
+    SharedInvitationAcceptWithCredentialRequest, SharedInvitationAcceptedWithCredential,
+    SharedInvitationRequest, SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::support::{
@@ -189,6 +190,38 @@ pub(crate) async fn vault_members_accept(
         invitee,
         move |server, invitee| sdk::accept_shared_invitation_as(server.vault(), &invitee, input),
         move |receipt| receipt_rows(vault.vault(), receipt),
+    )
+    .await
+}
+
+/// `vault.members.accept_with_credential`: accepts the invitee's own invitation
+/// and returns their regular member credential from the same writer.
+pub(crate) async fn vault_members_accept_with_credential(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedInvitationAcceptWithCredentialRequest,
+) -> MaybeListed<SharedInvitationAcceptedWithCredential> {
+    const VERB: &str = "vault.members.accept_with_credential";
+    let invitee = person(server, auth, VERB).and_then(|invitee| {
+        require_slip_invitation(auth, VERB, &input.invitation).map(|()| invitee)
+    });
+    let vault = Arc::clone(server);
+    as_person_naming(
+        server,
+        VERB,
+        invitee,
+        move |server, invitee| {
+            crate::api::pairing::with_issuer(server, |issuer| {
+                Ok(sdk::accept_shared_invitation_with_credential_as(
+                    server.vault(),
+                    &invitee,
+                    issuer,
+                    input,
+                ))
+            })
+            .map_err(|_| internal(VERB))?
+        },
+        move |accepted| receipt_rows(vault.vault(), &accepted.receipt),
     )
     .await
 }
