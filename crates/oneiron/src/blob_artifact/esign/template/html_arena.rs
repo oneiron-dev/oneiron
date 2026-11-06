@@ -125,6 +125,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let temporary_buffer = Mutex::new(Backing::new(budget.clone()));
         let tag_name = Mutex::new(Backing::new(budget.clone()));
         let attribute_name = Mutex::new(Backing::new(budget.clone()));
+        let formatting_budget = budget.clone();
         let attribute_storage_budget = budget.clone();
         let attribute_value_budget = budget.clone();
         let attribute_atomic_budget = budget.clone();
@@ -140,6 +141,11 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                     .unwrap_or_else(PoisonError::into_inner)
                     .reserve_vec(elements, additional)
             })
+            .with_active_formatting_reservation(
+                move |bytes| reserve(&formatting_budget, bytes),
+                Backing::resize,
+                tendril_error,
+            )
             .with_temporary_buffer_reservation(move |text, additional| {
                 temporary_buffer
                     .lock()

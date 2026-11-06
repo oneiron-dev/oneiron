@@ -145,7 +145,8 @@ then drops the partial tree and returns the same original error. The ordinary
 `TokenSink::process_token` API remains unchanged and uses an always-true
 checkpoint. Existing token-conversion and insertion-mode rule bodies are not
 duplicated or changed. Internal recursion, creation, formatting and adoption
-work within one insertion-mode step remains non-preemptible and unadmitted.
+work within one insertion-mode step remains non-preemptible; storage admission
+is described below.
 
 ## Native storage admission
 
@@ -340,3 +341,20 @@ The ordinary unhooked Vec merge keeps its original copied-name scratch and value
 wrapping. Public extraction/mutations/clones, interned names, other parser
 storage, boxed guard/callback metadata, allocator-private work and opaque native
 intervals remain unadmitted; FIX 9615 remains partial.
+
+The checked parser also admits the private active-formatting vector's backing.
+The native entry type determines its byte size; callers supply only byte-level
+reserve, settlement and typed-error callbacks. Every formatting-element push,
+marker push and adoption-agency insert reserves before it can grow, including
+insert-before-remove cases whose final length is unchanged. Each replacement
+admits its full new capacity while the old allocation remains charged, settles
+the reported capacity, publishes the vector and guard together, then frees the
+old vector before returning its old admission. Removals and same-length entry
+replacements retain the existing allocation and admission. The private owning
+carrier keeps entries before its guard through parser drop; it has no plain
+vector extraction. A refusal stops the current native rule and returns through
+the same first typed error, dropping partial parser and DOM state before Err.
+The ordinary unhooked parser keeps its existing operations. Entry payloads keep
+their separate existing admissions; this admits neither interned names nor
+other parser storage, callback/guard metadata, allocator-private overhead or
+opaque native work. Full FIX 9615 remains PART, with no new cap, timer or default.
