@@ -143,6 +143,7 @@ impl Memory<'_> {
             offers: self.rooms_open_offers(room)?,
             receipt: rules.receipt,
             host: None,
+            speaking: self.room_speaking_claims(room)?,
             invitable,
         })
     }
