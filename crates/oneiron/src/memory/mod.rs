@@ -367,6 +367,7 @@ pub use support::{
     HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
     resolve_entity_ref,
 };
+pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
