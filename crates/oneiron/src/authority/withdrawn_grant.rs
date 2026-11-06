@@ -115,10 +115,20 @@ pub(crate) fn grant_known_withdrawn_in_txn(
     txn: &heed::RoTxn<'_>,
     grant: EntityId,
 ) -> bool {
+    grant_known_withdrawn_with_read_status_in_txn(store, txn, grant).0
+}
+
+/// The original marker verdict and whether that same read completed.
+/// A fault keeps the original standing path, but cannot certify its sources.
+pub(super) fn grant_known_withdrawn_with_read_status_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+) -> (bool, bool) {
     match WITHDRAWN_GRANT.contains(store, txn, &HexId(grant)) {
-        Ok(known) => known,
+        Ok(known) => (known, true),
         Err(_) => match ISOLATION_NEW_CHECK_ERROR_MODE {
-            NewCheckErrorMode::KeepExistingPath => false,
+            NewCheckErrorMode::KeepExistingPath => (false, false),
         },
     }
 }
