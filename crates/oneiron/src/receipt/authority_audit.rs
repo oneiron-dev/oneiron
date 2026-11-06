@@ -572,6 +572,22 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // The owner's naming of a device key's successor: its subject is the
+        // successor machine, its detail the predecessor's client id and key
+        // (FIX 11135).
+        AuthorityOp::DeviceSuccession(succession) => (
+            Other,
+            "device_succession",
+            OpFields {
+                detail: Some(format!(
+                    "client {} device key {}",
+                    succession.client,
+                    hex_lower(&succession.device_key)
+                )),
+                subject_ref: Some(succession.successor.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         // A person's own opt-out: its subject is the PERSON, and its detail
         // says left out or not, never a conversation's text (FIX 5502).
         AuthorityOp::ConversationTrainingSet(set) => (
