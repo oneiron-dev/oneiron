@@ -33,9 +33,10 @@ use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
-    BudgetLease, CacheDigest, DispatchRelease, FatalLlmError, LabelReadFailure, LabelReadModel,
-    LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage,
-    LlmOutputUsage, LlmResult, LlmUsage, RetryableLlmError,
+    BudgetLease, CacheDigest, DispatchRelease, FatalLlmError, LabelReadFailure,
+    LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
+    LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
 use oneiron_driver::WorkerLease;
@@ -484,7 +485,8 @@ impl DecisionReader {
         prompts: &[String],
         questions: &[LabelReadout<'_>],
         release: Option<ReadRelease<'_>>,
-    ) -> LlmResult<LabelReadResponse> {
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> LlmResult<LabelReadGenerationOutcome> {
         let ids = self.ids(release).await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
         let (first, first_mode) = self
@@ -493,7 +495,16 @@ impl DecisionReader {
         let replies = answers(first, prompts.len())?;
         let mut readouts = Vec::with_capacity(prompts.len());
         let mut reads = Vec::with_capacity(prompts.len());
-        for ((prompt, question), mut reply) in prompts.iter().zip(questions).zip(replies) {
+        if admit_next.is_some() {
+            // The first batch answered every prompt, including questions not processed yet.
+            for reply in &replies {
+                let answering = self.answering(reply).await;
+                reads.push(usage(reply, answering.as_ref(), first_mode.as_ref())?);
+            }
+        }
+        for (index, ((prompt, question), mut reply)) in
+            prompts.iter().zip(questions).zip(replies).enumerate()
+        {
             let mut mode = first_mode.clone();
             let count = question.width();
             let (labels, tokens) = (&ids.labels[..count], &self.recipe.tokens()[..count]);
@@ -502,8 +513,20 @@ impl DecisionReader {
             if let Some(full) = self.recipe.n_probs_full()
                 && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
             {
-                let answering = self.answering(&reply).await;
-                spent = Some(usage(&reply, answering.as_ref(), mode.as_ref())?);
+                spent = Some(match admit_next {
+                    Some(_) => reads[index].clone(),
+                    None => {
+                        let answering = self.answering(&reply).await;
+                        usage(&reply, answering.as_ref(), mode.as_ref())?
+                    }
+                });
+                if let Some(admit_next) = admit_next
+                    && !admit_next()
+                {
+                    return Ok(LabelReadGenerationOutcome::StoppedPaidPrefix {
+                        usage: pack_usage(reads),
+                    });
+                }
                 (reply, mode) = self.complete(json!(prompt), ids.eos, full, release).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
@@ -517,17 +540,26 @@ impl DecisionReader {
                 readout.reverse();
             }
             readouts.push(readout);
-            let answering = self.answering(&reply).await;
-            let usage = usage(&reply, answering.as_ref(), mode.as_ref())?;
-            reads.push(match spent {
+            let usage = if admit_next.is_some() && spent.is_none() {
+                reads[index].clone()
+            } else {
+                let answering = self.answering(&reply).await;
+                usage(&reply, answering.as_ref(), mode.as_ref())?
+            };
+            let usage = match spent {
                 Some(first) => retried(first, usage),
                 None => usage,
-            });
+            };
+            if admit_next.is_some() {
+                reads[index] = usage;
+            } else {
+                reads.push(usage);
+            }
         }
-        Ok(LabelReadResponse {
+        Ok(LabelReadGenerationOutcome::Complete(LabelReadResponse {
             readouts,
             usage: pack_usage(reads),
-        })
+        }))
     }
 
     fn read_with_release(
@@ -535,6 +567,21 @@ impl DecisionReader {
         request: &LabelReadRequest<'_>,
         release: Option<ReadRelease<'_>>,
     ) -> LlmResult<LabelReadResponse> {
+        self.read_with_generations(request, release, None)
+            .map(|outcome| match outcome {
+                LabelReadGenerationOutcome::Complete(read) => read,
+                LabelReadGenerationOutcome::StoppedPaidPrefix { .. } => {
+                    unreachable!("an ordinary label read has no generation gate")
+                }
+            })
+    }
+
+    fn read_with_generations(
+        &self,
+        request: &LabelReadRequest<'_>,
+        release: Option<ReadRelease<'_>>,
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> LlmResult<LabelReadGenerationOutcome> {
         // Before the state renders or the tokenizer and completion are asked.
         if !self.permitted {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -550,7 +597,8 @@ impl DecisionReader {
             .map_err(refused)?;
         let read = async {
             let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions, release).await
+            self.read_pack(&prompts, request.questions, release, admit_next)
+                .await
         };
         // One bound for the tokenizer and completion waits: the decision's work cutoff.
         match request.work_until {
@@ -585,7 +633,35 @@ impl DecisionReader {
     }
 }
 
+impl LabelReadGenerationReader for DecisionReader {
+    fn read_admitted(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        may_send: Option<&(dyn Fn() -> bool + Sync)>,
+        admit_next: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LabelReadGenerationOutcome> {
+        match may_send {
+            Some(may_send) => {
+                let release = || {
+                    if may_send() {
+                        Ok(())
+                    } else {
+                        Err(FatalLlmError::Auth.into())
+                    }
+                };
+                self.read_with_generations(request, Some((&release, lease)), Some(admit_next))
+            }
+            None => self.read_with_generations(request, None, Some(admit_next)),
+        }
+    }
+}
+
 impl LabelReadModel for DecisionReader {
+    fn generation_reader(&self) -> Option<&dyn LabelReadGenerationReader> {
+        Some(self)
+    }
+
     fn model(&self) -> &str {
         &self.model
     }

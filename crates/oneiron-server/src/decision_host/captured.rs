@@ -28,7 +28,10 @@ impl SystemOneRung {
             } else {
                 self.decide_with_context(&call, context)?
             };
-            stopped = matches!(&outcome, DecisionReadOutcome::NotStarted);
+            stopped = matches!(
+                &outcome,
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped
+            );
             decisions.push(outcome);
         }
         Ok(decisions)

@@ -101,7 +101,7 @@ fn take_captured(
             .into_iter()
             .filter_map(|answer| match answer {
                 DecisionReadOutcome::Answered(answer) => Some(answer),
-                DecisionReadOutcome::NotStarted => None,
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => None,
             })
             .collect();
         return take(
@@ -115,11 +115,11 @@ fn take_captured(
     if answers.len() != count + usize::from(person.is_some()) {
         return Err(invalid("a pack answers every question"));
     }
-    let mut person_unstarted = false;
+    let mut person_incomplete = false;
     if let Some(person) = person {
         let reading = match answers.pop().expect("the person question's outcome") {
-            DecisionReadOutcome::NotStarted => {
-                person_unstarted = true;
+            DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                person_incomplete = true;
                 None
             }
             DecisionReadOutcome::Answered(answer) => {
@@ -144,9 +144,16 @@ fn take_captured(
     let late = pack.deadline.answer_due();
     let mut reads = Vec::with_capacity(count);
     for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
-        let DecisionReadOutcome::Answered(answer) = answer else {
-            reads.push(Read::NotStarted(StopCause::GenerationAllowance));
-            continue;
+        let answer = match answer {
+            DecisionReadOutcome::Answered(answer) => answer,
+            DecisionReadOutcome::NotStarted => {
+                reads.push(Read::NotStarted(StopCause::GenerationAllowance));
+                continue;
+            }
+            DecisionReadOutcome::Stopped => {
+                reads.push(Read::Cut(StopCause::GenerationAllowance));
+                continue;
+            }
         };
         if late {
             record_attempted_provider(
@@ -159,7 +166,7 @@ fn take_captured(
         }
         answer.validate(question)?;
         let pin = answer.answered_pin(pin)?;
-        if person_unstarted {
+        if person_incomplete {
             readings.pins.push(pin);
             reads.push(Read::Cut(StopCause::GenerationAllowance));
             continue;

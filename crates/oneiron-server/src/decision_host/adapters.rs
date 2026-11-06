@@ -2,9 +2,10 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use oneiron::llm::LabelReadGenerationReader;
 use oneiron::llm::decision::{
-    CapturedDecision, CapturedDecisionPack, DecisionCallContext, DecisionReadOutcome,
-    DecisionReadProvider, HostRuleRef,
+    CapturedDecision, CapturedDecisionPack, DecisionCallContext, DecisionGenerationAdmission,
+    DecisionReadOutcome, DecisionReadProvider, HostRuleRef,
 };
 use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
@@ -56,6 +57,7 @@ impl DecisionReadGate for HouseGate {
         // A read that went out and failed keeps its reservation as spend.
         let outcome = match &gated {
             GatedRead::NotStarted => CallOutcome::Answered(&unread),
+            GatedRead::StoppedPaidPrefix { usage } => CallOutcome::Answered(usage),
             GatedRead::Read(Ok(answer))
             | GatedRead::ReadOnRun {
                 read: Ok(answer), ..
@@ -69,6 +71,7 @@ impl DecisionReadGate for HouseGate {
         }
         Ok(match gated {
             GatedRead::NotStarted => GatedRead::NotStarted,
+            GatedRead::StoppedPaidPrefix { usage } => GatedRead::StoppedPaidPrefix { usage },
             GatedRead::Read(read) | GatedRead::ReadOnRun { read, .. } => {
                 GatedRead::ReadOnRun { read, run }
             }
@@ -124,6 +127,7 @@ impl DecisionReadGate for RunHouseGate<'_> {
             // A read that went out and failed keeps its reservation as spend.
             let outcome = match &gated {
                 GatedRead::NotStarted => CallOutcome::Answered(&unread),
+                GatedRead::StoppedPaidPrefix { usage } => CallOutcome::Answered(usage),
                 GatedRead::Read(Ok(answer))
                 | GatedRead::ReadOnRun {
                     read: Ok(answer), ..
@@ -167,10 +171,10 @@ impl DecisionProvider for HouseRead {
         call: &DecisionCall<'_>,
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecision> {
-        // A missing-label retry starts another generation inside the native reader.
-        if context.generation.is_some() {
-            return None;
-        }
+        let generation = match context.generation {
+            Some(admission) => Some((self.reader.generation_reader()?, admission)),
+            None => None,
+        };
         // Nonlocal extraction still needs its native admission request.
         if *oneiron::inference_context::admitted_as(context.purpose)
             == oneiron::llm::CallPurpose::Extraction
@@ -179,7 +183,7 @@ impl DecisionProvider for HouseRead {
             return None;
         }
         let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
-            self.decide_captured_request(call)
+            self.decide_captured_request(call, generation)
         });
         Some(CapturedDecision { result, receipts })
     }
@@ -189,10 +193,10 @@ impl DecisionProvider for HouseRead {
         pack: &DecisionPack<'_>,
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecisionPack> {
-        // A missing-label retry starts another generation inside the native reader.
-        if context.generation.is_some() {
-            return None;
-        }
+        let generation = match context.generation {
+            Some(admission) => Some((self.reader.generation_reader()?, admission)),
+            None => None,
+        };
         // Nonlocal extraction still needs its native admission request.
         if *oneiron::inference_context::admitted_as(context.purpose)
             == oneiron::llm::CallPurpose::Extraction
@@ -201,7 +205,7 @@ impl DecisionProvider for HouseRead {
             return None;
         }
         let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
-            self.decide_pack_captured_request(pack)
+            self.decide_pack_captured_request(pack, generation)
         });
         Some(CapturedDecisionPack { result, receipts })
     }
@@ -255,16 +259,23 @@ impl HouseRead {
     fn decide_captured_request(
         &self,
         call: &DecisionCall<'_>,
+        generation: Option<(
+            &dyn LabelReadGenerationReader,
+            &dyn DecisionGenerationAdmission,
+        )>,
     ) -> oneiron::Result<DecisionReadOutcome<ProviderDecision>> {
-        let mut answers = self.decide_pack_captured_request(&DecisionPack {
-            questions: &[call.question],
-            evidence: call.evidence,
-            images: call.images,
-            audio: call.audio,
-            state: call.state,
-            deadline: call.deadline,
-            run: call.run,
-        })?;
+        let mut answers = self.decide_pack_captured_request(
+            &DecisionPack {
+                questions: &[call.question],
+                evidence: call.evidence,
+                images: call.images,
+                audio: call.audio,
+                state: call.state,
+                deadline: call.deadline,
+                run: call.run,
+            },
+            generation,
+        )?;
         answers
             .pop()
             .ok_or_else(|| oneiron::Error::InvalidConfig("malformed decision read".into()))
@@ -273,12 +284,21 @@ impl HouseRead {
     fn decide_pack_captured_request(
         &self,
         pack: &DecisionPack<'_>,
+        generation: Option<(
+            &dyn LabelReadGenerationReader,
+            &dyn DecisionGenerationAdmission,
+        )>,
     ) -> oneiron::Result<Vec<DecisionReadOutcome<ProviderDecision>>> {
-        let captured = |answers: Vec<ProviderDecision>| {
-            answers
-                .into_iter()
-                .map(DecisionReadOutcome::Answered)
-                .collect()
+        let read = |provider: DecisionReadProvider<'_>| match generation {
+            Some((native, admission)) => {
+                provider.decide_pack_with_generation(pack, native, admission)
+            }
+            None => provider.decide_pack(pack).map(|answers| {
+                answers
+                    .into_iter()
+                    .map(DecisionReadOutcome::Answered)
+                    .collect()
+            }),
         };
         if let Some(run) = pack.run {
             let gate = RunHouseGate {
@@ -288,22 +308,19 @@ impl HouseRead {
                     .capturing_settlements(),
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
-            return DecisionReadProvider::new(
-                self.pin.clone(),
-                self.reader.as_ref(),
-                &gate,
-                &self.paired,
-                self.person.as_ref(),
-            )?
-            .observed_by(&observer)
-            .decide_pack(pack)
-            .map(captured);
+            return read(
+                DecisionReadProvider::new(
+                    self.pin.clone(),
+                    self.reader.as_ref(),
+                    &gate,
+                    &self.paired,
+                    self.person.as_ref(),
+                )?
+                .observed_by(&observer),
+            );
         }
         let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
-        self.provider()?
-            .observed_by(&observer)
-            .decide_pack(pack)
-            .map(captured)
+        read(self.provider()?.observed_by(&observer))
     }
 }
 
@@ -337,7 +354,7 @@ impl DecisionProvider for SystemOneRung {
         self.decide_with_context(call, None)
             .map(|outcome| match outcome {
                 DecisionReadOutcome::Answered(answer) => answer,
-                DecisionReadOutcome::NotStarted => {
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
                     unreachable!("an ordinary decision has no generation gate")
                 }
             })
