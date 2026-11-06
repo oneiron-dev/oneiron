@@ -110,7 +110,8 @@ fn admit_hydrate(body: &Value) -> Result<AdmittedHydrate, ApiError> {
 
 /// An admitted hydrate, read on `scoped_read`, `auth`'s own: its row
 /// projected and any image picked, then its body observed into the
-/// caller's session and its served forms committed.
+/// caller's session and its served forms committed. The answer goes beside
+/// the rows its projection was derived from (FIX 1435).
 async fn read_hydrate(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -129,6 +130,7 @@ async fn read_hydrate(
     let pick = hydrate_pick(server, auth, req.task, takes_images(req.image_input, view));
     let reader = hydrate_reader(req.image_input, view);
     let mut served = Vec::new();
+    let mut producers = Vec::new();
     let mut project = || {
         hydrate_short_id_response_with_mode(
             &scoped_read,
@@ -139,6 +141,7 @@ async fn read_hydrate(
             mode,
             pick.as_ref(),
             &mut served,
+            &mut producers,
         )
     };
     // A pick asks the host's models: off the async runtime.
@@ -174,7 +177,7 @@ async fn read_hydrate(
         ));
     };
 
-    Ok(NativeReadAnswer::unlisted(encoded(&response)?))
+    Ok(NativeReadAnswer::listed(encoded(&response)?, producers))
 }
 
 /// Batch-hydrate entities by context-pack short references.
@@ -247,6 +250,9 @@ fn admit_batch_hydrate(body: &Value) -> Result<CoreBatchShortIdHydrateRequest, A
 /// An admitted batch hydrate, read on `scoped_read`, `auth`'s own: its
 /// items read frame by frame and projected in order, then their bodies
 /// observed into the caller's session and their served forms committed.
+/// The answer goes beside the rows its projected live and deleted items
+/// were derived from (FIX 1435). A malformed ref, or a slot that is absent
+/// or refused, adds none.
 async fn read_batch_hydrate(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -276,6 +282,7 @@ async fn read_batch_hydrate(
     let mut batch_narrowing = narrowing.clone();
     let mut served = Vec::new();
     let mut observed = Vec::new();
+    let mut producers = Vec::new();
     let project = || {
         project_short_id_batch(
             server,
@@ -291,6 +298,7 @@ async fn read_batch_hydrate(
                 response: &mut batch_narrowing,
                 served: &mut served,
                 observed: &mut observed,
+                producers: &mut producers,
             },
         )
     };
@@ -329,5 +337,5 @@ async fn read_batch_hydrate(
         narrowing: batch_narrowing,
         results,
     })?;
-    Ok(NativeReadAnswer::unlisted(response))
+    Ok(NativeReadAnswer::listed(response, producers))
 }

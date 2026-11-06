@@ -32,4 +32,63 @@ impl CoreContextPackResponse {
         let capabilities = self.capabilities.iter().map(|hit| hit.id);
         contacts.chain(capabilities).collect()
     }
+
+    /// The rows this answer was derived from, as the route lists them for
+    /// the release of a drained retry (FIX 1435). They are the rows the
+    /// pack serves, the rows a keyed replay of it re-admits, the
+    /// CODE_ARTIFACT and units of each instruction file, every known
+    /// contact its disclosure block stamps, and the reaction, message and
+    /// reactor of each reaction signal.
+    ///
+    /// `None` when a returned record carries words read from rows the
+    /// response does not keep: a MESSAGE's or TURN's reaction lines, which
+    /// count reaction claims, or a TURN's text, which its messages hold.
+    /// Its rows are then not all known. `None` too when an id does not
+    /// parse.
+    pub(crate) fn producer_rows(&self) -> Option<Vec<oneiron::EntityId>> {
+        let composed_from_unlisted_rows = |entity: &super::CoreContextEntity| {
+            let Some(fields) = entity.fields.as_ref() else {
+                return false;
+            };
+            let reaction_lines = fields.contains_key(oneiron::reaction::REACTIONS_FIELD);
+            match entity.entity_type {
+                oneiron::registry::ENTITY_TYPE_TURN => reaction_lines || fields.contains_key("txt"),
+                oneiron::registry::ENTITY_TYPE_MESSAGE => reaction_lines,
+                _ => false,
+            }
+        };
+        if self
+            .results
+            .iter()
+            .chain(&self.neighbors)
+            .any(composed_from_unlisted_rows)
+        {
+            return None;
+        }
+        let mut rows = self.served_rows().ok()?;
+        rows.extend(self.replay_admits());
+        for handle in &self.instruction_files {
+            rows.push(handle.code_artifact_id);
+            rows.extend_from_slice(&handle.units);
+        }
+        let stamps = self
+            .disclosure
+            .iter()
+            .flat_map(|block| &block.interlocutors);
+        rows.extend(
+            stamps
+                .filter(|stamp| {
+                    stamp.class == oneiron::interlocutor::InterlocutorClass::KnownContact
+                })
+                .filter_map(|stamp| oneiron::EntityId::from_hex(&stamp.speaker).ok()),
+        );
+        for signal in &self.signals {
+            for id in [&signal.reaction, &signal.message, &signal.by] {
+                rows.push(oneiron::EntityId::from_hex(id).ok()?);
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Some(rows)
+    }
 }
