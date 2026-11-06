@@ -581,7 +581,7 @@ impl Vault {
     ) -> MemoryResult<EntityId> {
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn| {
+                content.update_note(note, |txn, _lane| {
                     // A sealed NOTE forks too: the fork leaves its seal intact.
                     super::verbs::note_core(self, txn, note)?;
                     let parent =
