@@ -213,6 +213,7 @@ fn with_peer<T>(
         materializer: manager.materializer(),
         window: &window,
         windows: &windows,
+        home: None,
     })
 }
 
