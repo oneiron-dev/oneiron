@@ -106,9 +106,7 @@ pub(crate) fn team_receipts_sourced_for_reader(
                 .attempt_sources
                 .iter()
                 .map(|source| {
-                    source
-                        .admitted_in_txn(vault, &txn, admitted.next().flatten())
-                        .map(|id| vec![id])
+                    source.admitted_sources_in_txn(reader, &txn, admitted.next().flatten())
                 })
                 .collect();
             let (receipt, rows) = stored.sourced();

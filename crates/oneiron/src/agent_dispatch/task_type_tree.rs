@@ -35,7 +35,10 @@ use super::widen_record::invalid;
 mod sources;
 mod validation;
 
-pub(crate) use sources::{SourcedTeamTypeTree, load_team_type_tree_with_sources_in_txn};
+pub(crate) use sources::{
+    SelectedTreeFile, SourcedTeamTypeTree, load_team_type_tree_with_sources_in_txn,
+};
+use sources::{stored_tree_unchecked_in_txn, stored_tree_with_file_in_txn};
 
 pub use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 
@@ -79,17 +82,27 @@ fn tree_in_force_with_root_in_txn(
     vault_skill: EntityId,
     reads: &mut Reads,
 ) -> Result<TaskTypeTree> {
+    Ok(tree_and_file_in_force_in_txn(vault, txn, project, vault_skill, reads)?.0)
+}
+
+/// The same selection with its actual file identity, never a later head lookup.
+fn tree_and_file_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    vault_skill: EntityId,
+    reads: &mut Reads,
+) -> Result<(TaskTypeTree, Option<SelectedTreeFile>)> {
     if let Some(project) = project
         && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill, reads)?
-        && let Some(tree) = stored_tree_in_txn(vault, txn, &fork, reads)?
+        && let Some(selected) = stored_tree_with_file_in_txn(vault, txn, &fork, reads)?
     {
-        return Ok(tree);
+        return Ok(selected);
     }
     Ok(match vault_head_in_txn(vault, txn, vault_skill, reads)? {
-        Some(head) => {
-            stored_tree_in_txn(vault, txn, &head, reads)?.unwrap_or_else(TaskTypeTree::seeded)
-        }
-        None => TaskTypeTree::seeded(),
+        Some(head) => stored_tree_with_file_in_txn(vault, txn, &head, reads)?
+            .unwrap_or_else(|| (TaskTypeTree::seeded(), None)),
+        None => (TaskTypeTree::seeded(), None),
     })
 }
 
@@ -708,73 +721,4 @@ fn vault_head_in_txn(
         }
     }
     Ok(head)
-}
-
-/// The tree an admitted skill carries, if its package has one.
-fn stored_tree_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    skill: &EntityId,
-    reads: &mut Reads,
-) -> Result<Option<TaskTypeTree>> {
-    let record = vault.get_skill_record_in_txn(txn, skill)?;
-    if record.is_some() {
-        reads.note(*skill);
-    }
-    match record {
-        Some(record) if skill_loadable(&record) => {
-            stored_tree_unchecked_in_txn(vault, txn, skill, reads)
-        }
-        _ => Ok(None),
-    }
-}
-
-/// The tree file in `skill`'s stored package, whatever its lifecycle: the
-/// version floor a fork's new tree is checked against.
-fn stored_tree_unchecked_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    skill: &EntityId,
-    reads: &mut Reads,
-) -> Result<Option<TaskTypeTree>> {
-    let record = vault.read_skill_record_in_txn(txn, skill)?;
-    reads.note(*skill);
-    let package = vault.runtime_skill_package_in_txn(txn, skill, &record)?;
-    if reads.naming() {
-        note_carrier_in_txn(vault, txn, skill, &record, package.is_some(), reads);
-    }
-    let Some(package) = package else {
-        return Ok(None);
-    };
-    let Some(file) = package
-        .files
-        .iter()
-        .find(|file| file.path == TASK_TYPE_TREE_FILE)
-    else {
-        return Ok(None);
-    };
-    let tree: TaskTypeTree = serde_json::from_slice(&file.content)
-        .map_err(|_| invalid("team-shape type tree does not decode"))?;
-    validate_tree(&tree)?;
-    Ok(Some(tree))
-}
-
-/// Notes the replicated source carrier that served `skill`'s package, when
-/// one did, by the probe an export names it by (SCAN C022), in the same
-/// read. The skill's own package row is the skill's. A carrier looked up
-/// that served nothing, or a probe that fails, leaves the rows unknown: the
-/// lookup may have read a row it then refused (FIX 7103).
-fn note_carrier_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    skill: &EntityId,
-    record: &SkillRecord,
-    served: bool,
-    reads: &mut Reads,
-) {
-    match vault.export_hub_package_carrier_in_txn(txn, skill, record) {
-        Ok(None) => {}
-        Ok(Some(carrier)) if served => reads.note(carrier),
-        Ok(Some(_)) | Err(_) => reads.unknown(),
-    }
 }
