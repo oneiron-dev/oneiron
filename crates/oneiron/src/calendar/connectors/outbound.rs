@@ -4,7 +4,7 @@ mod archived;
 mod collection;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
-pub(super) use self::collection::require_omission_observed;
+pub(super) use self::collection::omission_observed;
 pub use self::collection::{
     CalendarCollectionMember, CalendarRemoteObjectObservation,
     calendar_collection_members_for_operation,

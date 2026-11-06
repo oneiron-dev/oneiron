@@ -209,6 +209,10 @@ impl<W: CalDavWire> CalendarRemoteTransport for CalDavConnector<W> {
         self.collection_zone(secret_ref, &discovery)
     }
 
+    fn cursor_owing_full_listing(&self, cursor: &str) -> String {
+        collection_zone::owing_full_listing(cursor)
+    }
+
     fn upsert(
         &self,
         secret_ref: &str,

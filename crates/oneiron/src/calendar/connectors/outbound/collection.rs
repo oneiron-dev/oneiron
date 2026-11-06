@@ -7,8 +7,8 @@
 //! ([`calendar_collection_members_for_operation`]), in one scan scoped to the
 //! operation that opens each row's exact href once. An omission it reports
 //! carries the row as it read it, and its admission
-//! ([`require_omission_observed`]) refuses unless the row is still that one
-//! and no upsert of the UID is in flight.
+//! ([`omission_observed`]) lands only while the row is still that one
+//! and no upsert of the UID is in flight; else it stays owed.
 
 use super::super::door::CalendarConnectorOperation;
 use super::super::remote::ics_content_hash;
@@ -16,8 +16,8 @@ use super::super::resource::read_blob_ref;
 use super::super::seat::CalendarConnectorError;
 use super::{
     CalendarWriteAction, CalendarWriteOutboxState, OUTBOX, OutboxKey, REMOTE_OBJECT,
-    REMOTE_OBJECT_TAG, RemoteObjectKey, derive_outbox_id, ingest_error, open_cursor,
-    remote_object_digest, remote_projection,
+    REMOTE_OBJECT_TAG, RemoteObjectKey, derive_outbox_id, open_cursor, remote_object_digest,
+    remote_projection,
 };
 use crate::vault::Vault;
 
@@ -91,20 +91,25 @@ pub fn calendar_collection_members_for_operation(
     Ok(members)
 }
 
-/// Refuses the omission of `uid` a full listing reported unless this seat's
-/// remote object row is still the one `observation` read and no upsert of
-/// `uid` is prepared or remotely applied.
+/// Whether the omission of `uid` a full listing reported may land now: this
+/// seat's remote object row is still the one `observation` read and no
+/// upsert of `uid` is prepared or remotely applied. `false` leaves the
+/// omission owed: the sync applies every other change and the next pull
+/// lists the calendar whole again, so it is read again, never dropped.
 ///
 /// The caller holds the vault's calendar admission turn, in which a write
 /// publishes its prepared row too, so no write begins between this check and
-/// the absence it admits. A refusal fails the sync for a retry: the cursor
-/// stays, and the next full listing reads the omission again.
-pub(crate) fn require_omission_observed(
+/// the absence it admits.
+///
+/// # Errors
+///
+/// Scope and storage failures.
+pub(crate) fn omission_observed(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     uid: &str,
     observation: CalendarRemoteObjectObservation,
-) -> Result<(), CalendarConnectorError> {
+) -> Result<bool, CalendarConnectorError> {
     let seat = &operation.registration().seat;
     let scope = operation.literal_scope()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -113,9 +118,7 @@ pub(crate) fn require_omission_observed(
         .get(&vault.store, &txn, &RemoteObjectKey(key))?
         .is_none_or(|row| row.carrier.instance != observation.0)
     {
-        return Err(ingest_error(
-            "a full listing omits a resource whose row moved since the listing; sync again",
-        ));
+        return Ok(false);
     }
     let outbox_id = derive_outbox_id(
         &scope,
@@ -133,9 +136,7 @@ pub(crate) fn require_omission_observed(
             )
         })
     {
-        return Err(ingest_error(
-            "a full listing omits a resource whose write is in flight; sync again once it settles",
-        ));
+        return Ok(false);
     }
-    Ok(())
+    Ok(true)
 }
