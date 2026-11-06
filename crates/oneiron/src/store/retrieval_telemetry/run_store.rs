@@ -1096,11 +1096,12 @@ fn stage_retained_context_pack_retrieval_run_finalize(
         RETRIEVAL_RUN.contains(target, wtxn, &run_id)?
     };
     if present {
-        super::retention::put_retrieval_age(
+        super::retention::put_retrieval_age_with_memory(
             target,
             wtxn,
             run_id,
             target.clock().now_recorded_at(),
+            memory.as_deref_mut(),
         )?;
     }
     Ok(())

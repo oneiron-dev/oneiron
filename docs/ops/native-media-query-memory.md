@@ -373,6 +373,21 @@ aging and the original clock read keep their order and conditions. Any owned
 value copy made by the raw read, overlay storage, database pages, transaction
 scratch and key construction peaks remain outside this key-only charge.
 
+The retained finalizer also records the actual encoded key and value capacities
+of its age-ordered and by-run age-index puts. After the original old-age cleanup
+runs once, each bound put stages its original typed row once, records the sum
+of that row's actual key and value capacities on the same caller lease, then
+performs the same native put. The age-ordered row still precedes the by-run row.
+An unbound caller keeps the direct typed puts. The retained finalizer's presence
+condition, clock read, cleanup, write order and errors stay unchanged.
+
+Each staged row drops inside its write scope before the caller's same lease,
+including write errors and unwind. Its known encoded capacities stay charged
+conservatively until that lease drops. The old-age lookup and deletes remain
+outside this put-only charge, as do overlay copies, database pages, transaction
+scratch, encoding allocation peaks and a full working-set bound. No extra
+encoding, memory line, admission, wait or configured limit is introduced.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,

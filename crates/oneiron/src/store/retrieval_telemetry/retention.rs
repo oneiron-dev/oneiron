@@ -218,9 +218,39 @@ pub(super) fn put_retrieval_age(
     id: RetrievalRunId,
     at: u64,
 ) -> Result<()> {
+    put_retrieval_age_with_memory(target, txn, id, at, None)
+}
+
+pub(super) fn put_retrieval_age_with_memory(
+    target: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: RetrievalRunId,
+    at: u64,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<()> {
     delete_retrieval_age(target, txn, id)?;
-    RETRIEVAL_AGE.put(target, txn, &(at, id), &())?;
-    RETRIEVAL_AGE_BY_RUN.put(target, txn, &id, &CapturedAt(at))?;
+    if let Some(memory) = memory.as_deref_mut() {
+        let row = RETRIEVAL_AGE.stage(&(at, id), &())?;
+        memory.materialized(
+            0,
+            row.key_capacity_bytes()
+                .saturating_add(row.value_capacity_bytes()),
+        );
+        row.put(target, txn)?;
+    } else {
+        RETRIEVAL_AGE.put(target, txn, &(at, id), &())?;
+    }
+    if let Some(memory) = memory {
+        let row = RETRIEVAL_AGE_BY_RUN.stage(&id, &CapturedAt(at))?;
+        memory.materialized(
+            0,
+            row.key_capacity_bytes()
+                .saturating_add(row.value_capacity_bytes()),
+        );
+        row.put(target, txn)?;
+    } else {
+        RETRIEVAL_AGE_BY_RUN.put(target, txn, &id, &CapturedAt(at))?;
+    }
     Ok(())
 }
 
