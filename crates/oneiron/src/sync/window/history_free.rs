@@ -237,7 +237,7 @@ impl HistoryCheck {
             }
         }
         let withdrawn = crate::deletion::withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?;
-        let erased_origin = erased_origin_revisions(vault, &rtxn, doc, origin_revisions)?;
+        let erased_origin = erased_origin_revisions(vault, &rtxn, origin_revisions)?;
         Ok(Self {
             redacted,
             erased,
@@ -374,42 +374,46 @@ impl HistoryCheck {
 
 /// Of `revisions`, each origin CLAIM revision of the window by its entities-map key, the ones
 /// that never ship (FIX 21141): the scrub's settlement would rewrite it (it names an actor this
-/// vault erased, or the row this vault holds is its erased form), or the window's current
-/// carrier under the same key is its erased form, the same claim with more of whom it names
-/// erased and nothing else changed (`erases_more`, as the reverse replacement pin reads it).
+/// vault erased, or the row this vault holds is its erased form), or another revision the window
+/// holds under the same key, current or in history, is its erased form: the same claim with more
+/// of whom it names erased and nothing else changed (`erases_more`, as the reverse replacement
+/// pin reads it). An ordinary edit after the erased form leaves the original refused, since the
+/// erased form stays in the history beside it.
 fn erased_origin_revisions(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    doc: &LoroDoc,
     revisions: Vec<(String, Vec<u8>)>,
 ) -> Result<BTreeMap<String, BTreeSet<[u8; 32]>>> {
-    let entities = doc.get_map("entities");
-    let mut refused: BTreeMap<String, BTreeSet<[u8; 32]>> = BTreeMap::new();
+    let mut by_key: BTreeMap<String, BTreeMap<[u8; 32], Vec<u8>>> = BTreeMap::new();
     for (key, blob) in revisions {
+        by_key
+            .entry(key)
+            .or_default()
+            .insert(*blake3::hash(&blob).as_bytes(), blob);
+    }
+    let mut refused: BTreeMap<String, BTreeSet<[u8; 32]>> = BTreeMap::new();
+    for (key, blobs) in by_key {
         let Ok(id) = EntityId::from_hex(&key) else {
             continue;
         };
-        let Some((kind, body)) = origin_claim_row(&blob) else {
-            continue;
-        };
-        let digest = *blake3::hash(&blob).as_bytes();
-        if refused
-            .get(&key)
-            .is_some_and(|known| known.contains(&digest))
-        {
-            continue;
-        }
-        let rewritten =
-            crate::origin::actor_erase::canonical_origin_claim_in_txn(vault, txn, &id, &blob)?
-                .is_some();
-        let erased_since = super::super::loro_support::map_get_bytes(&entities, &key)
-            .and_then(|live| origin_claim_row(&live))
-            .is_some_and(|(live_kind, live)| {
-                live_kind == kind
-                    && crate::origin::actor_erase::erases_more(kind, &id, &body, &live)
+        let claims: Vec<([u8; 32], &[u8], _, _)> = blobs
+            .iter()
+            .filter_map(|(digest, blob)| {
+                origin_claim_row(blob).map(|(kind, body)| (*digest, blob.as_slice(), kind, body))
+            })
+            .collect();
+        for (digest, blob, kind, body) in &claims {
+            let erased_beside = claims.iter().any(|(other, _, other_kind, other_body)| {
+                other != digest
+                    && other_kind == kind
+                    && crate::origin::actor_erase::erases_more(*kind, &id, body, other_body)
             });
-        if rewritten || erased_since {
-            refused.entry(key).or_default().insert(digest);
+            if erased_beside
+                || crate::origin::actor_erase::canonical_origin_claim_in_txn(vault, txn, &id, blob)?
+                    .is_some()
+            {
+                refused.entry(key.clone()).or_default().insert(*digest);
+            }
         }
     }
     Ok(refused)
