@@ -11,12 +11,16 @@ use super::codec::{
 };
 use super::decision_receipts::keep_decision_receipts_in_txn;
 use super::judge::{AttributionDecisions, verdict_subject};
-use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
+use super::split::{
+    classify_split_traced, measure_split_notes, outcome_scope_in_txn, unclear_floor_sourced,
+};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
     SkillEditProposal,
 };
-use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
+use super::unclear::{
+    UnclearAttribution, UnclearContext, delete_unclear_in_txn, put_unclear_in_txn,
+};
 
 // ---------------------------------------------------------------------------
 // Evidence door + projector
@@ -147,13 +151,28 @@ pub fn run_attribution_projector_with_decisions(
             held.then(|| trace.receipts.clone()),
         ));
         if verdict == AttributionVerdict::Unclear {
+            // The context the notes were written in, frozen with them (FIX
+            // 7824); the project and task type are read in the writer.
+            let context = UnclearContext {
+                actor: evidence.actor,
+                skill: evidence.skill,
+                scope: None,
+                project: None,
+                type_ref: None,
+                attempt_receipt: Some(evidence.receipt_ref.clone()),
+                judge_revision: revision.clone(),
+                judge_model: trace.model.clone(),
+                sources: sources.clone().unwrap_or_default(),
+            };
             unclear.push((
                 sequence,
+                evidence.clone(),
                 UnclearAttribution {
                     lane: AttributionLane::Attempt,
                     reference: sequence.to_string(),
                     evidence_receipts: vec![evidence.receipt_ref.clone()],
                     notes: split.unclear,
+                    context,
                     at: evidence.at,
                 },
             ));
@@ -181,12 +200,23 @@ pub fn run_attribution_projector_with_decisions(
     }
 
     vault.with_write_txn(|wtxn| {
-        for (sequence, row) in &unclear {
+        for (sequence, evidence, row) in &mut unclear {
             // A sequence some earlier judge already routed keeps that verdict:
             // judgments are never rescored, so a note must not contradict one.
-            if !JUDGMENT.contains(&vault.store, wtxn, sequence)? {
-                put_unclear_in_txn(vault, wtxn, row)?;
+            if JUDGMENT.contains(&vault.store, wtxn, sequence)? {
+                continue;
             }
+            // An erase since this pass read the evidence changed it: the notes
+            // were written about what it no longer says (FIX 7824).
+            if !EVIDENCE
+                .get(&vault.store, wtxn, sequence)?
+                .is_some_and(|current| current.evidence == *evidence)
+            {
+                continue;
+            }
+            (row.context.project, row.context.type_ref) =
+                outcome_scope_in_txn(vault, wtxn, &evidence.receipt_ref)?;
+            put_unclear_in_txn(vault, wtxn, row)?;
         }
         for (judgment, (revision, receipts)) in judgments.iter_mut().zip(&stamps) {
             // An erase since this pass read the evidence left it naming no
