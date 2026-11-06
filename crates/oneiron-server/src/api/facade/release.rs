@@ -246,6 +246,26 @@ pub(crate) fn released_saved_result(
     replayed_value(vault, auth, verb, release)
 }
 
+/// `output`, a facade row's answer, as `auth`, its caller now, may read it
+/// (FIX 21054). When `producers` hold a drained call's saved rows, the
+/// answer is the result settlement's drain ran, and this retry read none of
+/// them again: a row the caller's credential no longer reads, or one erased
+/// since, keeps the result on this device, and the caller gets the
+/// content-free word that the call ran ([`details_on_device`]). A fresh
+/// answer, or a drained one whose rows are unknown, is `output` as it is.
+/// The destination release follows for every answer ([`released_value`]).
+pub(super) fn drained_still_admitted(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    producers: &oneiron::memory::ProducerRows,
+    output: serde_json::Value,
+) -> serde_json::Value {
+    match producers.drained_rows() {
+        Some(rows) if !rows_still_admitted(vault, auth, &rows) => details_on_device(),
+        _ => output,
+    }
+}
+
 /// Whether `auth`'s credential still reads every one of `rows` now, and none
 /// was erased since (FIX 7914, FIX 8212): the waiter's current source
 /// admission. A check that cannot be read passes: unknown never withholds.
