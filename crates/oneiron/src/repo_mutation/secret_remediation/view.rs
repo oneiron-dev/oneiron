@@ -172,26 +172,21 @@ fn link_entry(
         return Ok(None);
     }
     let map = body.value.as_map().ok_or_else(corrupt)?;
-    let field = |key: &str| {
-        map.iter()
-            .find(|(name, _)| name.as_str() == Some(key))
-            .map(|(_, value)| value)
-            .ok_or_else(corrupt)
-    };
     let text = |value: &Value| value.as_str().map(str::to_owned).ok_or_else(corrupt);
-    let state = text(field("state")?)?;
-    let proposal = EntityId::from_hex(&text(field("proposal")?)?).map_err(|_| corrupt())?;
-    let commit = match field("commit")? {
+    let state = text(link_field(map, "state")?)?;
+    let proposal =
+        EntityId::from_hex(&text(link_field(map, "proposal")?)?).map_err(|_| corrupt())?;
+    let commit = match link_field(map, "commit")? {
         Value::Nil => None,
         value => Some(text(value)?),
     };
-    let paths = field("paths")?
+    let paths = link_field(map, "paths")?
         .as_array()
         .ok_or_else(corrupt)?
         .iter()
         .map(text)
         .collect::<Result<Vec<_>>>()?;
-    let linked_at = field("linked_at")?.as_u64().ok_or_else(corrupt)?;
+    let linked_at = link_field(map, "linked_at")?.as_u64().ok_or_else(corrupt)?;
     Ok(Some(RepoSecretRemediationLinkEntry {
         state,
         proposal,
@@ -199,4 +194,14 @@ fn link_entry(
         paths,
         linked_at,
     }))
+}
+
+/// The value a link's field `key` holds.
+fn link_field<'v>(map: &'v [(Value, Value)], key: &str) -> Result<&'v Value> {
+    map.iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
+        .ok_or(Error::CorruptedIndex(
+            "a repo secret remediation link does not decode",
+        ))
 }
