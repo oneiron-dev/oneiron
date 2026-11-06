@@ -211,6 +211,15 @@ impl<T: ManifestDbs> DocumentRowStore for T {
         table(row).get_bytes(self, txn, &slot)
     }
 
+    fn port_document_row_borrowed<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        slot: DocumentSlot,
+        row: DocumentRow,
+    ) -> Result<Option<std::borrow::Cow<'txn, [u8]>>> {
+        table(row).get_borrowed(self, txn, &slot)
+    }
+
     fn port_document_updates(
         &self,
         txn: &RoTxn<'_>,
