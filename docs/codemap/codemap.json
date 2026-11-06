@@ -17401,6 +17401,8 @@
       "ReaderJobState",
       "ReaderJobWake",
       "ReaderParent",
+      "ReaderQueueCursor",
+      "ReaderQueuePage",
       "ReaderReportReceipt",
       "ReaderRoute",
       "ReaderRunEnd",
@@ -17428,8 +17430,8 @@
       "const": 6,
       "crate-vis": 13,
       "enum": 8,
-      "fn": 19,
-      "struct": 21,
+      "fn": 20,
+      "struct": 23,
       "trait": 1
      }
     },
@@ -18086,9 +18088,9 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -41273,7 +41275,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GraphFsFileRead"
@@ -92255,7 +92257,7 @@
     "graph_fs": {
      "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Graph-FS read projection over the vault graph"
     },
@@ -93177,7 +93179,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 174,
+   "over_bar": 175,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6572,
    "test_files": 895
@@ -138298,7 +138300,7 @@
       "crate-vis": 4,
       "fn": 1,
       "mod": 8,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -138354,11 +138356,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RecordMetaRows"
+     ],
      "path": "src/session_overlay/overlay/retrieval_erase.rs",
      "purpose": "A room's copies of a deleted or erased record's own retrieval rows (FIX 17382)",
      "surface": {
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
