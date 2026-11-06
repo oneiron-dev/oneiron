@@ -125,8 +125,14 @@ fn person_inputs(
         let Ok(decoded) = crate::claim::decode_claim_body(&body, false) else {
             continue;
         };
-        if decoded.subject != ClaimSubject::Entity(person)
-            || !crate::claim::claim_surfaceable(&decoded)
+        if decoded.subject != ClaimSubject::Entity(person) {
+            continue;
+        }
+        // Every key a claim about the person names is visited, with no
+        // eligible claim too: its profile then stands on nothing.
+        let facet = (decoded.scope_facet != default_facet).then_some(decoded.scope_facet);
+        let sources = keys.entry((facet, decoded.world)).or_default();
+        if !crate::claim::claim_surfaceable(&decoded)
             || crate::claim::claim_sensitivity_band(&decoded).is_none_or(|b| b >= RESTRICTED_BAND)
         {
             continue;
@@ -141,22 +147,19 @@ fn person_inputs(
             .value
             .as_str()
             .map_or_else(|| decoded.value.to_string(), str::to_owned);
-        let facet = (decoded.scope_facet != default_facet).then_some(decoded.scope_facet);
-        keys.entry((facet, decoded.world))
-            .or_default()
-            .push(Source {
-                claim,
-                learned_at,
-                world: decoded.world,
-                version: super::swarm_evidence_content_hash(&body),
-                body_hash: *blake3::hash(&body).as_bytes(),
-                citations,
-                readable: document_version(claim, &body),
-                source: decoded.source,
-                question: crate::context_pack::source_ranking::question_key(&decoded),
-                line: one_line(&format!("{}: {value}", decoded.predicate)),
-                candidate,
-            });
+        sources.push(Source {
+            claim,
+            learned_at,
+            world: decoded.world,
+            version: super::swarm_evidence_content_hash(&body),
+            body_hash: *blake3::hash(&body).as_bytes(),
+            citations,
+            readable: document_version(claim, &body),
+            source: decoded.source,
+            question: crate::context_pack::source_ranking::question_key(&decoded),
+            line: one_line(&format!("{}: {value}", decoded.predicate)),
+            candidate,
+        });
     }
     Ok(keys
         .into_iter()
@@ -268,8 +271,10 @@ fn inputs_digest(sources: &[Source]) -> [u8; 32] {
 }
 
 /// Whether the stored profile at `id` was written from exactly `sources`:
-/// the same claims, every one learned no later than the profile, and the
-/// profile neither marked stale nor withdrawn. Also when it was written.
+/// the same claims, each at the version the profile pinned (its content
+/// hash: a claim rewritten under its id is another version), every one
+/// learned no later than the profile, and the profile neither marked stale
+/// nor withdrawn. Also when it was written.
 fn stored_state(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -289,11 +294,20 @@ fn stored_state(
         return Ok(StoredProfile::Missing);
     };
     let ids: Vec<EntityId> = sources.iter().map(|source| source.claim).collect();
+    let pinned = |source: &Source| {
+        profile.sources.iter().any(|kept| {
+            kept.revision_ref == source.claim
+                && kept.words
+                    == PsychProfileSourceWords::Record {
+                        content: source.version,
+                    }
+        })
+    };
     let current = profile.status == PsychProfileSnapshotStatus::Fresh
         && profile.source_revision_ids == ids
         && sources
             .iter()
-            .all(|source| source.learned_at <= header.learned_at);
+            .all(|source| pinned(source) && source.learned_at <= header.learned_at);
     Ok(if current {
         StoredProfile::Current
     } else {
@@ -466,25 +480,33 @@ pub(crate) fn psych_mirror_key_of_input(input: &rmpv::Value) -> Result<PsychProf
 
 /// Queues the profile attempt of every key whose inputs moved since its
 /// stored profile, or that has none: at most daily for a stored profile, at
-/// once for a missing or withdrawn one. Runs at the start of every Dreamer
-/// wake pass.
+/// once for a missing or withdrawn one. A stored profile whose key has no
+/// eligible claim left (each retracted, hidden or restricted) is withdrawn
+/// at once: it stands on nothing. Runs at the start of every Dreamer wake
+/// pass.
 pub(crate) fn enqueue_psych_mirror_on_wake(vault: &Vault, now: u64) -> Result<()> {
     let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
     if persons.is_empty() {
         return Ok(());
     }
     let read = dreamer_read(vault)?;
-    let mut due = Vec::new();
+    let (mut due, mut withdrawn) = (Vec::new(), Vec::new());
     {
         let txn = snapshot(vault)?;
         let default_facet = vault.default_facet_in_txn(&txn)?;
         for person in persons {
             for (key, sources) in person_inputs(vault, &read, &txn, person, default_facet)? {
                 let sources = selected(sources, now)?;
+                let id = psych_profile_entity_id(&key);
                 if sources.is_empty() {
+                    if matches!(
+                        stored_state(vault, &txn, &id, &sources)?,
+                        StoredProfile::Current | StoredProfile::Behind { .. }
+                    ) {
+                        withdrawn.push(id);
+                    }
                     continue;
                 }
-                let id = psych_profile_entity_id(&key);
                 let regenerate = match stored_state(vault, &txn, &id, &sources)? {
                     StoredProfile::Current => false,
                     StoredProfile::Missing | StoredProfile::Withdrawn => true,
@@ -498,10 +520,13 @@ pub(crate) fn enqueue_psych_mirror_on_wake(vault: &Vault, now: u64) -> Result<()
             }
         }
     }
-    if due.is_empty() {
+    if due.is_empty() && withdrawn.is_empty() {
         return Ok(());
     }
     vault.with_write_txn(|txn| {
+        for id in &withdrawn {
+            crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, txn, id)?;
+        }
         for (key, digest) in &due {
             DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
                 txn,
