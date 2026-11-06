@@ -292,7 +292,7 @@ fn room_insert(
     ops: &mut u64,
 ) -> Result<InsertOutcome> {
     let Some(entry) = room_entry(store, &*wtxn, config.dimensions, id)? else {
-        return start_graph(store, wtxn, id);
+        return start_room_graph(store, wtxn, id);
     };
     let count = read_count(store, &*wtxn)?;
     let existing = store
@@ -327,6 +327,43 @@ fn room_insert(
     store
         .index_meta()
         .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    Ok(InsertOutcome::Applied)
+}
+
+/// A room graph none of whose other nodes loads a vector: `id` becomes its
+/// entry point beside the nodes the view still holds without one (a record
+/// whose vector the room hid, or one base deleted whose copy the room
+/// dropped, FIX 17382). Each of them stays counted, `id` too, so a later
+/// insert of one of them, which finds its node and adds no count, and a
+/// delete of each, which takes one, keep the count whole. A graph that held
+/// no node is symmetric by construction, as [`start_graph`] marks it.
+fn start_room_graph(
+    store: &impl VectorIndexDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<InsertOutcome> {
+    let mut others = 0_u64;
+    for row in store.index_neighbors().iter(&*wtxn)? {
+        let (key, _) = row?;
+        if key.as_ref() != id.as_bytes() {
+            others = others
+                .checked_add(1)
+                .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+        }
+    }
+    if others == 0 {
+        return start_graph(store, wtxn, id);
+    }
+    let count = others
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+    store
+        .index_meta()
+        .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
+    store
+        .index_meta()
+        .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    write_neighbors(store, wtxn, id, &[])?;
     Ok(InsertOutcome::Applied)
 }
 

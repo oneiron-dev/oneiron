@@ -17,11 +17,14 @@
 //! What stays: the room's staged totals (each field's document count and
 //! length, the document total) and its HNSW rows. The totals are room-scoped
 //! snapshots its scoring already reads as approximate beside base, and the
-//! HNSW rows hold ids only; a room's vector recall walks base's graph and
-//! scores the vectors the room stages, so a node without its vector is
-//! skipped. Rewriting either before the writer commits would leave them
-//! wrong if it aborts. The record's phonetic rows, its room revision rows and
-//! its embedding device mark stay too; they are listed as their own rows.
+//! HNSW rows hold ids only. A room's vector recall walks base's graph and
+//! scores the vectors the room stages; its own graph serves only its writes,
+//! whose walk skips a neighbour without its vector, and whose insert, when
+//! no node loads one, counts the vectorless nodes it keeps
+//! (`hnsw::insert::start_room_graph`). Rewriting the totals or the graph
+//! before the writer commits would leave them wrong if it aborts. The
+//! record's phonetic rows, its room revision rows and its embedding device
+//! mark stay too; they are listed as their own rows.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -53,10 +56,11 @@ impl SessionOverlay {
     /// Drops the room's copies of the own retrieval rows of `ids` (module
     /// docs). It runs inside the writer that deletes or erases one of `ids`,
     /// before that writer commits, as the media drop does: an aborted writer
-    /// costs the room a read through to base's rows, which it still holds,
-    /// and the pending `Text` or `Vector` entry of a record, never a shared
-    /// row. A room that holds none of them is left untouched. A segment this
-    /// thread has installed on the overlay loses the same rows and entries,
+    /// costs the room a read through to base's rows, which it still holds
+    /// (a posting the room masked shows again), and the pending `Text` or
+    /// `Vector` entry of a record, never a shared row. A room that holds none
+    /// of them is left untouched. A segment this thread has installed on the
+    /// overlay loses the same rows and entries,
     /// and a record that segment stages an entity row of is kept in both;
     /// another thread's segment, whose base write committed before this
     /// writer began, is published first. It never refuses the writer: an
@@ -214,13 +218,19 @@ impl Scrub {
         };
         let mut emptied = Vec::new();
         for (term, delta) in &mut *rows {
-            delta.present.retain(|identity, value| {
-                let keep = !self.names(identity);
-                if !keep {
+            let gone: Vec<Vec<u8>> = delta
+                .present
+                .keys()
+                .filter(|identity| self.names(identity))
+                .cloned()
+                .collect();
+            for mut identity in gone {
+                if let Some((mut key, mut value)) = delta.present.remove_entry(&identity) {
+                    key.zeroize();
                     value.zeroize();
                 }
-                keep
-            });
+                identity.zeroize();
+            }
             let masks: Vec<Vec<u8>> = delta
                 .deleted
                 .iter()
