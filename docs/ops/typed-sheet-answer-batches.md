@@ -39,6 +39,11 @@ bundle error, not a first-failing-answer index. The temporary vector drops
 before its local hold. Raw stored-bundle decoding and output verification
 have no resource operation and keep their unmetered path. This covers only
 the duplicate index, not all validation allocations.
+When an operation is supplied, validation checks its original deadline at
+entry, for each answer and each collected coordinate, and before and after
+sorting the coordinates. Raw paths without an operation add no clock. A
+returned resource error keeps its existing typed cause. Individual validation
+calls and the in-place sort are not preemptible; this is not a hard-time bound.
 
 The temporary chunk-plan vector and its validated cell text copies use the
 host's existing document-resource reservation and wait. The native writer

@@ -102,6 +102,15 @@ impl SheetAnswerBundle {
     }
 
     fn checked_op_count(&self, resources: Option<&Resources>) -> Result<usize> {
+        let checkpoint = || -> Result<()> {
+            if let Some(resources) = resources {
+                resources
+                    .checkpoint()
+                    .map_err(crate::office_body::machine_memory_refused)?;
+            }
+            Ok(())
+        };
+        checkpoint()?;
         fn invalid() -> Error {
             Error::Artifact(ArtifactError::InvalidEditManifest(
                 "invalid typed sheet answer bundle",
@@ -119,6 +128,7 @@ impl SheetAnswerBundle {
         }
         let mut count = 0;
         for answer in &self.answers {
+            checkpoint()?;
             let cell = answer.cell;
             if cell.col < self.range.start.col
                 || cell.col > self.range.end.col
@@ -164,12 +174,13 @@ impl SheetAnswerBundle {
                     .map_err(crate::office_body::machine_memory_refused)?;
             }
         }
-        cells.extend(
-            self.answers
-                .iter()
-                .map(|answer| (answer.cell.row, answer.cell.col)),
-        );
+        for answer in &self.answers {
+            checkpoint()?;
+            cells.push((answer.cell.row, answer.cell.col));
+        }
+        checkpoint()?;
         cells.sort_unstable();
+        checkpoint()?;
         if cells.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(invalid());
         }
