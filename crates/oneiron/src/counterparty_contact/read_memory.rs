@@ -1,7 +1,8 @@
 //! Canonical contact value reads with caller-bound memory custody.
 
 use super::codec::{
-    decode_counterparty_contact_fields_borrowed, invalid_contact, validate_counterparty,
+    CounterpartyContactScalarHeads, decode_counterparty_contact_fields_borrowed, invalid_contact,
+    validate_counterparty,
 };
 use super::types::{
     COUNTERPARTY_CONTACT_CLAIM_PREDICATES, COUNTERPARTY_CONTACT_SCHEMA_VERSION, KEY_COUNTERPARTY,
@@ -75,7 +76,7 @@ pub struct CounterpartyContactRead {
 
 impl CounterpartyContactRead {
     pub(super) fn from_heads(
-        mut heads: [Option<ClaimValueRead>; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()],
+        heads: [Option<ClaimValueRead>; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()],
     ) -> crate::Result<Self> {
         let schema_version = rmpv::Value::from(COUNTERPARTY_CONTACT_SCHEMA_VERSION);
         let fields = decode_counterparty_contact_fields_borrowed(|key| {
@@ -90,13 +91,36 @@ impl CounterpartyContactRead {
                 .ok_or_else(invalid_contact)
         })?;
         let state = fields.state;
+        Ok(Self::from_validated_heads(heads, state))
+    }
+
+    pub(super) fn from_staged_heads(
+        heads: [Option<ClaimValueRead>; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()],
+        scalars: CounterpartyContactScalarHeads,
+    ) -> crate::Result<Self> {
+        let fields = scalars.decode_fields(|key| {
+            COUNTERPARTY_CONTACT_CLAIM_PREDICATES
+                .iter()
+                .position(|predicate| super::codec::counterparty_contact_body_key(predicate) == key)
+                .and_then(|index| heads[index].as_ref())
+                .map(|value| &**value)
+                .ok_or_else(invalid_contact)
+        })?;
+        let state = fields.state;
+        Ok(Self::from_validated_heads(heads, state))
+    }
+
+    fn from_validated_heads(
+        mut heads: [Option<ClaimValueRead>; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()],
+        state: CounterpartyContactState,
+    ) -> Self {
         let index = |key| {
             COUNTERPARTY_CONTACT_CLAIM_PREDICATES
                 .iter()
                 .position(|predicate| super::codec::counterparty_contact_body_key(predicate) == key)
                 .expect("contact field has a canonical predicate")
         };
-        Ok(Self {
+        Self {
             counterparty: heads[index(KEY_COUNTERPARTY)]
                 .take()
                 .expect("validated contact head"),
@@ -104,7 +128,7 @@ impl CounterpartyContactRead {
                 .take()
                 .expect("validated contact head"),
             state,
-        })
+        }
     }
 
     pub(crate) fn into_counterparty_value(self) -> ClaimValueRead {

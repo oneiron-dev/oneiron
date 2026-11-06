@@ -1,18 +1,49 @@
 //! Canonical contact head collection with deferred fold errors.
 
-use super::{ContactClaimValue, contact_claim_value, duplicate_contact_head_error};
+use super::{
+    ContactClaimValue, contact_claim_value, duplicate_contact_head_error,
+    missing_contact_head_error,
+};
 use crate::Vault;
+use crate::counterparty_contact::codec::{
+    CounterpartyContactScalarHeads, counterparty_contact_body_key,
+};
+use crate::counterparty_contact::read_memory::CounterpartyContactRead;
 use crate::counterparty_contact::types::COUNTERPARTY_CONTACT_CLAIM_PREDICATES;
 use crate::entity_id::EntityId;
 use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
+
+pub(super) struct ContactClaimHeads {
+    bodies: Vec<ContactClaimValue>,
+    scalars: CounterpartyContactScalarHeads,
+    seen: [bool; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()],
+}
+
+impl ContactClaimHeads {
+    pub(super) fn is_empty(&self) -> bool {
+        !self.seen.iter().any(|seen| *seen)
+    }
+
+    pub(super) fn into_read(self) -> crate::Result<CounterpartyContactRead> {
+        if self.seen.iter().any(|seen| !seen) {
+            return Err(missing_contact_head_error());
+        }
+        let mut heads = std::array::from_fn(|_| None);
+        for body in self.bodies {
+            heads[body.predicate_index] = Some(body.value);
+        }
+        CounterpartyContactRead::from_staged_heads(heads, self.scalars)
+    }
+}
 
 pub(super) fn contact_claim_values_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
     memory: Option<ClaimScopeReadMemory<'_>>,
-) -> std::result::Result<Vec<ContactClaimValue>, ClaimBodyReadError> {
+) -> std::result::Result<ContactClaimHeads, ClaimBodyReadError> {
     let mut bodies = Vec::new();
+    let mut scalars = CounterpartyContactScalarHeads::default();
     let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     let mut duplicate = false;
     let mut retained_value_bytes = 0u64;
@@ -33,7 +64,15 @@ pub(super) fn contact_claim_values_in_txn(
             if duplicate {
                 drop(value);
                 drop(std::mem::take(&mut bodies));
+                scalars = CounterpartyContactScalarHeads::default();
                 retained_value_bytes = 0;
+                continue;
+            }
+            let key = counterparty_contact_body_key(
+                COUNTERPARTY_CONTACT_CLAIM_PREDICATES[value.predicate_index],
+            );
+            if scalars.stage(key, &value.value) {
+                drop(value);
                 continue;
             }
             retained_value_bytes =
@@ -44,5 +83,9 @@ pub(super) fn contact_claim_values_in_txn(
     if duplicate {
         return Err(duplicate_contact_head_error().into());
     }
-    Ok(bodies)
+    Ok(ContactClaimHeads {
+        bodies,
+        scalars,
+        seen,
+    })
 }
