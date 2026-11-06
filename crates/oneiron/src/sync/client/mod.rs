@@ -56,6 +56,7 @@ mod own_device;
 mod repo_projection;
 mod residence;
 mod sealed_updates;
+mod staged_bodies;
 mod sync_frames;
 mod types;
 mod window_pads;
