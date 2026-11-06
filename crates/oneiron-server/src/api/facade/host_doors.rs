@@ -130,6 +130,8 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's reset of a person's step-up passkeys (FIX 17553).
+pub(crate) use super::step_up_doors::vault_step_up_passkeys_reset;
 // The weave Admin's served rows, on the passkey step-up (FIX 11694).
 pub(crate) use super::weave_admin_doors::{
     vault_weave_admin_digest, vault_weave_admin_item_wrong, vault_weave_admin_lens,

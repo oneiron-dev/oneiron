@@ -593,6 +593,8 @@ class Oneiron:
         @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
+        def step_up(self) -> "Oneiron._VaultStepUpVerbs": ...
+        @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
@@ -1352,6 +1354,12 @@ class Oneiron:
     class _VaultWeaveDigestFeedbackVerbs:
         def put(self, spec: Facade.WeaveDigestFeedback) -> Facade.WeaveDigestFeedback:
             """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
+    class _VaultStepUpVerbs:
+        @property
+        def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs": ...
+    class _VaultStepUpPasskeysVerbs:
+        def reset(self, spec: Facade.StepUpPasskeysResetRequest) -> Facade.StepUpPasskeysReset:
+            """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
