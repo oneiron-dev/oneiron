@@ -91,9 +91,11 @@ impl Vault {
     }
 
     /// Resumes held turn action `id` once its host hook's ask no longer
-    /// waits: answered, declined, expired, or its saved call gone. The
-    /// worker's next claim crosses the hook boundary again, which alone
-    /// decides. Whether it still waits.
+    /// waits (answered, declined, expired, or its saved call gone) and hooks
+    /// run ([`Self::verb_hooks_running`]): with hooks off the boundary keeps
+    /// an answered call parked, so the action waits for them rather than
+    /// holding again on every pass. The worker's next claim crosses the hook
+    /// boundary again, which alone decides. Whether it still waits.
     pub fn resume_turn_action_hook(&self, id: AttemptId, now: u64) -> Result<bool> {
         let queue = AttemptQueue::new(self);
         let Some(held) = queue.get(id)? else {
@@ -110,7 +112,7 @@ impl Vault {
             HookActorClass::System,
             ask,
         )?;
-        if status == VerbHookWaitStatus::Waiting {
+        if status == VerbHookWaitStatus::Waiting || !self.verb_hooks_running()? {
             return Ok(true);
         }
         let mut txn = self.store.env.write_txn()?;

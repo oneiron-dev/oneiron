@@ -271,6 +271,17 @@ impl Vault {
         )
     }
 
+    /// Whether the pre chain runs hooks now: they are not suppressed for
+    /// this process (`--no-hooks`) and `hooks.enabled` is on. While they are
+    /// not, a retained call answered proceed stays parked (FIX 1765).
+    ///
+    /// # Errors
+    ///
+    /// Reading the binding list.
+    pub fn verb_hooks_running(&self) -> Result<bool> {
+        Ok(!self.verb_hook_state.suppressed() && self.verb_hook_state.bindings(self)?.enabled)
+    }
+
     /// [`Self::pre_verb_hooks`] for a host's retry of a call it retained on
     /// an ask (FIX 1765): a saved call that is gone is a skip, never a fresh
     /// call.
