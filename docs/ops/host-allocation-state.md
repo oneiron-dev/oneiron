@@ -37,8 +37,9 @@ use only the supplied transaction and must not acquire another writer. It must
 not call a void receipt sink and treat that as durability.
 
 The physical dispatch adapter must commit `begin_dispatch` before releasing
-request bytes. Admission, a cached boolean, a provider answer, or a later
-observer does not prove that this happened. This backend never infers unsent
+request bytes. A hold from another acquisition cannot start under the new
+serving fence; it remains pending for original-terminal reconciliation. Admission,
+a cached boolean, a provider answer, or a later observer does not prove dispatch. This backend never infers unsent
 work from a false dispatch bit and never releases old pending work by timeout,
 process close, mode change or grant replacement.
 
