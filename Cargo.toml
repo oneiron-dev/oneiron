@@ -62,6 +62,9 @@ arc-swap = "1.9"
 # inputs from path dependencies, not registry dependencies redirected by a patch.
 # Both declarations must select the same audited ONE-218 source tree.
 heed = { version = "0.20", path = "crates/heed/vendor/heed-0.20.5" }
+# FIX 6519: the same for the KS7 loro vendor (`crates/loro/PROVENANCE.md`); its
+# own loro-internal edge names the sibling vendor's path.
+loro = { version = "1.10", path = "crates/loro/vendor/loro-1.16.2" }
 uuid = { version = "1", features = ["v7"] }
 # ONE-1140 (OD-1): receipt origin attestation, pinned to the 2.2.x line.
 ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
@@ -153,7 +156,7 @@ pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
 # lopdf 0.44.0 snapshot with the additive DecodeAdmission hook (FIX 7654); see
 # crates/oneiron-seal/vendor/README.md. Matches .cargo/config.toml.
 lopdf = { path = "crates/oneiron-seal/vendor/lopdf-0.44.0" }
-# formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.15): the owned error-concatenation
+# formualizer 0.9.3 from the org fork, pinned by rev below: the owned error-concatenation
 # patch, Excel parity work, resource checkpoints and matrix builtin polls on `oneiron/parity`.
 # See docs/ops/forked-dependencies.md.
 formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
