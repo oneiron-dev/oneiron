@@ -12,6 +12,9 @@
 //! the same route makes the same compare and keeps the exact refusal the
 //! guest read as the first row. It stages no data row. A refusal whose
 //! receipt cannot be kept so is the run's error, never the guest's refusal.
+//! A write a verb hook stopped before it was prepared keeps the canonical
+//! path's mark on the same receipt, in one segment that stages no data row
+//! (FIX 18654): the never-ran mark, or a hidden result as its answer.
 //!
 //! The receipt is the write's bookkeeping, as a row's record position is
 //! (#3160): for as long as the room holds it, its row is neither refused
@@ -103,6 +106,10 @@ impl SessionBinding<'_> {
     /// and no hook runs. The refusal's view is settled as kept: no post chain
     /// runs over a refusal. A replay of the step gets the same refusal back
     /// and asks nothing again.
+    ///
+    /// FIX 18654: a write a verb hook stopped keeps the canonical path's mark
+    /// here too, before any segment of its own ran. A never-ran mark makes a
+    /// replay of the step make the write again, under the mark's generation.
     ///
     /// # Errors
     ///
