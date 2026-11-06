@@ -13,7 +13,7 @@
 //! for the owner to land or drop, never lost; and a pin twin with the same
 //! quote, span and version text is held (the window's side, in `sync`).
 
-use super::document::{META, map_insert_bytes};
+use super::document::{META, map_get_bytes, map_insert_bytes};
 use super::invalid;
 use crate::EntityId;
 use crate::error::Result;
@@ -46,6 +46,19 @@ impl Succession {
             incarnation: EntityId::from_bytes(origin.incarnation)?.to_hex(),
             version: version.encode(),
         })
+    }
+
+    /// The proof `doc` holds in its meta map: `None` for a document no
+    /// restore rebuilt, or one whose proof is not whole.
+    #[cfg(feature = "sync")]
+    pub(super) fn read(doc: &LoroDoc) -> Option<Self> {
+        let bytes = map_get_bytes(&doc.get_map(META), SUCCEEDS)?;
+        let proof: Self = super::storage::decode(&bytes).ok()?;
+        EntityId::from_hex(&proof.incarnation)
+            .ok()
+            .filter(|id| id.to_hex() == proof.incarnation)?;
+        VersionVector::decode(&proof.version).ok()?;
+        Some(proof)
     }
 
     /// Writes the proof into `doc`'s meta map; the caller commits it.
