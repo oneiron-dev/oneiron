@@ -31,6 +31,12 @@ struct ArchiveRelease {
     inventory: Option<retirement::ReleaseInventory>,
 }
 
+impl ArchiveRelease {
+    fn owns_version(&self) -> bool {
+        self.pin.own_join || self.sources.contains(&self.pin.artifact_id)
+    }
+}
+
 const RELEASES: SideTable<EntityId, ArchiveRelease, Named> =
     SideTable::new(&side_table::LINE_CHAT_ARCHIVE_RELEASE);
 
@@ -103,7 +109,7 @@ fn settle_line_chat_archive_releases_except_in_txn(
         if !release.detached {
             continue;
         }
-        if !release.pin.own_join || release.released {
+        if !release.owns_version() || release.released {
             retirement::finish_in_txn(store, txn, &claim, release)?;
             continue;
         }
@@ -132,7 +138,7 @@ fn settle_line_chat_archive_releases_except_in_txn(
         let releases: Vec<_> = RELEASES
             .scan(store, txn)?
             .into_iter()
-            .filter(|(_, other)| same_version(&other.pin, pin))
+            .filter(|(_, other)| other.detached && same_version(&other.pin, pin))
             .collect();
         for (owner, mut release) in releases {
             retirement::capture_in_txn(store, txn, &mut release)?;
@@ -214,6 +220,17 @@ fn captured_elsewhere(
     detaching: Option<&EntityId>,
     pin: &LineChatArchivePin,
 ) -> Result<bool> {
+    // A held accepted observation may have no CONTENT capture in a restored
+    // image. Its original LIVE selector still keeps this exact version.
+    for (other, pending) in RELEASES.scan(store, txn)? {
+        if other != *releasing
+            && Some(&other) != detaching
+            && !pending.detached
+            && same_version(&pending.pin, pin)
+        {
+            return Ok(true);
+        }
+    }
     for (other, capture) in PINS.scan(store, txn)? {
         if other != *releasing
             && Some(&other) != detaching
@@ -229,7 +246,7 @@ fn captured_elsewhere(
         let other = crate::vault::entity_id_from_type_index_key(&key)?;
         if other == *releasing
             || Some(&other) == detaching
-            || RELEASES.contains(store, txn, &other)?
+            || release_pending_in_txn(store, txn, &other)?
         {
             continue;
         }
@@ -285,6 +302,31 @@ pub(crate) fn line_chat_archive_releases_owed_in_txn(
             && sources
                 .iter()
                 .any(|source| release.sources.contains(source))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// An accepted erase of this actual source artifact keeps its exact
+/// version through the native full-chain cleanup while its continuation
+/// waits on a held observation or another retained version consumer.
+pub(crate) fn line_chat_archive_keeps_version_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; 32],
+    version_claim: &EntityId,
+) -> Result<bool> {
+    for (_, release) in RELEASES.scan(store, txn)? {
+        if !release.released
+            && release.sources.contains(artifact)
+            && release.pin.artifact_id == *artifact
+            && release.pin.version == version
+            && release.pin.content_hash == *content_hash
+            && release.pin.version_claim == *version_claim
         {
             return Ok(true);
         }
