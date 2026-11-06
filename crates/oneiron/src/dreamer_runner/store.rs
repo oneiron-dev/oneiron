@@ -618,6 +618,45 @@ impl<'a> DreamerRunnerStore<'a> {
         retry_at: u64,
         step_bindings: &[StepEffectBinding],
     ) -> Result<()> {
+        self.requeue_deferred(
+            admitted,
+            budget,
+            retry_at,
+            step_bindings,
+            super::SELECTION_DEFERRED_REASON,
+        )
+    }
+
+    /// Requeues a leased try the pass's frozen preparation did not hold, as
+    /// [`Self::defer_selection`] does, under the backlog reason: it ran
+    /// nothing, so its next run is not a selection retry and widens over no
+    /// conversation peers.
+    pub(crate) fn defer_backlog(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+        step_bindings: &[StepEffectBinding],
+    ) -> Result<()> {
+        self.requeue_deferred(
+            admitted,
+            budget,
+            retry_at,
+            step_bindings,
+            super::BACKLOG_DEFERRED_REASON,
+        )
+    }
+
+    /// The same-row requeue both deferrals share, with `reason` on its
+    /// history.
+    fn requeue_deferred(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+        step_bindings: &[StepEffectBinding],
+        reason: &str,
+    ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
             return Err(invalid_dreamer_runner("invalid selection retry"));
@@ -635,7 +674,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    reason: super::SELECTION_DEFERRED_REASON.into(),
+                    reason: reason.into(),
                     due_at: retry_at,
                 },
             )?;

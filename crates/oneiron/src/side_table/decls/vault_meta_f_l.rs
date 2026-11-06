@@ -30,6 +30,10 @@ side_tables! {
     /// The owner's confidence scale for claims one federation peer sends, this device's local
     /// truth (OF-149). Key: id16(peer principal).
     FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
+    /// An administrative ruling's admission, kept before the grant row that admitted it was
+    /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
+    /// (the ruling).
+    FEDERATION_RULING_WITNESS: VaultMeta b"federation:ruling_witness:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// An owner feedback preview as it was shown, kept until it expires (FIX 5212): its exact

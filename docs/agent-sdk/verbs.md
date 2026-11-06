@@ -1039,6 +1039,8 @@ both bindings and their export-census tests in one change.
 - `vault.habits.checkin`
 - `vault.productivity.create`
 - `vault.productivity.tree`
+- `vault.ingest.ag_ui.import`
+- `vault.ingest.ag_ui.read`
 - `vault.claims.admit`
 - `vault.artifacts.create`
 - `vault.esign.create`
