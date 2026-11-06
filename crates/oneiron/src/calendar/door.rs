@@ -99,6 +99,7 @@ impl Memory<'_> {
             vault.stage_calendar_event(
                 txn,
                 &input,
+                Some(&input.evidence_turn_ids),
                 occurred.to_time_range(),
                 self.write_actor(),
                 event,

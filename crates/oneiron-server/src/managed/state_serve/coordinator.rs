@@ -439,6 +439,18 @@ async fn serve_with_handles(
         restore.verified(&vault)?;
     }
 
+    // Dedicated environments open before ready and the opening wake push, so
+    // the first supervisor schedule already includes their earliest deadlines.
+    let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+        config.shared_env.clone(),
+        &config,
+        config.lease_vault_id,
+        state.background_admission(WriteKind::DeviceSync),
+        Some(state.device_sync_freeze()),
+    )
+    .await;
+    sync_server.install_shared_envs(shared);
+
     handles.ctl_task = Some(tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -452,7 +464,10 @@ async fn serve_with_handles(
     // traffic to. A facility it serves without is named first, and the ready
     // signal is the same either way.
     super::vault_gates::warn_degraded(&readiness);
-    host.ready()?;
+    if let Err(error) = host.ready() {
+        sync_server.stop_shared_envs().await;
+        return Err(error);
+    }
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
     #[cfg(target_os = "linux")]
     if let Some(link) = host.vm_link() {

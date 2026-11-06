@@ -153,6 +153,8 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         } else if let Some(ledger) = &handles.ledger {
             super::super::final_ledger_push_from(ledger, server).await;
         }
+        // Keep every env in the final full-replacement wake snapshot, then stop.
+        server.stop_shared_envs().await;
     }
     (stopped, telemetry_drained)
 }

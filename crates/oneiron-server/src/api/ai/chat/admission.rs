@@ -330,12 +330,13 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // deliveries. FIX 8133: the newcomer mark still precedes this read; FIX
     // 6794: the board still rides the dynamic tail, before anything the turn
     // witnesses.
-    let board = recall::turn_board(
+    let mut board = recall::turn_board(
         server,
         auth,
         &request.text,
         &request.conversation_ref,
         request.agent_ref.as_deref(),
+        agent,
     )
     .await;
     // Admitted through its role on the current snapshot, after hydration:
@@ -373,6 +374,11 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }),
     });
     let board_rows = read_board.map(|board| board.rows.clone());
+    let rider_ack = board
+        .as_mut()
+        .ok()
+        .and_then(Option::as_mut)
+        .and_then(|board| board.rider_ack.take());
     let recall::AdmittedTurn {
         call: admitted,
         recalled,
@@ -608,6 +614,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
         next,
         answering,
     );
+    if recalled && let Some(rider_ack) = rider_ack {
+        rider_ack.commit(server).await;
+    }
     Ok(Started {
         stream: request.stream,
         conversation_ref: request.conversation_ref,
