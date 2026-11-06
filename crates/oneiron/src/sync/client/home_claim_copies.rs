@@ -21,6 +21,8 @@ pub(crate) struct StagedWorldUpdate {
     pub(crate) bytes: Vec<u8>,
     pub(crate) from: crate::authority::PeerMachine,
     pub(crate) copies: Vec<Arc<PreparedHomeClaimCopy>>,
+    /// Original wire bytes, before native repo-copy translation; data only.
+    pub(crate) copy_delivery: Option<[u8; 32]>,
 }
 
 impl SyncClient {

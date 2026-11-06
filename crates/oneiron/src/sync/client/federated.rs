@@ -84,7 +84,7 @@ impl SyncClient {
             })
             .unwrap_or_default();
         self.import_own_device_window_update_with_retained_copies(
-            window_key, update, from, copies, answers,
+            window_key, update, from, copies, None, answers,
         )
     }
 
@@ -98,6 +98,7 @@ impl SyncClient {
         copies: Vec<
             std::sync::Arc<crate::embed::home_vectors::retained_copy::PreparedHomeClaimCopy>,
         >,
+        copy_delivery: Option<[u8; 32]>,
         answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
@@ -125,6 +126,7 @@ impl SyncClient {
                     bytes: update.to_vec(),
                     from,
                     copies,
+                    copy_delivery,
                 });
             // An update joined from its envelope's parts may pass the bound
             // alone (FIX 8247): it waits while nothing else does, and beside

@@ -111,6 +111,7 @@ impl SyncClient {
                 std::ops::ControlFlow::Continue(frame) => frame,
                 std::ops::ControlFlow::Break(answer) => return Ok(answer),
             };
+        let copy_delivery = payload.delivery_digest();
         let payload: &[u8] = &payload;
         match sub_tag {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
@@ -244,6 +245,7 @@ impl SyncClient {
                     payload,
                     self.home_peer,
                     copies,
+                    copy_delivery,
                     Some(&mut answers),
                 ) {
                     // What answers a deferred sealed update this import let in (FIX 10474).
