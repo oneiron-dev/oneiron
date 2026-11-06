@@ -12,9 +12,10 @@
 //!
 //! A host builds the run ceiling from the dispatch attempt it bound
 //! ([`brief_run_ceiling`]) and the credential ceiling from the slip it
-//! verified ([`brief_credential_ceiling`]); the parent ceiling is read from
-//! the store ([`crate::Vault::self_brief_parent_ceiling`]). None of them
-//! reads or writes anything else.
+//! verified ([`brief_credential_ceiling`]); the parent ceiling and the class
+//! ceilings are read from the store
+//! ([`crate::Vault::self_brief_parent_ceiling`],
+//! [`crate::Vault::self_brief_ceilings`]). None of them writes anything.
 
 use std::collections::BTreeSet;
 
@@ -25,7 +26,7 @@ use crate::claim::ScopedReadActorKey;
 use crate::context_projection::ContextSpec;
 use crate::entity_id::EntityId;
 use crate::federation::Scope;
-use crate::policy_manifest_doors::PolicyCeiling;
+use crate::policy_manifest_doors::{PolicyCeiling, PolicyGrantValue};
 
 /// A run's branch-resource bound, as its admitted dispatch stored it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -157,14 +158,19 @@ pub struct BriefParentCeiling {
     pub ancestors: Vec<BriefParentBound>,
 }
 
-/// One concrete class ceiling the resolved policy holds, dated. It describes
-/// a configured row; it is no verdict on any act.
+/// One concrete class ceiling the resolved policy holds, or the live
+/// definition ceiling, dated. It describes a configured row; it is no
+/// verdict on any act.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BriefCeiling {
     pub class_or_effect: BriefCeilingTarget,
     pub posture: BriefCeilingPosture,
     /// The vault's authority instant the read observed, in Unix seconds.
     pub as_of_secs: u64,
+    /// The resolved policy's frontier hash in the same read, lowercase hex:
+    /// it names the policy state the row was read beside. It is no revision,
+    /// and no row carries one of its own.
+    pub policy_frontier: String,
 }
 
 /// What a class ceiling governs, under the keys its source row uses. A
@@ -177,6 +183,13 @@ pub enum BriefCeilingTarget {
     Actor {
         actor_class: String,
         actor_ref: Option<String>,
+    },
+    /// The approval ceiling the policy resolves for this actor from the
+    /// actor-ceiling rows that match it, composed most-restrictive: the
+    /// actor class and the actor's own ref.
+    ResolvedActor {
+        actor_class: String,
+        actor_ref: String,
     },
     /// The live agent definition, with its fork and foreign bounds, that
     /// applies to `actor`.
@@ -212,63 +225,43 @@ pub enum BriefActPosture {
     RequireCapability,
 }
 
+/// What a class's vault row lets the class's holder rows do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BriefClassPrecedence {
+    /// A holder row narrows inside the vault row.
+    NestedNarrowing,
+    /// Holder rows are ignored for the class: the vault row is the answer.
+    VaultOnly,
+}
+
 /// The bound a class ceiling's row states.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BriefCeilingPosture {
     /// An approval ceiling.
     Approval { approval: PolicyCeiling },
-    /// An act class's posture.
-    Act { posture: BriefActPosture },
-    /// A wait class's window; `null` `max_secs` when the vault bounds no
-    /// longest wait.
+    /// An act class's posture, and on a vault row what its holder rows may
+    /// do; `null` `precedence` on a holder row, which names none.
+    Act {
+        posture: BriefActPosture,
+        precedence: Option<BriefClassPrecedence>,
+    },
+    /// A wait class's window, and on a vault row what its holder rows may
+    /// do; `null` `max_secs` when the row bounds no longest wait, `null`
+    /// `precedence` on a holder row, which names none.
     Wait {
         min_secs: u64,
         max_secs: Option<u64>,
+        precedence: Option<BriefClassPrecedence>,
     },
     /// A configured scoped policy grant row: the six-axis scope it reads
     /// under, its purpose-specific selectors and budget row as the manifest
     /// gives them, and whether a read under it needs a receipt.
     ConfiguredScopedGrant {
         scope: Scope,
-        selectors: Option<BriefPolicyValue>,
-        budget: Option<BriefPolicyValue>,
+        selectors: Option<PolicyGrantValue>,
+        budget: Option<PolicyGrantValue>,
         receipt_required: bool,
     },
-}
-
-/// A policy row's MessagePack value in a lossless JSON form: integers as
-/// text, floats as their exact big-endian bits, map entries in their order
-/// with their own keys.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum BriefPolicyValue {
-    Nil,
-    Boolean(bool),
-    Integer(String),
-    Float32([u8; 4]),
-    Float64([u8; 8]),
-    String(String),
-    /// A complete encoded MessagePack string, its header included, for a
-    /// string that is not valid UTF-8.
-    RawString(Vec<u8>),
-    Binary(Vec<u8>),
-    Array(Vec<BriefPolicyValue>),
-    /// Entries keep their order, duplicate keys and non-string keys.
-    Map(Vec<BriefPolicyMapEntry>),
-    Extension(BriefPolicyExtension),
-}
-
-/// One entry of a [`BriefPolicyValue::Map`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BriefPolicyMapEntry {
-    pub key: BriefPolicyValue,
-    pub value: BriefPolicyValue,
-}
-
-/// A MessagePack extension value.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BriefPolicyExtension {
-    pub tag: i8,
-    pub data: Vec<u8>,
 }

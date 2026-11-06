@@ -9,10 +9,11 @@
 //! from the run itself: the agent, the person its subject anchor names, the
 //! owner's agent Grants that stand for the agent, the run, credential and
 //! parent ceilings and the communication limits its host holds the facts
-//! for ([`BriefHostFacts`]), the line the run's entry spends on, the clock
-//! and the skills the run's own session loaded. Every field no host
-//! resolves is left out of the brief and named on one unavailable line
-//! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
+//! for ([`BriefHostFacts`]), the policy's class ceilings, the line the run's
+//! entry spends on, the clock and the skills the run's own session loaded.
+//! Every field no host resolves is left out of the brief and named on one
+//! unavailable line ([`oneiron::context_board::SelfBrief::render`]), never
+//! stated as a value.
 
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
@@ -87,13 +88,13 @@ pub(crate) async fn describe_self_for_run(
 /// `actor`, with the ceilings its host holds the facts for (`host`). Each
 /// field no host produces for a run (FIX-LIST: the self-brief producers) is
 /// `None`; so is the principal when no subject anchor names the person
-/// behind the agent, so are the grants, the parent ceiling and the comm
-/// reach when their read fails, so are the run and parent ceilings and the
-/// comm reach when the host bound no dispatch attempt, so are the
-/// credential ceiling and the credential's comm reach when it verified no
-/// slip, and so are the budget lease and budget when no line binds the
-/// run's entry. [`oneiron::context_board::SelfBrief::render`] leaves each
-/// `None` field out and names it unavailable. A credentialed agent's
+/// behind the agent, so are the grants, the parent ceiling, the comm reach
+/// and the class ceilings when their read fails, so are the run and parent
+/// ceilings and the comm reach when the host bound no dispatch attempt, so
+/// are the credential ceiling and the credential's comm reach when it
+/// verified no slip, and so are the budget lease and budget when no line
+/// binds the run's entry. [`oneiron::context_board::SelfBrief::render`]
+/// leaves each `None` field out and names it unavailable. A credentialed agent's
 /// describe(self) with no installed snapshot resolves its brief here too,
 /// over its own session's reads and with no line (FIX 11461).
 pub(super) fn resolved_state(
@@ -167,6 +168,20 @@ pub(super) fn resolved_state(
             .ok()
             .flatten()
     });
+    // CLASSES (FIX 17594): the concrete class ceilings the resolved policy
+    // holds for the agent and its live definition ceiling, dated, read in
+    // one snapshot. Class verdicts stay unavailable. A failed read leaves
+    // the ceilings unavailable.
+    let ceilings = server
+        .vault
+        .self_brief_ceilings(actor)
+        .inspect_err(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the self brief's class ceilings did not read; the brief names them unavailable"
+            );
+        })
+        .ok();
     Ok(SelfBriefState {
         self_ref,
         principal,
@@ -178,7 +193,7 @@ pub(super) fn resolved_state(
             reach,
             credential_ceiling: host.communication_credential_ceiling,
         },
-        ceilings: None,
+        ceilings,
         budget_lease_id: line.map(|line| line.run().to_owned()),
         budget: line.map(RunAdmission::read),
         clock_ms,

@@ -20,9 +20,8 @@ mod grants;
 mod working_set;
 pub use ceilings::{
     BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
-    BriefContextBound, BriefCredentialCeiling, BriefParentBound, BriefParentCeiling,
-    BriefPolicyExtension, BriefPolicyMapEntry, BriefPolicyValue, BriefRunCeiling,
-    brief_credential_ceiling, brief_run_ceiling,
+    BriefClassPrecedence, BriefContextBound, BriefCredentialCeiling, BriefParentBound,
+    BriefParentCeiling, BriefRunCeiling, brief_credential_ceiling, brief_run_ceiling,
 };
 pub use grants::{BriefGrant, BriefGrants};
 pub use working_set::{BriefWorkingHandle, BriefWorkingSet};
