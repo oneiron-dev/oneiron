@@ -60,7 +60,7 @@ pub(super) fn fence_dependents(
     id: EntityId,
 ) -> Result<Vec<EntityId>> {
     let dependents = super::pin_index::dependents(store, txn, id)?;
-    NOTE_ERASE_SOURCE.put(store, txn, &HexId(id), &())?;
+    mark_erased(store, txn, id)?;
     for citing in &dependents {
         NOTE_ERASE_PENDING.put(store, txn, &HexPair(HexId(*citing), HexId(id)), &())?;
     }
@@ -126,7 +126,7 @@ pub(crate) fn erase_restored_citations_in_txn(
     }
     let store = &vault.store;
     for id in erased {
-        NOTE_ERASE_SOURCE.put(store, txn, &HexId(*id), &())?;
+        mark_erased(store, txn, *id)?;
     }
     for (citing, request) in super::pin_index::requests_citing(store, txn, erased)? {
         let queued = HexPair(HexId(citing), HexId(request));
@@ -277,15 +277,31 @@ pub(super) fn redact_view_receipts(
     Ok(())
 }
 
+/// Marks `id` erased here, and the copy id its masked copy takes
+/// (`copy_id`): a copy of an erased record is erased with it, and no copy
+/// of it is cached again under that id (FIX 18400).
+pub(super) fn mark_erased(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    NOTE_ERASE_SOURCE.put(store, txn, &HexId(id), &())?;
+    if let Ok(copy) = crate::origin::secret_projection::copy_id::copy_id(&id) {
+        NOTE_ERASE_SOURCE.put(store, txn, &HexId(copy), &())?;
+    }
+    Ok(())
+}
+
+/// Whether `id` is erased here: its hard-delete marker, or its citation
+/// erase mark ([`mark_erased`]).
+pub(super) fn is_erased(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+    Ok(vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
+        || NOTE_ERASE_SOURCE.contains(&vault.store, txn, &HexId(id))?)
+}
+
 pub(super) fn pin_is_erased(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pin: &super::NotePin,
 ) -> Result<bool> {
     for id in [pin.document, pin.claim] {
-        if vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
-            || NOTE_ERASE_SOURCE.contains(&vault.store, txn, &HexId(id))?
-        {
+        if is_erased(vault, txn, id)? {
             return Ok(true);
         }
     }

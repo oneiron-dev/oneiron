@@ -76,6 +76,9 @@ pub(super) fn erase_own_copies_in_txn(
 ) -> Result<()> {
     let mut ids = Vec::new();
     for item in items {
+        // Both ids stay marked erased, so a home that still serves either
+        // copy cannot have it cached again here.
+        super::citation_erase::mark_erased(store, txn, item)?;
         ids.push(item);
         if let Ok(copy) = crate::origin::secret_projection::copy_id::copy_id(&item) {
             ids.push(copy);
@@ -102,9 +105,10 @@ pub(crate) fn erase_residence_copies_of_in_txn(
 }
 
 /// Refuses to keep a fetched residence copy of `item` (FIX 18400): an item
-/// erased here, or a NOTE whose document pins an erased record or does not
-/// read as its admitted state. The home may not have erased it yet; the
-/// next fetch tries again.
+/// erased here, the derived copy of an erased record included (its copy id
+/// is marked with it), or a NOTE whose document pins an erased record or
+/// does not read as its admitted state. The home may not have erased it yet;
+/// the next fetch tries again.
 ///
 /// # Errors
 ///
@@ -117,7 +121,7 @@ pub(crate) fn refuse_erased_residence_copy_in_txn(
     entity_type: u8,
     document: &[u8],
 ) -> Result<()> {
-    if vault.local_hard_delete_marker_exists_in_txn(txn, &item)? {
+    if super::citation_erase::is_erased(vault, txn, item)? {
         return Err(Error::EntityNotFound);
     }
     if entity_type == ENTITY_TYPE_NOTE && !copy_clean(vault, txn, item, document)? {
