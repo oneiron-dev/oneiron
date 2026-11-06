@@ -41321,7 +41321,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/hnsw/insert.rs",
@@ -92169,7 +92169,7 @@
     "hnsw": {
      "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "HNSW graph index over the persisted neighbor graph"
     },
@@ -93070,7 +93070,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 169,
+   "over_bar": 170,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6563,
    "test_files": 895
@@ -138171,6 +138171,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/session_overlay/overlay/retrieval_erase.rs",
+     "purpose": "A room's copies of a deleted or erased record's own retrieval rows (FIX 17382)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/session_overlay/overlay/rows.rs",
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
@@ -141340,7 +141350,7 @@
      "purpose": "Store-layer modules of core `serialize`; core re-exports each one at its old path"
     },
     "session_overlay": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -141573,7 +141583,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 633,
+   "source_files": 634,
    "test_files": 4
   },
   "oneiron-uniffi": {
