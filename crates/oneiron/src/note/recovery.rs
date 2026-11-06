@@ -61,13 +61,15 @@ pub(crate) fn guard(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId) -> Res
             "NOTE recovery requires authority or citation rebasing",
         ));
     }
-    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &note)? {
-        let doc = super::document_store::load(vault, txn, note)?;
-        if !doc.pins()?.is_empty() {
-            return Err(invalid(
-                "history-free NOTE recovery requires citation rebasing",
-            ));
-        }
+    // A NOTE whose document this vault does not hold yet (its core arrived
+    // first) has no citation to rebase (FIX 7783).
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &note)?
+        && let Some(doc) = super::storage::stored_document(vault, txn, note)?
+        && !NoteDocument::from_loro(note, doc)?.pins()?.is_empty()
+    {
+        return Err(invalid(
+            "history-free NOTE recovery requires citation rebasing",
+        ));
     }
     Ok(())
 }

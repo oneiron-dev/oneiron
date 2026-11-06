@@ -57,8 +57,7 @@ fn load_stored_to(
 
 /// The head document this vault holds of NOTE `id`, or `None` while it holds
 /// none: a replica whose authority has not sent the NOTE's document yet. Only
-/// the sync doors that ask for that document read this.
-#[cfg(feature = "sync")]
+/// the sync doors that ask for that document, and recovery, read this.
 pub(crate) fn stored_document(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
