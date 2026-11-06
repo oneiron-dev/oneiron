@@ -25,6 +25,7 @@ use super::run::ShapeApplyRun;
 use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::authority::{ActSurface, HostSlipIssuer, VerifiedSlip};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::Result;
