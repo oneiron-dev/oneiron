@@ -1,7 +1,7 @@
 //! Caller-retained session opens and causal queues for their actor/machine key.
 
 use super::*;
-use oneiron::runtime_hooks::VerbHookWaitStatus;
+use oneiron::runtime_hooks::verb::VerbHookWaitStatus;
 
 #[derive(Debug)]
 pub(super) struct HintWork {
