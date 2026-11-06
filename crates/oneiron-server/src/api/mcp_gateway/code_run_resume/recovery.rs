@@ -225,7 +225,15 @@ impl McpCodeRunContinuation {
         if crate::mcp::mcp_code_run_id(&origin.handle, &caller) != run.key.run {
             return Err(VerbAskRefusal::ContextUnavailable);
         }
-        mcp_execute_code_gate(server, &caller).map_err(|_| VerbAskRefusal::ScopeRefused)?;
+        // The gate folds a credential the store could not read into a
+        // refusal. A refused gate is judged again here: only a credential
+        // read as dead, or a scope the live credential does not hold,
+        // refuses for good (FIX 4606).
+        mcp_execute_code_gate(server, &caller).map_err(|_| {
+            credential_liveness(server, &caller)
+                .err()
+                .unwrap_or(VerbAskRefusal::ScopeRefused)
+        })?;
         Ok(Self {
             run_ref: origin.handle.clone(),
             task: run.task,
@@ -236,6 +244,27 @@ impl McpCodeRunContinuation {
             witness: run.witness,
             registration,
         })
+    }
+}
+
+/// Whether the rebuilt `caller`'s credential reads live now, with a store
+/// read that fails kept apart from a dead credential (FIX 4606): the first
+/// is unavailable and a later pass tries again, the second is revoked. The
+/// attested owner's standing is read again as his context reads it.
+fn credential_liveness(server: &SyncServer, caller: &McpCallContext) -> Result<(), VerbAskRefusal> {
+    let Some(auth) = caller.auth.as_ref() else {
+        return Err(VerbAskRefusal::CredentialMissing);
+    };
+    if let Some(owner) = auth.managed_owner() {
+        return crate::code_consent_host::attested_owner_standing(server, owner).map(|_| ());
+    }
+    let Some(verified) = auth.verified_slip() else {
+        return Ok(());
+    };
+    match server.vault.capability_slip_is_live(verified) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(VerbAskRefusal::CredentialRevoked),
+        Err(_) => Err(VerbAskRefusal::CredentialUnavailable),
     }
 }
 
