@@ -40464,17 +40464,18 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AdmissionDisposition",
-      "AdmissionVerdict"
+      "AdmissionVerdict",
+      "ProposerStamp"
      ],
      "path": "src/identity_topology/admission_disposition.rs",
      "purpose": "Signed append-only admission facts, independent of a decision's erasable author",
      "surface": {
-      "crate-vis": 18,
-      "enum": 1,
+      "crate-vis": 20,
+      "enum": 2,
       "struct": 1
      }
     },
@@ -40621,6 +40622,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/proposer_scope.rs",
+     "purpose": "The proposer axis of the ARCH-0055 r7 ramp scope (FIX 9870 + FIX 10189): op kind x target class x the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -40738,7 +40749,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 1,
-      "crate-vis": 64,
+      "crate-vis": 65,
       "re-export": 1
      }
     },
@@ -90116,9 +90127,9 @@
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
@@ -90963,9 +90974,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 158,
+   "over_bar": 159,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6389,
+   "source_files": 6390,
    "test_files": 895
   },
   "oneiron-android": {
