@@ -85,11 +85,23 @@ impl Spend {
         &mut self,
         vault: &Vault,
         attempt: AttemptId,
-        spent: &[([u8; 32], LlmUsage)],
+        spent: &[([u8; 32], LlmUsage, bool)],
     ) -> Result<()> {
         let store = DreamerRunnerStore::new(vault);
-        for (hash, usage) in spent {
-            if self.step_hashes.contains(hash) || store.checkpoint_step_charged(attempt, hash)? {
+        for (index, (hash, usage, _)) in spent.iter().enumerate() {
+            if self.step_hashes.contains(hash)
+                || match store.checkpoint_step_charged(attempt, hash) {
+                    Ok(charged) => charged,
+                    Err(error) => {
+                        for (_, usage, memoized) in &spent[index..] {
+                            if !*memoized {
+                                self.units = self.units.saturating_add(units(usage));
+                            }
+                        }
+                        return Err(error);
+                    }
+                }
+            {
                 continue;
             }
             self.step_hashes.push(*hash);
