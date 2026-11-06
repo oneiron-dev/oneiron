@@ -295,10 +295,13 @@ impl MergeQueue<'_> {
             .verdict_ref
             .clone()
             .ok_or(Error::InvariantViolation("bound check has no verdict"))?;
-        let passed = ContractOracle::new(self.vault)
+        let verdict = ContractOracle::new(self.vault)
             .verdict(&verdict_ref)?
-            .ok_or(Error::CorruptedIndex("merge verdict is missing"))?
-            .passes();
+            .ok_or(Error::CorruptedIndex("merge verdict is missing"))?;
+        // A removed public name routes to a person review before the slot
+        // settles (FIX 4365). The verdict stays red.
+        self.route_contract_review(&batch, step.mask, step.phase, &path.tree, &verdict)?;
+        let passed = verdict.passes();
         let _guard = lock_repository(self.repo.common_dir())?;
         let mut current = self.batch(&step.batch)?;
         if let Err(error) = self.settle_slot(
