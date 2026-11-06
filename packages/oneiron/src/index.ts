@@ -756,8 +756,10 @@ export class Oneiron {
    * `pactEpoch`. This selection grants no read authority.
    * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the
    * window budget of `readerAgentRef`'s memory profile, else 4,000.
+   * `filter` only narrows the vault's floor for every stage of the recall;
+   * an unset field leaves the floor in force.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef, opts.filter)),
     retrieval: {
       aging: {
         /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */

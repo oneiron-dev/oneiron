@@ -23269,7 +23269,7 @@ async fn execute_agent_verb_row_on(
         "vault.search.bm25" => {
             let input: oneiron::task_verb::sdk::QueryBm25Request =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let asked = (input.query.clone(), input.limit);
+            let asked = (input.query.clone(), input.limit, input.filter.clone());
             let output = oneiron::task_verb::sdk::vault_search_bm25(&memory, input)
                 .map_err(mcp_facade_error)?;
             let (output, listed) = Box::pin(crate::api::search::complete_bm25_with_home(
@@ -23277,6 +23277,7 @@ async fn execute_agent_verb_row_on(
                 output,
                 &asked.0,
                 asked.1,
+                asked.2.as_ref(),
                 &actor.home_caller(),
             ))
             .await;

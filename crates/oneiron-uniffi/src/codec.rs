@@ -1243,6 +1243,14 @@ impl Lower<oneiron::code_run::vault_read::ContextPackMediaQuery> for RecallMedia
 
 /// A recall's query affect crosses as the engine's; the recall door refuses
 /// it out of range.
+/// A recall's caller retrieval filter, the generated record of the engine's
+/// `ReadFilterInput` (FIX 3977), lowered through its wire shape.
+impl Lower<engine::ReadFilterInput> for crate::facade_types_generated::ReadFilterInput {
+    fn lower(self) -> Result<engine::ReadFilterInput, OneironError> {
+        lower_record("vault.recall", self)
+    }
+}
+
 impl Lower<sdk::QueryAffect> for QueryAffect {
     fn lower(self) -> Result<sdk::QueryAffect, OneironError> {
         Ok(sdk::QueryAffect {

@@ -276,10 +276,15 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .scoped_read
             .search_candidate_limit(limit)
             .map_err(|error| engine_failure(METHOD, &error))?;
-        let mut builder = self
+        // Every channel and neighbor takes this read's row gate, its bound
+        // caller filter included, before its cut (FIX 3977); the pack is
+        // still filtered under the read once it runs.
+        let plan = self
             .scoped_read
-            .vault()
-            .context_pack()
+            .context_pack_plan()
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        let mut builder = plan
+            .admit(self.scoped_read.vault().context_pack())
             .limit(candidate_limit)
             .hydrate(true)
             .include_edges(false)

@@ -366,6 +366,10 @@ ARGUMENTS = {
     'query_affect': {'rust': 'Option<oneiron::task_verb::sdk::QueryAffect>', 'napi': 'Option<NapiQueryAffect>', 'native_ts': 'QueryAffect | undefined', 'py': 'dict[str, Any] | None', 'stub': 'QueryAffect | None', 'native_py': 'Option<&str>', 'json': True,
         'napi_convert': 'let {name} = {name}.map(query_affect_to_engine);', 'py_convert': 'let {name}: Option<oneiron::task_verb::sdk::QueryAffect> = {name}.map(|value| decode(value, "recall query affect")).transpose()?;', 'field': '{name}'},
     'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
+    # FIX 3977: a recall's caller retrieval filter, the request's own JSON
+    # shape at every boundary, decoded onto the engine's `ReadFilterInput`.
+    'read_filter': {'rust': 'Option<oneiron::memory::ReadFilterInput>', 'napi': 'Option<serde_json::Value>', 'native_ts': 'ReadFilterInput | undefined', 'py': 'dict[str, Any] | None', 'stub': 'Facade.ReadFilterInput | None', 'native_py': 'Option<&str>', 'json': True,
+        'napi_convert': 'let {name} = {name}.map(|value| read_filter_to_engine(js_json(value))).transpose().map_err(facade_error)?;', 'py_convert': 'let {name}: Option<oneiron::memory::ReadFilterInput> = {name}.map(|value| decode(value, "recall filter")).transpose()?;', 'field': '{name}'},
     # OF-237: the receipt kinds a read lists, as `ReceiptKind` names them; none
     # is the gate decision ledger.
     'kinds': {'rust': '&[String]', 'napi': 'Option<Vec<String>>', 'native_ts': 'string[] | undefined', 'py': 'list[str] | None', 'stub': 'list[str] | None', 'native_py': 'Option<Vec<String>>',
@@ -945,9 +949,10 @@ def mcp_input_dispatch(row):
                      'let output = output.map_err(mcp_facade_error)?;\n')
         elif name in CALL_HOME_DOORS:
             # Its page as the plain arm reads it, then the home's references.
-            body += ('let asked = (input.query.clone(), input.limit);\n'
+            # The caller's own filter rides the home ask too (FIX 3977).
+            body += ('let asked = (input.query.clone(), input.limit, input.filter.clone());\n'
                      f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
-                     f'let (output, listed) = Box::pin({CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller())).await;\n'
+                     f'let (output, listed) = Box::pin({CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, asked.2.as_ref(), &actor.home_caller())).await;\n'
                      '// The home\'s references, found under the caller\'s own proof.\n'
                      'served.extend(listed);\n')
         else:

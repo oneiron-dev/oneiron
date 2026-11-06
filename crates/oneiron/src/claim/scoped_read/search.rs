@@ -657,6 +657,104 @@ impl ScopedRead<'_> {
     }
 }
 
+impl<'v> ScopedRead<'v> {
+    /// This read bound to `request` as well (FIX 3977), for a shared service
+    /// a caller hands its lane by reference: the same key, audience, peers,
+    /// session view, room ceiling, claim status, owner authority, records
+    /// cover and judged time, its bound filter met with `request`. A request,
+    /// never authority: it only narrows.
+    pub(crate) fn narrowed_by_request(
+        &self,
+        request: Option<&RetrievalFilter>,
+    ) -> Result<ScopedRead<'v>> {
+        let room_ceiling = self
+            .room_ceiling
+            .lock()
+            .map_err(|_| Error::InvariantViolation("room ceiling lock"))?
+            .clone();
+        Ok(ScopedRead {
+            vault: self.vault,
+            actor_key: self.actor_key.clone(),
+            audience: self.audience.clone(),
+            peer_reads: self.peer_reads.clone(),
+            audience_cache: Mutex::new(Default::default()),
+            room_ceiling: Mutex::new(room_ceiling),
+            room_ceilings_built: AtomicUsize::new(0),
+            session_view: self.session_view,
+            claim_status: self.claim_status,
+            recall_authority: Mutex::new(None),
+            room_peer: self.room_peer,
+            own_owner_authority: self.own_owner_authority,
+            records_cover: self.records_cover.clone(),
+            judged_at: self.judged_at,
+            read_filter: RetrievalFilter::meet_requests(self.read_filter.as_ref(), request),
+        })
+    }
+}
+
+/// A context pack's admission under one read's search plan (FIX 3977): every
+/// channel's candidates and every neighbor take the read's row gate, its key
+/// and its bound caller filter, before any cut, so a row the read refuses
+/// takes no place an admitted row could fill. A prefilter, never an
+/// authorization: the pack is still filtered under the read once it runs.
+pub struct ContextPackPlan<'p, 'v> {
+    read: &'p ScopedRead<'v>,
+    plan: SearchPlan,
+}
+
+impl<'v> ScopedRead<'v> {
+    /// The plan a context pack this read assembles retrieves under, resolved
+    /// in a fresh snapshot ([`ContextPackPlan`]).
+    ///
+    /// # Errors
+    ///
+    /// The read's own refusals resolving its authority.
+    pub fn context_pack_plan(&self) -> Result<ContextPackPlan<'_, 'v>> {
+        Ok(ContextPackPlan {
+            read: self,
+            plan: self.search_plan(None)?,
+        })
+    }
+}
+
+impl ContextPackPlan<'_, '_> {
+    /// `builder` retrieving under this plan: its read key on private-note and
+    /// PPR candidate work, the plan's candidate envelope on every channel and
+    /// neighbor, and the read's row gate on each candidate.
+    #[must_use]
+    pub fn admit<'b>(
+        &'b self,
+        builder: crate::ContextPackBuilder<'b>,
+    ) -> crate::ContextPackBuilder<'b> {
+        builder
+            .scoped_note_reader(self.read.actor_key.clone())
+            .authority_filter(self.plan.candidates.clone())
+            .filter_candidates(&plan_row_decodes)
+            .gate_candidates(self)
+    }
+}
+
+impl crate::store::retrieval_values::CandidateGate for ContextPackPlan<'_, '_> {
+    fn in_txn<'t>(
+        &'t self,
+        txn: &'t heed::RoTxn<'t>,
+    ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
+        let held = self.read.held_for(None);
+        Box::new(
+            move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
+                self.read.snapshot_candidate_in(
+                    txn,
+                    &held,
+                    rtxn,
+                    &self.plan.policy,
+                    &self.plan.filter,
+                    id,
+                )
+            },
+        )
+    }
+}
+
 /// A CLAIM whose body does not decode is no candidate, as the D19 gate holds;
 /// it does not end the search.
 fn plan_row_decodes(

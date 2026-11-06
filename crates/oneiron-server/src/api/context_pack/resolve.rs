@@ -194,9 +194,15 @@ pub(crate) async fn run_context_pack(
         ),
     );
 
-    let mut builder = server
-        .vault
-        .context_pack()
+    // Every channel and neighbor takes the reader's row gate, its bound
+    // caller filter included, before its cut (FIX 3977); the pack is still
+    // filtered under the reader once it runs.
+    let plan = scoped_read.context_pack_plan().map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "core context-pack scoped plan failed");
+        core_engine_error("core context-pack scoped read setup failed", error)
+    })?;
+    let mut builder = plan
+        .admit(server.vault.context_pack())
         .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
