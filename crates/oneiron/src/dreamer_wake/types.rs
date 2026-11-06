@@ -1,6 +1,6 @@
 //! Wake request and outcome vocabulary plus the executor contract.
 
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,7 @@ use crate::attempt_queue::{
 use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{
     AdmittedBudgetLine, DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause,
-    NativeMeterSnapshot,
+    NativeMeterSnapshot, NativeNetSnapshot, NativeNetTally,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -251,6 +251,7 @@ pub struct WakeAttemptMeter {
     spent_before_error: Mutex<(u64, Vec<StepReceipt>)>,
     /// The actual private program result's total and selected native tokens.
     result_native: Mutex<Option<NativeMeterSnapshot>>,
+    partition_net: OnceLock<Arc<NativeNetTally>>,
 }
 
 #[derive(Debug)]
@@ -295,6 +296,14 @@ impl WakeAttemptMeter {
             .as_ref()
             .filter(|native| native.interval().end_used_units == reported_units)
             .cloned()
+    }
+
+    pub(crate) fn result_net(&self, reported_units: u64) -> Option<NativeNetSnapshot> {
+        // A registered guard is a GROSS producer, not this partition NET tally.
+        if self.line.get().is_some() {
+            return None;
+        }
+        self.partition_net.get()?.snapshot(reported_units)
     }
 
     fn lock_spent_before_error(&self) -> std::sync::MutexGuard<'_, (u64, Vec<StepReceipt>)> {
@@ -347,6 +356,14 @@ impl WakeAttemptMeter {
 }
 
 impl WakeAttemptContext<'_> {
+    pub(crate) fn partition_net_tally(&self) -> Option<Arc<NativeNetTally>> {
+        let meter = self.spend_meter?;
+        let original = self.deadline.original_budget_line()?.clone();
+        let tally = Arc::new(NativeNetTally::new(original));
+        meter.partition_net.set(tally.clone()).ok()?;
+        Some(tally)
+    }
+
     /// True once the pass asked this attempt to stop at its next boundary:
     /// the host paused or stopped it. An attempt that sees this parks
     /// through its checkpoint exit, and a later pass resumes it.

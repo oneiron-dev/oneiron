@@ -93,8 +93,8 @@ call finds its paid fact without charging again. These rows are live financial
 state, excluded from checkpoint images, and are not removed by logical memo forget,
 step-mark cleanup or ordinary owed-call retirement.
 
-Automatic payment is not activated. Neither the response producer nor the wake
-aggregate driver calls that primitive. Before activation, the actual invoice
+Automatic direct invoice payment is not activated. Neither the response producer
+nor the wake aggregate driver calls that primitive. Before activation, the actual invoice
 coverage must travel through each native NET or GROSS producer and its settlement.
 A scalar aggregate minus native usage, or a sum of selected lease states, is not
 proof of the covered guard delta. The existing driver charge, owed-unit SUM and
@@ -122,8 +122,9 @@ native invocation coordinate, when that invocation came from a native admission.
 The source is captured before the call constructor; only that constructor's
 coordinate is attached afterward. Recovery does not recapture the actor, run,
 frontier, subject or time from a later receiver. The private STATE format is
-version 3, with a mandatory nil-or-binary invocation field; no older format is
-accepted. The canonical `dreamer.step` claim format is unchanged.
+version 4, with mandatory invocation and native NET invoice-population fields;
+no older format is accepted. A missing native source is nil, not an inferred
+invoice. The canonical `dreamer.step` claim format is unchanged.
 
 After inserting the actual terminal claim, the same writer binds every retained
 physical call of that original attempt, generation and invocation to that claim.
@@ -139,6 +140,39 @@ original admissions remain missing, not guessed from the latest memo, observed
 call, public lease id or response totals. The association is financial correlation
 data, not permission or proof of payment. It does not activate the payment
 primitive or settle the remaining NET/GROSS coverage and reconciliation work.
+
+### Original native NET response population
+
+Each fresh generation keeps the exact native responses its schema producer
+returned, before corrective usage is combined. The capture records the original
+corrective ordinal and native input-plus-output quantity, including known zeros.
+It uses that producer's existing invocation and allocates no call or lease.
+Transport retries keep their existing coordinate. An unreported error is not
+converted to a zero invoice.
+
+The final successful response, including a successful deterministic fallback,
+pairs this population with the same original source and saved response bytes.
+A checked sum validates the reported NET total; it never selects invoice members
+from an aggregate number or a GROSS meter. Missing provenance, a noncontiguous
+population or overflow leaves this optional capture unknown. Error, cut, refused
+fallback and unsaved-response exits keep their existing behavior and no new
+response-population record.
+
+After the original terminal-alias write, a separate nested savepoint checks each
+selected original call's retained invoice, quantity and exact claim alias. It
+records the immutable response population only on the original invocation's
+ordinal-zero financial row. An admitted but unanswered corrective tail can share
+the terminal alias without belonging to this NET population. A known empty
+population is not a zero invoice for that unanswered call. Recovery keeps the
+same saved population and may add another terminal alias; it cannot replace the
+original population or invoice facts.
+
+A capture or pairing failure is logged and leaves the existing response, aliases,
+charge and result unchanged. A failed parent write rolls back the child record.
+This is source data, not a payment or permission. The partition NET tally/driver
+inclusion and same-attempt Paid acknowledgement are described below. Other
+producer coverage, complete paid-fact checks and late-call reconciliation remain
+unfinished. Automatic direct invoice payment and aggregate subtraction stay off.
 
 ### Original native meter-token capture
 
@@ -226,9 +260,9 @@ The program's result uses its existing absolute total, while error settlement
 uses the registered baseline delta. A result-total equality check only pairs the
 capture with its reported result; native membership comes from the producer's
 actual selected tokens. The program has no Deferred or Landed result producer,
-so those paths gain no invented coverage. Native NET tally coverage, complete House producer coverage,
-paid-fact checks and late-call reconciliation remain separate
-work. No durable guard pointer is serialized. Automatic native invoice payment
+so those paths gain no invented GROSS coverage. The partition NET tally has its
+own producer and inclusion path below. Complete House producer coverage,
+paid-fact checks and late-call reconciliation remain separate work. No durable guard pointer is serialized. Automatic native invoice payment
 and aggregate charge subtraction remain off; a known empty GROSS interval is not
 a zero NET invoice.
 
@@ -263,3 +297,98 @@ This is optional producer data, not a paid fact, exact aggregate coverage or
 complete error-prefix accounting. The native payment primitive stays uncalled;
 new funding, aggregate subtraction, automatic payment and the generated-only
 opening policy remain unchanged.
+
+### Captured House response quantities on errors
+
+The same retained native admission also stores the original read's completion
+request observations. Each request records its actual prompt count. A parsed HTTP
+response records its status and each answer's native `index`, `tokens_evaluated`
+and `tokens_predicted` when present, before status, batch or label validation.
+Malformed shapes and missing counters remain explicit unknowns. Native zero
+counts remain zero data; they do not replace the existing accounting output floor.
+
+A transport failure or work-cutoff cancellation leaves that request unresolved.
+Earlier observed responses remain on the same source list, even when a later
+retry has no response. List position is local request order, not a corrective
+financial ordinal or proof that bytes reached a model. A tokenizer failure before
+any completion request creates no response observation.
+
+The optional write occurs after the original read returns, including its unchanged
+error, and freezes this source list separately from the terminal invoice. The
+existing complete/stopped-prefix invoice, logical validation, retry order and
+single permit settlement remain unchanged.
+
+For an unchanged logical error, a terminal invoice is recorded only when every
+actual completion request has a parsed successful response, exactly its distinct
+native prompt-index population, and both native counters. The quantity uses the
+same existing forward-pass output floor as ordinary House usage; raw zero counters
+remain unchanged in the source list. Overflow or any unresolved, unsuccessful,
+missing or ambiguous response leaves the error invoice unknown. The full source
+list and this invoice are confirmed in the same writer, so a conflicting source
+cannot freeze a different invoice. No error prefix is promoted to a full invoice.
+
+An incomplete response is not a complete invoice, paid fact, exact NET/GROSS
+coverage or payment activation. Unreported expenses and unresolved requests remain
+unknown; these sources do not close full error-prefix accounting.
+
+### Captured House post-settlement meter intervals
+
+A successful pre-byte input registration also binds a set-once weak reference to
+that original vault on the shared admission handle. Runtime receipt clones share
+this reference; it does not keep a vault alive, serialize a pointer, or create a
+new registry or funding reservation.
+
+The original permit's settlement capture samples that exact issuing guard and
+opaque lease after its guard settlement, before keeping receipt clones. It runs
+independently of ModelCallRecord evidence, observer attribution and captured-receipt
+subscribers. An absent writer, closed vault, different boot, panic unwind or
+unknown lease interval records nothing. A known settled empty interval stays
+known and empty; it is not a zero NET invoice.
+
+The snapshot releases the guard lock before the existing private native-call
+writer begins. No capture-target lock is held over that writer. Failure is logged
+without changing the original settlement or receipt forwarding. The hook runs
+before any later durable allocation commit and host publication, so this native
+meter observation proves neither of those operations succeeded. It records no
+extra settlement, charge, NET payment, aggregate credit or fabricated terminal
+claim. Reads that never retain an input do not gain invented meter provenance.
+
+
+### Partition NET tally inclusion
+
+A prepared partition registers its own fresh tally on that attempt's context.
+Each newly counted terminal contributes the exact StepReceipt and that response's
+native usage. Usage without a terminal remains explicitly unpaired, including a
+known zero entry. A child guard total invalidates this NET-only capture rather
+than being treated as native response usage. Other tally constructors and restored
+follower tallies keep their existing behavior and supply no invented capture.
+
+The actual Completed, Deferred and ParkWithSpend producers publish that tally.
+The error handoff publishes it beside the original error spend. A snapshot is
+owned before any vault writer starts, and no tally lock crosses IO. A registered
+GROSS guard, an unpublished tally, overflow or a different reported total supplies
+no NET inclusion data. Result-total equality only checks alignment; it never
+selects invoices or turns missing usage into zero.
+
+Inside the original budget writer, exact terminal aliases resolve a unique
+original O0 row without consulting the mutable memo index. Its captured response
+population selects the original physical invoices. Every selected ordinal,
+quantity, line, step and alias is checked again in that same writer. Overlapping
+original invoices are not silently deduplicated. The optional child transaction
+records NET inclusion beside the aggregate charge, receipts and any park or
+deferral; its failure leaves those existing operations unchanged. NoReservation
+records no coverage, and a parent abort rolls back both operations.
+
+For a same-attempt original invoice, this writer also records Paid using the
+invoice's original quantity and this settlement's time. The existing NET
+aggregate has already charged that original line; this acknowledgement adds no
+debit or subtraction. A prior Paid fact keeps its original time. Another
+attempt's contribution remains inclusion data only, since this settlement does
+not establish that other attempt's free-time attribution.
+
+Coverage and this Paid fact share the optional child transaction. A failed child
+leaves both absent and does not undo the old aggregate charge, so absence of a
+Paid fact is not permission to pay again. Unpaired usage, distinct recovery
+selection, cross-alias aggregate overlap and late original-call reconciliation
+remain open. The old aggregate arithmetic is unchanged, and the direct native
+payment primitive is still uncalled. Automatic direct invoice payment stays off.

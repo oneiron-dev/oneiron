@@ -164,6 +164,7 @@ impl ConsolidationExecutor<'_> {
         let mut charges = StepChargeTally {
             units,
             step_bindings,
+            native_net: None,
         };
         let call = RoleCall::resolve(
             &self.roles,

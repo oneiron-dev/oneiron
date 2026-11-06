@@ -176,7 +176,7 @@ impl ConsolidationExecutor<'_> {
             originals,
             returned,
             widened_round,
-            charges: StepChargeTally::default(),
+            charges: StepChargeTally::for_context(ctx),
         })))
     }
 
@@ -230,6 +230,7 @@ impl ConsolidationExecutor<'_> {
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
+                charges.publish_net();
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
                     step_bindings: charges.step_bindings.clone(),
@@ -254,6 +255,7 @@ impl ConsolidationExecutor<'_> {
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
+                charges.publish_net();
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),

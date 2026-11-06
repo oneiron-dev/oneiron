@@ -11,7 +11,10 @@
 mod arc_backstop;
 mod deadline;
 mod decision_source;
-pub use decision_source::{DecisionCallAdmission, DecisionCallInvoice, DecisionCallSource};
+pub use decision_source::{
+    DecisionAnswerQuantity, DecisionCallAdmission, DecisionCallInvoice, DecisionCallSource,
+    DecisionCompletionObservation, DecisionCompletionResponse,
+};
 mod driver;
 pub(crate) mod follower;
 mod grain;

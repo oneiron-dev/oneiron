@@ -11,6 +11,11 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use oneiron_model::llm::BudgetMeterRange;
 
+mod net;
+use net::NativeNetCoverage;
+pub(in crate::dreamer_runner) use net::record_native_net_settlement_in_txn;
+pub(crate) use net::{NativeNetSnapshot, NativeNetTally};
+
 const CALLS: SideTable<AdmittedCallId, NativeCallObligation, Named> =
     SideTable::new(&side_table::DREAMER_BUDGET_NATIVE_CALL);
 
@@ -27,6 +32,9 @@ struct NativeCallObligation {
     terminal_claims: Vec<EntityId>,
     meter: NativeCallMeter,
     gross_coverage: NativeGrossCoverage,
+    net_response: NativeNetResponse,
+    net_coverage: NativeNetCoverage,
+    house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +71,18 @@ enum NativeGrossCoverage {
         aggregate_units: u64,
         settled_units: u64,
         at: u64,
+    },
+}
+
+/// Native responses selected by the original generation, not all calls
+/// sharing a terminal alias and not a payment of their invoices.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum NativeNetResponse {
+    Unknown,
+    Captured {
+        invoices: Vec<(u32, u64)>,
+        response_units: u64,
     },
 }
 
@@ -116,6 +136,9 @@ pub(crate) fn retain_native_call_in_txn(
         terminal_claims: Vec::new(),
         meter: NativeCallMeter::Unknown,
         gross_coverage: NativeGrossCoverage::Unknown,
+        net_response: NativeNetResponse::Unknown,
+        net_coverage: NativeNetCoverage::Unknown,
+        house_completions: None,
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
@@ -123,6 +146,9 @@ pub(crate) fn retain_native_call_in_txn(
         original.terminal_claims.clear();
         original.meter = NativeCallMeter::Unknown;
         original.gross_coverage = NativeGrossCoverage::Unknown;
+        original.net_response = NativeNetResponse::Unknown;
+        original.net_coverage = NativeNetCoverage::Unknown;
+        original.house_completions = None;
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
@@ -131,6 +157,29 @@ pub(crate) fn retain_native_call_in_txn(
         return Ok(());
     }
     CALLS.put(&vault.store, wtxn, &admitted.origin, &row)
+}
+
+/// Keep the original House read's request/response counters even when its
+/// unchanged logical result is an error. A partial prefix is never an invoice.
+pub(crate) fn record_native_house_completions_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: AdmittedCallId,
+    completions: &[crate::dreamer_wake::DecisionCompletionObservation],
+) -> Result<()> {
+    let Some(mut row) = CALLS.get(&vault.store, &*wtxn, &origin)? else {
+        return Err(invalid_dreamer_runner(
+            "native call has no original admission",
+        ));
+    };
+    match &row.house_completions {
+        None => {
+            row.house_completions = Some(completions.to_vec());
+            CALLS.put(&vault.store, wtxn, &origin, &row)
+        }
+        Some(original) if original == completions => Ok(()),
+        _ => Err(invalid_dreamer_runner("native House observations differ")),
+    }
 }
 
 /// Keep the actual response quantity at its native producer, before schema
@@ -225,6 +274,94 @@ pub(crate) fn bind_native_call_terminal_in_txn(
     })();
     if let Err(error) = written {
         tracing::warn!(kind = ?error.kind(), %error, "native call terminal binding skipped");
+    }
+}
+
+/// Pair the original response's exact NET population with its terminal
+/// alias. A failed evidence write leaves the old alias/response writer intact.
+pub(crate) fn record_native_net_response_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: AdmittedCallId,
+    binding: crate::model_step_context::StepReceipt,
+    invoices: &[(u32, u64)],
+    response_units: u64,
+) {
+    let recorded = (|| -> Result<()> {
+        if origin.attempt_id != binding.attempt_id || origin.ordinal != 0 {
+            return Err(invalid_dreamer_runner("native NET response origin differs"));
+        }
+        let mut child = vault.store.env.nested_write_txn(wtxn)?;
+        let Some(mut root) = CALLS.get(&vault.store, &child, &origin)? else {
+            return Err(invalid_dreamer_runner(
+                "native NET response admission missing",
+            ));
+        };
+        if root.step_hash != binding.step_hash || !root.terminal_claims.contains(&binding.claim_id)
+        {
+            return Err(invalid_dreamer_runner(
+                "native NET response terminal differs",
+            ));
+        }
+        let mut total = 0_u64;
+        for (index, &(ordinal, units)) in invoices.iter().enumerate() {
+            if usize::try_from(ordinal).ok() != Some(index) {
+                return Err(invalid_dreamer_runner(
+                    "native NET response population differs",
+                ));
+            }
+            let mut call = origin;
+            call.ordinal = ordinal;
+            let Some(row) = CALLS.get(&vault.store, &child, &call)? else {
+                return Err(invalid_dreamer_runner(
+                    "native NET invoice admission missing",
+                ));
+            };
+            if row.step_hash != binding.step_hash
+                || !row.terminal_claims.contains(&binding.claim_id)
+            {
+                return Err(invalid_dreamer_runner(
+                    "native NET invoice terminal differs",
+                ));
+            }
+            let native_units = match row.invoice {
+                NativeCallInvoice::Invoiced { units } | NativeCallInvoice::Paid { units, .. } => {
+                    units
+                }
+                NativeCallInvoice::Admitted => {
+                    return Err(invalid_dreamer_runner("native NET invoice is unknown"));
+                }
+            };
+            if native_units != units {
+                return Err(invalid_dreamer_runner(
+                    "native NET invoice quantity differs",
+                ));
+            }
+            total = total
+                .checked_add(units)
+                .ok_or_else(|| invalid_dreamer_runner("native NET invoice total overflows"))?;
+        }
+        if total != response_units {
+            return Err(invalid_dreamer_runner(
+                "native NET response quantity differs",
+            ));
+        }
+        let captured = NativeNetResponse::Captured {
+            invoices: invoices.to_vec(),
+            response_units,
+        };
+        match root.net_response {
+            NativeNetResponse::Unknown => {
+                root.net_response = captured;
+                CALLS.put(&vault.store, &mut child, &origin, &root)?;
+            }
+            _ if root.net_response == captured => {}
+            _ => return Err(invalid_dreamer_runner("native NET response differs")),
+        }
+        child.commit().map_err(Error::from)
+    })();
+    if let Err(error) = recorded {
+        tracing::warn!(kind = ?error.kind(), %error, "native NET response pairing skipped");
     }
 }
 
