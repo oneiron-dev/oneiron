@@ -31755,35 +31755,35 @@ fn invoke_vault_skills_get(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_skills_get(memory, decode(value)?)?)
+    skill_library_output::view(vault_skills_get(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_list(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_skills_list(memory, decode(value)?)?)
+    skill_library_output::page(vault_skills_list(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_archive(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_skills_archive(memory, decode(value)?)?)
+    skill_library_output::view(vault_skills_archive(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_restore(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_skills_restore(memory, decode(value)?)?)
+    skill_library_output::restored(vault_skills_restore(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_fork(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_skills_fork(memory, decode(value)?)?)
+    skill_library_output::view(vault_skills_fork(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_rules_set(

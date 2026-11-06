@@ -88,6 +88,7 @@ mod skill_attribution;
 mod skill_defaults;
 mod skill_execution;
 mod skill_fit;
+mod skill_library_output;
 mod skill_fork;
 mod skills;
 mod standing;
