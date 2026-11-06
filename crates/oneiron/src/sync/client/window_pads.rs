@@ -47,6 +47,7 @@ use crate::sync::window::{
 mod deferred;
 mod send;
 
+pub use send::PreparedSyncFrame;
 pub(crate) use send::WindowClaimCopyRelease;
 
 /// A sealed world update whose isolated check waits on an edge endpoint no

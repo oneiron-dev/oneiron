@@ -12,7 +12,7 @@ use super::node_batch::PreparedNodeBatch;
 use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::sync::carrier::SyncSocket;
-use crate::sync::client::SyncClient;
+use crate::sync::client::{PreparedSyncFrame, SyncClient};
 
 pub(super) struct ConnectionSocket {
     socket: SyncSocket,
@@ -23,6 +23,7 @@ pub(super) struct ConnectionSocket {
 pub(super) enum OutgoingMessage {
     Frame(Message),
     NodeBatch(PreparedNodeBatch),
+    Prepared(PreparedSyncFrame),
 }
 
 impl Stream for ConnectionSocket {
@@ -44,6 +45,12 @@ impl Sink<OutgoingMessage> for ConnectionSocket {
         let this = self.get_mut();
         let message = match item {
             OutgoingMessage::Frame(message) => message,
+            OutgoingMessage::Prepared(frame) => {
+                let Some(frame) = frame.release(&this.vault, this.peer) else {
+                    return Ok(());
+                };
+                Message::Binary(frame.into())
+            }
             OutgoingMessage::NodeBatch(batch) => {
                 Message::Binary(batch.into_frame(&this.vault, this.peer).into())
             }
@@ -84,6 +91,10 @@ pub(super) fn reunite(read: WsSource, write: WsSink) -> Result<SyncSocket, Strin
 }
 
 impl WsSink {
+    pub(super) async fn send_prepared(&mut self, frame: PreparedSyncFrame) -> Result<(), WsError> {
+        self.inner.send(OutgoingMessage::Prepared(frame)).await
+    }
+
     pub(super) async fn send_node_batch(
         &mut self,
         batch: PreparedNodeBatch,

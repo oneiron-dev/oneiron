@@ -59,8 +59,24 @@ produce a copy; the receiver still imports and receipts the required prefix
 exactly once. Native tokens drop with the selected batch or its buffered head,
 never become a durable queued grant, and do not survive the connection.
 
-This producer covers live node batches. It does not add copies to handshake,
-receipt-resend, bulk, promotion or server-generated sends.
+The live producer covers node batches. Direct UPDATE deltas answering a
+VV_REQUEST or VV_RESPONSE also keep their native tokens through the same
+socket door, including during the initial handshake, convergence, normal
+incoming-message handling and the residence-ACK pump. These direct frames
+keep the standalone encoder's existing per-frame limits and order. A final
+source miss drops only the optional suffix, not the required window prefix.
+Receipt-resend, queued handshake replay, bulk, promotion and server-generated
+producers still do not add copies.
+
+`SyncClient::handle_server_message` returns owning `PreparedSyncFrame` values.
+The connection keeps each whole native value in its existing split-sink slot
+until the underlying socket is ready. It checks the original frame with the
+existing withholding predicate before queuing it. Public `as_bytes` and
+`into_bytes` expose only required bytes, never optional copies as a future
+grant. An optional-only continuation has no required bytes and is omitted by
+the native socket when its copies are abandoned. Other replies carry their
+original bytes with no optional evidence. There is no parallel raw/with-copies
+dispatch or compatibility reader.
 
 The standalone window encoder, protocol tags, header fields, receipt bindings,
 limits and retry settings are unchanged. There is no migration or old-format
