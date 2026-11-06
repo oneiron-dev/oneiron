@@ -37,6 +37,7 @@ pub use admission::{
 pub use allocation::{
     AllocationCallContext, AllocationCallIntent, AllocationCallKey, AllocationCommit,
     AllocationProducer, AllocationServingFence, AllocationStoreError, AllocationTerminal,
+    AllocationTerminalSelection,
     AllocationTerms, DurableAllocationHold, DurableAllocationRead, PersistentAllocation,
     VaultAllocationLedger,
 };

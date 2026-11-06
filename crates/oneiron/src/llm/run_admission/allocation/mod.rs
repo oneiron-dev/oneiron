@@ -108,6 +108,13 @@ pub struct AllocationCommit<T> {
     pub postcommit_error: Option<AllocationStoreError>,
 }
 
+/// The original terminal was already selected, or this commit selected a
+/// new terminal with the caller's retained value. Neither case reissues a hold.
+pub enum AllocationTerminalSelection<T> {
+    Existing(AllocationTerminal),
+    Selected(T),
+}
+
 /// Native storage failures remain distinct from budget/admission denials.
 #[derive(Debug, thiserror::Error)]
 pub enum AllocationStoreError {
