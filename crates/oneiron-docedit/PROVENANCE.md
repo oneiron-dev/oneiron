@@ -248,3 +248,15 @@ bytes. Paragraph gates, rendering, alignment, defaults, opaque/static carries, c
 and receipts are unchanged. This is a source-only same-count gap correction, part of the
 existing 17480/residual 18510 pack, not full 17480, full-feature, whole OF-509 or
 PowerPoint fidelity proof, and no Office runtime comparison is claimed.
+
+The count-changing outer field-free gap carry (2026-11-06, FIX 17480) extends
+the same-count gap carry with one shared original-gap block: same-count lines keep
+their exact existing gap bytes and predicate, and count-changing lines additionally
+keep only gaps wholly between two original matched head paragraphs or two original
+matched tail paragraphs under the same field-free gate and body scope. Gaps holding
+any direct or nested field and all middle, boundary, added, removed or unmatched gaps
+keep the existing drop so field-removal receipts stay truthful. Rendering, alignment,
+BREAK handling, opaque/static carries, cut paths and receipts are unchanged. This is a
+source-only outer-gap correction, part of the existing 17480/residual 18510 pack, not
+full 17480, full-feature, whole OF-509/OF-510 or PowerPoint fidelity proof, and no
+Office runtime comparison is claimed.
