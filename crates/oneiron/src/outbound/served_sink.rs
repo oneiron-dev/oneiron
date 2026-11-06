@@ -718,20 +718,43 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
     /// FIX 4747: native mail looks the send's submission up by its
     /// Message-ID. A LINE push carries the retry key the engine send id
     /// derives, and LINE drops a resend under a key it already accepted, so
-    /// its resend is safe and stands as not sent. A LINE reply carries no
-    /// key, and Slack and Telegram keep no id of ours: they cannot tell.
-    /// Engine call (CALLS, FIX 4747): a LINE push's lookup is not sent.
+    /// while LINE still keeps that key its resend is safe and stands as not
+    /// sent; once the send's approval is older than LINE's retry-key window
+    /// ([`line_push_resend_is_deduplicated`]) it cannot tell (review #4747
+    /// slices 2+3). A LINE reply carries no key, and Slack and Telegram keep
+    /// no id of ours: they cannot tell. Engine call (CALLS, FIX 4747).
     fn lookup_sent(
         &mut self,
         engine_send_id: &EngineSendId,
         target: &SentLookupTarget<'_>,
     ) -> SentLookup {
         match (target.intent.channel.as_str(), target.intent.verb.as_str()) {
-            (LINE_CHANNEL, "push") => SentLookup::NotSent,
+            (LINE_CHANNEL, "push")
+                if line_push_resend_is_deduplicated(
+                    target.send_approved_at,
+                    crate::unix_seconds_now(),
+                ) =>
+            {
+                SentLookup::NotSent
+            }
             (EMAIL_CHANNEL, "send") => self.email_lookup_sent(engine_send_id, target),
             _ => SentLookup::CannotTell,
         }
     }
+}
+
+/// How long after a send's approval its LINE retry key still deduplicates a
+/// resend: LINE keeps a retry key for 24 hours from the first request, and
+/// the approval is the earliest that request could have been, so an hour of
+/// margin is left. Engine call (CALLS, FIX 4747).
+const LINE_RETRY_KEY_DEDUPE_SECS: u64 = 23 * 60 * 60;
+
+/// Whether a LINE push approved at `approved_at` is still inside LINE's
+/// retry-key window at `now`, so a resend under the same key cannot reach
+/// its audience twice. Unknown approval: not.
+fn line_push_resend_is_deduplicated(approved_at: Option<u64>, now: u64) -> bool {
+    approved_at
+        .is_some_and(|approved_at| now.saturating_sub(approved_at) < LINE_RETRY_KEY_DEDUPE_SECS)
 }
 
 /// The served sink a host keeps past one borrow of its vault: a connector

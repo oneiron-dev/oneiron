@@ -189,6 +189,11 @@ pub struct OutboundDispatchRequest {
     /// the transport releases the send that may have gone out for one
     /// resend, with no lookup.
     pub(crate) owner_released_resend: bool,
+    /// FIX 4747: when a connector-send TASK's send was approved (its
+    /// `occurred_at`, Unix seconds): the earliest any executor could have
+    /// sent it, which a lookup bounded by a provider's dedupe window reads.
+    /// In memory only; `None` for every other send.
+    pub(crate) send_approved_at: Option<u64>,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -249,6 +254,7 @@ impl OutboundDispatchRequest {
             engine_send_id: None,
             earlier_send_lookup: false,
             owner_released_resend: false,
+            send_approved_at: None,
         }
     }
 

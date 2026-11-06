@@ -79,6 +79,9 @@ pub struct SentLookupTarget<'a> {
     pub intent: &'a OutboundIntent,
     pub verb_contract: &'static OutboundVerbContract,
     pub channel_identity_ref: Option<EntityId>,
+    /// When the send was approved (Unix seconds): the earliest any executor
+    /// could have sent it. `None` when the caller does not know.
+    pub send_approved_at: Option<u64>,
 }
 
 /// The bound on one provider lookup's request. Engine call (CALLS, FIX

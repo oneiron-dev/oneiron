@@ -62,6 +62,7 @@ fn sent_lookup_target<'r>(
         intent: &request.intent,
         verb_contract,
         channel_identity_ref: request.channel_identity_ref,
+        send_approved_at: request.send_approved_at,
     }
 }
 
