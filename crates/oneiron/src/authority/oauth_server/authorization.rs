@@ -141,17 +141,20 @@ impl Vault {
             "expires_at": expires_at,
         })
         .to_string();
-        let ask = NotificationEvent {
+        // One Ask per live owner, each its own notification (its event names the owner): a
+        // shared vault's owners each see it, and whichever answers first settles the request;
+        // the others' taps then find it settled (review #6478).
+        let ask_for = |owner: EntityId| NotificationEvent {
             kind: NotificationKind::Ask,
             source: NotificationSource {
                 producer: OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER.to_owned(),
-                event: format!("{}:asked", request_ref.to_hex()),
+                event: format!("{}:asked:{}", request_ref.to_hex(), owner.to_hex()),
                 result: Some(request_ref.to_hex()),
-                detail: Some(detail),
+                detail: Some(detail.clone()),
                 ..NotificationSource::default()
             },
             subject_refs: Vec::new(),
-            recipient: Some(crate::vault::embedded_owner_actor_id()?),
+            recipient: Some(owner),
             created_at: now,
             origin_conversation: None,
         };
@@ -168,7 +171,9 @@ impl Vault {
                 return Ok(false);
             }
             REQUESTS.put(&self.store, txn, &HexId(request_ref), &request)?;
-            self.record_notification_in_txn(txn, &ask)?;
+            for owner in crate::policy_model::owners_in_txn(self, txn)? {
+                self.record_notification_in_txn(txn, &ask_for(owner))?;
+            }
             Ok(true)
         })?;
         Ok(recorded.then(|| OAuthAuthorizationPending {
