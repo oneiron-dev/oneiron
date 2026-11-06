@@ -1,9 +1,7 @@
 //! Pin-only live-state rebuild. Authored prose and surviving provenance stay intact.
 
 use super::document::{NoteDocument, invalid};
-use super::sync_rows::{
-    NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_DS_E, SYNC_NC_E, SYNC_QD_E, SYNC_QN_E,
-};
+use super::sync_rows::{SYNC_AD_E, SYNC_DS_E, SYNC_QD_E, SYNC_QN_E};
 use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
@@ -39,39 +37,18 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
             &doc.doc.oplog_vv().encode(),
         )?;
     }
-    let pins = doc.doc.get_map("pins");
-    let mut remove = Vec::new();
-    let entries: Vec<_> = pins
-        .keys()
-        .filter_map(|key| pins.get(&key).map(|value| (key, value)))
-        .collect();
-    for (key, value) in entries {
-        let loro::ValueOrContainer::Value(loro::LoroValue::String(value)) = value else {
-            return Err(invalid("invalid NOTE pin value"));
-        };
-        let pin: super::NotePin =
-            serde_json::from_str(&value).map_err(|_| invalid("invalid NOTE pin"))?;
-        pin.validate()?;
-        if super::citation_erase::pin_is_erased(vault, txn, &pin)? {
-            remove.push(key.to_string());
-        }
-    }
-    for key in remove {
-        pins.delete(&key)
-            .map_err(|_| invalid("NOTE citation erase"))?;
-    }
+    super::citation_erase::remove_erased_pins(vault, txn, &doc)?;
     doc.doc.commit();
     // A normal snapshot retains deleted map values in its oplog. StateOnly
     // removes those bytes while keeping live text op IDs/cursors and authorship.
     let clean = NoteDocument::load(id, &crate::sync::documents::storage::state_copy(&doc.doc)?)?;
     super::citation_erase::validate_pins(vault, txn, &clean.pins()?)?;
-    // Saved receipts contain full old document views. Their authored operation
-    // IDs survive in the authorship map, so replay cannot restore old responses.
+    // Saved receipts contain full old document views. They stay as replay
+    // guards, without the erased pins; their queued copies go (FIX 18270).
     let key_prefix = format!("{}:", id.to_hex()).into_bytes();
     SYNC_QD_E.delete_from(&vault.store, txn, &key_prefix)?;
     SYNC_AD_E.delete_from(&vault.store, txn, &key_prefix)?;
-    NOTE_RECEIPT_BY_REQUEST.delete_from(&vault.store, txn, &key_prefix)?;
-    SYNC_NC_E.delete_from(&vault.store, txn, &key_prefix)?;
+    super::citation_erase::redact_view_receipts(vault, txn, id)?;
     // Keep unrelated queued semantic edits. Only a Cite of an erased dependency
     // is obsolete; it must not be transmitted by reconnect.
     let pending = SYNC_QN_E.scan_from(&vault.store, txn, &key_prefix)?;

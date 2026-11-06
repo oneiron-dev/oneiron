@@ -7,6 +7,8 @@ use crate::result_body::ResultBodyPin;
 use crate::store::result_body_rows::body_handle;
 pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
+mod context;
+mod context_output;
 mod host_occurrence;
 mod reader;
 
@@ -15,6 +17,13 @@ impl Vault {
     /// custody knows is replaced by its handle as it streams (OF-560 C).
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
         Ok(self.code_run_script_sink()?.sweeping(self.known_source()?))
+    }
+
+    /// A result of the actual execution that received PERSON reveals.
+    pub(crate) fn code_run_output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        Ok(self
+            .code_run_script_sink()?
+            .sweeping_run(self.run_known_source(exec_run)?))
     }
 
     /// [`Self::code_run_output_sink`] with no sweep, for a step's program:
@@ -720,6 +729,38 @@ pub(crate) fn lift_code_run_file_hold_in_txn(
     };
     RAW_OUTPUTS.put(dbs, wtxn, &handle, &StoredBody::File { len, held: false })?;
     crate::provenance::body::queue_pruned_file_in_txn(dbs, wtxn, digest)
+}
+
+/// Drops the key rows of restore-unlanded inline bodies (FIX 11417), only
+/// when no body row or descriptor holds them and the reopened destination
+/// can journal their instance history. Archived or unbound destinations
+/// keep their mappings. The custody keys are not erased.
+///
+/// # Errors
+///
+/// Storage errors, and a key row that does not decode.
+pub(crate) fn retire_unlanded_inline_body_keys_in_txn(
+    dbs: &(impl crate::store::ManifestDbs + crate::side_table::SideTableDbs),
+    wtxn: &mut heed::RwTxn<'_>,
+    unlanded: &[[u8; 32]],
+) -> Result<()> {
+    for digest in unlanded {
+        let Some(key) = crate::store::body_key_row_in_txn(dbs, wtxn, digest)? else {
+            continue;
+        };
+        if !key.inline
+            || RAW_OUTPUTS
+                .get_borrowed(dbs, wtxn, &body_handle(digest))?
+                .is_some()
+            || crate::provenance::body::digest_is_held_in_txn(dbs, wtxn, digest)?
+        {
+            continue;
+        }
+        if crate::store::journal_restored_body_key_in_txn(dbs, wtxn, digest, &key)? {
+            crate::store::retire_body_key_in_txn(dbs, wtxn, digest)?;
+        }
+    }
+    Ok(())
 }
 
 /// The digest a raw result body row's key names by its handle.

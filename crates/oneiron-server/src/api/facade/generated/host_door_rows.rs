@@ -39,6 +39,8 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.drafters.list_as`
+//! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
@@ -179,6 +181,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCommitmentsFulfill,
     VaultCommitmentsRelease,
     VaultCommitmentsSupersede,
+    VaultCommitmentsReminderRouteGet,
+    VaultCommitmentsReminderRouteSet,
     Fetch,
     Crawl,
     FeedbackPreview,
@@ -268,6 +272,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
+    VaultProactivityDigest,
     VaultInboxLens,
     VaultInboxGroups,
     VaultSkillsBootstrap,
@@ -294,6 +299,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSkillsRulesSet,
     VaultSkillsCodeAutoInstallSet,
     VaultSkillsFitSet,
+    VaultSkillsAdvisoryAskSet,
     VaultSkillsPermissionsApprove,
     VaultSkillsOptimizeStart,
     VaultSkillsOptimizeResult,
@@ -398,6 +404,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultFederationBurstBaseline,
     VaultFederationBurstPolicy,
     VaultFederationBurstPolicySet,
+    VaultSyncQuarantineHeldEdits,
     VaultSyncRetainedWorkWaitSet,
     VaultFederationBurstIngress,
     VaultFederationBurstDisposition,
@@ -450,6 +457,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultOffRecordDiscard,
     VaultOffRecordRecall,
     VaultOffRecordNotesCreate,
+    VaultOffRecordArtifactsSave,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
     SelfOffRecordResultsList,
@@ -496,6 +504,10 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultDraftersList,
+    VaultDraftersStatus,
+    VaultDraftersPolicySet,
+    VaultDraftersRevert,
     VaultResearchEvaluateSplit,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -821,6 +833,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultWritesCriticalConfirmDecline,
     VaultWritesCriticalConfirmReceipt,
     VaultVectorsPut,
+    VaultIngestAgUiImport,
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultRunsProgramHoldRelease,
@@ -896,6 +909,8 @@ impl HostDoorRow {
             "vault.commitments.fulfill" => Self::VaultCommitmentsFulfill,
             "vault.commitments.release" => Self::VaultCommitmentsRelease,
             "vault.commitments.supersede" => Self::VaultCommitmentsSupersede,
+            "vault.commitments.reminder_route.get" => Self::VaultCommitmentsReminderRouteGet,
+            "vault.commitments.reminder_route.set" => Self::VaultCommitmentsReminderRouteSet,
             "fetch" => Self::Fetch,
             "crawl" => Self::Crawl,
             "feedback.preview" => Self::FeedbackPreview,
@@ -985,6 +1000,7 @@ impl HostDoorRow {
             "vault.weave.digest_feedback.put" => Self::VaultWeaveDigestFeedbackPut,
             "vault.weave.owner.digest.render" => Self::VaultWeaveOwnerDigestRender,
             "vault.inbox.concerns.review" => Self::VaultInboxConcernsReview,
+            "vault.proactivity.digest" => Self::VaultProactivityDigest,
             "vault.inbox.lens" => Self::VaultInboxLens,
             "vault.inbox.groups" => Self::VaultInboxGroups,
             "vault.skills.bootstrap" => Self::VaultSkillsBootstrap,
@@ -1011,6 +1027,7 @@ impl HostDoorRow {
             "vault.skills.rules.set" => Self::VaultSkillsRulesSet,
             "vault.skills.code_auto_install.set" => Self::VaultSkillsCodeAutoInstallSet,
             "vault.skills.fit.set" => Self::VaultSkillsFitSet,
+            "vault.skills.advisory_ask.set" => Self::VaultSkillsAdvisoryAskSet,
             "vault.skills.permissions.approve" => Self::VaultSkillsPermissionsApprove,
             "vault.skills.optimize.start" => Self::VaultSkillsOptimizeStart,
             "vault.skills.optimize.result" => Self::VaultSkillsOptimizeResult,
@@ -1117,6 +1134,7 @@ impl HostDoorRow {
             "vault.federation.burst.baseline" => Self::VaultFederationBurstBaseline,
             "vault.federation.burst.policy" => Self::VaultFederationBurstPolicy,
             "vault.federation.burst.policy.set" => Self::VaultFederationBurstPolicySet,
+            "vault.sync.quarantine.held_edits" => Self::VaultSyncQuarantineHeldEdits,
             "vault.sync.retained_work.wait.set" => Self::VaultSyncRetainedWorkWaitSet,
             "vault.federation.burst.ingress" => Self::VaultFederationBurstIngress,
             "vault.federation.burst.disposition" => Self::VaultFederationBurstDisposition,
@@ -1175,6 +1193,7 @@ impl HostDoorRow {
             "vault.off_record.discard" => Self::VaultOffRecordDiscard,
             "vault.off_record.recall" => Self::VaultOffRecordRecall,
             "vault.off_record.notes.create" => Self::VaultOffRecordNotesCreate,
+            "vault.off_record.artifacts.save" => Self::VaultOffRecordArtifactsSave,
             "vault.off_record.claims.upsert" => Self::VaultOffRecordClaimsUpsert,
             "self.off_record.execute" => Self::SelfOffRecordExecute,
             "self.off_record.results.list" => Self::SelfOffRecordResultsList,
@@ -1227,6 +1246,10 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.drafters.list" => Self::VaultDraftersList,
+            "vault.drafters.status" => Self::VaultDraftersStatus,
+            "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
+            "vault.drafters.revert" => Self::VaultDraftersRevert,
             "vault.research.evaluate_split" => Self::VaultResearchEvaluateSplit,
             "vault.authority.handoff_alarms" => Self::VaultAuthorityHandoffAlarms,
             "vault.authority.handoff_alarms.acknowledge" => {
@@ -1562,6 +1585,7 @@ impl HostDoorRow {
             "vault.writes.critical_confirm.decline" => Self::VaultWritesCriticalConfirmDecline,
             "vault.writes.critical_confirm.receipt" => Self::VaultWritesCriticalConfirmReceipt,
             "vault.vectors.put" => Self::VaultVectorsPut,
+            "vault.ingest.ag_ui.import" => Self::VaultIngestAgUiImport,
             "vault.runs.step" => Self::VaultRunsStep,
             "vault.runs.checkpoint" => Self::VaultRunsCheckpoint,
             "vault.runs.program_hold.release" => Self::VaultRunsProgramHoldRelease,

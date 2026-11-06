@@ -44,8 +44,9 @@ use super::{CanonicalRows, CheckpointImage, codec_error, rebuild};
 use crate::attempt_queue::AttemptId;
 use crate::store::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, Store,
-    bind_response_in_txn, carrier_row, release_response_in_txn, response_binding_in_txn,
-    response_carrier, response_owed_to_all_in_txn, stamp_opaque_erased,
+    bind_missing_response_owners_in_txn, bind_response_in_txn, carrier_row,
+    release_response_in_txn, response_binding_in_txn, response_carrier,
+    response_owed_to_all_in_txn, response_owners_bound_in_txn, stamp_opaque_erased,
 };
 use crate::vault_cleanup::refresh_archived_attempt_in_rows;
 use crate::{Error, Result};
@@ -112,7 +113,14 @@ impl ResponseCensus {
         {
             return Ok(noted);
         }
-        let Some((carriage, opaque)) = family.scan(store.attempt_operations, key, value).carriage()
+        let Some((carriage, opaque)) = family
+            .scan(
+                store.attempt_operations,
+                store.voice_bank_response,
+                key,
+                value,
+            )
+            .carriage()
         else {
             return Ok(Noted::Not);
         };
@@ -124,6 +132,10 @@ impl ResponseCensus {
         // A shared reply's late holder joins its instance's obligations at
         // the binding pass before an image carries it (FIX 6588).
         let joined = match binding {
+            Some(binding) if family == ResponseFamily::BlockedCapture => {
+                let owners = family.owners(store, txn, key, value)?;
+                response_owners_bound_in_txn(store, txn, &binding.instance, &owners)?
+            }
             Some(binding) if family.shared() => {
                 let owners = family.owners(store, txn, key, value)?;
                 response_owed_to_all_in_txn(store, txn, family, &binding.instance, &owners)?
@@ -237,7 +249,12 @@ pub(super) fn bind_in_txn(
         return Ok(Vec::new());
     };
     let Some((carriage, opaque)) = family
-        .scan(store.attempt_operations, key, &value)
+        .scan(
+            store.attempt_operations,
+            store.voice_bank_response,
+            key,
+            &value,
+        )
         .carriage()
     else {
         return Ok(Vec::new());
@@ -246,6 +263,10 @@ pub(super) fn bind_in_txn(
     if let Some(bound) =
         response_binding_in_txn(store, txn, carrier)?.filter(|bound| bound.digest == digest)
     {
+        if family == ResponseFamily::BlockedCapture {
+            let owners = family.owners(store, txn, key, &value)?;
+            return bind_missing_response_owners_in_txn(store, txn, carrier, bound, &owners);
+        }
         if !family.shared() {
             return Ok(Vec::new());
         }
@@ -305,7 +326,12 @@ pub(super) fn release_stale_in_txn(
                     ResponseFamily::of_row(db, key, &value)
                         .and_then(|family| {
                             family
-                                .scan(store.attempt_operations, key, &value)
+                                .scan(
+                                    store.attempt_operations,
+                                    store.voice_bank_response,
+                                    key,
+                                    &value,
+                                )
                                 .carriage()
                         })
                         .is_some()

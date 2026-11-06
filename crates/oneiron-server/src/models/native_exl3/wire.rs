@@ -95,7 +95,7 @@ pub(super) fn decode(payload: &[u8]) -> Option<Incoming> {
 /// A chat request body split for the native call: the conversation the
 /// input region carries (`messages`, and `tools` when the call names them),
 /// and every other field as the HTTP route takes it, less the route's own.
-pub(super) fn split_request(body: &JsonValue) -> (JsonValue, JsonValue) {
+pub(in crate::models) fn split_request(body: &JsonValue) -> (JsonValue, JsonValue) {
     let mut conversation = serde_json::Map::new();
     let mut params = serde_json::Map::new();
     if let Some(fields) = body.as_object() {

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
+use super::apns::ApnsConfig;
 use super::backup::BackupConfig;
 use super::channel_endpoints::ChannelEndpointsConfig;
 use super::embedder::EmbedderConfig;
@@ -77,6 +78,11 @@ pub struct SyncServerConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// The host's own Git door base (`https://<host>/git`, or loopback
+    /// `http`), as the operator configures it (FIX 7181, ARCH-0068 RC4). When
+    /// set, a run's checkout bind names this base and never the caller's
+    /// endpoint; unset, the caller's explicit endpoint stands as before.
+    pub git_door_base: Option<String>,
     /// Every public URL a kit fetch may be signed for, as for a home behind
     /// several tunnel aliases (FIX 4404). Empty: `oauth_resource_indicator`.
     pub kit_bundle_public_urls: Vec<String>,
@@ -155,6 +161,9 @@ pub struct SyncServerConfig {
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
+    /// `[apns]`: the Apple push applications the served sinks send through;
+    /// none unless the file names applications.
+    pub apns: ApnsConfig,
     /// `[linear]`: the Linear mirror this server runs and its webhook's
     /// tracker mapping, nonsecret. A plain serve with no section reads its
     /// `ONEIRON_LINEAR_*` environment into this before the server starts
@@ -166,6 +175,8 @@ pub struct SyncServerConfig {
     /// `[merge_queue]`: the queue checker's executor (FIX 6868). `None` is
     /// isolated and unconfigured.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
+    /// Explicit failure healer for served agent runs; None keeps human-only escalation.
+    pub agent_failure_healer: Option<oneiron::failure_ladder::healer_dispatch::HealerSlot>,
     /// The organ builds this server runs as first party, by blake3 (64 lowercase
     /// hex), from `--trusted-organ-build` alone (FIX 7644), which a vault VM's
     /// init passes from its config drive's list (FIX 7889). Listing a digest is
@@ -210,6 +221,7 @@ impl Default for SyncServerConfig {
             oauth_issuer: None,
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
+            git_door_base: None,
             kit_bundle_public_urls: Vec::new(),
             cloud_registration_pins: None,
             native_mail: None,
@@ -238,9 +250,11 @@ impl Default for SyncServerConfig {
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
+            apns: ApnsConfig::default(),
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
+            agent_failure_healer: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
             hosted_private_origins: std::collections::BTreeSet::new(),
         }
@@ -254,6 +268,7 @@ impl SyncServerConfig {
     }
 
     pub fn validate(&self) -> Result<(), oneiron::Error> {
+        super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
         if self.ephemeral_timeout_ms <= 0 {
             return Err(oneiron::Error::sync_protocol(
                 oneiron::SyncProtocolValidation::InvalidConfig {
@@ -279,6 +294,24 @@ impl SyncServerConfig {
     }
 }
 
+/// The explicit vault inputs an embedded binding resolved over its config file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmbeddedHolderOverrides {
+    pub vault_path: PathBuf,
+    pub dimensions: Option<usize>,
+}
+
+impl EmbeddedHolderOverrides {
+    pub(crate) fn serve_args(&self, config: Option<PathBuf>) -> super::ServeArgs {
+        super::ServeArgs {
+            config,
+            vault_path: Some(self.vault_path.clone()),
+            dimensions: self.dimensions,
+            ..Default::default()
+        }
+    }
+}
+
 /// Fully resolved serve configuration after defaults, config file, env vars,
 /// and flags have been merged.
 ///
@@ -290,6 +323,10 @@ pub struct ServeConfig {
     /// The resolved file first-run model setup may rewrite, `None` for managed
     /// argv/settings-only serving or a binding started without a file.
     pub config_path: Option<PathBuf>,
+    /// Original embedded holder inputs for first-run setup replay. Unset for
+    /// configs that did not declare these overrides; resolved file values
+    /// must not be copied here because that would hide later file changes.
+    pub embedded_holder_overrides: Option<EmbeddedHolderOverrides>,
     pub host: String,
     pub port: u16,
     /// The artifact-only listener's port on `host`; `0` takes any free one,
@@ -299,6 +336,9 @@ pub struct ServeConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// `--git-door-base` / `ONEIRON_GIT_DOOR_BASE` / `git_door_base`: the
+    /// host-resolved Git door a run's checkout bind names (FIX 7181).
+    pub git_door_base: Option<String>,
     pub kit_bundle_public_urls: Vec<String>,
     /// `--cloud-registration-pins`, argv only, plain or managed: the public
     /// pins the native cloud registration client trusts (G7). Unset, that
@@ -351,8 +391,8 @@ pub struct ServeConfig {
     /// The `[failure_signals]` section: the publisher this deployment's
     /// failure signals go to.
     pub failure_signals: FailureSignalsConfig,
-    /// The `[self_heal]` section: the model-graded detectors over retrieval
-    /// telemetry.
+    /// The `[self_heal]` section: model-graded detectors over retrieval telemetry
+    /// and explicit failure-healer routing for served agent runs.
     pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
@@ -390,6 +430,9 @@ pub struct ServeConfig {
     /// The `[device_sync]` section: the home this machine dials, absent until
     /// the config file names it. Absent means it dials no one.
     pub device_sync: Option<super::DeviceSyncConfig>,
+    /// Each `[[shared_env]]` entry: one dedicated shared vault environment
+    /// this host keeps open for leave checks and housekeeping (FIX 2051).
+    pub shared_env: Vec<super::SharedEnvConfig>,
     /// The `[connectors.<name>]` sections: each catalog connector's installed
     /// transport and endpoint, empty until the config file names one.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
@@ -402,11 +445,17 @@ pub struct ServeConfig {
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
+    /// The `[apns]` section: the Apple push applications the served sinks
+    /// send through, none unless the config file names applications.
+    pub apns: ApnsConfig,
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
+    /// Operator-only enterprise/advanced checkpoint selection capability.
+    /// Managed argv supplies it; the owner's settings file never does.
+    pub allow_host_checkpoint_opt_out: bool,
     /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
     /// deployment's default, on for our managed serve and off on every plain
     /// serve ([`oneiron::config::failure_signals::default_exports`]).
@@ -465,6 +514,7 @@ impl Default for ServeConfig {
         Self {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
             config_path: None,
+            embedded_holder_overrides: None,
             host: "0.0.0.0".to_owned(),
             port: 9090,
             artifact_port: 0,
@@ -472,6 +522,7 @@ impl Default for ServeConfig {
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
             oauth_resource_indicator: server.oauth_resource_indicator,
+            git_door_base: server.git_door_base,
             kit_bundle_public_urls: server.kit_bundle_public_urls,
             cloud_registration_pins: server.cloud_registration_pins,
             allow_unauthenticated: server.allow_unauthenticated,
@@ -521,14 +572,17 @@ impl Default for ServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: Vec::new(),
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
             channel_endpoints: server.channel_endpoints.clone(),
+            apns: server.apns.clone(),
             linear: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
+            allow_host_checkpoint_opt_out: false,
             failure_signal_export: None,
             failure_signal_training: None,
             hosted_kms_key_ref: None,
@@ -557,6 +611,7 @@ impl ServeConfig {
             oauth_issuer: self.oauth_issuer.clone(),
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
+            git_door_base: self.git_door_base.clone(),
             kit_bundle_public_urls: self.kit_bundle_public_urls.clone(),
             cloud_registration_pins: self.cloud_registration_pins.clone(),
             native_mail: self.native_mail.clone(),
@@ -590,11 +645,13 @@ impl ServeConfig {
             skills: self.skills.clone(),
             line: self.line,
             channel_endpoints: self.channel_endpoints.clone(),
+            apns: self.apns.clone(),
             linear: self.linear.clone(),
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.
             ingress: IngressAuth::Configured,
             merge_queue: self.merge_queue.clone(),
+            agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             // Managed boot alone sets it (FIX 7657).
             hosted_private_origins: std::collections::BTreeSet::new(),
@@ -629,6 +686,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);

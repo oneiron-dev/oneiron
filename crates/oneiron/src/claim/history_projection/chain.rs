@@ -331,16 +331,21 @@ pub(crate) fn verified_handoff_chain_from(
 ) -> Result<Vec<ClaimHistoryHandoff>> {
     let chain = read_handoff_chain_from(rows, store, txn, tip)?;
     let vault_id = fold.vault_id.ok_or_else(missing)?;
+    // FIX 3449: one cached image read for the whole packet loop, not one
+    // re-verify per packet.
+    let adopted = crate::authority::cached_adopted_authority_checkpoint_in_txn(store, txn)?;
+    let image = adopted.as_deref().map(|adopted| adopted.image());
     for (index, current) in chain.iter().enumerate() {
         if current.vault_id != vault_id {
             return Err(Error::InvalidClaimBody("handoff-chain vault mismatch"));
         }
         if !fold.valid_entries.contains(&current.authority_head)
-            && !crate::authority::machine_history_authority_descends(
+            && !crate::authority::machine_history_authority_descends_with_image(
                 store,
                 txn,
                 &current.authority_head,
                 &tip.authority_head,
+                image,
             )?
         {
             return Err(Error::InvalidClaimBody(if index + 1 == chain.len() {

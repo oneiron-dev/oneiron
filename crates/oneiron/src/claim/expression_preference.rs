@@ -26,6 +26,12 @@ pub(super) struct ExpressionPreferenceWrite {
     pub(super) value: ExpressionPreferenceValue,
     pub(super) valid_from: u64,
     pub(super) origin: ExpressionWriteOrigin,
+    /// An archive replay (FIX 8658): the write lands its row and closes
+    /// nothing. Precedence here is uniform (`Imported`), so re-deriving
+    /// which heads a write outranks would close heads the archived history
+    /// left open; the archive adapter closes exactly the archived links
+    /// itself, through the same lifecycle doors.
+    pub(super) replay: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,6 +47,7 @@ impl ExpressionPreferenceWrite {
             value: change.value,
             valid_from: change.valid_from,
             origin: ExpressionWriteOrigin::Native(change.origin),
+            replay: false,
         }
     }
 }
@@ -292,30 +299,34 @@ impl Vault {
         crate::memory::guard_existing_claim_in_txn(self, wtxn, *actor, claim_id)?;
         // Every readable claim of the predicate is judged (FIX 8656); the
         // override or self-grant each outranked head needs is written once
-        // the walk has ended, never through its open read.
+        // the walk has ended, never through its open read. A replay walks
+        // none of it: its closes are the archived links, applied by the
+        // archive adapter (FIX 8658).
         let mut outranked = Vec::new();
-        let rtxn: &heed::RoTxn<'_> = wtxn;
-        self.for_each_readable_claim_with_predicate_in_txn(rtxn, predicate, |old_id, body| {
-            if old_id == claim_id
-                || body.subject != ClaimSubject::Entity(change.subject)
-                || body.lifecycle != ClaimLifecycleStatus::Active
-            {
-                return Ok(());
-            }
-            let old_learned_at = self
-                .store
-                .port_entity_record(rtxn, &old_id)?
-                .map(|row| row.encode())
-                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
-                .ok_or(Error::CorruptedIndex("expression preference header"))?;
-            if Self::expression_preference_wins(
-                (Some(source), Some(change.valid_from), learned_at, claim_id),
-                (body.source, body.valid_from, old_learned_at, old_id),
-            ) {
-                outranked.push((old_id, body));
-            }
-            Ok(())
-        })?;
+        if !change.replay {
+            let rtxn: &heed::RoTxn<'_> = wtxn;
+            self.for_each_readable_claim_with_predicate_in_txn(rtxn, predicate, |old_id, body| {
+                if old_id == claim_id
+                    || body.subject != ClaimSubject::Entity(change.subject)
+                    || body.lifecycle != ClaimLifecycleStatus::Active
+                {
+                    return Ok(());
+                }
+                let old_learned_at = self
+                    .store
+                    .port_entity_record(rtxn, &old_id)?
+                    .map(|row| row.encode())
+                    .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
+                    .ok_or(Error::CorruptedIndex("expression preference header"))?;
+                if Self::expression_preference_wins(
+                    (Some(source), Some(change.valid_from), learned_at, claim_id),
+                    (body.source, body.valid_from, old_learned_at, old_id),
+                ) {
+                    outranked.push((old_id, body));
+                }
+                Ok(())
+            })?;
+        }
         let mut prior_ids = Vec::with_capacity(outranked.len());
         for (old_id, body) in outranked {
             if change.origin
@@ -586,6 +597,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: header.learned_at,
+                row_version: None,
                 data: encode_claim_body(&body)?,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

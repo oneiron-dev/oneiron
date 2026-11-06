@@ -250,6 +250,7 @@ impl McpCallContext {
             drain: Some(drain),
             forwarded: None,
             client_surface: None,
+            signing_request_transport: None,
         };
         rerun_saved_call(server, &context, call).await
     }
@@ -325,7 +326,21 @@ async fn rerun_saved_call(
         &mut board_hooks,
     ))
     .await;
-    Ok(ran.map(|(output, ..)| output).map_err(mcp_saved_error))
+    match ran {
+        Err(error) => Ok(Err(mcp_saved_error(error))),
+        Ok((output, ..)) => {
+            // A board read answers the settlement here: the receipt its hook
+            // rows owe is recorded and their blocks spent as the answer
+            // returns (OF-579).
+            if let Some(mut hooks) = board_hooks {
+                if let Err(error) = hooks.record_receipt(server).await {
+                    return Ok(Err(mcp_saved_error(error)));
+                }
+                hooks.spend(server);
+            }
+            Ok(Ok(output))
+        }
+    }
 }
 
 /// A connector call's refusal as the error settlement saves for its retry:

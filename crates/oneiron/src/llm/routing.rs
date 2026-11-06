@@ -15,7 +15,7 @@ use super::decision::{
     GeneratedStep, ProviderPin, Reversibility, TypedDecision,
 };
 use super::registry::ModelWireFormat;
-use super::seat::DescriptionSource;
+use super::seat::{DescriptionSource, SeatLearningContext};
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
@@ -125,6 +125,8 @@ pub struct SeatBirth<'a> {
     /// inferred again (ARCH-0079, "placed once, read everywhere"); none for a
     /// seat born for no typed task.
     pub type_ref: Option<&'a TaskTypeRef>,
+    /// Native project/agent context for read-only measured model evidence.
+    pub learning: Option<&'a SeatLearningContext>,
     pub purpose: &'a CallPurpose,
     pub settings: &'a SeatSettings,
     pub tier: &'a super::TierPrecedence,
@@ -528,6 +530,7 @@ impl Vault {
             role,
             task,
             type_ref,
+            learning,
             purpose,
             settings,
             tier,
@@ -558,6 +561,8 @@ impl Vault {
             &policy,
             &self.seat_policy()?,
             &measurements,
+            self,
+            learning,
             settings,
             purpose,
             task,
@@ -625,6 +630,7 @@ impl Vault {
         &self,
         task: &str,
         type_ref: Option<&TaskTypeRef>,
+        learning: Option<&SeatLearningContext>,
         decisions: &DescriptionDecisions<'_>,
         settings: &SeatSettings,
         mut request: LlmRequest,
@@ -638,6 +644,8 @@ impl Vault {
             &policy,
             &self.seat_policy()?,
             &measurements,
+            self,
+            learning,
             settings,
             &request.envelope.purpose,
             task,
@@ -707,6 +715,7 @@ impl Vault {
         let (request, grading) = self.routed_verdict_request(
             task,
             verdict.type_ref,
+            None,
             decisions,
             settings,
             request,

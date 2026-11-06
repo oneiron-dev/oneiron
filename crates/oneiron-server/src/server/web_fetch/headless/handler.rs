@@ -112,7 +112,7 @@ impl PageRequests {
 
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, Unanswered> {
         let (url, status, headers, body) = self.send_spooled(request).await?;
-        let body = body.into_vec().map_err(Unanswered::failed)?;
+        let body = body.into_bytes().map_err(Unanswered::failed)?;
         Ok(HttpResponse {
             url,
             status,
@@ -128,7 +128,7 @@ impl PageRequests {
     async fn send_spooled(
         &self,
         request: HttpRequest,
-    ) -> Result<(String, u16, Vec<(String, String)>, SpooledBody), Unanswered> {
+    ) -> Result<(String, u16, Vec<(String, Vec<u8>)>, SpooledBody), Unanswered> {
         let url = Url::parse(&request.url).map_err(Unanswered::failed)?;
         // An address literal resolves nothing, so the client's guard never
         // sees it: it is checked here, before anything is sent. A name's
@@ -156,16 +156,11 @@ impl PageRequests {
             .map_err(|error| self.unanswered(error))?;
         let url = response.url().to_string();
         let status = response.status().as_u16();
-        let headers: Vec<(String, String)> = response
+        let headers: Vec<(String, Vec<u8>)> = response
             .headers()
             .iter()
             .filter(|(name, _)| !HOP_RESPONSE_HEADERS.contains(&name.as_str()))
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.to_string(), value.to_owned()))
-            })
+            .map(|(name, value)| (name.to_string(), value.as_bytes().to_vec()))
             .collect();
         let body = produce_body(
             response,

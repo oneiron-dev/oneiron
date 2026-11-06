@@ -14,8 +14,13 @@
 //! speaker is never dropped from an audience while it waits to be
 //! identified. Its "who is this?" ask (ILDF2 P4) is raised once, on the
 //! roster revision it first entered under. A speaker its roster placed but
-//! who is no room member gets its entry fact too, asked nothing; so does any
-//! speaker in a project room, which no PERSON entry is recorded for.
+//! who is covered by neither a member nor a live vault Owner gets its entry
+//! fact too, asked nothing; so does any such speaker in a project room,
+//! which no PERSON entry is recorded for.
+//!
+//! A speaker first entered as placed may later need an identity question.
+//! That first late question freezes its own revision and route separately;
+//! it never changes the original entry or its history cut.
 //!
 //! The owner answers P5 on a private surface: [`Vault::confirm_container_attendee`]
 //! clears the entry's contact standing under a frozen offer and sets the
@@ -90,8 +95,9 @@ pub struct ContainerAttendeeEntry {
     pub roster_revision: u64,
     /// Engine time of the first entry: the attendee's history cut.
     pub entered_at: u64,
-    /// Who the owner said an unplaced speaker is, on the entry revision;
-    /// `None` while unanswered (unknown, so public-only) and for a PERSON.
+    /// Who the owner said an unplaced speaker is: on the entry revision,
+    /// or the first late answer where the entry asked nothing; `None`
+    /// while unanswered (unknown, so public-only) and for a PERSON.
     pub identity: Option<AttendeeIdentityChoice>,
     /// An owner decided this entry's P5 question.
     pub decided: bool,
@@ -178,9 +184,11 @@ impl Memory<'_> {
     /// has held is rejoining, and nothing is recorded or asked. A speaker the vault cannot place gets its entry fact, which is
     /// its history cut, and on its first entry only the owner's "who is
     /// this?" ask on the revision it entered under. A later revision, a
-    /// rejoin or another device replays the stored entry and asks nothing;
-    /// an entry whose ask an interrupted call never admitted is raised by the
-    /// next call. A project room keeps its own rule: a PERSON's entry is its
+    /// rejoin or another device replays the stored entry without repeating
+    /// its question. A speaker first entered as placed gets a separate first
+    /// late question if the vault later cannot place it. An interrupted
+    /// pending question is raised by the next call on its original route.
+    /// A project room keeps its own rule: a PERSON's entry is its
     /// roster's, and a speaker gets its entry fact, asked nothing and joined
     /// to no roster.
     ///
@@ -189,7 +197,26 @@ impl Memory<'_> {
         &self,
         event: &ContainerAttendeeEvent,
     ) -> MemoryResult<Option<TaskAskReceipt>> {
-        self.attendee_entered(event, EntryAsk::Identity)
+        self.attendee_entered(event, EntryAsk::Identity, None)
+    }
+
+    /// Records an entry and proposes a PERSON newcomer's clearance in the
+    /// same writer. `scope` and `owner_ref` are the host's proposal, never
+    /// authority; the owner reads and answers the existing disclosure offer.
+    /// No Scope or recipient is selected by the engine.
+    ///
+    /// An offer failure is returned after the entry commits. Retrying reads
+    /// the original entry, without another join or a new history cut, while
+    /// its first membership window remains open. An offer already filed for
+    /// that contact and room is not filed again. Speakers keep their normal
+    /// identity-ask behavior. Returns the identity ask raised, if any.
+    pub fn container_attendee_entered_with_disclosure_offer(
+        &self,
+        event: &ContainerAttendeeEvent,
+        scope: &oneiron_authority::federation::Scope,
+        owner_ref: &str,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
+        self.attendee_entered(event, EntryAsk::Identity, Some((scope, owner_ref)))
     }
 
     /// [`Self::container_attendee_entered`], a speaker asked as `ask` says.
@@ -197,15 +224,19 @@ impl Memory<'_> {
         &self,
         event: &ContainerAttendeeEvent,
         ask: EntryAsk,
+        offer_context: Option<(&oneiron_authority::federation::Scope, &str)>,
     ) -> MemoryResult<Option<TaskAskReceipt>> {
         // The identity ask is admitted in the entry's own writer, so the
         // task-work turn it needs is taken here, before any transaction.
         if !self.has_task_work_turn() {
-            return self.task_work_memory().attendee_entered(event, ask);
+            return self
+                .task_work_memory()
+                .attendee_entered(event, ask, offer_context);
         }
         let vault = self.vault();
         let writer = self.write_actor();
         self.with_verified_actor_write_txn(|txn| {
+            self.recheck_host_action_in_txn(txn)?;
             body::body_in(vault, txn, event.container)?;
             // A project room keeps its own rule: a PERSON enters it through
             // its roster, and a speaker enters it asked nothing.
@@ -224,7 +255,12 @@ impl Memory<'_> {
                     .ever_members_in_txn(txn, event.container)?
                     .contains(person)
             {
-                return Ok(Ok(None));
+                return Ok(match offer_context {
+                    Some((scope, owner_ref)) => {
+                        self.offer_person_entry_in_savepoint(txn, event, scope, owner_ref)
+                    }
+                    None => Ok(None),
+                });
             }
             let admit = match (ask, project) {
                 (EntryAsk::Identity, false) => crate::task_verb::admit_attendee_entry_in_txn,
@@ -244,14 +280,109 @@ impl Memory<'_> {
                 )?;
             }
             let decided = entry_decided_in(vault, txn, &admitted.entry_ref)?;
-            if !admitted.ask_pending || decided {
+            if decided {
                 return Ok(Ok(None));
+            }
+            if matches!(admitted.fact.attendee, ContainerAttendee::Person(_))
+                && let Some((scope, owner_ref)) = offer_context
+            {
+                return Ok(self.offer_person_entry_in_savepoint(txn, event, scope, owner_ref));
             }
             // The ask commits with the entry (FIX 10172). Its failure is
             // the ask's alone: the entry commits pending, as an entry whose
             // ask was never admitted, for the next call to raise.
-            Ok(self.compose_entry_ask_in_savepoint(txn, admitted.entry_ref, &admitted.fact))
+            if admitted.ask_pending {
+                return Ok(self.compose_entry_ask_in_savepoint(
+                    txn,
+                    admitted.entry_ref,
+                    &admitted.fact,
+                ));
+            }
+            if !admitted.first
+                && !project
+                && matches!(ask, EntryAsk::Identity)
+                && admitted.fact.ask_group.is_none()
+                && matches!(&admitted.fact.attendee, ContainerAttendee::Speaker { .. })
+                && let Some(question) = vault.admit_late_attendee_ask_in_txn(
+                    txn,
+                    self.actor(),
+                    admitted.entry_ref,
+                    event,
+                )?
+            {
+                return Ok(self.compose_attendee_identity_ask_in_savepoint(
+                    txn,
+                    admitted.entry_ref,
+                    &question,
+                ));
+            }
+            Ok(Ok(None))
         })?
+    }
+
+    /// Proposes only the stored PERSON entry's question. The savepoint owns
+    /// every offer-related read and write, so a failed proposal never rolls
+    /// back the entry or repeats its membership and output-barrier effects.
+    fn offer_person_entry_in_savepoint(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        event: &ContainerAttendeeEvent,
+        scope: &oneiron_authority::federation::Scope,
+        owner_ref: &str,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
+        let vault = self.vault();
+        let entry_ref = crate::task_verb::attendee_entry_id(event.container, &event.attendee)?;
+        let offered: MemoryResult<()> = vault
+            .store
+            .env
+            .nested_write_txn(txn)
+            .map_err(|error| crate::memory::MemoryError::from(crate::Error::from(error)))
+            .and_then(|mut savepoint| {
+                let Some(fact) =
+                    crate::task_verb::read_attendee_entry_in(vault, &savepoint, entry_ref)?
+                else {
+                    return Ok(());
+                };
+                let ContainerAttendee::Person(person) = fact.attendee else {
+                    return Ok(());
+                };
+                if fact.container != event.container
+                    || event.attendee != ContainerAttendee::Person(person)
+                    || entry_decided_in(vault, &savepoint, &entry_ref)?
+                {
+                    return Ok(());
+                }
+                let windows = vault.windows_in_txn(&savepoint, fact.container, person)?;
+                let [window] = windows.as_slice() else {
+                    return Ok(());
+                };
+                if window.to.is_some() {
+                    return Ok(());
+                }
+                let fold = vault.authority_view_readonly_in_txn(&savepoint)?;
+                let Some(contact) =
+                    crate::disclosure::room_party_entry_in(vault, &savepoint, &fold, person)?
+                        .contact
+                else {
+                    return Ok(());
+                };
+                vault.file_person_entry_disclosure_offer_once_in_txn(
+                    &mut savepoint,
+                    contact,
+                    &fact.container,
+                    scope.clone(),
+                    owner_ref,
+                )?;
+                savepoint.commit().map_err(crate::Error::from)?;
+                Ok(())
+            });
+        if offered.is_err() {
+            tracing::warn!(
+                entry = %entry_ref.to_hex(),
+                "an attendee entry's disclosure offer was not filed; the entry stays pending"
+            );
+        }
+        offered.map(|()| None)
     }
 
     /// Admits `fact`'s "who is this?" ask in a savepoint of the entry's
@@ -279,6 +410,15 @@ impl Memory<'_> {
             candidates: fact.candidates.clone(),
             until: fact.until,
         };
+        self.compose_attendee_identity_ask_in_savepoint(txn, entry_ref, &ask)
+    }
+
+    fn compose_attendee_identity_ask_in_savepoint(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entry_ref: EntityId,
+        ask: &UnknownAttendeeAsk,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
         let composed: MemoryResult<TaskAskReceipt> = self
             .vault()
             .store
@@ -286,7 +426,7 @@ impl Memory<'_> {
             .nested_write_txn(txn)
             .map_err(|error| crate::memory::MemoryError::from(crate::Error::from(error)))
             .and_then(|mut savepoint| {
-                let spec = self.unknown_attendee_ask_spec_in_txn(&mut savepoint, &ask)?;
+                let spec = self.unknown_attendee_ask_spec_in_txn(&mut savepoint, ask)?;
                 let receipt = self.compose_attendee_entry_ask_in_txn(&mut savepoint, &spec)?;
                 savepoint.commit().map_err(crate::Error::from)?;
                 Ok(receipt)
@@ -301,15 +441,17 @@ impl Memory<'_> {
     }
 
     /// Records the entry into `container`, the committed room its voice
-    /// session is heard in, of each speaker of `roster` the room's members
-    /// do not cover: the speakers its live call must place there, as the
-    /// room's reads require them (FIX 1388/1389 C1). Each enters as a
+    /// session is heard in, of each speaker of `roster` that neither its
+    /// members nor a positive live vault Owner covers: the speakers its
+    /// live call must place there, as the room's reads require them
+    /// (FIX 1388/1389 C1). Each enters as a
     /// [`ContainerAttendee::Speaker`] by the session's ref and the capture's
     /// speaker key, under the roster's revision, the keys the interlocutor
     /// read asks the identity at. A speaker the roster could not place goes
-    /// through [`Self::container_attendee_entered`]; one it placed, as no
-    /// member, enters asked nothing. A voice host that binds its session to
-    /// a room calls it once the matcher has written the roster;
+    /// through [`Self::container_attendee_entered`]; one it placed, covered
+    /// by neither a member nor a live vault Owner, enters asked nothing.
+    /// A voice host that binds its session to a room calls it once the
+    /// matcher has written the roster;
     /// `trigger_turn`, `candidates` (live contacts, in its order, offered by
     /// an unplaced speaker's ask only) and `until` are its own. A speaker
     /// already entered replays its stored entry. Answers each "who is
@@ -322,9 +464,16 @@ impl Memory<'_> {
         candidates: &[EntityId],
         until: u64,
     ) -> MemoryResult<Vec<TaskAskReceipt>> {
-        let members = self.vault().room_audience_members(container)?;
+        let required = {
+            let vault = self.vault();
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            let members = vault.room_audience_members_in_txn(&txn, container)?;
+            crate::conversation::required_live_speakers(roster, &members, |identity| {
+                crate::disclosure::live_vault_owner_person_in_txn(vault, &txn, identity)
+            })?
+        };
         let mut asks = Vec::new();
-        for speaker in crate::conversation::required_live_speakers(roster, &members) {
+        for speaker in required {
             let (ask, candidates) = if speaker.placed {
                 (EntryAsk::Unasked, Vec::new())
             } else {
@@ -342,7 +491,7 @@ impl Memory<'_> {
                 until,
                 history: HistoryChoice::Inherit,
             };
-            asks.extend(self.attendee_entered(&event, ask)?);
+            asks.extend(self.attendee_entered(&event, ask, None)?);
         }
         Ok(asks)
     }
@@ -438,18 +587,12 @@ impl Vault {
                 // not-clearable path below.
                 crate::disclosure::room_party_entry_in(self, txn, &fold, *person)?.contact
             }
-            ContainerAttendee::Speaker {
-                session_key,
-                speaker_key,
-            } => match self.attendee_identity_in_txn(
-                txn,
-                session_key,
-                speaker_key,
-                fact.roster_revision,
-            )? {
-                Some(AttendeeIdentityChoice::Contact(contact)) => Some(contact),
-                _ => None,
-            },
+            ContainerAttendee::Speaker { .. } => {
+                match self.attendee_entry_identity_in_txn(txn, &fact)? {
+                    Some(AttendeeIdentityChoice::Contact(contact)) => Some(contact),
+                    _ => None,
+                }
+            }
         }
         .ok_or_else(|| not_clearable("this entry is no contact the owner can clear"))?;
         let offer = self
@@ -532,7 +675,8 @@ impl Vault {
     }
 
     /// The entry `entry_ref` names, with the identity the owner gave an
-    /// unplaced speaker on the revision it entered under.
+    /// unplaced speaker on the revision it entered under, or the first
+    /// late answer where the entry asked nothing.
     fn attendee_entry_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -543,12 +687,7 @@ impl Vault {
         };
         let identity = match &fact.attendee {
             ContainerAttendee::Person(_) => None,
-            ContainerAttendee::Speaker {
-                session_key,
-                speaker_key,
-            } => {
-                self.attendee_identity_in_txn(txn, session_key, speaker_key, fact.roster_revision)?
-            }
+            ContainerAttendee::Speaker { .. } => self.attendee_entry_identity_in_txn(txn, &fact)?,
         };
         Ok(Some(ContainerAttendeeEntry {
             entry_ref,
