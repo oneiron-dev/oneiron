@@ -10,7 +10,7 @@ use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 mod tests;
 
 /// Most persons the ROOM `invite?:` line names; the rest are counted.
-const ROOM_INVITE_CAP: usize = 5;
+pub(super) const ROOM_INVITE_CAP: usize = 5;
 
 /// One roster entry. The engine builds every entry from the Conversation's
 /// `memberIds` and each member's own grants; no request supplies one.
@@ -204,7 +204,25 @@ impl RoomSection {
         &self,
         people: &PeopleView<'_>,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
-        self.board_section_page(people, &self.roster, None)
+        self.board_section_page(people, &self.roster, None, ROOM_INVITE_CAP)
+    }
+
+    /// [`Self::board_section`] on a board whose layout gives ROOM a share:
+    /// the `invite?:` hint names as many persons as the share allots,
+    /// never fewer than the fixed cap (BOARD-LAYOUT). The rest of ROOM is
+    /// pinned and takes no layout.
+    pub fn board_section_laid_out(
+        &self,
+        people: &PeopleView<'_>,
+        layout: &super::BoardLayout,
+        cap_tok: usize,
+    ) -> std::result::Result<BoardSection, BoardFrameError> {
+        self.board_section_page(
+            people,
+            &self.roster,
+            None,
+            layout.row_allotment("room", cap_tok, ROOM_INVITE_CAP),
+        )
     }
 
     /// [`Self::board_section`] for one page of the room's rows (FIX 9746):
@@ -216,6 +234,7 @@ impl RoomSection {
         people: &PeopleView<'_>,
         members: &[RoomPresence],
         page: Option<String>,
+        invite_cap: usize,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut rows = vec![format!("room: {}", self.room.to_hex())];
         rows.extend(page);
@@ -265,13 +284,13 @@ impl RoomSection {
                 "invite?: {}",
                 invitees
                     .iter()
-                    .take(ROOM_INVITE_CAP)
+                    .take(invite_cap)
                     .map(|row| people.label(row.person))
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            if invitees.len() > ROOM_INVITE_CAP {
-                line.push_str(&format!(" +{}", invitees.len() - ROOM_INVITE_CAP));
+            if invitees.len() > invite_cap {
+                line.push_str(&format!(" +{}", invitees.len() - invite_cap));
             }
             rows.push(line);
         }
