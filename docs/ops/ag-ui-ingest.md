@@ -48,12 +48,57 @@ Consumers must still use ordinary authenticated import/admission, entity
 resolution, source-trust, secret, and write gates. Those doors can refuse data;
 this source does not bypass them or promise byte-preserving persistence.
 
+## Owner-selected file capture and scoped observations
+
+`vault.ingest.ag_ui.import` is an explicit owner door. It captures an app ID,
+a live project, the complete JSONL bytes, and the app's CUSTOM mappings in one
+fresh `ingest.ag_ui.file` CLAIM. The authenticated owner is the real capture
+actor and principal; no event field selects either. The owner proof and project
+are checked in the same actor-content writer as the Imported/Proposed claim.
+Normal secret masking still runs. The import rechecks the finalized capture in
+that same writer and aborts if admission changed any captured bytes or context;
+it never bypasses masking or returns an original fingerprint for changed data.
+This is file import, not a live connector or an agent-principal setup API.
+
+Each CUSTOM mapping names the exact event `name`, its reported kind (`action`,
+`failure`, `repair`, or `outcome`), and JSON pointers into the whole event for
+its ID, thread, run, tool, failure/repair references, and observed outcome.
+For example, `/value/runId` is an explicit app mapping, not an AG-UI standard
+field. Missing or non-string IDs stay missing. Unregistered CUSTOM events,
+RAW, unknown events, whitespace and line terminators remain in the captured
+JSONL. The original registry normalizer and generic imported-claim doors are
+unchanged. Capture does not approve the observations or permit training or
+sending data off-device.
+
+The import receipt returns the claim ID and a full BLAKE3 fingerprint over the
+captured bytes and context. `vault.ingest.ag_ui.read` requires both. It reads
+through the caller's normal scoped, receipted lane, including its credential,
+destination and room ceiling. A missing or withheld claim exposes no source
+metadata. A changed capture fails the exact fingerprint check; the reader does
+not substitute a current file, another claim or an older fingerprint. The
+underlying CLAIM retains its ordinary lifecycle, history and erasure rules.
+This is a content pin, not a new immutable blob-version store.
+
+The typed reader also proves, in its same read snapshot, that the authenticated
+capture author is a live vault owner. A Human actor alone, or a generic imported
+claim shaped like a capture, does not attest an owner-registered mapping. Generic
+imports remain available without gaining that typed-source status.
+
+The typed reader returns the original JSONL and the registered app observations.
+Each reported outcome's repair link names occurrence ordinals only when the
+repair explicitly names a failure and the outcome explicitly names that repair.
+Thread and run must be present and equal; tool IDs must also match, including
+absence. Repeated matching target IDs stay ambiguous, even for byte-identical
+occurrences. Missing references, cross-namespace targets and missing outcome
+values are reported separately. A linked result is sourced app evidence, not a
+success verdict, a checked Oneiron action or a complete training/eval task.
+
 ## Remaining feature work
 
-This is a partial delivery of OF-582 / FIX3720. Authenticated owner/principal/
-project-scoped connector setup, live transport, app-registered action/outcome
-interpretation, durable linked failure/repair/outcome exposure, completeness
-tracking across reconnects, and the typed persisted triple reader remain open.
-OF-578's Repair nomination, reuse, digest, and cut-audit consumer is separate.
-Existing structured claim admission and typed Repair case storage can be reused;
-this source adds no predicate, table, family ledger, migration, or old reader.
+This is a partial delivery of OF-582 / FIX3720. Live connector setup and
+transport, choosing a non-owner principal, links across separately captured
+files, and completeness tracking across reconnects remain open. OF-578's
+Repair nomination, world/initial-state/intent/tools/grader, family split,
+reuse, digest and cut-audit consumer are separate. Existing typed Repair case
+storage is unchanged. The file path adds no table, family ledger, migration,
+old-format reader, default cap or timer.

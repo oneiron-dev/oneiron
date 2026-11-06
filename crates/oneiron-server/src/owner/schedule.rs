@@ -384,7 +384,7 @@ impl OwnerHost {
                 .is_none_or(|newest| now_unix_ms().saturating_sub(newest.taken_ms) >= every_ms);
             if due {
                 self.enter(PassStage::OwnerBackup);
-                return backup::take(vault, &plan).map(Some);
+                return backup::take_automatic(vault, &plan).map(Some);
             }
         }
         self.managed_pass(vault, &plan)

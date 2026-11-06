@@ -67,9 +67,7 @@ pub(super) struct BodySpool {
 impl BodySpool {
     /// The spool as one JSON document `T`, decoded as it is read; `None`
     /// when it is not one.
-    pub(super) fn json<T: serde::de::DeserializeOwned>(
-        &mut self,
-    ) -> Result<Option<T>, MemoryRefusal> {
+    pub(super) fn json<T: serde::de::DeserializeOwned>(&mut self) -> Result<Option<T>, MemoryRefusal> {
         let mut memory = self.admit_reader()?;
         Ok(self.with_reader_admitted(&mut memory, |reader| serde_json::from_reader(reader).ok()))
     }
