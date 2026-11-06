@@ -26,3 +26,46 @@ consumed budget trap with no saved response follows the existing inference
 admission path. Exact-model selection, keyless/paid work attribution, the
 physical run meter, logical allowance and retry policy are unchanged. No
 current-format storage field, migration, default, cap or configuration is added.
+
+## Exact terminal response identity
+
+A finished step carries `StepReceipt` with the original attempt, request hash,
+and actual committed terminal claim. Fresh and saved-response recovery use
+that terminal writer's returned claim. A memo carries the claim selected beside
+its response in the same read transaction. The submission result keeps that
+claim; it does not replace it with a later memo-index lookup.
+
+Post-terminal charge tallies, stored results, fallback output pins and wake
+settlement retain this full identity. A checkpoint marks `(attempt, hash,
+claim)` beside its budget charge in the same writer. A later terminal claim
+for the same logical step cannot inherit an older claim's mark. Forgetting a
+step's memo still forgets all its logical charge marks; attempt cleanup still
+retires them. These content-class markers are not permanent financial facts.
+
+A receipt is correlation data, not permission or proof of payment. A fallback
+publication still checks the exact claim's trusted source and actor, active
+status, response hash, current policy and stage in the governing transaction.
+Pre-terminal outbound effect bindings and their existing checks stay separate.
+
+### Original admitted-call coordinates
+
+A successful native Dreamer admission freezes its original attempt id, native
+`attempt_count` and budget line. Its cloned deadlines share one checked invocation
+sequence. A fresh durable-step invocation takes its coordinate before requesting a
+model lease; schema corrections keep that invocation and use their existing call
+ordinal. Transport retries keep the same coordinate. A fresh guard's public lease
+id is not a substitute for this original coordinate.
+
+The existing owed-call row retains this coordinate beside the original line and
+lease. It still coalesces by attempt and logical step, and ordinary settlement
+still retires the attempt's rows. This extra provenance does not make that row an
+irreversible paid fact or close the late-call accounting gap.
+
+`BudgetGuard::accounting_snapshot` captures its total and selected native lease
+states under one lock. A foreign lease with a matching public id has no
+entry on that guard. The snapshot is accounting data, not a grant or proof that a
+vault budget charge committed. Callers release the guard lock before any vault
+writer runs; no caller callback runs inside it.
+A settled lease's amount keeps its native settlement convention. It is not a
+billing credit or proof that summing selected lease amounts reproduces a meter
+delta, including at counter saturation.

@@ -1539,7 +1539,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                     unserved = Some(oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND);
                     Ok(DreamerAttemptExecution::Completed {
                         completed_units: 0,
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     })
                 }
             }
@@ -1556,7 +1556,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                         Some(oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND);
                     Ok(DreamerAttemptExecution::Completed {
                         completed_units: 0,
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     })
                 }
             }

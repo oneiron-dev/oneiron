@@ -14,6 +14,7 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::model_step_context::StepReceipt;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
@@ -132,7 +133,7 @@ pub enum DreamerAttemptExecution {
         completed_units: u64,
         /// Terminal step identities this completion charges for the first time.
         /// Atomic with wake-budget settlement so replay cannot double debit.
-        step_hashes: Vec<[u8; 32]>,
+        step_bindings: Vec<StepReceipt>,
     },
     /// The try ends Failed with `reason`, terminal and resumed by nothing:
     /// a turn program whose attested owner is no longer the vault's live
@@ -154,7 +155,7 @@ pub enum DreamerAttemptExecution {
         completed_units: u64,
         /// Terminal step identities this checkpoint charges for the first time.
         /// Atomic with wake-budget settlement so replay cannot double debit.
-        step_hashes: Vec<[u8; 32]>,
+        step_bindings: Vec<StepReceipt>,
     },
     /// Selection holds are scheduled retries, never unspent parked attempts.
     Deferred {
@@ -162,7 +163,7 @@ pub enum DreamerAttemptExecution {
         retry_at: u64,
         /// Terminal step identities this deferral charges for the first time.
         /// Atomic with wake-budget settlement so replay cannot double debit.
-        step_hashes: Vec<[u8; 32]>,
+        step_bindings: Vec<StepReceipt>,
     },
     /// ONE-1896 rung 1, answered: the worker saw a soft request or a typed
     /// runtime warning ([`WakeAttemptContext::landing_request`]) and chose to
@@ -241,10 +242,10 @@ pub struct WakeAttemptMeter {
     line: OnceLock<(BudgetGuard, u64)>,
     /// The terminal steps the executor tallied as paid on that line, each
     /// with its units, in the order it noted them (FIX 6100).
-    terminal_steps: Mutex<Vec<([u8; 32], u64)>>,
+    terminal_steps: Mutex<Vec<(StepReceipt, u64)>>,
     /// What the executor's own tally spent before an error left it, with
     /// the terminal steps those units pay for (FIX 7432).
-    spent_before_error: Mutex<(u64, Vec<[u8; 32]>)>,
+    spent_before_error: Mutex<(u64, Vec<StepReceipt>)>,
 }
 
 impl WakeAttemptMeter {
@@ -259,37 +260,42 @@ impl WakeAttemptMeter {
 
     fn line_units(&self) -> u64 {
         self.line.get().map_or(0, |(line, start)| {
-            line.read().used_units.saturating_sub(*start)
+            line.accounting_snapshot(&[])
+                .read
+                .used_units
+                .saturating_sub(*start)
         })
     }
 
-    fn lock_spent_before_error(&self) -> std::sync::MutexGuard<'_, (u64, Vec<[u8; 32]>)> {
+    fn lock_spent_before_error(&self) -> std::sync::MutexGuard<'_, (u64, Vec<StepReceipt>)> {
         self.spent_before_error
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The terminal steps a settlement of [`Self::charged_units`] pays
-    /// for, each once: those the tally spent before an error, then the
-    /// leading noted line steps whose units fit in the line's charge, so no
-    /// step is pinned paid beyond what the settlement charges (FIX 6100).
-    pub(crate) fn step_receipts(&self) -> Vec<[u8; 32]> {
-        let mut paid = self.lock_spent_before_error().1.clone();
+    /// Captures one settlement's units and paid-step receipts together.
+    /// The same line reading bounds the paid prefix, and error spend stays
+    /// paired with the receipts recorded beside it.
+    pub(crate) fn settlement(&self) -> (u64, Vec<StepReceipt>) {
+        let spent = self.lock_spent_before_error();
         let steps = self
             .terminal_steps
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let mut left = self.line_units();
-        for &(hash, units) in &*steps {
+        let line_units = self.line_units();
+        let charged = line_units.saturating_add(spent.0);
+        let mut paid = spent.1.clone();
+        let mut left = line_units;
+        for &(binding, units) in &*steps {
             let Some(rest) = left.checked_sub(units) else {
                 break;
             };
             left = rest;
-            if !paid.contains(&hash) {
-                paid.push(hash);
+            if !paid.contains(&binding) {
+                paid.push(binding);
             }
         }
-        paid
+        (charged, paid)
     }
 }
 
@@ -317,7 +323,7 @@ impl WakeAttemptContext<'_> {
     /// that step's paid receipt in the same settlement and a replay of its
     /// memo is not paid again (FIX 6100). With no line registered, or no
     /// meter, nothing is noted: nothing would settle its charge.
-    pub fn note_terminal_step_charge(&self, step_hash: [u8; 32], units: u64) {
+    pub fn note_terminal_step_charge(&self, binding: StepReceipt, units: u64) {
         if let Some(meter) = self.spend_meter
             && meter.line.get().is_some()
         {
@@ -325,22 +331,22 @@ impl WakeAttemptContext<'_> {
                 .terminal_steps
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .push((step_hash, units));
+                .push((binding, units));
         }
     }
 
     /// Hands the driver what the executor's own tally spent before an error
-    /// leaves the attempt (FIX 7432): `units`, and the terminal `step_hashes`
+    /// leaves the attempt (FIX 7432): `units`, and the terminal `step_bindings`
     /// they pay for. The error itself goes on unchanged; the failure or park
     /// that settles it charges these units and pins their receipts. With no
     /// meter nothing is handed.
-    pub(crate) fn note_spend_before_error(&self, units: u64, step_hashes: &[[u8; 32]]) {
+    pub(crate) fn note_spend_before_error(&self, units: u64, step_bindings: &[StepReceipt]) {
         if let Some(meter) = self.spend_meter {
             let mut spent = meter.lock_spent_before_error();
             spent.0 = spent.0.saturating_add(units);
-            for hash in step_hashes {
-                if !spent.1.contains(hash) {
-                    spent.1.push(*hash);
+            for binding in step_bindings {
+                if !spent.1.contains(binding) {
+                    spent.1.push(*binding);
                 }
             }
         }
