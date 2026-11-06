@@ -143,8 +143,7 @@ fn line_end(bytes: &[u8], reader: &ContainerReader, scan_bytes: usize) -> Result
     Ok(None)
 }
 
-/// Searches bounded text windows for needles within the existing scan quantum.
-/// Longer needles keep the native whole-text search.
+/// Searches bounded standard windows, or a paced constant-space long-needle matcher.
 pub(super) fn contains_literal(
     text: &str,
     pattern: &str,
@@ -157,7 +156,9 @@ pub(super) fn contains_literal(
         return Ok(true);
     }
     if pattern.len() > quantum {
-        return Ok(text.contains(pattern));
+        return super::coreutils_search::contains_long_literal(text, pattern, quantum, || {
+            checkpoint(reader)
+        });
     }
     let mut start = 0;
     while start < text.len() {
