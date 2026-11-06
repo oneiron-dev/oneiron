@@ -248,6 +248,82 @@ fn history_names(doc: &LoroDoc, actor: &EntityId) -> bool {
         })
 }
 
+/// Whether `doc`'s map carries, live, a policy revision or a change receipt
+/// naming an actor this vault erased, read in `txn`: what a sealed mirror's
+/// writer reads again before it keeps the mirror (FIX 17210).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn carries_erased_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+) -> Result<bool> {
+    if !holds_map(doc) {
+        return Ok(false);
+    }
+    for (_, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
+        let named = match &carried {
+            Carrier::Policy { policy, .. } => {
+                source_audience::names_erased_actor_in(vault, txn, policy)?
+            }
+            Carrier::Event { event, .. } => {
+                source_audience::event_names_erased_actor_in(vault, txn, event)?
+            }
+            _ => false,
+        };
+        if named {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `doc`'s history past `from` (its shallow root or later) inserted
+/// into its map a policy revision or a change receipt naming an actor this
+/// vault erased, read in `txn`, live or removed since: a sealed mirror that
+/// took one in from another machine pins its window history-free, so its
+/// seals check what they ship (FIX 17210).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn history_names_erased_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    from: &VersionVector,
+) -> Result<bool> {
+    let container = ContainerID::new_root(SOURCE_AUDIENCES_MAP, ContainerType::Map);
+    let history = doc.export_json_updates(from, &doc.oplog_vv());
+    for op in history.changes.iter().flat_map(|change| &change.ops) {
+        if op.container != container {
+            continue;
+        }
+        let JsonOpContent::Map(MapOp::Insert {
+            key,
+            value: LoroValue::Binary(bytes),
+        }) = &op.content
+        else {
+            continue;
+        };
+        let named = match carrier(key, bytes) {
+            Ok(Carrier::Policy { policy, .. }) => {
+                source_audience::names_erased_actor_in(vault, txn, &policy)?
+            }
+            Ok(Carrier::Event { event, .. }) => {
+                source_audience::event_names_erased_actor_in(vault, txn, &event)?
+            }
+            _ => false,
+        };
+        if named {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether `policy` names `actor`: a reader, a share or its creator.
 fn names(policy: &SourceAudiencePolicy, actor: &EntityId) -> bool {
     policy.created_by == Some(*actor)

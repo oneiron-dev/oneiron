@@ -25,16 +25,19 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::ports::{WindowAddress, WindowDeletionRows};
+use crate::store::legal_hold::HoldActor;
 use crate::store::loro_document::{
     export_snapshot, import_doc, map_for_each_tombstone_value, map_get_bytes,
 };
 use crate::sync::WindowManager;
+use crate::sync::carrier_holds::CarrierInventory;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{
     apply_pending_window_updates, apply_tombstone_to_window_doc, export_sealed_mirror_snapshot,
     forward_rematerialize_mirror, load_window_from_state, replace_detached_mirror,
-    reverse_rematerialize_for_sealing, strict_window_cut,
+    require_history_free_window, reverse_rematerialize_for_sealing, strict_window_cut,
 };
+use crate::sync::window_rows::HISTORY_FREE_WINDOW;
 use crate::window_key::WindowKey;
 
 /// Where a mirror's deletes come from.
@@ -228,7 +231,12 @@ impl WindowManager {
         // The export scrubs and the history check, as any export (FIX
         // 17210): a revision, birth or fact the scrubs took out never rides
         // the mirror's history, and the mirror kept here is the one shipped.
-        let snapshot = export_sealed_mirror_snapshot(vault, window, &mirror)?;
+        let shipped = export_sealed_mirror_snapshot(vault, window, &mirror)?;
+        // A checked snapshot may root later than the mirror: what keeping it
+        // would destroy, read before the writer (OF-470).
+        let destroyed = shipped
+            .checked
+            .then(|| CarrierInventory::of_window(&mirror));
         vault.with_write_txn_grouped(|wtxn| {
             let key = mirror_key(world, window);
             // An actor erase rewrites the mirrors in its own writer, without
@@ -238,9 +246,27 @@ impl WindowManager {
             if MIRROR.get(&vault.store, wtxn, &key)? != held {
                 return Err(refused("the sealed mirror changed while it was sealed"));
             }
-            MIRROR.put(&vault.store, wtxn, &key, &snapshot)
+            // An actor erased since the scrubs ran: a revision naming it is
+            // never kept or shipped.
+            if crate::sync::source_audiences::carries_erased_actor_in(vault, wtxn, &mirror)? {
+                return Err(refused("an actor was erased while the mirror was sealed"));
+            }
+            // A legal hold keeps every row it names (OF-470): while one
+            // stands over what the cut drops, the mirror is kept whole and
+            // only the checked snapshot ships.
+            let held_rows = match &destroyed {
+                Some(destroyed) => destroyed
+                    .reject_held_in_txn(&vault.store, wtxn, &HoldActor::TIMER)
+                    .is_err(),
+                None => false,
+            };
+            if held_rows {
+                MIRROR.put(&vault.store, wtxn, &key, &export_snapshot(&mirror)?)
+            } else {
+                MIRROR.put(&vault.store, wtxn, &key, &shipped.bytes)
+            }
         })?;
-        Ok(snapshot)
+        Ok(shipped.bytes)
     }
 
     /// Takes a bundle's `snapshot` of `window` of `world` into the window's
@@ -272,6 +298,13 @@ impl WindowManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let (mirror, fresh) = load_mirror(vault, world, window)?;
+        // What the merge brought: its history past here is read for an
+        // erased actor below.
+        let before = if fresh {
+            incoming.shallow_since_vv().to_vv()
+        } else {
+            mirror.oplog_vv()
+        };
         let (mirror, gained) = if fresh {
             (incoming, true)
         } else if mirror.oplog_vv().includes_vv(&incoming.oplog_vv()) {
@@ -285,8 +318,17 @@ impl WindowManager {
             // A mirror cut history-free (FIX 17210) does not merge into one
             // that lacks its root: it takes this mirror's place, with what
             // this one holds that it does not written back on top. The
-            // mirror the failed import touched is read again first.
+            // mirror the failed import touched is read again first. A legal
+            // hold over what this mirror holds keeps it as it is (OF-470).
             let (old, _) = load_mirror(vault, world, window)?;
+            {
+                let rtxn = vault.store.env.read_txn()?;
+                CarrierInventory::of_window(&old).reject_held_in_txn(
+                    &vault.store,
+                    &rtxn,
+                    &HoldActor::TIMER,
+                )?;
+            }
             let (candidate, lost) = replace_detached_mirror(vault, &old, snapshot)?;
             if lost > 0 {
                 tracing::warn!(
@@ -297,6 +339,27 @@ impl WindowManager {
             }
             (candidate, true)
         };
+        // A revision naming an actor this vault erased that came in with it
+        // pins the window history-free: the mirror's seals then check what
+        // they ship (FIX 17210).
+        if gained {
+            let from = if mirror.oplog_vv().includes_vv(&before)
+                && before.includes_vv(&mirror.shallow_since_vv().to_vv())
+            {
+                before
+            } else {
+                mirror.shallow_since_vv().to_vv()
+            };
+            let named = {
+                let rtxn = vault.store.env.read_txn()?;
+                crate::sync::source_audiences::history_names_erased_actor_in(
+                    vault, &rtxn, &mirror, &from,
+                )?
+            };
+            if named {
+                require_history_free_window(vault, window)?;
+            }
+        }
         if materialize {
             self.land_mirror(world, window, &mirror, gained)?;
         } else if gained {
@@ -340,9 +403,22 @@ pub(crate) fn rewrite_mirrors_in_txn(
         if !rewrite(&mut *wtxn, &doc)? {
             continue;
         }
-        // No observer watches the mirror: the barrier reaches no window.
-        let cut = strict_window_cut(&doc)?;
-        MIRROR.put(&vault.store, wtxn, &key, &cut.bytes)?;
+        // A legal hold keeps every row it names (OF-470): while one stands
+        // over what the cut drops, the mirror keeps its history and its
+        // window is pinned history-free, so its seals check what they ship.
+        let held = CarrierInventory::of_window(&doc)
+            .reject_held_in_txn(&vault.store, wtxn, &HoldActor::UNATTRIBUTED.privacy(true))
+            .is_err();
+        let bytes = if held {
+            if let Some((_, label)) = key.split_once(':') {
+                HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &label.to_owned(), &[1u8])?;
+            }
+            export_snapshot(&doc)?
+        } else {
+            // No observer watches the mirror: the barrier reaches no window.
+            strict_window_cut(&doc)?.bytes
+        };
+        MIRROR.put(&vault.store, wtxn, &key, &bytes)?;
     }
     Ok(())
 }
