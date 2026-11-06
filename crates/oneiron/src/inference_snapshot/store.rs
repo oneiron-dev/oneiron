@@ -457,7 +457,7 @@ impl Vault {
     /// host's restore candidates, matched against a turn before any open.
     ///
     /// # Errors
-    /// Storage errors.
+    /// Storage and allocation errors.
     pub fn inference_snapshot_records(&self) -> Result<Vec<SnapshotRecord>> {
         let txn = self.store.env.read_txn()?;
         Ok(catalog::rows(&self.store, &txn)?
@@ -512,7 +512,7 @@ impl Vault {
     /// unlinked. Startup and housekeeping run it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn finish_inference_snapshot_retirements(&self) -> Result<()> {
         let files = self.store.inference_snapshots.files();
         self.sweep_inference_snapshots(&files).map(drop)
@@ -522,7 +522,7 @@ impl Vault {
     /// or a sweep holds the body files: then nothing is done.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub(crate) fn try_finish_inference_snapshot_retirements(&self) -> Result<()> {
         let Some(files) = self.store.inference_snapshots.try_files() else {
             return Ok(());
@@ -598,7 +598,7 @@ impl Vault {
     /// retirements carried out. Publication waits for it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn reconcile_inference_snapshots(&self) -> Result<SnapshotReconcile> {
         let store = &self.store;
         let mut retired = 0;
