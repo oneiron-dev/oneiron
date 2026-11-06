@@ -59,3 +59,10 @@ This record is not an execution grant, a paid receipt or a generation-level once
 The existing owed key, codec and settlement rules are unchanged. Late-generation
 settlement, corrective-call identity and atomic exactly-once payment remain separate
 work; this supplier change does not claim to close them.
+
+A settled lower-model lease reports the units that lease actually charged, not the
+guard's cumulative total. Per-call settlement keeps that call's units; absolute
+settlement keeps only its increment over the prior watermark. Unmetered local
+leases report zero, and a repeated settlement retains the first result. This
+corrects the existing per-call observation. It does not turn that observation into
+a durable paid fact or authorize subtracting it from a different meter or tally.
