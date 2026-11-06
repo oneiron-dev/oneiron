@@ -22,11 +22,15 @@ pub mod scope_stamp;
 mod source_trust;
 
 pub use codec::encode_claim_body;
-pub use codec::{decode_claim_body, decode_claim_body_with_scope_memory};
+pub use codec::{
+    decode_claim_body, decode_claim_body_with_scope_memory, decode_claim_value_head_with_scope_memory,
+};
 pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
 pub use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
 pub use made_by::MadeByClass;
-pub use read_memory::{ClaimBodyRead, ClaimBodyReadError, ClaimScopeReadMemory, ClaimValueRead};
+pub use read_memory::{
+    ClaimBodyRead, ClaimBodyReadError, ClaimScopeReadMemory, ClaimValueHead, ClaimValueRead,
+};
 pub use relationship_scope::{
     RelationshipScope, RelationshipSet, meet_relationship_scopes, relationship_scope_includes,
     relationship_scope_of, relationship_scope_transcript,

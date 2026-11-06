@@ -54,7 +54,7 @@ mod authorship;
 pub mod code_instruction;
 pub mod consult_payload_ref;
 pub mod retrieval_scope;
-pub(crate) use authorship::claim_author;
+pub(crate) use authorship::{claim_author, claim_author_from_evidence};
 mod core_types;
 pub mod corpus_scope;
 mod decay;

@@ -126,6 +126,47 @@ pub fn decode_claim_body_with_scope_memory(
     allow_reserved_predicate: bool,
     memory: Option<ClaimScopeReadMemory<'_>>,
 ) -> std::result::Result<ClaimBodyRead, ClaimBodyReadError> {
+    match decode_claim(data, allow_reserved_predicate, memory, DecodeTarget::Body)? {
+        DecodedClaim::Body(body) => Ok(body),
+        DecodedClaim::Value(_) => unreachable!("full claim decoder selects a body"),
+    }
+}
+
+/// Validates the entire body, then retains only its value and live-head metadata.
+/// `history` borrows validated metadata and may select an owned projected birth.
+pub fn decode_claim_value_head_with_scope_memory(
+    data: &[u8],
+    allow_reserved_predicate: bool,
+    memory: Option<ClaimScopeReadMemory<'_>>,
+    mut history: impl FnMut(&str, Option<&Value>) -> Result<Option<ClaimBody>>,
+) -> std::result::Result<ClaimValueHead, ClaimBodyReadError> {
+    match decode_claim(
+        data,
+        allow_reserved_predicate,
+        memory,
+        DecodeTarget::Value(&mut history),
+    )? {
+        DecodedClaim::Value(head) => Ok(head),
+        DecodedClaim::Body(_) => unreachable!("value claim decoder selects a head"),
+    }
+}
+
+enum DecodeTarget<'callback> {
+    Body,
+    Value(&'callback mut dyn FnMut(&str, Option<&Value>) -> Result<Option<ClaimBody>>),
+}
+
+enum DecodedClaim {
+    Body(ClaimBodyRead),
+    Value(ClaimValueHead),
+}
+
+fn decode_claim(
+    data: &[u8],
+    allow_reserved_predicate: bool,
+    memory: Option<ClaimScopeReadMemory<'_>>,
+    target: DecodeTarget<'_>,
+) -> std::result::Result<DecodedClaim, ClaimBodyReadError> {
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
@@ -313,6 +354,20 @@ pub fn decode_claim_body_with_scope_memory(
     if let Some(value_memory) = &mut value_memory {
         value_memory.materialized(0, read_memory::value_storage_bytes(&claim_value));
     }
+    if let DecodeTarget::Value(history) = target {
+        if let Some(projected) = history(&predicate, evidence.as_ref())? {
+            return Ok(DecodedClaim::Value(
+                ClaimBodyRead::retained(projected, memory).into_value_head(),
+            ));
+        }
+        return Ok(DecodedClaim::Value(ClaimValueHead::new(
+            predicate,
+            lifecycle,
+            stale.unwrap_or(false),
+            claim_value,
+            value_memory,
+        )));
+    }
     let retained_value_bytes = value_memory.as_ref().map_or(0, |lease| lease.bytes());
     let rel = rel.expect("required relationship scope was validated");
     let mut memory = match (memory, rel.len()) {
@@ -332,7 +387,7 @@ pub fn decode_claim_body_with_scope_memory(
             .map_or(0, |ids| read_memory::relationship_bytes(ids.capacity()));
         memory.materialized(reserved, actual);
     }
-    Ok(ClaimBodyRead::new(
+    Ok(DecodedClaim::Body(ClaimBodyRead::new(
         ClaimBody {
             predicate,
             subject,
@@ -357,5 +412,5 @@ pub fn decode_claim_body_with_scope_memory(
         },
         memory,
         value_memory,
-    ))
+    )))
 }

@@ -35,12 +35,17 @@ it neither pre-admits JSON decoding nor charges copies made by later resolution.
 
 For the worker's principal-contact and explicit `ContactRef` lookups, the single
 canonical CLAIM decoder validates relationship ids at their original wire
-position, then completes every native field check before admitting typed
-relationship-vector storage. It reserves the wire array's typed slots on the
-same server memory line without a new deadline, allocates the canonical set and
+position and completes every native field check. Its value-only terminal then
+passes borrowed predicate and evidence to the same native history selector as
+the full-body reader. It retains only the selected head's predicate, lifecycle,
+stale flag and guarded value. It never materializes the raw relationship set
+that this consumer does not use, so this door has no typed-relationship wait.
+The full-body terminal still reserves the wire array's typed slots on the same
+supplied memory line without a new deadline, allocates the canonical set and
 settles its actual capacity. The MessagePack DOM has already been allocated and
-is not admitted by this step. Unbound readers use the same validator without a
-memory wait.
+is not admitted by either terminal. Unbound readers use the same validator
+without a memory wait. The Store-only contact reader keeps its original
+no-history selection, through the same value-only terminal.
 
 The ordinary claim read keeps its history, fold and successor selection. At its
 terminal history projection, it transfers the already-owned birth through the
@@ -51,25 +56,30 @@ body keeps its own guard until it drops, including while a replacement is built.
 Contact reads retain only each live head's predicate index and value for the
 fold. The value owns a separate post-allocation lease on the supplied line.
 The canonical decoder charges the current value's actual heap capacities before
-the relationship wait; a selected history projection records its own value too.
+the terminal selector; a selected history projection records its own value too.
+The selector preserves actor observations, history-presence reads, successor
+author checks and their error and short-circuit order. Source-collecting reads
+use that same selector and visitor; ordinary reads retain no source-id list.
 Strings include both valid UTF-8 String backing and invalid UTF-8 byte backing,
 through the pinned rmpv capacity accessor. Arrays, maps, binary and extension
 buffers use their actual capacities; nested values are counted once by borrow.
-Moving the value out transfers only its value guard and releases that body's
-unused relationship set before its private relationship lease, before the next
-claim read can wait. Guarded values stay in the head array through the last
+Moving a projected body's head out transfers only its value guard and releases
+that body's already-allocated unused relationship set before its private
+relationship lease. The raw value-only terminal never allocates that typed set. Guarded values stay in the head array through the last
 borrow by the same canonical field decoder. No paid value is extracted to build
 an unguarded map. The stored-map decoder keeps its original key checks and uses
 that same field validator.
 
 The fold still sees the first duplicate only after every claim has been read,
 so a later native read error retains its original precedence. Ignored heads
-release their own guards too. Before each admitted allocation, the memory floor
-includes the request controls, earlier retained values and the current value
-still held by this worker. These are distinct pinned inputs, not second ledger
-charges or a sum of other workers' leases. An impossible required peak returns
-the original typed floor. This is an idle-floor check only: it does not resolve
-FIFO waits behind an earlier request that needs these retained inputs released.
+release their own guards too. Where the full-body terminal admits relationship
+storage, its memory floor includes the original caller's request controls,
+earlier retained values and the current value still held by that caller.
+These are distinct pinned inputs, not second ledger charges or a sum of other
+workers' leases. An impossible required peak returns the original typed floor.
+That check alone does not resolve FIFO waits behind an earlier request that
+needs retained inputs released. Removing the contact door's unused-set wait
+removes that particular hold-and-wait edge, not the wider admission problem.
 Channel-pair and voice-roster lookups stay unbound.
 
 Native store and validation errors retain their existing response mapping. A
@@ -82,5 +92,5 @@ MessagePack DOM decoding (including allocation before a value is charged),
 history/projection scratch, other retained collections, other request storage,
 auth clones and response-byte custody still need their own physical-memory
 accounting and admission. Retained-input FIFO progress remains open. Future untimed memory waits must use this caller's
-stop condition; the relationship-set wait above does so. There is no full-Q,
+stop condition; the full-body relationship-set wait does so. There is no full-Q,
 runtime or throughput claim here.

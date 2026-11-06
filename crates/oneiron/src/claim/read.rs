@@ -2,7 +2,10 @@
 //! scans, the session-bundle projection, and the facet-ref lookup the scoped
 //! read lane gates on.
 
-use crate::write_envelope::claim_body::{ClaimBodyRead, ClaimBodyReadError, ClaimScopeReadMemory};
+use crate::write_envelope::claim_body::{
+    ClaimBodyReadError, ClaimScopeReadMemory, ClaimValueHead,
+    decode_claim_value_head_with_scope_memory,
+};
 use rmpv::Value;
 
 use super::*;
@@ -100,30 +103,27 @@ impl Vault {
             id,
             None,
             super::history_projection::resolved_machine_history,
-            None,
         )
-        .map(|body| {
-            body.map(|body| {
-                body.try_into_unbound_body()
-                    .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
-            })
-        })
-        .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
-    pub(crate) fn get_claim_with_scope_memory_in_txn(
+    pub(crate) fn get_claim_value_head_with_memory_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
         memory: Option<ClaimScopeReadMemory<'_>>,
-    ) -> std::result::Result<Option<ClaimBodyRead>, ClaimBodyReadError> {
-        self.claim_in_txn(
-            rtxn,
-            id,
-            None,
-            super::history_projection::resolved_machine_history,
-            memory,
-        )
+    ) -> std::result::Result<Option<ClaimValueHead>, ClaimBodyReadError> {
+        self.with_claim_body_in_txn(rtxn, id, |data| {
+            decode_claim_value_head_with_scope_memory(data, true, memory, |predicate, evidence| {
+                self.selected_machine_claim_in_txn(
+                    rtxn,
+                    id,
+                    predicate,
+                    evidence,
+                    None,
+                    super::history_projection::resolved_machine_history,
+                )
+            })
+        })
     }
 
     /// The targeted claim and the actual history carriers the same read
@@ -136,27 +136,15 @@ impl Vault {
     ) -> Result<(Option<ClaimBody>, Vec<EntityId>)> {
         let mut sources = Vec::new();
         let mut history_sources = Vec::new();
-        let body = self.claim_in_txn(
-            rtxn,
-            id,
-            Some(&mut sources),
-            |store, txn, fold, target| {
+        let body =
+            self.claim_in_txn(rtxn, id, Some(&mut sources), |store, txn, fold, target| {
                 let (projection, carriers) =
                     super::history_projection::resolved_machine_history_with_sources(
                         store, txn, fold, target,
                     )?;
                 history_sources.extend(carriers);
                 Ok(projection)
-            },
-            None,
-        )
-        .map(|body| {
-            body.map(|body| {
-                body.try_into_unbound_body()
-                    .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
-            })
-        })
-        .map_err(ClaimBodyReadError::into_unbound_error)?;
+            })?;
         sources.extend(history_sources);
         if body.is_some() {
             sources.push(*id);
@@ -178,21 +166,41 @@ impl Vault {
             id,
             None,
             super::history_projection::machine_history_for_restriction,
-            None,
         )
-        .map(|body| {
-            body.map(|body| {
-                body.try_into_unbound_body()
-                    .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
-            })
-        })
-        .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
     fn claim_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
+        sources: Option<&mut Vec<EntityId>>,
+        history: impl FnMut(
+            &crate::store::Store,
+            &heed::RoTxn<'_>,
+            &crate::authority::AuthorityFold,
+            EntityId,
+        ) -> Result<super::transition::ClaimTransitionProjection>,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(body) = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)? else {
+            return Ok(None);
+        };
+        let projected = self.selected_machine_claim_in_txn(
+            rtxn,
+            id,
+            &body.predicate,
+            body.evidence.as_ref(),
+            sources,
+            history,
+        )?;
+        Ok(Some(projected.unwrap_or(body)))
+    }
+
+    fn selected_machine_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        predicate: &str,
+        evidence: Option<&Value>,
         mut sources: Option<&mut Vec<EntityId>>,
         mut history: impl FnMut(
             &crate::store::Store,
@@ -200,14 +208,12 @@ impl Vault {
             &crate::authority::AuthorityFold,
             EntityId,
         ) -> Result<super::transition::ClaimTransitionProjection>,
-        memory: Option<ClaimScopeReadMemory<'_>>,
-    ) -> std::result::Result<Option<ClaimBodyRead>, ClaimBodyReadError> {
-        let body = self.claim_body_with_scope_memory_in_txn(rtxn, id, memory)?;
-        let Some(body) = body else { return Ok(None) };
-        if crate::authority::machine_claim_needs_history_observing(
+    ) -> Result<Option<ClaimBody>> {
+        if crate::authority::machine_claim_metadata_needs_history_observing(
             &self.store,
             rtxn,
-            &body,
+            predicate,
+            evidence,
             |actor| {
                 if let Some(rows) = sources.as_deref_mut() {
                     rows.push(actor);
@@ -233,11 +239,12 @@ impl Vault {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
             let projection = history(&self.store, rtxn, &fold, *id)?;
             // A superseded history's same-id successor is an ordinary claim.
-            if !projection.admits_successor_by(crate::claim::claim_author(&body))
-                || crate::authority::machine_claim_needs_history_observing(
+            if !projection.admits_successor_by(crate::claim::claim_author_from_evidence(evidence))
+                || crate::authority::machine_claim_metadata_needs_history_observing(
                     &self.store,
                     rtxn,
-                    &body,
+                    predicate,
+                    evidence,
                     |actor| {
                         if let Some(rows) = sources.as_deref_mut() {
                             rows.push(actor);
@@ -245,13 +252,12 @@ impl Vault {
                     },
                 )?
             {
-                return Ok(Some(ClaimBodyRead::retained(
+                return Ok(Some(
                     super::history_projection::into_projected_machine_claim(projection),
-                    memory,
-                )));
+                ));
             }
         }
-        Ok(Some(body))
+        Ok(None)
     }
 
     pub(crate) fn session_claim_bundle_members_in_txn(

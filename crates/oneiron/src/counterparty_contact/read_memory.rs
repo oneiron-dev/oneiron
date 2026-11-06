@@ -1,15 +1,14 @@
-//! Canonical contact reads with caller-bound relationship-scope memory.
+//! Canonical contact value reads with caller-bound memory custody.
 
 use crate::Vault;
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::entity_id::EntityId;
-pub(super) use crate::write_envelope::claim_body::ClaimBodyRead as ContactClaim;
+pub(super) use crate::write_envelope::claim_body::ClaimValueHead as ContactClaim;
 use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
 
 impl Vault {
-    /// Admits direct canonical relationship backing on the supplied line.
-    /// History intermediates remain native; a final projected set is charged
-    /// only after its original history selection finishes.
+    /// Retains canonical head values on the supplied line without materializing
+    /// unused relationship sets. History intermediates remain native.
     pub fn get_counterparty_contact_with_memory(
         &self,
         id: &EntityId,

@@ -159,6 +159,24 @@ impl Vault {
         Option<crate::write_envelope::claim_body::ClaimBodyRead>,
         crate::write_envelope::claim_body::ClaimBodyReadError,
     > {
+        self.with_claim_body_in_txn(rtxn, id, |data| {
+            crate::write_envelope::claim_body::decode_claim_body_with_scope_memory(
+                data, true, memory,
+            )
+        })
+    }
+
+    pub(crate) fn with_claim_body_in_txn<T>(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        decode: impl FnOnce(
+            &[u8],
+        ) -> std::result::Result<
+            T,
+            crate::write_envelope::claim_body::ClaimBodyReadError,
+        >,
+    ) -> std::result::Result<Option<T>, crate::write_envelope::claim_body::ClaimBodyReadError> {
         let Some(raw) = self
             .store
             .entities
@@ -177,12 +195,7 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM").into());
         }
-        crate::write_envelope::claim_body::decode_claim_body_with_scope_memory(
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-            true,
-            memory,
-        )
-        .map(Some)
+        decode(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 }
 
