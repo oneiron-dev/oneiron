@@ -139,3 +139,25 @@ original admissions remain missing, not guessed from the latest memo, observed
 call, public lease id or response totals. The association is financial correlation
 data, not permission or proof of payment. It does not activate the payment
 primitive or settle the remaining NET/GROSS coverage and reconciliation work.
+
+### Original native meter-token capture
+
+Each native durable admission keeps its actual issuing guard and opaque lease
+clone until the call's existing settlement or abort has run. This holder is
+independent of optional wake observation: an unobserved call or an already
+claimed observation still drops it. Corrective calls retain their own actual
+ordinal and lease. Panic unwinding skips this best-effort write.
+
+At that drop, one accounting snapshot reads the selected actual lease on its
+issuing guard. Only a settled interval is copied into its original retained
+call row. Open, aborted, foreign and unknown states do not become zero; a known
+settled empty interval remains known and empty. The first stored interval is
+immutable. Repeating admission, invoicing or terminal association cannot replace
+it. The guard lock is released before the private writer starts, and a failed
+write is logged without changing the original call's result or settlement.
+
+This retains an original call-to-interval observation, not durable guard identity
+or proof that an aggregate charged that interval. It creates no payment, credit,
+new funding reservation or extra settlement. The actual executor/driver inclusion
+join, paid-fact checks, interval deduplication on the same real guard, and native
+House producer coverage remain separate work before automatic payment activation.
