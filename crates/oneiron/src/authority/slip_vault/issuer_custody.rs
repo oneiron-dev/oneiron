@@ -308,3 +308,21 @@ impl Vault {
         Ok(require_host(&fold, issuer).is_ok())
     }
 }
+
+impl Vault {
+    /// Keeps a transferred candidate only when its issuer is this vault's
+    /// live root now. The owner and fold are checked in the escrow writer,
+    /// before any destination binding or secret is published.
+    pub(crate) fn escrow_transferred_host_issuer_seed_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        seed: &[u8; HOST_ISSUER_SEED_BYTES],
+    ) -> Result<Option<bool>> {
+        let issuer = HostSlipIssuer::from_seed(seed)?;
+        self.store.escrow_host_issuer_seed_checked(seed, |txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            Ok(require_host(&fold, &issuer).is_ok())
+        })
+    }
+}

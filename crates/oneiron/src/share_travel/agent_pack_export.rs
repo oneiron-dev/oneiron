@@ -140,8 +140,11 @@ impl Memory<'_> {
                     }
                 }
             }
+            // Any other sharer reads every component, its knowledge, skills,
+            // definition and world name too, for where the pack goes on to,
+            // never on this device alone (FIX 10105).
             None => {
-                let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+                let lane = self.read_lane_for_destination(ClaimReadStatus::Recorded, &onward)?;
                 respond(
                     &agent,
                     pack_in(vault, &lane, &agent, &choice, &onward, None)?,
