@@ -53,6 +53,15 @@ pub enum EngineLimit {
     /// claim door, scope and refs included. Past it the claim is written
     /// whole.
     ClaimInputJsonBytes,
+    /// Entities one core batch write carries (`POST /v1/core/batch` and the
+    /// vault's core batch door). Past it every entity is written in the same
+    /// one atomic batch.
+    CoreBatchEntities,
+    /// Entities one legacy `batch_put_entities` call carries (N-API, or the
+    /// C FFI's `oneiron_vault_batch_put_entities`), counted before any
+    /// element is read. Past it every entity is written in the same one
+    /// atomic transaction.
+    LegacyBatchEntities,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.
