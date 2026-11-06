@@ -252,6 +252,11 @@ fn landed(
     let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
     // Approval is the gate's result, not part of the deterministic candidate.
     expected.approval = existing.approval;
+    // A stored marker keeps the MACHINE signature its writer attached; the
+    // marker rebuilt here is compared unsigned, so a replay finds it.
+    let mut existing = existing;
+    existing.evidence = crate::authority::evidence_without_machine_signature(&existing);
+    expected.evidence = crate::authority::evidence_without_machine_signature(&expected);
     if existing != expected {
         return Err(Error::InvalidClaimBody(
             "supersession companion identity collision",
