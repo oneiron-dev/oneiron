@@ -20,6 +20,12 @@ use super::{
 /// server evaluates nothing and opens no second vault-write path. A run with
 /// a seat may spawn reader children under it. A run its caller's credential
 /// admitted binds that slip's lineage as its own (FIX 4705).
+///
+/// FIX 7087: the door declares the caller's task text its own, and only
+/// that text. `config.task` is exactly the request's task, as `execute`
+/// checked against the provider's config before the call. Provider config,
+/// seat grading, the home's persona words, the run's prior record and any
+/// text a host adds later declare nothing, and keep their own row causes.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -42,7 +48,9 @@ pub(super) fn run_engine_native_code_mode(
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
         .with_bound_run(config.run_id)
-        .with_git_door_base(git_door_base);
+        .with_git_door_base(git_door_base)
+        // The caller's own task text, verbatim (FIX 7087).
+        .with_caller_task(config.run_id, &config.task);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
     }

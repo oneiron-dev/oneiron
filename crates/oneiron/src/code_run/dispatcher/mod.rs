@@ -179,10 +179,10 @@ pub struct HostSelfDispatcher<'a> {
     /// call's own capture noted its answer. Host-internal: no guest call
     /// reaches it.
     read_worlds: Cell<read_worlds::ReadWorldLive>,
-    /// Whether the run's task is its caller's own text (FIX 6130): only
-    /// [`Self::with_caller_task`] sets it, as the host binds the run. No
-    /// guest call reaches it.
-    caller_task: bool,
+    /// The run and the exact task text its host declared the caller's own
+    /// (FIX 6130, FIX 7087): only [`Self::with_caller_task`] sets it, as the
+    /// host binds the run. No guest call reaches it.
+    caller_task: Option<(EntityId, String)>,
     /// The host's review policy for the run's repo proposals (FIX 6867):
     /// only [`Self::with_repo_review_policy`] binds it. No guest call
     /// reaches it.

@@ -115,7 +115,7 @@ impl<'a> HostSelfDispatcher<'a> {
             fold_log: fold_verbs::FoldLog::Site,
             program: None,
             read_worlds: Cell::default(),
-            caller_task: false,
+            caller_task: None,
             repo_review_policy: None,
             git_door_base: None,
             spawn_capture: spawn_capture::SpawnCapture::default(),
