@@ -245,6 +245,10 @@ pub(crate) enum UncertainSendStep {
     /// The owner answered resend: the row is sent once more, still marked
     /// as one that may have gone out before.
     OwnerReleased,
+    /// The provider would drop a resend under the same id for now: the row
+    /// is sent again, still Pending and marked as one that may have gone, so
+    /// a resend resumed later asks the lookup again (review #6555).
+    ResendDeduplicated,
     /// Nobody can tell: the row stays Pending and uncertain, nothing is
     /// sent, and the caller asks the owner.
     Hold,
@@ -293,6 +297,16 @@ pub(crate) trait OutboundTransport {
     /// transport does; by default a transport does not, and the chokepoint
     /// keeps its rule.
     fn looks_up_uncertain_sends(&self) -> bool {
+        false
+    }
+
+    /// Whether `call`'s provider deduplicates a resend under its key only
+    /// for a window and then forgets it (LINE's retry key, 24 hours), so an
+    /// uncertain resend of it goes through [`Self::uncertain_send_step`]
+    /// like a non-idempotent one: inside the window the lookup lets it go,
+    /// after it the owner is asked (FIX 4747, review #6555). By default no
+    /// provider's key lapses.
+    fn idempotent_resend_is_time_bounded(&self, _call: &FrozenOutboundCall) -> bool {
         false
     }
 
