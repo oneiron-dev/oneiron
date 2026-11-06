@@ -368,6 +368,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.digest_feedback.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.concerns.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.proactivity.digest" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups.resolve" => a.spec.clone().ok_or_else(invalid),
@@ -2263,6 +2264,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inbox.concerns.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.proactivity.digest" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inbox.lens" => {
@@ -6012,6 +6016,7 @@ async fn execute_agent_verb_row_on(
             boxed_mcp_verb_row_vault_weave_owner_digest_render(row).await
         }
         "vault.inbox.concerns.review" => boxed_mcp_verb_row_vault_inbox_concerns_review(row).await,
+        "vault.proactivity.digest" => boxed_mcp_verb_row_vault_proactivity_digest(row).await,
         "vault.inbox.lens" => boxed_mcp_verb_row_vault_inbox_lens(row).await,
         "vault.inbox.groups" => boxed_mcp_verb_row_vault_inbox_groups(row).await,
         "vault.inbox.groups.resolve" => boxed_mcp_verb_row_vault_inbox_groups_resolve(row).await,
@@ -18669,6 +18674,64 @@ async fn mcp_verb_row_vault_inbox_concerns_review(row: McpVerbRow<'_>) -> McpVer
         oneiron::task_verb::verb_hook_boundary::door_invocation_of(
             &memory,
             "vault.inbox.concerns.review",
+        ),
+        input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_proactivity_digest<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_proactivity_digest(row))
+}
+async fn mcp_verb_row_vault_proactivity_digest(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.proactivity.digest", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::memory::ProactivityDigestRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_proactivity_digest(
+        server,
+        auth,
+        (actor.actor_ref, actor.actor_class),
+        oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+            &memory,
+            "vault.proactivity.digest",
         ),
         input,
     ))

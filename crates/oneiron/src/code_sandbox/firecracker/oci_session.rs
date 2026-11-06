@@ -48,6 +48,7 @@ pub(super) fn resolve(image: &str, source: &str) -> Result<GuestImage> {
 
 struct Lease {
     alive: Arc<AtomicBool>,
+    ingress: oneiron_container::native_ingress::HostEndpoint,
     _control_directory: std::fs::File,
     _egress_directory: std::fs::File,
     process: launch::ProcessCustody,
@@ -61,6 +62,14 @@ impl Drop for Lease {
     }
 }
 impl SessionLease for Lease {
+    fn connect_loopback(
+        &self,
+        target: std::net::SocketAddr,
+        waiting: &dyn Fn() -> bool,
+    ) -> std::io::Result<oneiron_container::LoopbackConnection> {
+        self.ingress.connect(target, waiting)
+    }
+
     fn abandoned(&self) -> bool {
         !self.alive.load(Ordering::Acquire)
     }
@@ -170,6 +179,16 @@ pub(super) fn start(
     stream.write_all(&(start.len() as u32).to_be_bytes())?;
     stream.write_all(&start)?;
     let alive = Arc::new(AtomicBool::new(true));
+    use std::os::fd::AsRawFd;
+    let ingress = oneiron_container::native_ingress::HostEndpoint::new(
+        PathBuf::from(format!(
+            "/proc/self/fd/{}/vsock.sock",
+            directory.as_raw_fd()
+        )),
+        token.clone(),
+        Arc::clone(&relay),
+        Arc::clone(&alive),
+    );
     super::egress::serve(egress_listener, relay, Arc::clone(&alive));
     let control_alive = Arc::clone(&alive);
     let control_child = Arc::clone(&child);
@@ -224,6 +243,7 @@ pub(super) fn start(
         manifest,
         lease: Box::new(Lease {
             alive,
+            ingress,
             _control_directory: control_directory,
             _egress_directory: egress_directory,
             process,

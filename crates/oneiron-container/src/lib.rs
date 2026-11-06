@@ -3,6 +3,8 @@
 
 mod cli_env;
 mod egress;
+#[cfg(target_os = "linux")]
+pub mod native_ingress;
 mod host_net_floor;
 pub mod image_release;
 mod relay_protocol;

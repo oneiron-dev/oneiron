@@ -263,6 +263,7 @@ pub(super) fn mint_reconciliation_task_in_txn(
             crate::task_type::SeedTaskType::Solve,
             crate::task_type::SEEDED_TREE_VERSION,
         ),
+        type_parents: None,
     };
     let provenance = Value::Map(vec![
         (Value::from("source"), Value::from("repo.conflict")),
