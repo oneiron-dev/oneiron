@@ -2,8 +2,9 @@
 //!
 //! At pin d81235049384534c167caea52b85a694f6103d14, env, argv and file
 //! handlers append accepted keys. Env keys and a key/file flag at the start
-//! of the operator args stay valid with any later args. Other argv and
-//! preset-only authentication keep the existing unauthenticated GET.
+//! of the operator args, or after only the known context/slot prefix, stay
+//! valid with any later args. Other argv and preset-only authentication
+//! keep the existing unauthenticated GET.
 use std::path::Path;
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
@@ -21,6 +22,7 @@ impl MetricsRoute {
         env: &[(String, String)],
         worker_cwd: &Path,
     ) -> Self {
+        let args = auth_args(args);
         let authorization = match resolve_key(args, env) {
             Some(key) => bearer(Zeroizing::new(key).as_bytes()),
             None => file_authorization(args, env, worker_cwd).await,
@@ -35,6 +37,17 @@ impl MetricsRoute {
             None => builder,
         }
     }
+}
+
+// Skip only the pinned context/slot options, each with exactly one value.
+fn auth_args(mut args: &[String]) -> &[String] {
+    while let [flag, _, rest @ ..] = args {
+        if !matches!(flag.as_str(), "--parallel" | "-np" | "--ctx-size" | "-c") {
+            break;
+        }
+        args = rest;
+    }
+    args
 }
 
 fn resolve_key(args: &[String], env: &[(String, String)]) -> Option<String> {

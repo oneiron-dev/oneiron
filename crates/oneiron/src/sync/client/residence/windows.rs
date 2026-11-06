@@ -140,8 +140,12 @@ impl SyncClient {
             return Err(refused());
         }
         let pads = super::promoted_pads::checked_pads(window, &reply.pads)?;
-        // Its envelope's pads reach custody first (FIX 7107).
-        let snapshot = self.promotion_snapshot(window, &reply.snapshot)?;
+        // Its envelope's pads reach custody first (FIX 7107), once its
+        // isolated check over the empty window it opens into admits it (FIX
+        // 10474).
+        let Some(snapshot) = self.promotion_snapshot(window, &reply.snapshot, None)? else {
+            return Err(refused());
+        };
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES {
             return Err(refused());
         }
@@ -197,6 +201,10 @@ impl SyncClient {
                             .store
                             .sync_state
                             .delete(txn, &format!("ri:d:{id}"))?;
+                        self.vault
+                            .store
+                            .sync_state
+                            .delete(txn, &format!("ri:c:{id}"))?;
                         self.vault
                             .store
                             .sync_state
@@ -304,8 +312,14 @@ impl SyncClient {
             return Err(refused());
         }
         let pads = super::promoted_pads::checked_pads(window, &reply.pads)?;
-        // Its envelope's pads reach custody first (FIX 7107).
-        let snapshot = self.promotion_snapshot(window, &reply.snapshot)?;
+        // Its envelope's pads reach custody first (FIX 7107), once its
+        // isolated check over the window it merges into admits it (FIX 10474);
+        // a refused one is refused as a failed retain is.
+        let Some(snapshot) = self.promotion_snapshot(window, &reply.snapshot, Some(&loaded.doc))?
+        else {
+            self.mark_retain_refused(window)?;
+            return Ok(false);
+        };
         // The world's pads reach custody here before the snapshot (FIX 6706).
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;

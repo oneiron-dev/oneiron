@@ -77,6 +77,11 @@ pub struct SyncClient {
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
+    /// This connection's sealed world updates whose isolated check waits on
+    /// an edge endpoint, in their envelopes: their capsules install once the
+    /// check passes (FIX 10474). Their bytes share the bound of
+    /// `staged_world_updates`. Cleared at every connect.
+    pub(crate) deferred_sealed_updates: Vec<super::window_pads::DeferredSealedUpdate>,
     pub(crate) root_bootstrapped: bool,
     /// This connection's home replies to opened-item queue sends, keyed by
     /// sequence and bound to the raw row's BLAKE3. Only Durable retires a row;
@@ -208,6 +213,7 @@ impl SyncClient {
             requested_windows: Mutex::new(HashSet::new()),
             pending_world_windows: Mutex::new(HashSet::new()),
             staged_world_updates: Vec::new(),
+            deferred_sealed_updates: Vec::new(),
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             window_pads: Mutex::default(),

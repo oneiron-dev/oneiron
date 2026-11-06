@@ -214,7 +214,17 @@ impl ScopedRead<'_> {
                 self.timeline_record_allowed_in(&txn, &policy, &filter, record)
                     .map(|visible| visible.then_some(()))
             })?;
-            suppressed += admitted.suppression();
+            if admitted.suppression() > 0
+                && requested.is_some()
+                && self
+                    .actor_retrieval_floor(&policy)
+                    .and_then(|floor| {
+                        self.timeline_record_allowed_in(&txn, &policy, &floor, record)
+                    })
+                    .unwrap_or(false)
+            {
+                suppressed += 1;
+            }
             if !admitted.visible() {
                 value.push(None);
                 continue;
@@ -326,13 +336,17 @@ impl ScopedRead<'_> {
             )? {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             }
             let Some(current) = self.entity_record_in(&txn, &id)?.map(|row| row.encode()) else {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             };
             let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
@@ -344,7 +358,9 @@ impl ScopedRead<'_> {
             else {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             };
             if blake3::hash(&raw).as_bytes() != &expected_hash {
@@ -358,7 +374,9 @@ impl ScopedRead<'_> {
             {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             }
             parts.push((
@@ -378,6 +396,60 @@ impl ScopedRead<'_> {
             value: Some((before, after)),
             receipt: receipt(0),
         })
+    }
+
+    fn supersession_pair_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        old: EntityId,
+        new: EntityId,
+        pair: crate::claim::supersession_diff::RevisionPair,
+    ) -> usize {
+        let readable = self.actor_retrieval_floor(policy).and_then(|floor| {
+            for (id, revision, expected_hash) in [
+                (old, pair.before, pair.before_hash),
+                (new, pair.after, pair.after_hash),
+            ] {
+                if !crate::vault::entity_revision::entity_owns_revision_in_txn(
+                    &self.vault.store,
+                    txn,
+                    &id,
+                    revision,
+                )? {
+                    return Ok(false);
+                }
+                let Some(current) = self.entity_record_in(txn, &id)?.map(|row| row.encode()) else {
+                    return Ok(false);
+                };
+                let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+                    self.vault,
+                    txn,
+                    &id,
+                    ReadMode::Pinned(revision),
+                )?
+                else {
+                    return Ok(false);
+                };
+                if blake3::hash(&raw).as_bytes() != &expected_hash {
+                    return Ok(false);
+                }
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("supersession revision header"))?;
+                if self.admit_in::<()>(txn, &id, || Ok(None))?.suppression() == 0
+                    || !crate::note::countable_read_suppression(
+                        header.entity_type,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    )
+                    || !self.history_row_readable_in(txn, policy, &floor, &id, &current)?
+                    || !self.history_row_readable_in(txn, policy, &floor, &id, &raw)?
+                {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        });
+        usize::from(readable.unwrap_or(false))
     }
 
     fn timeline_anchor_allowed_in(

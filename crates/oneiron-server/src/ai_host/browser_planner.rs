@@ -424,7 +424,7 @@ fn batch_subgoal(input: &Value) -> Option<String> {
 
 /// The run a step's call belongs to: the run id the engine executor writes
 /// in the call's durable fallback config. None for any other call.
-fn step_run(request: &LlmRequest) -> Option<EntityId> {
+pub(super) fn step_run(request: &LlmRequest) -> Option<EntityId> {
     let CallClass::Durable { fallback } = &request.envelope.class else {
         return None;
     };
