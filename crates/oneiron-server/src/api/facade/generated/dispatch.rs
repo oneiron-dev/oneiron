@@ -26669,6 +26669,74 @@ async fn tasks_answer(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_answer_forward_challenge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward.challenge",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke_in_turn(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward",
+        value,
+        &producers,
+        Some(turn),
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward.status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn tasks_outcomes(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41750,6 +41818,13 @@ async fn call_verb_row(
         "ask" => Box::pin(ask(server, call, input)).await,
         "wait" => Box::pin(wait(server, call, input)).await,
         "tasks.answer" => Box::pin(tasks_answer(server, call, input)).await,
+        "tasks.answer.forward.challenge" => {
+            Box::pin(tasks_answer_forward_challenge(server, call, input)).await
+        }
+        "tasks.answer.forward" => Box::pin(tasks_answer_forward(server, call, input)).await,
+        "tasks.answer.forward.status" => {
+            Box::pin(tasks_answer_forward_status(server, call, input)).await
+        }
         "tasks.outcomes" => Box::pin(tasks_outcomes(server, call, input)).await,
         "vault.rooms.list" => Box::pin(vault_rooms_list(server, call, input)).await,
         "vault.rooms.messages" => Box::pin(vault_rooms_messages(server, call, input)).await,

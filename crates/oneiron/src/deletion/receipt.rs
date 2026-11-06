@@ -478,6 +478,9 @@ impl Vault {
             ids.extend(crate::secret_custody::cloud_registration_erased_with(
                 &holder,
             ));
+            // The relayed ask intents and results a person's erase retired
+            // (FIX 20468).
+            ids.extend(crate::task_verb::ask_forward_rows_retired_with(&holder));
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         // A classified corrupt CLAIM this erase took the audited exception for
