@@ -93,6 +93,10 @@ pub(crate) struct ChatBreakpointCall {
     pub(crate) budget_units: u64,
     /// The reply's MESSAGE: the flight's paid calls' job.
     pub(crate) message: EntityId,
+    /// Every row the answer's own admitted call was read from, `None` when
+    /// not all were witnessed: its live fork is captured only from a whole
+    /// set (FIX 9463).
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 
 /// One answer's own admitted call, as its breakpoint captures it: a clone
@@ -199,7 +203,7 @@ impl AiHandle {
         if call.log.uncompacted_tokens < driver.compact_at() {
             return Err(Why::Quiet);
         }
-        let captured = capture_conversation_fork(&driver, &admitted.request);
+        let captured = capture_conversation_fork(&driver, &admitted.request, call.sources.clone());
         let spawn = ThreadSpawn {
             passes: Arc::clone(&live.passes),
             credential: call.payer.entity_ref().to_hex(),
