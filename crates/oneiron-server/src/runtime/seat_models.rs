@@ -16,8 +16,9 @@
 //! claim: never a provider key, a slip or a grant. A process that copies it
 //! can spend it while the run's registration and claim stand, and no longer.
 //!
-//! This slice serves buffered requests only: OpenAI chat completions and
-//! Anthropic Messages, never a streamed reply.
+//! The door serves OpenAI chat completions and Anthropic Messages, whole or
+//! as server-sent events (slice 2), with Claude Code's `?beta=true` on
+//! Messages.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

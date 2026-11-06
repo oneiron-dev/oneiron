@@ -21,7 +21,9 @@ use oneiron_llm_systemone::{
 };
 use zeroize::Zeroizing;
 
-use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key};
+use super::broker::{
+    BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key, open_with_key,
+};
 use super::http::is_cloud_node;
 use super::seat_model::{SeatModelProvider, seat_model_providers};
 use crate::config::ServeConfig;
@@ -210,6 +212,26 @@ impl BrokerContext {
             status,
             body: reply.body,
         })
+    }
+
+    /// Opens the one streamed call `header` checks, with the key read at
+    /// `keys` (a seat's model door, FIX 15702 slice 2), and leaves its reply
+    /// to the caller: its outcome, then its body as the broker clears it.
+    /// The request is checked before the broker is reached and the key read;
+    /// the whole reply must end within `wait`.
+    pub(crate) async fn open_with_keys(
+        &self,
+        keys: &Arc<dyn KeyDoor>,
+        secret: &str,
+        header: &CallHeader,
+        body: &[u8],
+        wait: Duration,
+    ) -> LlmResult<oneiron_broker::BrokerStream> {
+        header
+            .check(body)
+            .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+        let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
+        open_with_key(&client, keys, secret, header, body).await
     }
 
     /// [`Self::send`] for a blocking caller, run on the serve runtime: from

@@ -1,16 +1,18 @@
-//! The model door's broker leg (FIX 15702 slice 1; ARCH-0069
-//! `#door-sign-loopback`): one buffered model request from an official CLI
-//! seat, its bytes as the seat's SDK wrote them, sent through the vault's
-//! credential broker with the provider key read at the custody door for that
-//! one request.
+//! The model door's broker leg (FIX 15702; ARCH-0069
+//! `#door-sign-loopback`): one model request from an official CLI seat, its
+//! bytes as the seat's SDK wrote them, sent through the vault's credential
+//! broker with the provider key read at the custody door for that one
+//! request. A request that asks for a stream gets the provider's events as
+//! the broker clears them of the key (slice 2); any other, one buffered
+//! reply (slice 1).
 //!
 //! The door fixes everything but the body: the provider the run's slot was
 //! bound to gives the origin, the path, the auth shape and the headers, and
-//! the slot's model list the models a request may name. A streamed request
-//! and every model outside the list are refused before any key is read. The
-//! key is released only while the run's seat-child credential holds, its
-//! slip names the key and carries the model door's channel, and the run's
-//! registration is open and records the key's taint first.
+//! the slot's model list the models a request may name. Every model outside
+//! the list is refused before any key is read. The key is released only
+//! while the run's seat-child credential holds, its slip names the key and
+//! carries the model door's channel, and the run's registration is open and
+//! records the key's taint first.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -22,7 +24,7 @@ use oneiron_broker::{CallHeader, Shape};
 use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
-use super::broker::{KeyDoor, join};
+use super::broker::{KeyDoor, answered, join};
 use super::broker_context::{BrokerAnswer, BrokerContext};
 use super::http::is_cloud_node;
 use crate::config::models::{ModelsConfig, ProviderConfig, ProviderKind};
@@ -35,6 +37,9 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// version and the beta features the request asks for. No other request
 /// header leaves the host.
 const ANTHROPIC_CARRIED: [&str; 2] = ["anthropic-version", "anthropic-beta"];
+
+/// The query Claude Code adds to Messages, carried on exactly as sent.
+const ANTHROPIC_BETA_QUERY: &str = "?beta=true";
 
 /// The `chat_path` value that selects an OpenAI provider's unversioned
 /// `/chat/completions`.
@@ -159,21 +164,43 @@ impl KeyDoor for SeatKeyDoor {
     }
 }
 
+/// What the provider answered a seat request: one buffered body, or, for a
+/// request that asked for events, its status, whether its reply is an event
+/// stream, and the reply as the broker clears it.
+pub(crate) enum SeatModelAnswer {
+    Whole(BrokerAnswer),
+    Events {
+        status: u16,
+        event_stream: bool,
+        reply: oneiron_broker::BrokerStream,
+    },
+}
+
 /// Sends one seat request through `provider`: `body` as the seat sent it,
-/// under the provider's origin, path and headers and the Anthropic headers
-/// in `asked` the door carries on, its key read at `keys`. Refused before
-/// any key is read unless `body` is one JSON object naming one of `models`
-/// and asking for no stream.
+/// under the provider's origin, path and headers, Anthropic's `beta=true`
+/// query when `beta`, and the Anthropic headers in `asked` the door carries
+/// on, its key read at `keys`. Refused before any key is read unless `body`
+/// is one JSON object naming one of `models`, whose `stream` is absent,
+/// null, `false` or `true`, each once. A request with `stream: true` goes as
+/// a stream and its events come back as the broker clears them (slice 2).
 pub(crate) async fn send_seat_model(
     context: &BrokerContext,
     provider: &SeatModelProvider,
     models: &BTreeSet<String>,
     asked: &[(String, String)],
+    beta: bool,
     body: &[u8],
     keys: &Arc<dyn KeyDoor>,
-) -> LlmResult<BrokerAnswer> {
-    let model = admitted_model(body, models)?;
+) -> LlmResult<SeatModelAnswer> {
+    let (model, events) = admitted_request(body, models)?;
+    let invalid = || LlmError::from(FatalLlmError::InvalidRequest);
+    let shape = if events {
+        provider.shape.with_events().ok_or_else(invalid)?
+    } else {
+        provider.shape
+    };
     let mut headers = provider.headers.clone();
+    let mut path = provider.path.clone();
     if provider.protocol == SeatModelProtocol::AnthropicMessages {
         for (name, value) in asked {
             if ANTHROPIC_CARRIED.contains(&name.as_str()) {
@@ -183,41 +210,63 @@ pub(crate) async fn send_seat_model(
         headers
             .entry("anthropic-version".to_owned())
             .or_insert_with(|| ANTHROPIC_VERSION.to_owned());
+        if beta {
+            path.push_str(ANTHROPIC_BETA_QUERY);
+        }
+    } else if beta {
+        return Err(invalid());
     }
     headers.insert("content-type".to_owned(), "application/json".to_owned());
     let header = CallHeader::new(
         format!("seat-model-{}", oneiron::EntityId::now().to_hex()),
-        provider.shape,
+        shape,
         provider.origin.clone(),
-        provider.path.clone(),
+        path,
         headers.into_iter().collect(),
         model,
         is_cloud_node(),
         body,
     );
-    context
-        .send_with_keys(keys, &provider.secret, &header, body, provider.timeout)
-        .await
+    if !events {
+        return context
+            .send_with_keys(keys, &provider.secret, &header, body, provider.timeout)
+            .await
+            .map(SeatModelAnswer::Whole);
+    }
+    let reply = context
+        .open_with_keys(keys, &provider.secret, &header, body, provider.timeout)
+        .await?;
+    let (status, reply_headers) = answered(reply.outcome().clone())?;
+    let event_stream = reply_headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("content-type")
+            && value
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("text/event-stream")
+    });
+    Ok(SeatModelAnswer::Events {
+        status,
+        event_stream,
+        reply,
+    })
 }
 
-/// The model `body` names, when it is one of `models` and the request asks
-/// for no stream: the door relays one buffered reply, so a streamed request
-/// is refused, never answered whole. The broker's own check refuses a body
-/// naming its model twice or asking for another route.
-fn admitted_model(body: &[u8], models: &BTreeSet<String>) -> LlmResult<String> {
+/// The model `body` names, when it is one of `models`, and whether the
+/// request asks for events. `stream` is read once, its repeats refused, so
+/// the mode chosen here is the one the provider reads; any value but absent,
+/// null, `false` or `true` refuses. The broker's own check refuses a body
+/// naming its model twice or asking for another route, and binds an event
+/// shape to `stream: true` again.
+fn admitted_request(body: &[u8], models: &BTreeSet<String>) -> LlmResult<(String, bool)> {
     let invalid = || LlmError::from(FatalLlmError::InvalidRequest);
-    let request: serde_json::Map<String, JsonValue> =
-        serde_json::from_slice(body).map_err(|_| invalid())?;
-    if !matches!(
-        request.get("stream"),
-        None | Some(JsonValue::Null | JsonValue::Bool(false))
-    ) {
-        return Err(invalid());
-    }
-    let model = request
-        .get("model")
-        .and_then(JsonValue::as_str)
-        .filter(|model| models.contains(*model))
-        .ok_or_else(invalid)?;
-    Ok(model.to_owned())
+    let events = match oneiron_broker::json_member(body, "stream").map_err(|_| invalid())? {
+        None | Some(JsonValue::Null | JsonValue::Bool(false)) => false,
+        Some(JsonValue::Bool(true)) => true,
+        Some(_) => return Err(invalid()),
+    };
+    let model = match oneiron_broker::json_member(body, "model").map_err(|_| invalid())? {
+        Some(JsonValue::String(model)) if models.contains(&model) => model,
+        _ => return Err(invalid()),
+    };
+    Ok((model, events))
 }

@@ -118,7 +118,7 @@ pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
-pub(crate) use seat_model::{SeatKeyDoor, send_seat_model};
+pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, send_seat_model};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
