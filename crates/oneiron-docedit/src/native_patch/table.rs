@@ -448,6 +448,10 @@ pub(super) fn set_cell(
 /// (direct breaks as U+000B) equals the requested line and it holds zero
 /// descendant DrawingML fields; omitted breaks still drop through the
 /// existing prefix/suffix path.
+/// Same-count lines also keep each original field-free inter-paragraph gap's
+/// exact bytes in place when zero DrawingML `fld` nodes sit wholly inside
+/// that gap; gaps holding any such field keep the existing drop so
+/// field-removal receipts stay truthful. Count-changing output is unchanged.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -697,6 +701,16 @@ fn rebuilt(
     let paired = (paragraphs.len() - head - tail).min(new_count - head - tail);
     let mut out = bytes[..first_node.span.start].to_vec();
     for (index, line) in value.split('\n').enumerate() {
+        if same_count && index > 0 {
+            let gap_start = paragraphs[index - 1].1.span.end;
+            let gap_end = paragraphs[index].1.span.start;
+            let gap_has_field = within(tree, body).any(|(_, node)| {
+                node.is(DML, "fld") && node.span.start >= gap_start && node.span.end <= gap_end
+            });
+            if !gap_has_field {
+                out.extend_from_slice(&bytes[gap_start..gap_end]);
+            }
+        }
         let rendered = if same_count && index == 0 {
             match styled((first, first_node), source_run, line) {
                 Some(xml) => xml,
