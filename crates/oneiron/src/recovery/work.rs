@@ -14,7 +14,7 @@
 //! retained-parent and workflow checks, and encoding still run whole. The
 //! envelope checksum and outer canonical digest yield between BLAKE3 chunks.
 //! Aborted-transaction preflight and the NOTE workflow plan also run whole;
-//! manifest construction yields between its original whole pack/hash chunks.
+//! manifest construction yields between whole packs and within each chunk hash.
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
 //! completion turn; pure snapshot equality then resumes one row at a time.
