@@ -1,9 +1,10 @@
 # Calendar prep: counterparty obligations
 
 Calendar prep adds open CMT-5 obligations when an EVENT attendee reference directly
-names a CounterpartyContact. It does not turn a PERSON id, name, vendor string or
-`mailto:` URI into a contact. Those attendees keep their existing PPR evidence.
-There is no new identity resolver, stored prep cache, timer or permission.
+names a CounterpartyContact, or an admitted email attendee exactly matches an
+existing contact's party. It creates no contact and does not infer one from a
+PERSON id, display name or vendor label. Existing PPR evidence remains available.
+There is no new stored prep cache, timer or permission.
 
 Both the raw and actor-scoped prep builders add the two ledger directions. A
 self-owed obligation appears once in prep. An obligation already returned by PPR
@@ -52,7 +53,20 @@ The ledger adds candidates outside the PPR walk; the existing final word budget
 still applies to the combined evidence. Prep does not adopt the ledger's due sort.
 No extra contact-active or send-consent gate is imposed on reading obligations.
 
-This is a direct-contact attendee slice. General attendee-to-contact resolution,
-complete off-record overlay coverage and runtime proof are not claimed. The raw
-builder retains its unrestricted API. This change adds no migration, feature flag,
+An admitted, settled `calendar.attendee` CLAIM can also match a contact by its
+exact stored counterparty: a bare address or a lowercase `mailto:` prefix, with
+surrounding whitespace removed. Matching does not fold address case or infer a
+contact from a display name. It keeps all matching contacts, then rechecks the
+selected contact label's exact party before using its ledger. Added items cite the
+actual attendee CLAIM as well as the commitment and deciding contact/identity
+heads. Existing direct-contact attendees and PPR seeds are unchanged.
+
+The lookup uses the serving content view. Its scan threshold remains vault
+policy. Deferred scan observations go to the actual Session's pending checks for
+a Session call, or the vault's pending checks for a canonical call; a content
+reader's base-forwarding accessor is not used as the room's destination.
+
+General PERSON-to-party resolution, all address spellings, complete off-record
+overlay coverage and runtime proof are not claimed. The raw builder retains its
+unrestricted API. This change adds no migration, feature flag,
 configuration or special deployment step. Deploy the ordinary engine/server update.
