@@ -79,11 +79,6 @@ pub(crate) fn apply_calendar_source_feed(
         preserve_direction: false,
         now,
         blob_ref: &archived.record,
-        // Each passport keeps the exact archived version it came from.
-        source: Some(crate::calendar::claims::CalendarPassportSource {
-            artifact: archived.artifact_id,
-            version: archived.version,
-        }),
         verdict_fold: VerdictFold::default(),
         continuations: None,
     };
@@ -232,8 +227,6 @@ struct ArchivedResource {
     /// The `hex#vN` reference the admitted claims cite.
     record: String,
     artifact_id: EntityId,
-    /// The version the archive wrote.
-    version: u64,
     /// The version this one descends from, when it is not the first.
     parent_version: Option<u64>,
 }
@@ -285,7 +278,6 @@ fn archive_source_resource(
     Ok(ArchivedResource {
         record: format!("{}#v{}", artifact_id.to_hex(), version.version),
         artifact_id,
-        version: version.version,
         parent_version: version.parent_version,
     })
 }
