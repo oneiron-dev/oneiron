@@ -28428,7 +28428,7 @@
      "path": "src/dreamer_runner/deferral.rs",
      "purpose": "A deferred selection (FIX 3863)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30824,7 +30824,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 18,
       "struct": 1
      }
@@ -31104,7 +31104,7 @@
      "path": "src/dreamer_wake/driver/dispatch.rs",
      "purpose": "One admitted attempt's dispatch (§3.4 split, FIX 10611): the outcome a checkpoint between admission and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77677,6 +77677,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/selector/authorize/filter.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/selector/born_with.rs",
      "purpose": "Born-with text on a copy to another vault (OF-491)",
      "surface": {
@@ -90788,7 +90798,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 352,
+     "files": 353,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91000,7 +91010,7 @@
    },
    "over_bar": 159,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6392,
+   "source_files": 6393,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109101,7 +109111,7 @@
      "path": "src/ai_host/coach_host.rs",
      "purpose": "The host Coach's nightly jobs (ARCH-0066 #coach, OF-420)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -109162,6 +109172,16 @@
      "purpose": "The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/wake.rs",
+     "purpose": "The installed host Coach's complete dispatcher, lent to a wake pass",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -109541,7 +109561,7 @@
      "path": "src/ai_host/feedback_triage.rs",
      "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"GitHub issues still work",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -127680,7 +127700,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 112,
+     "files": 113,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128200,7 +128220,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1595,
+   "source_files": 1596,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
