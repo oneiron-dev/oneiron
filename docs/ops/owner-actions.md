@@ -1354,9 +1354,16 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 
 The Coach reads the open inbox with a triage skill you bind, and files what it finds as
 proposals in your run tray. It never closes, moderates or deletes a note. Bind the skill first:
-`GET /v1/owner/feedback/triage/binding` returns `{skill, revision}`, and `PUT` with
-`{"skill": "<SKILL id>", "seen": <revision>}` binds it (`"skill": null` unbinds; a stale `seen`
-is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
+`GET /v1/owner/feedback/triage/binding` returns
+`{skill, enqueue_on_intake, revision, set_at}`. `PUT` with
+`{"skill": "<SKILL id>", "enqueue_on_intake": false, "seen": <revision>}` binds it
+(`"skill": null` unbinds; a stale `seen` is refused). The required
+`enqueue_on_intake` boolean defaults to false while never set, keeping manual/nightly
+batching. Set it true to queue the same ordinary sweep as each new inbox note lands;
+running work retains one coalesced later sweep. Turning it off leaves already admitted
+work intact. This is scheduling under the owner's setting, not anonymous authority.
+The repo's `skills/feedback-triage/SKILL.md` is a starting skill. Details:
+[`Feedback triage on intake`](feedback-triage-intake.md).
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
 already going is joined. If that sweep is already running, the request also retains one later

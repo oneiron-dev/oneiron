@@ -276,7 +276,8 @@ pub(super) struct WithheldKey {
 /// the edge with it, goes with that actor; a whole document pin's key, the
 /// digest of the pin naming no one, is its citer's, held while the message
 /// it quotes is, as the pin is. `None` for every other key: a part's digest
-/// is withheld under its manifests' holders ([`withheld_part_key`]), and any
+/// is withheld under its manifests' holders ([`withheld_part_key`]), a
+/// custody digest beside its client's copy ([`withheld_client_key`]), and any
 /// other keeps its window whole as [`key_refusal`] names.
 pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
     match root {
@@ -325,6 +326,19 @@ pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
                 | MESSAGE_DOCS_MAP
                 | REPO_MANIFESTS_MAP
         )
+}
+
+/// The client the skeleton withholds `key` of `root` for, beside that
+/// client's copy of its value (FIX 10278): a protected input, a witness part
+/// or a sealed copy in the custody map is filed under a digest of it, and the
+/// credential client's copy holds both. `None` for every other key.
+pub(super) fn withheld_client_key(root: &str, key: &str) -> Option<OtherClient> {
+    (root == CUSTODY_MAP
+        && matches!(
+            crate::sync::custody::checkpoint::key_class(key),
+            KeyClass::Digest
+        ))
+    .then_some(OtherClient::Credential)
 }
 
 /// The key `no_one`, a split of a withheld key of `root`, with each of
