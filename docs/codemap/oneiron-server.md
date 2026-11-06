@@ -953,7 +953,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/owner/recovery_kit/authority_recovery.rs` | src | s | 2 crate-vis | — | Explicit recovery-key enrollment before loss; kit issuance is separate |
 | `src/commands/owner/recovery_kit/custody.rs` | src | s | 2 crate-vis | — | The kit's side of a custody head (KS-4A1, FIX 5685) |
 | `src/commands/owner/recovery_kit/issue.rs` | src | s | 2 crate-vis | — | `oneiron recovery-kit issue` and `issue-vault-key`: a kit's pieces, each stored piece's recovery code… |
-| `src/commands/owner/recovery_kit/live.rs` | src | s | 5 crate-vis | — | `oneiron recovery-kit pad-access \| upkeep \| roots \| pin \| anchor`: the kit and root calls of a running… |
+| `src/commands/owner/recovery_kit/live.rs` | src | m | 5 crate-vis | — | `oneiron recovery-kit pad-access \| upkeep \| roots \| pin \| anchor`: the kit and root calls of a running… |
 | `src/commands/owner/reminder_route.rs` | src | s | 1 fn | — | The owner's commitment reminder route on a stopped vault… |
 | `src/commands/owner/secret_commands.rs` | src | m | 4 fn · 3 crate-vis | — | Secret scan, custody, and value commands for a stopped vault |
 | `src/commands/owner/secret_input.rs` | src | m | 2 crate-vis | — | A secret read from stdin (FIX 1490) |
@@ -1209,7 +1209,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/invocation_claims.rs` | src | m | 13 crate-vis | — | Durable client-named invocation claims (FIX 11889) |
 | `src/ladder_poll.rs` | src | s | 1 crate-vis | — | Polling an engine future whose decisions run on the host's ladder |
 | `src/lens_frames.rs` | src | m | 15 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
-| `src/lib.rs` | src | s | 3 fn · 1 const · 24 mod · 2 re-export | — | Oneiron CRDT sync server library |
+| `src/lib.rs` | src | s | 3 fn · 1 const · 24 mod · 2 re-export · 1 crate-vis | — | Oneiron CRDT sync server library |
 | `src/linear_host.rs` | src | m | 5 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `src/linear_host/body_line.rs` | src | s | 2 crate-vis | — | The direct Linear mirror's decode memory on the server's retained-memory line (FIX 8610): the narrow host… |
 | `src/linear_host/direct.rs` | src | s | 4 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
