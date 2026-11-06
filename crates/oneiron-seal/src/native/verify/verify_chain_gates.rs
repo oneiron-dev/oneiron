@@ -512,8 +512,10 @@ pub(crate) fn verify_document(
         .zip(profiles)
         .map(|(evidence, profile)| signature_report(evidence, profile))
         .collect();
+    let active_content = pdf::active_content_facts(&doc, limits).map_err(memory_refused)?;
     Ok(VerifyReport {
         artifact_sha256,
+        active_content,
         revisions,
         signatures,
         modifications,

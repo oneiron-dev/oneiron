@@ -194,8 +194,8 @@ pub enum SealWarning {
 
 mod report;
 pub use report::{
-    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind,
-    RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest, VerifyCheck,
+    ActiveContentFacts, Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications,
+    RevisionKind, RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest, VerifyCheck,
     VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
 };
 
