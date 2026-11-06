@@ -95,7 +95,8 @@ pub struct BoardLayoutState {
     /// The batch the next turn applies; absent when none is staged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<BoardLayout>,
-    /// The owner's override sections, which win over the actor's own.
+    /// The owner's override sections for this actor (every agent's, with
+    /// this agent's own laid over them), which win over the actor's own.
     #[serde(default, skip_serializing_if = "is_empty_layout")]
     pub owner_override: BoardLayout,
 }
@@ -209,7 +210,7 @@ impl Memory<'_> {
             BOARD_LAYOUT.put(store, txn, &actor, &row)?;
             let settings =
                 crate::settings::board_layout::board_layout_settings_in_txn(vault, &*txn)?;
-            Ok(row.state(settings.override_layout))
+            Ok(row.state(settings.override_for(actor)))
         })
     }
 }
@@ -248,11 +249,11 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let settings = crate::settings::board_layout::board_layout_settings_in_txn(self, &rtxn)?;
         Ok(match BOARD_LAYOUT.get(&self.store, &rtxn, &actor)? {
-            Some(row) => row.state(settings.override_layout),
+            Some(row) => row.state(settings.override_for(actor)),
             None => BoardLayoutState {
+                owner_override: settings.override_for(actor),
                 live: settings.default_layout,
                 pending: None,
-                owner_override: settings.override_layout,
             },
         })
     }
@@ -275,14 +276,17 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let settings = crate::settings::board_layout::board_layout_settings_in_txn(self, &rtxn)?;
         let Some(row) = BOARD_LAYOUT.get(&self.store, &rtxn, &actor)? else {
-            return Ok((settings.effective(&settings.default_layout), None));
+            return Ok((settings.effective(actor, &settings.default_layout), None));
         };
         if !has_turn {
-            return Ok((settings.effective(&row.live), None));
+            return Ok((settings.effective(actor, &row.live), None));
         }
         match row.candidate(actor)? {
-            Some(candidate) => Ok((settings.effective(&candidate.layout), Some(candidate))),
-            None => Ok((settings.effective(&row.live), None)),
+            Some(candidate) => Ok((
+                settings.effective(actor, &candidate.layout),
+                Some(candidate),
+            )),
+            None => Ok((settings.effective(actor, &row.live), None)),
         }
     }
 
