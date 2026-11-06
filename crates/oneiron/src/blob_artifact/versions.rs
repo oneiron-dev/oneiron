@@ -25,6 +25,8 @@ use crate::write_envelope::provenance::made_by::MadeBy;
 
 // The one version append every door takes.
 mod append;
+// FIX 4818: a room step's response version, staged in the room.
+mod room;
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
 mod checked;
@@ -32,6 +34,7 @@ mod queue_check;
 mod reads;
 pub(crate) use queue_check::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 pub use reads::BlobBytes;
+pub(crate) use room::RoomResponseVersion;
 
 /// Blob artifact version record. Key: id16 (artifact) + u64be (version).
 pub(super) const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
