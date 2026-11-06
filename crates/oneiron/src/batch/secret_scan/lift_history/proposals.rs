@@ -192,7 +192,7 @@ pub(super) fn review(vault: &Vault) -> Result<()> {
 /// row as it stands: a known-value pass marks nothing more in that row (FIX
 /// 2781). A close for a rotation, or one the sweep made, leaves it open to
 /// marking.
-pub(super) fn owner_kept_in_txn(
+pub(in crate::batch::secret_scan) fn owner_kept_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     family: LiftFamily,
