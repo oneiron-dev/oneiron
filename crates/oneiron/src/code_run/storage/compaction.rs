@@ -379,13 +379,27 @@ fn code_run_compaction_epochs_in(
     run_id: EntityId,
 ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
     let mut rows = Vec::new();
+    for row in coverage_rows_in_txn(dbs, txn, run_id)? {
+        let text = verified_text(dbs, txn, &row)?;
+        rows.push((row, text));
+    }
+    Ok(rows)
+}
+
+/// Every coverage row of `run_id` as `txn` holds it, each under its own
+/// key, with no summary read.
+pub(super) fn coverage_rows_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    run_id: EntityId,
+) -> Result<Vec<CodeRunCompactionCoverage>> {
+    let mut rows = Vec::new();
     for item in COVERAGE.iter_from(dbs, txn, run_id.as_bytes())? {
         let ((key_run, key_summary), row) = item?;
         if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
             return Err(Error::CorruptedIndex("code-run compaction coverage key"));
         }
-        let text = verified_text(dbs, txn, &row)?;
-        rows.push((row, text));
+        rows.push(row);
     }
     Ok(rows)
 }
