@@ -23,4 +23,3 @@ pub fn split_row(row: &[u8]) -> Option<(u8, &[u8])> {
 pub fn code_run_row_inline(value: &[u8]) -> bool {
     matches!(split_row(value), Some((STORED_INLINE, _)))
 }
-

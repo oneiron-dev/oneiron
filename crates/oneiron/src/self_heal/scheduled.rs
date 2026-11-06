@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
 
 /// A host-signed scheduled detector run receipt, keyed by its content digest.
-/// Key: bytes32 (blake3 digest of the signed detector run).
+/// Key: bytes32 (blake3 digest of the signed detector run). A run that read
+/// the tripwire policy signs its pass's id in that policy, so each pass keeps
+/// its own row (FIX 10817).
 const SIGNED_RUN: SideTable<[u8; 32], SignedDetectorRun, Named> =
     SideTable::new(&side_table::SELF_HEAL_SIGNED_RUN);
 
@@ -159,7 +161,8 @@ impl Vault {
     /// A verified run persists every event; past `limits.detector_events` it
     /// asks first. A verified run that carries its tripwire policy is kept
     /// even when it found nothing, so an empty pass keeps its applied-policy
-    /// record (FIX 10096).
+    /// record (FIX 10096), one row per pass: the policy names its pass (FIX
+    /// 10817). The same signed run accepted again is the same row.
     pub fn accept_signed_detector_run(&self, run: &SignedDetectorRun) -> Result<Vec<EntityId>> {
         let Some(events) = self.verified_run(run)? else {
             return Ok(vec![]);
