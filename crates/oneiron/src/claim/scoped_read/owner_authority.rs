@@ -74,7 +74,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Option<ScopedRead<'v>> {
         let owner = self.owner_reader()?;
@@ -128,7 +128,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         request: Option<&RetrievalFilter>,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         owner: EntityId,
     ) -> Result<Option<ScopedRead<'v>>> {
         if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, rtxn, &owner)? {

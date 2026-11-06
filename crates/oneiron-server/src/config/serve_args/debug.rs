@@ -83,6 +83,7 @@ impl fmt::Debug for ServeArgs {
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
             .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
+            .field("git_door_base", &self.git_door_base)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field(
                 "insecure_allow_unauthenticated",

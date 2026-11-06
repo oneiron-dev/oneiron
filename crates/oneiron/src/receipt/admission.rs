@@ -83,6 +83,11 @@ struct StoredAdmission {
 const ADMISSIONS: SideTable<[u8; 32], StoredAdmission, Named> =
     SideTable::new(&side_table::ADMISSION_INTENT);
 
+/// The reason code of an intent another request is running now: a retry
+/// that met it may try again once that one answers, so a paced turn that
+/// meets it goes back in line, never ends (FIX 8753).
+pub const ADMISSION_INTENT_ACTIVE: &str = "admission.intent_active";
+
 fn intent(text: &str) -> MemoryResult<InvocationId> {
     InvocationId::parse_hex(text)
         .ok_or_else(|| MemoryError::bad_request("intent_key must be a 32-hex invocation id"))
@@ -107,7 +112,16 @@ pub struct AdmissionTracker {
 impl AdmissionTracker {
     /// Keeps the intent before the host starts its typed call. Actor binding,
     /// retry identity and the active/terminal fence are checked in the same
-    /// write transaction as the receipt. Only an answered hook ask may resume.
+    /// write transaction as the receipt. Only a held call may resume: one an
+    /// answered hook ask or a paced turn runs again. `resumed` is a call the
+    /// drain runs again on the args its hold saved (FIX 8753), which carry
+    /// ids the hold fixed and a hook's rewrite, so its held intent is
+    /// reopened whatever its request's fingerprint; the drain's leave comes
+    /// from the engine alone, never from a request.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's identity, as its door read it"
+    )]
     pub fn start(
         vault: Arc<Vault>,
         actor: EntityId,
@@ -116,22 +130,41 @@ impl AdmissionTracker {
         verb: &str,
         request_digest: String,
         fingerprint: String,
+        resumed: bool,
     ) -> MemoryResult<Self> {
         let key = key(actor, class, invocation);
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
             verify_actor_binding_in_txn(&vault, txn, actor, class)?;
             if let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? {
-                if stored.fingerprint != fingerprint {
+                let running = || MemoryError {
+                    reason_codes: vec![ADMISSION_INTENT_ACTIVE.to_owned()],
+                    ..MemoryError::new(
+                        oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
+                        "admission intent is already running; read its status",
+                        &[],
+                    )
+                };
+                // The drain's re-entry meets a running retry before its own
+                // args' fingerprint: it waits for that retry, never ends.
+                if resumed && stored.active {
+                    return Err(running());
+                }
+                let reopens =
+                    resumed && matches!(stored.receipt.state, AdmissionStatus::Held { .. });
+                if stored.fingerprint != fingerprint && !reopens {
                     return Err(MemoryError::new(
                         oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
                         "admission intent names a different call",
                         &[],
                     ));
                 }
-                if stored.active || stored.receipt.state.terminal() {
+                if stored.active {
+                    return Err(running());
+                }
+                if stored.receipt.state.terminal() {
                     return Err(MemoryError::new(
                         oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
-                        "admission intent is already running or settled; read its status",
+                        "admission intent is already settled; read its status",
                         &[],
                     ));
                 }
@@ -181,18 +214,21 @@ impl AdmissionTracker {
         })
     }
 
-    /// Settles once after the original typed door answers; a pending ask
-    /// remains held and can resume under its original invocation.
+    /// Settles once after the original typed door answers; a pending ask or
+    /// a paced hold remains held and can resume under its original
+    /// invocation.
     pub fn finish(&self, result: Result<&serde_json::Value, (&str, &str)>) -> MemoryResult<()> {
         let state = match result {
             Ok(value) => AdmissionStatus::Completed {
                 result_digest: super::call_json_digest(value),
             },
-            Err((oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK, reason)) => {
-                AdmissionStatus::Held {
-                    reason: Some(reason.to_owned()),
-                }
-            }
+            Err((
+                oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK
+                | oneiron_contracts::memory::MEMORY_CODE_PACED_HOLD,
+                reason,
+            )) => AdmissionStatus::Held {
+                reason: Some(reason.to_owned()),
+            },
             Err((code, reason)) => AdmissionStatus::Refused {
                 code: code.to_owned(),
                 reason: reason.to_owned(),
@@ -206,6 +242,41 @@ impl AdmissionTracker {
             reason: "call stopped before settlement was observed; inspect effects before a new intent".to_owned(),
         }, false)
     }
+}
+
+/// Settles `actor`'s intent of `invocation` as refused with `code` and
+/// `reason`, when its held call ended with no door running it again (FIX
+/// 8753): a paced call past its deadline, or one the host refused before
+/// its door. A retry running now (a status read of the held call) cannot
+/// hold it back: once settled, that retry's own finish leaves it settled.
+/// An intent already settled stays as it is.
+///
+/// # Errors
+///
+/// Storage errors as they occur.
+pub(crate) fn refuse_held_intent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    invocation: InvocationId,
+    code: &str,
+    reason: &str,
+) -> crate::Result<()> {
+    let key = key(actor, class, invocation);
+    let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? else {
+        return Ok(());
+    };
+    if stored.receipt.state.terminal() {
+        return Ok(());
+    }
+    stored.active = false;
+    stored.receipt.state = AdmissionStatus::Refused {
+        code: code.to_owned(),
+        reason: reason.to_owned(),
+    };
+    stored.receipt.updated_at = vault.store.clock.now_recorded_at();
+    ADMISSIONS.put(vault, txn, &key, &stored)
 }
 
 impl LineObserver for AdmissionTracker {

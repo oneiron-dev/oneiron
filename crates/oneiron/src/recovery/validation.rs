@@ -1,11 +1,33 @@
 //! Fail-closed whole-payload validation before a recovery mutation.
 
-use super::canonical::{
-    CanonicalEntityDocument, CanonicalForkStatus, CanonicalSnapshot, id, invalid,
-};
+use super::canonical::{CanonicalSnapshot, id, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod documents;
+mod entity_documents;
+mod entity_history;
+mod manifest;
+mod window_rows;
+pub(super) use documents::DocumentRows;
+pub(super) use entity_documents::EntityDocumentRows;
+pub(super) use manifest::ManifestValidation;
+pub(super) use window_rows::WindowRows;
+
+/// Drain the NOTE-only validator for native document capture callers.
+pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    let mut validation = DocumentRows::default();
+    while !validation.advance(snapshot, usize::MAX)? {}
+    Ok(())
+}
+
+/// Drain the generic document validator for native document capture callers.
+pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    let mut validation = EntityDocumentRows::default();
+    while !validation.advance(snapshot, usize::MAX)? {}
+    Ok(())
+}
 
 /// Recovery-only proof for an AddressedTo edge retained by a soft-erased
 /// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
@@ -78,392 +100,6 @@ pub(crate) fn trusted_soft_addressing_edge(
     Ok(true)
 }
 
-pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    validate_manifest_and_order(snapshot)?;
-    validate_window_rows(snapshot)?;
-    snapshot.validate_asset_body_refs()?;
-    validate_documents(snapshot)?;
-    validate_entity_documents(snapshot)
-}
-
-fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
-    if crate::deletion::parse_window_label(&snapshot.window).is_none() {
-        return Err(invalid("window key"));
-    }
-    if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
-        || snapshot.schema_manifest.container_schema_version != 3
-        || snapshot.schema_manifest.loro_version.is_empty()
-    {
-        return Err(invalid("unsupported schema manifest"));
-    }
-    strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
-    strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
-    strict(
-        snapshot
-            .custody_transitions
-            .iter()
-            .map(|row| (row.id, row.piece)),
-    )?;
-    strict(snapshot.room_turns.iter().map(|row| row.key.as_str()))?;
-    for row in &snapshot.room_turns {
-        if !crate::room_codec::carrier_parts::is_part_key(&row.key) {
-            super::canonical::parse_id(&row.key)?;
-        }
-    }
-    strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
-    strict(snapshot.document_pins.iter().map(|row| row.key.as_str()))?;
-    strict(snapshot.peer_origins.iter().map(|row| row.id))?;
-    // Custody transitions ride base windows only (OF-422).
-    if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
-        return Err(invalid("custody transition in a world window"));
-    }
-    // Room turn rows ride base windows only (OF-522).
-    if snapshot.window.contains('@') && !snapshot.room_turns.is_empty() {
-        return Err(invalid("room turn row in a world window"));
-    }
-    // Room side rows too (FIX 1794).
-    if snapshot.window.contains('@') && !snapshot.room_facts.is_empty() {
-        return Err(invalid("room side row in a world window"));
-    }
-    // And document quote pins (FIX 853).
-    if snapshot.window.contains('@') && !snapshot.document_pins.is_empty() {
-        return Err(invalid("document pin in a world window"));
-    }
-    strict(
-        snapshot
-            .base_edges
-            .iter()
-            .map(|row| (row.source, row.kind, row.target)),
-    )?;
-    strict(snapshot.tombstones.iter().map(|row| row.id))?;
-    strict(snapshot.suppressed_tasks.iter())?;
-    for task in &snapshot.suppressed_tasks {
-        let held = snapshot
-            .entity_blobs
-            .binary_search_by_key(task, |row| row.id)
-            .ok()
-            .and_then(|at| EntityMetadataHeader::parse(&snapshot.entity_blobs[at].blob));
-        if held.is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TASK) {
-            return Err(invalid("suppressed task outside the window"));
-        }
-    }
-    // A peer origin names a row the window holds, by the digest of its whole
-    // blob (FIX 4550): never an absent row's, nor an earlier body's.
-    for origin in &snapshot.peer_origins {
-        let held = snapshot
-            .entity_blobs
-            .binary_search_by_key(&origin.id, |row| row.id)
-            .ok()
-            .map(|at| *blake3::hash(&snapshot.entity_blobs[at].blob).as_bytes());
-        if held != Some(origin.digest) {
-            return Err(invalid("peer origin outside the window"));
-        }
-    }
-    strict(
-        snapshot
-            .container_manifests
-            .iter()
-            .map(|row| row.container_id.as_str()),
-    )?;
-    if snapshot.container_manifests != snapshot.expected_containers() {
-        return Err(invalid("container manifest coverage"));
-    }
-    Ok(())
-}
-
-fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
-    let world = snapshot
-        .window
-        .split_once('@')
-        .map(|(_, hex)| crate::EntityId::from_hex(hex))
-        .transpose()
-        .map_err(|_| invalid("window world"))?;
-    if world.is_some()
-        && (!snapshot.doc_snapshots.is_empty()
-            || !snapshot.document_heads.is_empty()
-            || !snapshot.head_move_receipts.is_empty()
-            || !snapshot.note_forks.is_empty()
-            || !snapshot.note_proposals.is_empty())
-    {
-        return Err(invalid("world window NOTE carrier"));
-    }
-    let deleted: BTreeMap<_, _> = snapshot
-        .tombstones
-        .iter()
-        .map(|row| (row.id, crate::deletion::decode_tombstone_value(&row.value)))
-        .collect();
-    let shell_worlds: BTreeMap<_, _> = snapshot
-        .retained_claim_worlds
-        .iter()
-        .map(|row| (row.id, row.world))
-        .collect();
-    for row in &snapshot.retained_claim_worlds {
-        id(row.id)?;
-        let Some(world) = world else {
-            return Err(invalid("base shell world proof"));
-        };
-        if row.world != *world.as_bytes()
-            || !snapshot.entity_blobs.iter().any(|entity| {
-                entity.id == row.id
-                    && entity.blob.len() == ENTITY_METADATA_HEADER_LEN
-                    && EntityMetadataHeader::parse(&entity.blob).is_some_and(|header| {
-                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                            && crate::deletion::window_label_from_timestamp(header.learned_at)
-                                == snapshot.window[..7]
-                    })
-            })
-            || !deleted.get(&row.id).is_some_and(|value| {
-                value.reason == Some(crate::deletion::TombstoneReason::UserDelete)
-            })
-        {
-            return Err(invalid("retained claim world proof"));
-        }
-    }
-    for entity in &snapshot.entity_blobs {
-        id(entity.id)?;
-        if let Some(tombstone) = deleted.get(&entity.id)
-            && (tombstone.is_hard() || entity.blob.len() != ENTITY_METADATA_HEADER_LEN)
-        {
-            return Err(invalid("tombstoned entity payload"));
-        }
-        let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
-        crate::registry::validate_entity_type(header.entity_type)?;
-        if header.occurred_start > header.occurred_end {
-            return Err(invalid("entity time range"));
-        }
-        let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
-        // A pad row rides by reference, never at rest with its pad (KS-5).
-        if !crate::world_keys::image_pad_form_ok(&entity.blob) {
-            return Err(invalid("world key pad at rest"));
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM && !body.is_empty() {
-            let claim = crate::claim::validate_claim_body_and_decode(body, true)?;
-            if claim.world != world
-                || (world.is_some()
-                    && crate::deletion::window_label_from_timestamp(header.learned_at)
-                        != snapshot.window[..7])
-            {
-                return Err(invalid("claim outside window residence"));
-            }
-        } else if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
-            && world.is_some()
-        {
-            // A live key pad rides its world's window of the month it was
-            // learned (`ITEM11_LIVE_PAD_CARRIER`).
-            if crate::world_keys::pad_world_in_body(body).ok() != world
-                || crate::deletion::window_label_from_timestamp(header.learned_at)
-                    != snapshot.window[..7]
-            {
-                return Err(invalid("pad outside window residence"));
-            }
-        } else if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-            && let Ok(entry) = crate::authority::decode_authority_log_entry_body(body)
-            && let Some(side) = crate::authority::side_world(&entry.op)
-        {
-            // A world's side rows, its key wraps and the joins of their
-            // leaves (FIX 11868), ride its window of the month they were
-            // learned (`sync::types::entity_world`); its settings stay base.
-            if Some(side) != world
-                || crate::deletion::window_label_from_timestamp(header.learned_at)
-                    != snapshot.window[..7]
-            {
-                return Err(invalid("key wrap outside window residence"));
-            }
-        } else if world.is_some()
-            && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-                || !body.is_empty()
-                || !deleted.contains_key(&entity.id)
-                || world.as_ref().is_some_and(|world_id| {
-                    shell_worlds.get(&entity.id) != Some(world_id.as_bytes())
-                }))
-        {
-            // A bodiless CLAIM is admissible only as a soft-deletion shell,
-            // bound by its tombstone and the canonical window address.
-            return Err(invalid("entity outside world window"));
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && !body.is_empty() {
-            crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)?;
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-            crate::authority::validate_authority_log_entry_body_bytes(body)?;
-        }
-    }
-    for edge in &snapshot.base_edges {
-        id(edge.source)?;
-        id(edge.target)?;
-        if deleted
-            .get(&edge.source)
-            .is_some_and(crate::deletion::DecodedTombstoneValue::is_hard)
-            || deleted
-                .get(&edge.target)
-                .is_some_and(crate::deletion::DecodedTombstoneValue::is_hard)
-        {
-            return Err(invalid("hard-deleted edge endpoint"));
-        }
-        let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(invalid("edge kind"))?;
-        crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
-        if kind == crate::EdgeKind::AddressedTo
-            && snapshot.tombstones.iter().any(|row| row.id == edge.source)
-        {
-            trusted_soft_addressing_edge(
-                snapshot,
-                &id(edge.source)?,
-                &id(edge.target)?,
-                &edge.value,
-            )?;
-        }
-    }
-    for tombstone in &snapshot.tombstones {
-        id(tombstone.id)?;
-        let decoded = crate::deletion::decode_tombstone_value(&tombstone.value);
-        if decoded.reason == Some(crate::deletion::TombstoneReason::ArchivedByCleanup) {
-            return Err(invalid("local-only archive in window snapshot"));
-        }
-        if !decoded.is_hard()
-            && !snapshot
-                .entity_blobs
-                .iter()
-                .any(|row| row.id == tombstone.id)
-        {
-            return Err(invalid("soft tombstone missing retained shell"));
-        }
-        if !matches!(tombstone.value.len(), 8 | 25)
-            || tombstone.deleted_at
-                != crate::deletion::decode_tombstone_value(&tombstone.value).deleted_at
-        {
-            return Err(invalid("tombstone timestamp or encoding"));
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
-    strict(
-        snapshot
-            .doc_snapshots
-            .iter()
-            .map(|row| (row.entity_id, row.head)),
-    )?;
-    strict(snapshot.document_heads.iter().map(|row| row.entity_id))?;
-    strict(snapshot.head_move_receipts.iter().map(|row| row.id))?;
-    let mut cores = BTreeMap::new();
-    for entity in &snapshot.entity_blobs {
-        let header =
-            EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("document owner header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            && entity.blob.len() > ENTITY_METADATA_HEADER_LEN
-        {
-            cores.insert(
-                entity.id,
-                crate::note::decode_note_body_using(
-                    &entity.blob[ENTITY_METADATA_HEADER_LEN..],
-                    crate::note::NoteKind::wire,
-                )?,
-            );
-        }
-    }
-    let docs: BTreeSet<_> = snapshot
-        .doc_snapshots
-        .iter()
-        .map(|row| (row.entity_id, row.head))
-        .collect();
-    let heads: BTreeMap<_, _> = snapshot
-        .document_heads
-        .iter()
-        .map(|row| (row.entity_id, row.head))
-        .collect();
-    for row in &snapshot.doc_snapshots {
-        id(row.entity_id)?;
-        id(row.head)?;
-        if let Some(actor) = row.birth_actor {
-            id(actor)?;
-        }
-        let core = cores
-            .get(&row.entity_id)
-            .ok_or(invalid("document owner is not a NOTE"))?;
-        // An erased author binds as no one, never as a live actor (FIX 6072).
-        let author = core.author_ref.id().map(|author| *author.as_bytes());
-        if row.birth_actor != author || !heads.contains_key(&row.entity_id) {
-            return Err(invalid("document birth binding"));
-        }
-        row.rebuild()?;
-        let header = snapshot
-            .entity_blobs
-            .iter()
-            .find(|entity| entity.id == row.entity_id)
-            .and_then(|entity| EntityMetadataHeader::parse(&entity.blob))
-            .ok_or(invalid("document envelope"))?;
-        if row.birth_at != header.learned_at {
-            return Err(invalid("document birth timestamp binding"));
-        }
-        // The head's own value carries its birth; any other value, a retained
-        // parent among them (FIX 8829), claims no authority.
-        let current = heads.get(&row.entity_id) == Some(&row.head);
-        if row.head == row.entity_id && current {
-            let birth = row
-                .authorship
-                .iter()
-                .find(|record| record.operation.as_bytes() == &row.entity_id)
-                .ok_or(invalid("NOTE birth provenance missing"))?;
-            if birth.actor != core.author_ref
-                || birth.actor_class != "ledger"
-                || birth.grant.is_some()
-                || birth.command_hash != *blake3::hash(core.markdown.as_bytes()).as_bytes()
-            {
-                return Err(invalid("NOTE birth provenance binding"));
-            }
-        }
-        if !current && !row.authorship.is_empty() {
-            return Err(invalid("proposal value claims authority"));
-        }
-    }
-    // A switch moves the head to its fork; a merge or reject keeps it. A
-    // decided fork's value stays only as the head, or as the parent a
-    // pending fork needs (FIX 8829).
-    let retained: BTreeSet<_> = super::document::retained_parents(snapshot)?
-        .into_iter()
-        .map(|(note, head)| (*note.as_bytes(), *head.as_bytes()))
-        .collect();
-    let mut switched = BTreeSet::new();
-    for row in &snapshot.head_move_receipts {
-        let receipt = row.decode()?;
-        let head_binding = match receipt.verdict {
-            crate::note::NoteVerdict::Switch => receipt.head == receipt.fork,
-            _ => receipt.head == receipt.previous_head,
-        };
-        if !cores.contains_key(&row.entity_id) || !head_binding {
-            return Err(invalid("receipt canonical identity"));
-        }
-        if receipt.verdict == crate::note::NoteVerdict::Switch {
-            switched.insert((row.entity_id, *receipt.head.as_bytes()));
-        }
-        let fork = *receipt.fork.as_bytes();
-        if docs.contains(&(row.entity_id, fork))
-            && heads.get(&row.entity_id) != Some(&fork)
-            && !retained.contains(&(row.entity_id, fork))
-        {
-            return Err(invalid("decided proposal retains text"));
-        }
-    }
-    for entity in cores.keys() {
-        if heads
-            .get(entity)
-            .is_none_or(|head| !docs.contains(&(*entity, *head)))
-        {
-            return Err(invalid("live NOTE has no canonical document value"));
-        }
-    }
-    for row in &snapshot.document_heads {
-        if !cores.contains_key(&row.entity_id)
-            || (row.head != row.entity_id && !switched.contains(&(row.entity_id, row.head)))
-            || !docs.contains(&(row.entity_id, row.head))
-        {
-            return Err(invalid("canonical document identity"));
-        }
-    }
-    super::document::validate_workflows(snapshot)
-}
-
 /// A document pointer in a raw entity row MUST have its value in the artifact.
 /// Do not trust the writer: decoded payloads enter this gate too.
 fn pointer(body: &[u8]) -> Result<Option<String>> {
@@ -492,251 +128,33 @@ fn pointer(body: &[u8]) -> Result<Option<String>> {
     Ok(Some(value.to_owned()))
 }
 
-pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
-    strict(snapshot.entity_documents.iter().map(|row| row.entity_id))?;
-    // A proposal bundle may span documents: the snapshot carries every member
-    // or the bundle is not recoverable from it.
-    let mut proposals = BTreeMap::new();
-    let mut forks = BTreeSet::new();
-    for row in &snapshot.entity_documents {
-        validate_history(row)?;
-        for fork in row.history.iter().flat_map(|history| &history.forks) {
-            if !forks.insert(fork.fork) {
-                return Err(invalid("entity document fork duplicated"));
-            }
-            let (len, settled, actor, lineage, members) =
-                proposals.entry(fork.proposal).or_insert((
-                    fork.proposal_len,
-                    fork.proposal_settled,
-                    fork.actor,
-                    &fork.proposal_opener_lineage,
-                    BTreeSet::new(),
-                ));
-            if (*len, *settled, *actor) != (fork.proposal_len, fork.proposal_settled, fork.actor)
-                || **lineage != fork.proposal_opener_lineage
-                || !members.insert(fork.proposal_index)
-            {
-                return Err(invalid("entity document proposal bundle"));
-            }
-        }
-    }
-    if proposals
-        .values()
-        .any(|(len, _, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
-    {
-        return Err(invalid(
-            "entity document proposal spans entities outside the snapshot",
-        ));
-    }
-    let rows: BTreeMap<_, _> = snapshot
-        .entity_documents
-        .iter()
-        .map(|row| (row.entity_id, row))
-        .collect();
-    for entity in &snapshot.entity_blobs {
-        let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            || entity.blob.len() == ENTITY_METADATA_HEADER_LEN
-        {
-            if rows.contains_key(&entity.id) {
-                return Err(invalid("entity document owner cannot be NOTE or shell"));
-            }
-            continue;
-        }
-        let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
-        let ref_id = pointer(body)?;
-        let row = rows.get(&entity.id).copied();
-        match (ref_id, row) {
-            (None, None) => continue,
-            (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
-                if let Some(actor) = row.birth_actor {
-                    id(actor)?;
-                }
-                if row.birth_at != header.occurred_start {
-                    return Err(invalid("entity document birth timestamp"));
-                }
-                let mut reader = std::io::Cursor::new(body);
-                let value = rmpv::decode::read_value(&mut reader)
-                    .map_err(|_| invalid("entity document pointer row"))?;
-                let rmpv::Value::Map(fields) = value else {
-                    return Err(invalid("entity document pointer row"));
-                };
-                let others: Vec<_> = fields
-                    .iter()
-                    .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
-                    .collect();
-                if others
-                    .iter()
-                    .any(|(key, _)| key.as_str().is_some_and(crate::ports::is_metadata_field))
-                {
-                    return Err(invalid("editable metadata remains in the entity row"));
-                }
-                match &row.field {
-                    None if others.is_empty() => {}
-                    Some(field)
-                        if crate::ports::is_text_field(field)
-                            && !others
-                                .iter()
-                                .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
-                    _ => return Err(invalid("entity document text field")),
-                }
-            }
-            _ => return Err(invalid("entity document coverage or pointer binding")),
-        }
-    }
-    if rows
-        .keys()
-        .any(|entity| !snapshot.entity_blobs.iter().any(|row| &row.id == entity))
-    {
-        return Err(invalid("entity document owner absent"));
-    }
-    Ok(())
-}
-
 /// A causal row binds inside itself: every version leads to the head, pins
 /// quote their version, and forks, receipts and purges name carried versions.
-fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
-    strict(row.record_fields.iter())?;
-    if row.record_fields.iter().any(|field| {
-        !crate::ports::is_metadata_field(field) || row.field.as_deref() == Some(field.as_str())
-    }) || (row.field.is_none() && !row.record_fields.is_empty())
-    {
-        return Err(invalid("document native record fields"));
-    }
-    validate_document_metadata(&row.metadata, row.field.as_deref())?;
-    validate_summary_meta(&row.summary_meta)?;
-    let Some(history) = &row.history else {
-        return Ok(());
-    };
-    if !history.shallow
-        && history.pins.is_empty()
-        && history.receipts.is_empty()
-        && history.forks.is_empty()
-        && history.purges.is_empty()
-    {
-        return Err(invalid("entity document history without causal state"));
-    }
-    if !history.purges.is_empty() && !history.shallow {
-        return Err(invalid("entity document purge without a purge floor"));
-    }
-    let texts = history.texts()?;
-    let head = texts
-        .len()
-        .checked_sub(1)
-        .ok_or(invalid("entity document history has no head"))?;
-    if texts[head] != row.text || history.versions[head].metadata != row.metadata {
-        return Err(invalid("entity document head version"));
-    }
-    let mut reached = vec![false; texts.len()];
-    reached[head] = true;
-    for (index, version) in history.versions.iter().enumerate().rev() {
-        validate_document_metadata(&version.metadata, row.field.as_deref())?;
-        validate_summary_meta(&version.summary_meta)?;
-        if !reached[index] {
-            return Err(invalid("entity document version is not before its head"));
-        }
-        if history.shallow && index > 0 && version.parents.is_empty() {
-            return Err(invalid("entity document version precedes its purge floor"));
-        }
-        strict(version.parents.iter().copied())?;
-        for &parent in &version.parents {
-            let parent = parent as usize;
-            if parent >= index {
-                return Err(invalid("entity document version parent"));
-            }
-            reached[parent] = true;
-        }
-    }
-    let version = |index: u32| (index as usize) < texts.len();
-    strict(history.pins.iter().map(|pin| pin.citation))?;
-    for pin in &history.pins {
-        for value in [pin.citation, pin.document].into_iter().chain(pin.actor) {
-            id(value)?;
-        }
-        let text = texts
-            .get(pin.version as usize)
-            .ok_or(invalid("entity document pin version"))?;
-        let (start, end) = (pin.start as usize, pin.end as usize);
-        let quote: String = text
-            .chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect();
-        if start > end
-            || end > text.chars().count()
-            || quote != pin.quote
-            || blake3::hash(quote.as_bytes()).as_bytes() != &pin.hash
-        {
-            return Err(invalid("entity document pin quote"));
-        }
-    }
-    strict(history.receipts.iter().map(|receipt| receipt.receipt))?;
-    for receipt in &history.receipts {
-        for value in [receipt.receipt, receipt.proposal, receipt.fork]
-            .into_iter()
-            .chain(receipt.actor)
-        {
-            id(value)?;
-        }
-        if !version(receipt.before) || !version(receipt.after) {
-            return Err(invalid("entity document receipt version"));
-        }
-    }
-    strict(history.forks.iter().map(|fork| fork.fork))?;
-    for fork in &history.forks {
-        for value in [fork.fork, fork.proposal, fork.parent_document]
-            .into_iter()
-            .chain(fork.actor)
-        {
-            id(value)?;
-        }
-        let pending = fork.status == CanonicalForkStatus::Pending;
-        match fork.base {
-            Some(base) if version(base) => {}
-            None if history.shallow && !pending => {}
-            _ => return Err(invalid("entity document fork base")),
-        }
-        if let Some(metadata) = &fork.output_metadata {
-            validate_document_metadata(metadata, row.field.as_deref())?;
-        }
-        if fork.output_metadata.is_some() != pending
-            || fork.output.is_some() != pending
-            || fork.proposal_index >= fork.proposal_len
-        {
-            return Err(invalid("entity document fork state"));
-        }
-    }
-    strict(history.purges.iter().map(|purge| purge.receipt))?;
-    for purge in &history.purges {
-        for value in [purge.receipt, purge.document]
-            .into_iter()
-            .chain(purge.actor)
-        {
-            id(value)?;
-        }
-        if !version(purge.requested) || !version(purge.applied) {
-            return Err(invalid("entity document purge version"));
-        }
-    }
-    Ok(())
-}
-
 fn validate_document_metadata(
     fields: &BTreeMap<String, Vec<u8>>,
     body_field: Option<&str>,
 ) -> Result<()> {
     for (field, bytes) in fields {
-        if Some(field.as_str()) == body_field {
-            return Err(invalid("document body duplicated in metadata"));
-        }
-        let mut cursor = bytes.as_slice();
-        let value = rmpv::decode::read_value(&mut cursor)
-            .map_err(|_| invalid("document metadata encoding"))?;
-        if !cursor.is_empty() {
-            return Err(invalid("trailing document metadata bytes"));
-        }
-        crate::ports::validate_metadata(field, &value)?;
+        validate_document_metadata_field(field, bytes, body_field)?;
     }
+    Ok(())
+}
+
+fn validate_document_metadata_field(
+    field: &str,
+    bytes: &[u8],
+    body_field: Option<&str>,
+) -> Result<()> {
+    if Some(field) == body_field {
+        return Err(invalid("document body duplicated in metadata"));
+    }
+    let mut cursor = bytes;
+    let value =
+        rmpv::decode::read_value(&mut cursor).map_err(|_| invalid("document metadata encoding"))?;
+    if !cursor.is_empty() {
+        return Err(invalid("trailing document metadata bytes"));
+    }
+    crate::ports::validate_metadata(field, &value)?;
     Ok(())
 }
 
@@ -744,11 +162,16 @@ fn validate_document_metadata(
 /// each one whole value of its own type.
 fn validate_summary_meta(fields: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     for (field, bytes) in fields {
-        match field.as_str() {
-            "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
-            "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
-            _ => return Err(invalid("entity document summary meta field")),
-        }
+        validate_summary_meta_field(field, bytes)?;
+    }
+    Ok(())
+}
+
+fn validate_summary_meta_field(field: &str, bytes: &[u8]) -> Result<()> {
+    match field {
+        "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
+        "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
+        _ => return Err(invalid("entity document summary meta field")),
     }
     Ok(())
 }
