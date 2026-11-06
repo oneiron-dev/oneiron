@@ -4,6 +4,7 @@ use super::*;
 
 /// Native ledger data, not an ENTITY row or a read grant. The marker's
 /// absence is part of the witness: a later retirement changes this source.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CanonicalSkillEditVerdict {
     key: Vec<u8>,
     body: Vec<u8>,
@@ -37,7 +38,7 @@ impl CanonicalSkillEditVerdict {
         self.verdict.read_position.as_ref()
     }
 
-    fn into_verdict(self) -> HeldOutVerdict {
+    pub(crate) fn into_verdict(self) -> HeldOutVerdict {
         self.verdict
     }
 }
@@ -53,6 +54,20 @@ pub(crate) fn canonical_skill_edit_verdict_in_txn(
         return Ok(None);
     };
     canonical_from_raw_in_txn(vault, txn, *id, raw).map(Some)
+}
+
+/// The brief's original eager scan, including every row filtered out later.
+/// The exact prefix is returned only after all original native reads decode.
+pub(crate) fn canonical_skill_edit_verdicts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<CanonicalSkillEditVerdict>, &'static [u8])> {
+    let rows = VERDICTS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(id, raw)| canonical_from_raw_in_txn(vault, txn, id, raw))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((rows, VERDICTS.decl().prefix))
 }
 
 fn canonical_from_raw_in_txn(
