@@ -42,6 +42,7 @@ mod anchor;
 mod backlog;
 mod credentials;
 mod exit;
+mod image_release;
 mod ledger_io;
 mod network;
 mod provision;
@@ -52,6 +53,7 @@ mod snapshot;
 
 pub use self::anchor::VmAnchorHostIo;
 pub use self::exit::VmExitWatch;
+pub use self::image_release::{VmImageMeasurement, VmImageReleaseObservation};
 pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
 pub use self::runner::{VaultVmRun, run_vault_vm};
 use self::snapshot::SnapshotLease;
@@ -234,6 +236,7 @@ pub struct VaultVm {
     /// The bound snapshot custody's unlock this driver holds, until the
     /// VMM generation it backs is reaped (FIX 9497).
     snapshot_lease: Option<SnapshotLease>,
+    image_release: Option<VmImageReleaseObservation>,
 }
 
 impl VaultVm {
@@ -281,6 +284,7 @@ impl VaultVm {
             outbox,
             anchor,
             snapshot_lease: None,
+            image_release: None,
         })
     }
 
@@ -473,7 +477,10 @@ impl VaultVm {
     /// profile's restore source drive read-only after the others, when it
     /// names one.
     async fn boot_vmm(&mut self, with_source: bool) -> anyhow::Result<()> {
+        // A failed or cancelled attempt must not retain an older boot's evidence.
+        self.image_release = None;
         provision::check_vault_disk(&self.config)?;
+        self.observe_image_release().await;
         self.spawn_vmm().await?;
         let config = &self.config;
         let mut boot_args = config.boot_args.clone();
