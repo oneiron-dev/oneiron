@@ -525,7 +525,10 @@ pub(in crate::api) struct Base64FileSink {
 }
 
 impl Base64FileSink {
-    pub(in crate::api) fn new_admitted(file: File, memory: &mut crate::machine::MemoryLease) -> Self {
+    pub(in crate::api) fn new_admitted(
+        file: File,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Self {
         let text = Vec::with_capacity(BASE64_TEXT_BUFFER_BYTES);
         memory.materialized(BASE64_TEXT_BUFFER_BYTES as u64, text.capacity() as u64);
         let decoded = vec![0; BASE64_DECODE_BUFFER_BYTES];
