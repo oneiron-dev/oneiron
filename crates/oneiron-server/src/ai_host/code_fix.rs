@@ -306,20 +306,23 @@ impl<'a> HostModels<'a> {
     /// each secret in it its custody handle, sent on this call alone once
     /// the configured prompt is the one first sent, by its digest (FIX 6255,
     /// 6356). Its answer's text, and each tool call it names as data; no
-    /// tool runs. `None` when that model or prompt is not served now, or
-    /// the call fails: the replay then rebuilds the call.
+    /// tool runs. A captured rung's call is admitted on the role whose
+    /// admission sent it (FIX 6359); a kept request with no rung is admitted
+    /// on the chat role. `None` when that model or prompt is not served now,
+    /// or the call fails: the replay then rebuilds the call.
     fn send_exact(&self, exact: &ExactReplayRequest) -> Option<String> {
         let mut request = exact.request.clone();
         if let Some(rung) = &exact.rung {
             request.model = rung.binding.model.clone();
             request.envelope.locality = rung.binding.locality;
         }
+        let role = exact.rung.as_ref().map_or(CHAT_ROLE, |rung| rung.role);
         // Its answer is compared with the kept call's: it runs alone on an
         // own server that batches (INF 1). The kept request stays as it was.
         mark_solo(&mut request);
         let call = self
             .runtime
-            .admit_seat_bound(self.vault, CHAT_ROLE, request)
+            .admit_seat_bound(self.vault, role, request)
             .ok()?;
         let sent = match &exact.rung {
             Some(rung) => {

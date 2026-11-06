@@ -39,7 +39,6 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use self::program::{LentProgram, ProgramLending, executed_evidence};
-use super::CHAT_ROLE;
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
 
@@ -147,8 +146,9 @@ impl ContributionForkModel for ExactFork<'_> {
         mark_solo(&mut request);
         // The model a raw call naming it meets, never swapped for the
         // role's route, which still clamps it: a model not served here now
-        // is no replay, and no other model stands in.
-        let Ok(call) = runtime.admit_seat_bound(self.vault, CHAT_ROLE, request) else {
+        // is no replay, and no other model stands in. The role is the one
+        // whose admission sent the capsule's call (FIX 6359).
+        let Ok(call) = runtime.admit_seat_bound(self.vault, rung.role, request) else {
             return Ok(None);
         };
         // The rung that answered the capsule's call, as it is configured

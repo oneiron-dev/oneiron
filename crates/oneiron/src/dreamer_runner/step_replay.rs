@@ -1,5 +1,6 @@
 use crate::Result;
 use crate::compaction::output::OutputRef;
+use crate::model_binding::ModelRole;
 use crate::side_table::ErasedForm;
 use crate::{ContentPart, EntityId, LlmRequest, ModelId, ModelLocality};
 use serde::{Deserialize, Serialize};
@@ -87,12 +88,15 @@ pub struct CapsuleRungBinding {
 /// the wall's reasons. `prompt_digest` is the digest of the prompt as it
 /// was sent ([`route_prompt_digest`], FIX 6356): a replay checks the route
 /// configured now against it before the stored prompt takes its place.
+/// `role` is the role whose admission sent the call (FIX 6359): a replay is
+/// admitted through that role's route clamp, and through no other role's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredRungBinding {
     pub model: ModelId,
     pub locality: ModelLocality,
     pub prompt: Option<CapsuleRequest>,
     pub prompt_digest: [u8; 32],
+    pub role: ModelRole,
 }
 
 impl StoredRungBinding {
@@ -126,11 +130,14 @@ impl StoredRungBinding {
 /// the rung with the route prompt read from the capsule's body, each secret
 /// in it its custody handle, and the digest of the prompt as it was sent,
 /// which the route configured now must match before the stored prompt
-/// takes its place. It lives for one call and is never stored.
+/// takes its place. `role` is the role whose admission sent the captured
+/// call (FIX 6359), which admits the replay. It lives for one call and is
+/// never stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayRung {
     pub binding: CapsuleRungBinding,
     pub prompt_digest: [u8; 32],
+    pub role: ModelRole,
 }
 
 impl ReplayRung {
@@ -144,6 +151,7 @@ impl ReplayRung {
                 prompt,
             },
             prompt_digest: stored.prompt_digest,
+            role: stored.role,
         }
     }
 }
@@ -320,14 +328,14 @@ pub struct StepContextRef {
 
 /// What an erase leaves of a capsule (FIX 6144): what the step was (its
 /// attempt, run, step and lease generation, its host, the model and
-/// locality that answered it, both request hashes and its messages digest,
-/// its exposures' skills, revisions and spans, its seed, its time, its
-/// start's ref, digest and bridge count, its replay context's ref and
-/// digest, its route prompt's ref and digest (FIX 6255), and the route its
-/// rung went out on, which holds the route prompt's digest only), its
-/// content Erased, naming no actor. Its bodies are released beside it, its
-/// route prompt's among them; its fork receipts and scores stay in their
-/// own rows.
+/// locality that answered it and the role that admitted it (FIX 6359),
+/// both request hashes and its messages digest, its exposures' skills,
+/// revisions and spans, its seed, its time, its start's ref, digest and
+/// bridge count, its replay context's ref and digest, its route prompt's
+/// ref and digest (FIX 6255), and the route its rung went out on, which
+/// holds the route prompt's digest only), its content Erased, naming no
+/// actor. Its bodies are released beside it, its route prompt's among them;
+/// its fork receipts and scores stay in their own rows.
 pub(crate) fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
     capsule.content = CapsuleContent::Erased;
     capsule
