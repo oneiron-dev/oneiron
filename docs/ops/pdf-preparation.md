@@ -12,7 +12,10 @@ order and inherited page attributes. It rejects repeated object IDs and checks
 each Pages node's Count after visiting all its children. Empty and malformed
 page trees keep their existing errors.
 
-On an admitted inspection, both worklists reserve backing memory through the
+Object-stream members use the same direct signature checks through an iterative
+worklist admitted by their parse stage. Later document-level checks are unchanged.
+
+On an admitted inspection, these worklists reserve backing memory through the
 same inspection host. A replacement is admitted while the old allocation is
 still live; the old admission is released after replacement. The final vector
 is freed before its backing admission. An inspection without host memory keeps
