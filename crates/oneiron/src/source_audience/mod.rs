@@ -55,8 +55,8 @@ pub(crate) use replica::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use wake::{
-    PolicyWake, advance_policy_wake, file_policy_window, forget_policy_window, note_policy_windows,
-    policy_wakes, policy_windows_after,
+    PolicyWake, advance_policy_wake, forget_policy_window, note_policy_windows, policy_wakes,
+    policy_windows_after,
 };
 pub(crate) use walk::{
     ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
