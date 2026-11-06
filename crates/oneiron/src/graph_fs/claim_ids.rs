@@ -76,7 +76,8 @@ impl GraphFsResolver<'_, '_> {
             if self.read_live_into(*id, &mut receipt)?.is_none() {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::file(id.to_hex(), None)) {
+            let entry = GraphFsEntry::file(id.to_hex(), None);
+            if !builder.try_push_after(entry, scope.seal(id)) {
                 next_cursor = last_listed.map(|id| scope.seal(&id));
                 break;
             }

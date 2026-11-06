@@ -73,7 +73,7 @@ pub(crate) fn erase_actor_responses_in_txn(
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
     for (&record_id, &run) in &records {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            release_reply_outputs_in_txn(store, wtxn, record.run_id, &record.outputs)?;
+            release_reply_outputs_in_txn(store, wtxn, &record)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         }
         mark_response_erased_in_txn(store, wtxn, record_id, run)?;
@@ -116,7 +116,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
         return Ok(record);
     }
     let run = owner.map_or(record.run_id, |owner| owner.run);
-    release_reply_outputs_in_txn(&vault.store, wtxn, record.run_id, &record.outputs)?;
+    release_reply_outputs_in_txn(&vault.store, wtxn, &record)?;
     erase_replies(record.to_mut())?;
     mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?;
     Ok(record)
@@ -180,7 +180,7 @@ pub(crate) fn retire_actor_responses_in_txn(
         .collect();
     for (record_id, _) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            held.extend(reply_occurrences(record.run_id, &record.outputs));
+            held.extend(reply_occurrences(&record));
         }
     }
     let mut digests: BTreeMap<EntityId, Vec<[u8; 32]>> = BTreeMap::new();
@@ -241,26 +241,27 @@ fn actor_records_in_txn(
     Ok(records)
 }
 
-/// The occurrences run `owner` holds of those of `outputs` that hold reply
-/// content.
-fn reply_occurrences(owner: EntityId, outputs: &[CodeRunRawOutput]) -> Vec<Occurrence> {
-    outputs
+/// The record's owned reply occurrences. An exact canonical native receipt
+/// keeps its original standing independently of its shared content hash.
+fn reply_occurrences(record: &CodeRunReplayRecord) -> Vec<Occurrence> {
+    record
+        .outputs
         .iter()
-        .filter(|output| holds_reply_content(&output.path))
-        .map(|output| (owner, output.path.clone(), output.handle.clone()))
+        .filter(|output| {
+            holds_reply_content(&output.path) && !record.output_is_retained_receipt(output)
+        })
+        .map(|output| (record.run_id, output.path.clone(), output.handle.clone()))
         .collect()
 }
 
-/// Releases run `owner`'s occurrence of each of `outputs` that holds reply
-/// content, with that occurrence's own taint and secret marks and no
-/// other's.
+/// Releases the record's reply occurrences with each occurrence's own taint
+/// and secret marks, never another holder's or a retained receipt's.
 fn release_reply_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    owner: EntityId,
-    outputs: &[CodeRunRawOutput],
+    record: &CodeRunReplayRecord,
 ) -> Result<()> {
-    for (owner, path, handle) in reply_occurrences(owner, outputs) {
+    for (owner, path, handle) in reply_occurrences(record) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
     Ok(())
