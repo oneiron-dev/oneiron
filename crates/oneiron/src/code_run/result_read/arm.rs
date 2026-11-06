@@ -93,6 +93,9 @@ impl ResultRead {
             state,
             secret,
             foreign,
+            // The arm reads for no scoped child: no live cutoff applies
+            // (FIX 8233).
+            live_cutoff: None,
         })
     }
 

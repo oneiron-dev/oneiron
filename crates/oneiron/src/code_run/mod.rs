@@ -39,6 +39,7 @@ mod repo_calls;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
+mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
 pub mod shadow_runner;
@@ -123,8 +124,8 @@ pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
     ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
-    StoredRungBinding, StoredSpan, TaskExposure, capture_workflow_step, finalize_step_captures,
-    note_answering_route_pin, note_answering_rung, route_prompt_digest,
+    StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle, capture_workflow_step,
+    finalize_step_captures, note_answering_route_pin, note_answering_rung, route_prompt_digest,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
@@ -244,6 +245,7 @@ pub(crate) use self::reader::{
 pub use self::reader_brief::reader_task_brief;
 pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};
 pub use self::reader_fold::{summarize_input, summarize_prompt};
+pub use self::scoped_call_control::{READER_TASK_SETTLED, ScopedCallControl};
 pub(crate) use self::scoped_child::scoped_child_read_refusal;
 pub use self::scoped_child::{
     SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PARENT_LEASE_LOST,
