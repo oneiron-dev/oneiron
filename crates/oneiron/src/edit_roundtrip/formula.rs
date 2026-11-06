@@ -2,10 +2,22 @@
 
 use super::{CellValue, EditOp, EditPlan};
 use oneiron_docedit::xlfn::storage_form;
+use std::borrow::Cow;
 
 /// Return a plan with modern function calls prefixed before the session sees
 /// them. The returned ops (rather than the caller's input) become the manifest.
-pub(super) fn serialize_plan(plan: &EditPlan) -> EditPlan {
+/// Borrow the original plan when no formula field needs storage conversion.
+pub(super) fn serialize_plan(plan: &EditPlan) -> Cow<'_, EditPlan> {
+    if !plan.ops.iter().any(|op| match op {
+        EditOp::SetCell { after, .. } => matches!(after, CellValue::Formula { .. }),
+        EditOp::SetRange { writes, .. } => writes
+            .iter()
+            .any(|write| matches!(&write.after, CellValue::Formula { .. })),
+        EditOp::AddFormulaColumn { .. } => true,
+        _ => false,
+    }) {
+        return Cow::Borrowed(plan);
+    }
     let mut plan = plan.clone();
     for op in &mut plan.ops {
         match op {
@@ -19,7 +31,7 @@ pub(super) fn serialize_plan(plan: &EditPlan) -> EditPlan {
             _ => {}
         }
     }
-    plan
+    Cow::Owned(plan)
 }
 
 fn serialize_value(value: &mut CellValue) {

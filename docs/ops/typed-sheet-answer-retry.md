@@ -56,7 +56,10 @@ existing batch scratch hold covers copied sheet names and flat text or error
 cell values until that batch is freed. The small-plan path still forwards the
 original plan directly. Chunk order, one native call per chunk, the single
 proposal and outer recalc stay unchanged; no new operation-kind refusal is
-introduced.
+introduced. Storage serialization also borrows the original typed-answer plan,
+which has no formula conversion to perform, rather than cloning its vector and
+payloads. Plans with formula-cell, range-value or formula-column conversions
+keep the original owned clone and storage-prefix conversion path.
 Validation sets and other scratch, native workbook parsing and projection
 output, applied-operation manifest copies, and transient allocator surplus
 remain outside this admission.
