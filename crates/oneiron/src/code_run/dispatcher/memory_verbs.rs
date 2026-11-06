@@ -270,6 +270,8 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -314,6 +316,8 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryPutClaimCall,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -405,6 +409,8 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemorySupersedeClaimCall,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
             admission.as_ref().map(|admission| admission.lane),
@@ -481,6 +487,8 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let placement = read_as.filter(|_| call.kind == EdgeKind::FacetOf);
         if placement.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
             // A room's rows include overlay rows a door's lane cannot name, so
