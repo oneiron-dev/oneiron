@@ -45,7 +45,7 @@ pub(super) struct HealedExecutorReply {
 /// Normalizes one provider reply into the bare executable program the
 /// sandbox runs (ONE-1929).
 ///
-/// The model-facing wire is strict bare executable plain JavaScript. The
+/// The model-facing wire is strict bare executable source (TypeScript or JavaScript). The
 /// executor may remove PACKAGING once, but it never trusts model-authored
 /// console text: forged console blocks are deleted outright — not compared,
 /// diffed, logged, or kept as a diagnostic — and the sandbox's own
@@ -247,7 +247,7 @@ fn strip_one_whole_exec_wrapper(input: &str) -> Option<&str> {
 /// sandbox parser handle source syntax on the existing runtime-error path.
 fn mandatory_structural_gate(code: &str, trailing_speak: &str) -> EngineExecutorResult<()> {
     if code.is_empty() {
-        return Err(Error::InvalidClaimBody("executor LLM response missing plain JS").into());
+        return Err(Error::InvalidClaimBody("executor LLM response missing program").into());
     }
     if has_residual_wire_structure_in_source(code) {
         return Err(Error::InvalidClaimBody(
