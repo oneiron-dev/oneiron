@@ -284,9 +284,19 @@ conservatively until that lease drops; no earlier shrink or extra lease is
 added. The returned ID vector is distinct and gets its existing post-return
 observation on the same caller lease.
 
-This covers only the initial prepared group-vector storage. Deep entity IDs,
-field vectors and values, sanitized pack copies, internal preparation and
-rebudget scratch, later growth, L2, stats, output bytes and construction peaks
+That same initial observation also records each prepared entity's owned ID
+string capacity and field-vector capacity, using the native `(String, Value)`
+slot size. Each surviving field adds its own key-string capacity and known
+value backing. The shared lower-store value calculation records owned string
+capacities, array slot capacities and recursively owned children, including
+object-key strings. Inline entity and field slots are not counted twice.
+These are distinct prepared copies, not the source pack's buffers. Empty
+buffers and primitive values can add no deep backing.
+
+The initial known extent stays conservatively charged until that same caller
+lease drops, with no early release or extra lease. Object-map storage, number
+internals, sanitized pack copies, internal preparation and rebudget scratch,
+later growth and replacements, L2, stats, output bytes and construction peaks
 remain outside this observation. No capacity walk runs when unbound. Public
 serialization entry points and the original preparation, dispatch and output
 operations are unchanged; the private serializer and its two callers only

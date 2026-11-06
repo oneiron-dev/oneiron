@@ -136,6 +136,23 @@ pub(crate) fn serialize_pack_with_telemetry(
                     (entities.capacity() as u64)
                         .saturating_mul(std::mem::size_of::<PreparedEntity>() as u64),
                 );
+                for entity in entities {
+                    bytes = bytes
+                        .saturating_add(entity.id.capacity() as u64)
+                        .saturating_add(
+                            (entity.fields.capacity() as u64)
+                                .saturating_mul(std::mem::size_of::<(String, Value)>() as u64),
+                        );
+                    for (key, value) in &entity.fields {
+                        bytes = bytes
+                            .saturating_add(key.capacity() as u64)
+                            .saturating_add(
+                                oneiron_store::retrieval_telemetry::state::known_value_backing_bytes(
+                                    value,
+                                ),
+                            );
+                    }
+                }
             }
         }
         memory.materialized(0, bytes);
