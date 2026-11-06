@@ -4,6 +4,7 @@ use super::*;
 use crate::memory::support::verify_actor_binding_in_txn;
 
 mod binding;
+mod claims;
 pub use binding::SessionWitnessBinding;
 
 /// An admitted caller's live session and its captured mode generation.
@@ -95,6 +96,15 @@ impl<'v> SessionWitnessContext<'v> {
         author: &Memory<'_>,
         turn: &WitnessTurn,
     ) -> MemoryResult<SessionWitnessOutcome> {
+        self.witness_with_terminal(author, turn, None)
+    }
+
+    pub(in crate::memory::witness) fn witness_with_terminal(
+        &self,
+        author: &Memory<'_>,
+        turn: &WitnessTurn,
+        terminal: Option<&super::super::stream::SessionStreamTerminal>,
+    ) -> MemoryResult<SessionWitnessOutcome> {
         if !std::ptr::eq(self.caller.vault, author.vault) {
             return Err(caller_refused());
         }
@@ -159,6 +169,7 @@ impl<'v> SessionWitnessContext<'v> {
                 admit: Some(&admit),
                 rostered: self.room,
                 turn_vector: None,
+                terminal,
             },
             WitnessDoor::Guest,
             || {},
@@ -166,6 +177,167 @@ impl<'v> SessionWitnessContext<'v> {
             |_| Ok(()),
         )?;
         Ok(SessionWitnessOutcome::Retained(receipt))
+    }
+
+    /// Checks a private native stream without reserving containers or writing a seed.
+    pub(in crate::memory::witness) fn admit_stream(
+        &self,
+        author: &Memory<'_>,
+        turn: &WitnessTurn,
+    ) -> MemoryResult<()> {
+        if !std::ptr::eq(self.caller.vault, author.vault) {
+            return Err(caller_refused());
+        }
+        author.admit_witness_request(turn, WitnessDoor::Guest)?;
+        if incoming_turn_speaker(&turn.messages)?.is_none() {
+            return Err(MemoryError::bad_request(
+                "a new witnessed turn needs one non-system speaker",
+            ));
+        }
+        validate_witness_occurrence(self.caller.vault.now_recorded_at(), turn.occurred_at)?;
+        let txn = self
+            .caller
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)?;
+        self.admit_in_txn(&txn)?;
+        if self.room.is_some() && self.route.target() != RouteTarget::Base {
+            verify_actor_binding_in_txn(author.vault, &txn, author.actor, author.actor_class)?;
+            if author.vault.shared_vault_creation_in_txn(&txn)?.is_some() {
+                author
+                    .vault
+                    .verify_write_actor_in_txn(&txn, &author.write_actor())?;
+            }
+        } else {
+            author.verify_actor_write_in_txn(&txn)?;
+        }
+        if let Some(room) = self.room
+            && !self.session.is_member_in_txn(&txn, room, author.actor)?
+        {
+            return Err(caller_refused());
+        }
+        let policy = resolve_policy_manifest(&self.caller.vault.store, &txn)?;
+        for message in &turn.messages {
+            let envelope = witness_message_envelope(message);
+            let body = envelope.encode_body()?;
+            crate::gate::check_witness_message_ceiling(
+                &self.caller.vault.store,
+                &txn,
+                author.write_actor(),
+                &envelope,
+                &body,
+                &policy,
+            )?;
+        }
+        self.route.revalidate()?;
+        Ok(())
+    }
+
+    pub(in crate::memory::witness) fn project_stream_text(
+        &self,
+        text: &str,
+    ) -> MemoryResult<String> {
+        let txn = self
+            .caller
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)?;
+        self.admit_in_txn(&txn)?;
+        let mut value = serde_json::Value::String(text.to_owned());
+        let masked = match (&self.caller.host_action, &self.caller.read_proof) {
+            (None, Some(proof)) => {
+                let owner = self.caller.is_vault_owner_in_txn(&txn)?;
+                self.caller
+                    .vault
+                    .credential_read_key_in_txn(&txn, proof, self.caller.actor, owner)?
+                    .is_none_or(|key| {
+                        key.secret_sight() == crate::secret_custody::SecretSight::Masked
+                    })
+            }
+            _ => self.caller.reads_lifted_keys_masked_in_txn(&txn)?,
+        };
+        if masked {
+            let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                &self.caller.vault.store,
+                &txn,
+                &value,
+            )?;
+            keys.mask_json(&mut value);
+        }
+        let serde_json::Value::String(text) = value else {
+            return Err(
+                Error::InvariantViolation("stream projection changed the text type").into(),
+            );
+        };
+        drop(txn);
+        let text = text.as_str();
+        let projected = if masked {
+            match self.caller.vault.known_source()? {
+                Some(source) => source.pass(|known| {
+                    let Some(known) = known else {
+                        return text.to_owned();
+                    };
+                    let data = text.as_bytes();
+                    let growing = known.growing(data);
+                    let mut limit = growing.opens.unwrap_or(data.len()).min(growing.held);
+                    while !text.is_char_boundary(limit) {
+                        limit -= 1;
+                    }
+                    let mut projected = Vec::new();
+                    let mut from = 0;
+                    for hit in known.spans(data) {
+                        if hit.span.start >= limit {
+                            break;
+                        }
+                        projected.extend_from_slice(&data[from..hit.span.start]);
+                        projected.extend_from_slice(
+                            crate::store::known_value_index::handle_text(hit.handle).as_bytes(),
+                        );
+                        from = hit.span.end;
+                    }
+                    projected.extend_from_slice(&data[from..from.max(limit)]);
+                    String::from_utf8_lossy(&projected).into_owned()
+                })?,
+                None => text.to_owned(),
+            }
+        } else {
+            text.to_owned()
+        };
+        self.route.revalidate()?;
+        Ok(projected)
+    }
+
+    pub(in crate::memory::witness) fn stream_terminal_receipt(
+        &self,
+        candidate: &super::super::stream::MessageStreamReceipt,
+    ) -> MemoryResult<Option<super::super::stream::MessageStreamReceipt>> {
+        let view = (self.route.target() == RouteTarget::Overlay)
+            .then(|| self.session.read_view())
+            .transpose()?;
+        let txn = self
+            .caller
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)?;
+        self.admit_in_txn(&txn)?;
+        let dbs = match &view {
+            Some(view) => crate::side_table::RoutedDbs::Session(view),
+            None => crate::side_table::RoutedDbs::Base(self.caller.vault),
+        };
+        let receipt = super::super::stream::generation_receipt_in(
+            &dbs,
+            &txn,
+            candidate.message_id,
+            candidate.generation,
+        )?;
+        self.route.revalidate()?;
+        Ok(receipt)
     }
 
     fn admit_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {

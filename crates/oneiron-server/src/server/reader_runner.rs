@@ -541,7 +541,8 @@ struct Child {
     clock: Option<ReaderParentClock>,
 }
 
-/// Why a canonical job's seat was not born ([`Child::seat`]).
+/// Why a canonical job's seat, or a pinned session job's, was not born
+/// ([`Child::seat`]).
 enum Unseated {
     /// Its parent's clock bound the pick, or is spent: the job ends at its
     /// cutoff, as its run would ([`Child::unseated`], FIX 8230).
@@ -550,11 +551,13 @@ enum Unseated {
     Failed(String),
 }
 
-/// Default A (FIX 7507, Engine 10-21): a job in an off-record session whose
-/// seat its room's route does not bear, its birth failed, runs its
+/// Default A (FIX 7507, Engine 10-21): a job in an off-record session with
+/// no seat pin on its room's route, whose fresh birth failed, runs its
 /// configured model, as every session job did before it took a seat; that
-/// model is still held to its inherited list ([`Child::held_to_list`]). No
-/// call that runs today stops here.
+/// model is still held to its inherited list ([`Child::held_to_list`]). Only
+/// a pin read that succeeded and found none comes here (FIX 7641): a job
+/// whose pin exists or does not read ends as a canonical job's failed birth
+/// does ([`Child::unseated`]), so one run never mixes models.
 fn session_seat_or_seatless(
     task: EntityId,
     born: Result<Option<ModelSeat>, String>,

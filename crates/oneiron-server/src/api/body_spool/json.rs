@@ -125,6 +125,61 @@ pub(super) fn decode_object<T: DeserializeOwned>(
     serde_json::from_slice(&head).map_err(|_| JsonInvalid)
 }
 
+/// Decodes an object containing only the declared string members. Names
+/// are matched as unescaped runs, so neither unknown names nor values
+/// become a rebuilt DTO head.
+pub(super) fn decode_string_object<const N: usize>(
+    reader: impl BufRead,
+    bulk: &mut [BulkMember<'_>; N],
+) -> Decoded<()> {
+    let mut scan = Scanner { reader };
+    scan.skip_whitespace()?;
+    scan.expect(b'{')?;
+    scan.skip_whitespace()?;
+    if scan.peek()? == Some(b'}') {
+        scan.bump();
+    } else {
+        loop {
+            scan.skip_whitespace()?;
+            scan.expect(b'"')?;
+            let mut names = bulk.each_ref().map(|member| Some(member.name.as_bytes()));
+            scan.string(&mut |run| {
+                for name in &mut names {
+                    *name = (*name).and_then(|remaining| remaining.strip_prefix(run));
+                }
+            })?;
+            let index = names
+                .iter()
+                .position(|name| name.is_some_and(<[u8]>::is_empty))
+                .ok_or(JsonInvalid)?;
+            let member = &mut bulk[index];
+            if member.seen {
+                return Err(JsonInvalid);
+            }
+            member.seen = true;
+            scan.skip_whitespace()?;
+            scan.expect(b':')?;
+            scan.skip_whitespace()?;
+            scan.expect(b'"')?;
+            scan.string(&mut |run| member.take(run))?;
+            if !member.refused && !member.sink.finish() {
+                member.refused = true;
+            }
+            scan.skip_whitespace()?;
+            match scan.next()? {
+                Some(b',') => {}
+                Some(b'}') => break,
+                _ => return Err(JsonInvalid),
+            }
+        }
+    }
+    scan.skip_whitespace()?;
+    if scan.peek()?.is_some() || bulk.iter().any(|member| member.required && !member.seen) {
+        return Err(JsonInvalid);
+    }
+    Ok(())
+}
+
 /// The document as bytes, read one at a time over its buffer.
 struct Scanner<R> {
     reader: R,
@@ -387,6 +442,69 @@ impl SpooledField {
     /// 11140).
     pub(in crate::api) fn file(&self) -> (&File, u64) {
         (&self.file, self.len)
+    }
+}
+
+/// A JSON string's unescaped UTF-8 bytes in an anonymous file. The route
+/// validates their meaning after the complete JSON document is known.
+pub(in crate::api) struct TextFileSink {
+    writer: io::BufWriter<File>,
+    len: u64,
+    refusal: Option<super::Unspooled>,
+}
+
+impl TextFileSink {
+    pub(in crate::api) fn new(file: File) -> Self {
+        Self {
+            writer: io::BufWriter::with_capacity(super::SPOOL_PIECE, file),
+            len: 0,
+            refusal: None,
+        }
+    }
+
+    /// Uses room admitted before the original constructor allocates its buffer.
+    pub(in crate::api) fn new_admitted(
+        file: File,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Self {
+        let sink = Self::new(file);
+        memory.materialized(super::SPOOL_PIECE as u64, sink.writer.capacity() as u64);
+        sink
+    }
+
+    pub(in crate::api) fn into_field(self) -> Result<SpooledField, super::Unspooled> {
+        if let Some(refusal) = self.refusal {
+            return Err(refusal);
+        }
+        let mut file = self
+            .writer
+            .into_inner()
+            .map_err(|error| super::write_failed(error.into_error()))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|_| super::Unspooled::Failed)?;
+        Ok(SpooledField {
+            file,
+            len: self.len,
+        })
+    }
+}
+
+impl StringSink for TextFileSink {
+    fn write(&mut self, run: &[u8]) -> bool {
+        if let Err(error) = self.writer.write_all(run) {
+            self.refusal = Some(super::write_failed(error));
+            return false;
+        }
+        self.len = self.len.saturating_add(run.len() as u64);
+        true
+    }
+
+    fn finish(&mut self) -> bool {
+        if let Err(error) = self.writer.flush() {
+            self.refusal = Some(super::write_failed(error));
+            return false;
+        }
+        true
     }
 }
 

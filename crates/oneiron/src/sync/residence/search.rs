@@ -41,23 +41,25 @@ pub(super) const fn caller_locality_field(locality: CallerLocality) -> [u8; 1] {
 /// The forwarded `residence.search` a device signs and its home verifies, as
 /// [`super::with_forwarded_search`] builds it, its caller's locality
 /// included, with a later page's cursor bound too: its offset and `as_of` as
-/// big-endian `u64`s and its revision. A first page signs the same bytes as
-/// a search of one call.
+/// big-endian `u64`s and its revision. A recall's explicit clock pin adds
+/// its own big-endian field before the cursor; an unpinned search is unchanged.
 pub fn with_forwarded_search_page<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    recall_as_of: Option<u64>,
     locality: CallerLocality,
     page: Option<&ResidenceSearchCursor>,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
+    let recall_as_of = recall_as_of.map(u64::to_be_bytes);
     let locality = caller_locality_field(locality);
     let offset = page.map(|page| page.offset.to_be_bytes());
     let as_of = page.map(|page| page.as_of.to_be_bytes());
-    let mut fields: Vec<&[u8]> = Vec::with_capacity(8);
+    let mut fields: Vec<&[u8]> = Vec::with_capacity(9);
     fields.extend([
         query.as_bytes(),
         limit.as_slice(),
@@ -65,6 +67,9 @@ pub fn with_forwarded_search_page<R>(
         scope.as_slice(),
         locality.as_slice(),
     ]);
+    if let Some(recall_as_of) = &recall_as_of {
+        fields.push(recall_as_of.as_slice());
+    }
     if let (Some(page), Some(offset), Some(as_of)) = (page, &offset, &as_of) {
         fields.extend([
             offset.as_slice(),
@@ -80,8 +85,8 @@ pub fn with_forwarded_search_page<R>(
 
 /// The actor-readable lexical candidates of a paged search, ranked `window`
 /// deep at `as_of` (unix seconds) past the read lane's candidate window, and
-/// how many rows the ranking held: fewer than `window` only once the matches
-/// ran out. The read key and `scope` are those of
+/// whether its lexical scan exhausted the matches without a window cut.
+/// The read key and `scope` are those of
 /// [`super::home_search_candidates`].
 pub fn home_search_page_candidates(
     vault: &Vault,
@@ -90,9 +95,11 @@ pub fn home_search_page_candidates(
     window: usize,
     scope: Option<&ResolvedRecallSelection>,
     as_of: u64,
-) -> Result<(Vec<(EntityId, f32, WindowKey)>, usize)> {
-    let (found, ranked) = vault
+    recall_as_of: Option<u64>,
+) -> Result<(Vec<(EntityId, f32, WindowKey)>, bool)> {
+    let (found, exhausted) = vault
         .scoped_read(actor)
+        .with_judged_at(recall_as_of)
         .residence_search_page(query, window, scope, as_of)?;
     let mut results = Vec::new();
     for hit in found {
@@ -101,7 +108,7 @@ pub fn home_search_page_candidates(
         };
         results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
-    Ok((results, ranked))
+    Ok((results, exhausted))
 }
 
 /// The revision of a paged search's final list: its request and each hit's

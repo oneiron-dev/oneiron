@@ -23,7 +23,8 @@ use super::read::{read_learning_in_txn, stored_prior_from_read_in_txn};
 pub(crate) const PRIOR: SideTable<[u8; 32], StoredPrior, Named> =
     SideTable::new(&side_table::LEARNING_PRIOR);
 
-/// Stores the prior `cell` starts from and re-projects it.
+/// Stores the prior `cell` starts from and re-projects it. A hard-deleted
+/// subject is passed over without changing the prior or registering a cell.
 ///
 /// Callers are the operations the law names: a hub import (`provenance`), an
 /// executor swap (`carried`), a type split or project fork (`parent`), a
@@ -42,6 +43,13 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
     }
     prior.validate()?;
     vault.with_write_txn_grouped(|wtxn| {
+        if vault.local_hard_delete_marker_exists_in_txn(wtxn, &cell.subject)? {
+            tracing::warn!(
+                subject = %cell.subject.to_hex(),
+                "a learning prior was not stored: its subject was hard-deleted"
+            );
+            return Ok(());
+        }
         let digest = ensure_cell_in_txn(vault, wtxn, cell, prior.value.form())?;
         PRIOR.put(
             &vault.store,
@@ -59,7 +67,8 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
 /// evidence, so that evidence adds runs against the borrowed weight instead
 /// of replacing it ("Receipts then outweigh it, like any prior"). A cell with
 /// a stored prior or an own head keeps what it has; a cell that borrows
-/// nothing, or borrows in another form than `form`, stores nothing.
+/// nothing, borrows in another form than `form`, or has a hard-deleted subject,
+/// stores nothing.
 ///
 /// # Errors
 ///
@@ -71,6 +80,13 @@ pub(crate) fn capture_borrowed_prior_in_txn(
     type_parents: &[TypeRef],
     form: EstimateForm,
 ) -> Result<()> {
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &cell.subject)? {
+        tracing::warn!(
+            subject = %cell.subject.to_hex(),
+            "a borrowed learning prior was not captured: its subject was hard-deleted"
+        );
+        return Ok(());
+    }
     let digest = cell.digest();
     if PRIOR.contains(&vault.store, wtxn, &digest)? {
         return Ok(());
@@ -91,7 +107,7 @@ pub(crate) fn cell_prior_in_txn(
     txn: &heed::RoTxn<'_>,
     row: &CellRow,
     digest: &[u8; 32],
-) -> Result<Prior> {
+) -> Result<(Prior, bool)> {
     prior_for_cell_in_txn(vault, txn, &row.cell, row.form, &row.of, digest)
 }
 
@@ -102,7 +118,9 @@ pub(crate) fn cell_prior_in_txn(
 /// one is set (its project's goal's, its project's, its type's, else the
 /// vault's), then from a stored prior, then from the catalog seed at the
 /// shipped weight. Every other cell starts from its stored prior, else the
-/// shipped default of its form.
+/// shipped default of its form. A matching pattern's authored line supplies
+/// a weak model default before the shipped one. The returned flag names
+/// that default only: readers still try measured backoff before using it.
 pub(crate) fn prior_for_cell_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -110,10 +128,10 @@ pub(crate) fn prior_for_cell_in_txn(
     form: EstimateForm,
     of: &str,
     digest: &[u8; 32],
-) -> Result<Prior> {
-    let prior = stored_prior_for_cell_in_txn(vault, txn, cell, form, of, digest)?;
+) -> Result<(Prior, bool)> {
+    let (prior, default_hint) = stored_prior_for_cell_in_txn(vault, txn, cell, form, of, digest)?;
     let conversions = conversions_in_txn(vault, txn)?;
-    Ok(prior.project(&conversions))
+    Ok((prior.project(&conversions), default_hint))
 }
 
 pub(super) fn stored_prior_for_cell_in_txn(
@@ -123,7 +141,7 @@ pub(super) fn stored_prior_for_cell_in_txn(
     form: EstimateForm,
     of: &str,
     digest: &[u8; 32],
-) -> Result<StoredPrior> {
+) -> Result<(StoredPrior, bool)> {
     let spec = match cell.predicate {
         LearningPredicate::Setting => cell
             .setting_key
@@ -135,23 +153,30 @@ pub(super) fn stored_prior_for_cell_in_txn(
         && let Some((value, weight_runs)) =
             learning_setting::owner_seed_in_txn(vault, txn, spec, cell)?
     {
-        return Ok(StoredPrior::plain(Prior {
-            origin: PriorOrigin::Seed,
-            value: point_value(form, of, value),
-            weight_runs,
-            from: Some(format!("setting row {}", spec.key)),
-        }));
+        return Ok((
+            StoredPrior::plain(Prior {
+                origin: PriorOrigin::Seed,
+                value: point_value(form, of, value),
+                weight_runs,
+                from: Some(format!("setting row {}", spec.key)),
+            }),
+            false,
+        ));
     }
     if let Some(prior) = PRIOR.get(&vault.store, txn, digest)?
         && prior.prior.value.form() == form
     {
-        return Ok(prior);
+        return Ok((prior, false));
+    }
+    if let Some(prior) = crate::team::pattern::works_well_for_prior_in_txn(vault, txn, cell, form)?
+    {
+        return Ok((StoredPrior::plain(prior), true));
     }
     let prior = match spec {
         Some(spec) => shipped_setting_prior(vault, txn, form, of, spec)?,
         None => Prior::shipped(form),
     };
-    Ok(StoredPrior::plain(prior))
+    Ok((StoredPrior::plain(prior), false))
 }
 
 fn shipped_setting_prior(

@@ -35,10 +35,12 @@ mod custody_keys;
 mod fetch;
 mod file_keys;
 mod observe;
+mod pdf_work;
 mod verify;
 
 pub use custody_keys::CustodySealKeys;
 pub use file_keys::{FileSealKeys, pem_certificates};
+pub use pdf_work::{PdfInspectionError, inspect_pdf_pages_via_organ, inspect_pdf_region_until};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -74,6 +76,8 @@ use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSp
 pub const SEAL_ORGAN: &str = "seal";
 pub const VERB_SEAL: &str = "seal.pdf";
 pub const VERB_VERIFY: &str = "seal.verify";
+pub const VERB_INSPECT: &str = "seal.inspect";
+pub const VERB_PREPARE: &str = "seal.prepare";
 /// `seal.pdf`'s schema: the engine's revisions, lent beside the PDF.
 pub const SEAL_SCHEMA: u32 = 2;
 /// Ask: the signing identity.
@@ -185,6 +189,20 @@ impl SealSettings {
             fetch_timeout: Duration::from_secs(5),
         }
     }
+
+    fn call(&self, verb: &str, schema: u32, args: Value) -> OrganCall {
+        OrganCall {
+            organ: self.organ.clone(),
+            verb: verb.to_owned(),
+            schema,
+            args,
+            body: None,
+            inputs: Vec::new(),
+            class: self.class,
+            deadline: self.deadline,
+            grant: self.grant.clone(),
+        }
+    }
 }
 
 /// The seal organ's install grant: both verbs over PDFs and the engine's
@@ -200,7 +218,12 @@ impl SealSettings {
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);
-    spec.verbs = vec![VERB_SEAL.to_owned(), VERB_VERIFY.to_owned()];
+    spec.verbs = vec![
+        VERB_SEAL.to_owned(),
+        VERB_VERIFY.to_owned(),
+        VERB_INSPECT.to_owned(),
+        VERB_PREPARE.to_owned(),
+    ];
     spec.media_types = vec![PDF.to_owned(), REVISIONS.to_owned()];
     spec.asks = vec![
         AskGrant::new(ASK_IDENTITY, u32::MAX),
@@ -462,17 +485,7 @@ impl HostedSealer<'_> {
     }
 
     fn call(&self, verb: &str, schema: u32, args: Value) -> OrganCall {
-        OrganCall {
-            organ: self.settings.organ.clone(),
-            verb: verb.to_owned(),
-            schema,
-            args,
-            body: None,
-            inputs: Vec::new(),
-            class: self.settings.class,
-            deadline: self.settings.deadline,
-            grant: self.settings.grant.clone(),
-        }
+        self.settings.call(verb, schema, args)
     }
 }
 
@@ -572,6 +585,17 @@ impl EsignSealer for HostedSealer<'_> {
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
         Ok(self.verify_classified(pdf)?.0)
+    }
+
+    fn prepare_esign_pdf(
+        &self,
+        original: &[u8],
+        request: &oneiron::blob_artifact::esign::render::PdfPreparation<'_>,
+        chain: [u8; 32],
+        trail: &[String],
+    ) -> Result<Option<oneiron::blob_artifact::esign::render::PreparedEsignPdf>, EsignSealerError>
+    {
+        self.prepare_esign_pdf_via_organ(original, request, chain, trail)
     }
 }
 

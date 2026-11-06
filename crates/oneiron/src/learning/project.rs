@@ -167,7 +167,7 @@ fn fold_cell_with_snapshot_in_txn(
     digest: &[u8; 32],
     now: u64,
 ) -> Result<(Estimate, OwnTally, Vec<String>, Option<FrozenFold>)> {
-    let stored_prior =
+    let (stored_prior, _) =
         stored_prior_for_cell_in_txn(vault, txn, &row.cell, row.form, &row.of, digest)?;
     let conversions = conversions_in_txn(vault, txn)?;
     let prior = stored_prior.project(&conversions);
@@ -368,7 +368,8 @@ pub(super) fn convert(
 
 /// Re-projects one cell and writes its head: a new superseding claim when the
 /// estimate moved, nothing when one head already says it, and a retraction of
-/// every head when the window has left no own runs.
+/// every head when the window has left no own runs. A hard-deleted subject is
+/// passed over without projecting a new head.
 pub(crate) fn project_cell_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -378,6 +379,13 @@ pub(crate) fn project_cell_in_txn(
     let row = CELL
         .get(&vault.store, wtxn, digest)?
         .ok_or(Error::CorruptedIndex("learning cell"))?;
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &row.cell.subject)? {
+        tracing::warn!(
+            subject = %row.cell.subject.to_hex(),
+            "a learning cell was not projected: its subject was hard-deleted"
+        );
+        return Ok(None);
+    }
     let (estimate, tally, cited, frozen) =
         fold_cell_with_snapshot_in_txn(vault, wtxn, &row, digest, now)?;
     let heads = active_heads_in_txn(vault, wtxn, &row.cell)?;
@@ -438,8 +446,10 @@ pub(crate) fn project_cell_in_txn(
 }
 
 /// Re-projects every registered cell, so the window keeps fading runs with no
-/// new evidence arriving. An off-hot-path sweep; returns the cells it visited.
-/// A cell whose subject is gone is passed over without stopping the sweep.
+/// new evidence arriving. An off-hot-path sweep; returns the initial
+/// registration snapshot length, not the successful projections. A registered
+/// cell or its subject erased between the snapshot and its write is passed
+/// over without stopping the sweep.
 ///
 /// # Errors
 ///
@@ -452,11 +462,14 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
     };
     for digest in &digests {
         vault.with_write_txn_grouped(|wtxn| {
-            if let Some(row) = CELL.get(&vault.store, wtxn, digest)?
-                && vault
-                    .store
-                    .port_entity_record(wtxn, &row.cell.subject)?
-                    .is_none()
+            let Some(row) = CELL.get(&vault.store, wtxn, digest)? else {
+                tracing::warn!("a learning cell was not reprojected: its registered cell is gone");
+                return Ok(());
+            };
+            if vault
+                .store
+                .port_entity_record(wtxn, &row.cell.subject)?
+                .is_none()
             {
                 tracing::warn!(
                     subject = %row.cell.subject.to_hex(),

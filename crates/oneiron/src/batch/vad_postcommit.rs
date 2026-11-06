@@ -22,6 +22,8 @@ type TransactionKey = (usize, usize);
 pub(crate) struct PostcommitWork {
     pub(crate) vad_ids: BTreeSet<EntityId>,
     pub(crate) proactivity_changed: bool,
+    /// An answered consent receipt, announced only after this writer commits.
+    pub(crate) consent_answered: bool,
     /// TASKs this transaction wrote, announced only after it commits.
     pub(crate) task_ids: BTreeSet<EntityId>,
     /// Rows this transaction wrote (puts, and the sources of edges it wrote),
@@ -116,6 +118,16 @@ pub(crate) fn queue_notification_change(vault: &Vault, txn: &RwTxn<'_>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.notifications_changed = true;
+        }
+    });
+}
+
+/// Mark an answered consent receipt for its transaction owner's durable wake.
+/// Raw-transaction owners publish their own wake only after a successful commit.
+pub(crate) fn queue_consent_answer(vault: &Vault, txn: &RwTxn<'_>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.consent_answered = true;
         }
     });
 }
@@ -321,4 +333,22 @@ pub(super) fn pending_dreamer_vad_approvals(
         }
     }
     Ok(pending_ids)
+}
+
+/// Move a successful nested actor batch's postcommit work to its actual owner.
+pub(super) fn merge_postcommit_work(vault: &Vault, txn: &RwTxn<'_>, work: PostcommitWork) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.vad_ids.extend(work.vad_ids);
+            queued.proactivity_changed |= work.proactivity_changed;
+            queued.consent_answered |= work.consent_answered;
+            queued.task_ids.extend(work.task_ids);
+            queued.rows.extend(work.rows);
+            queued.room_joins.extend(work.room_joins);
+            queued.pad_windows.extend(work.pad_windows);
+            queued.settled_tasks.extend(work.settled_tasks);
+            queued.notifications_changed |= work.notifications_changed;
+            queued.note_document_ids.extend(work.note_document_ids);
+        }
+    });
 }

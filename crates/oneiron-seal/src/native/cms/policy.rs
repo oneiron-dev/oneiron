@@ -12,17 +12,17 @@ use super::oids::{
     OID_EC_PUBLIC_KEY, OID_ECDSA_SHA256, OID_P256, OID_RSA_ENCRYPTION, OID_RSA_PSS, OID_SHA256,
     OID_SHA256_WITH_RSA,
 };
-use super::parse::{ParsedSignerInfo, parse_oid};
+use super::parse::ParsedSignerInfo;
 
 // ---------------------------------------------------------------------------
 // Attribute inspection and signature verification
 // ---------------------------------------------------------------------------
 
 /// Parse one Attribute: returns (attr OID content bytes, single value TLV).
-pub(crate) fn parse_attribute(attr_der: &[u8]) -> Result<(Vec<u8>, Tlv<'_>), SealError> {
+pub(crate) fn parse_attribute(attr_der: &[u8]) -> Result<(&[u8], Tlv<'_>), SealError> {
     let top = DerReader::new(attr_der).expect(0x30)?;
     let mut r = DerReader::new(top.content);
-    let oid = parse_oid(r.expect(0x06)?)?;
+    let oid = r.expect(0x06)?.content;
     let set = r.expect(0x31)?;
     let mut sr = DerReader::new(set.content);
     let value = sr.read()?;
@@ -75,13 +75,13 @@ pub(crate) fn check_baseline_attrs(signer: &ParsedSignerInfo) -> Result<Sha256Di
 
 /// (cert hash content, issuer Name DER, serialNumber TLV) of one
 /// ESSCertIDv2.
-type EssCertIdParts = (Vec<u8>, Vec<u8>, Vec<u8>);
+type EssCertIdParts<'a> = (&'a [u8], &'a [u8], &'a [u8]);
 
 /// Walk a signingCertificateV2 attribute down to its (single) ESSCertIDv2,
 /// returning (cert hash content, issuer Name DER, serialNumber TLV). The
 /// attribute must be the exact baseline shape: single value, one
 /// ESSCertIDv2, issuerSerial with one directoryName GeneralName.
-pub(super) fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts, SealError> {
+pub(super) fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts<'_>, SealError> {
     let (oid, value) = parse_attribute(attr_der)?;
     if oid != OID_ATTR_SIGNING_CERT_V2.as_bytes() || value.tag != 0x30 {
         return Err(cms_err());
@@ -113,11 +113,7 @@ pub(super) fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts, SealErro
     if !gr.is_done() {
         return Err(cms_err());
     }
-    Ok((
-        hash.content.to_vec(),
-        dir_name.content.to_vec(),
-        serial.full.to_vec(),
-    ))
+    Ok((hash.content, dir_name.content, serial.full))
 }
 
 /// Verify the ESSCertIDv2 binding inside a signingCertificateV2 attribute:
@@ -130,7 +126,8 @@ pub(crate) fn check_ess_binding(
     serial_der: &[u8],
 ) -> Result<(), SealError> {
     let (hash, issuer, serial) = ess_cert_id_v2(attr_der)?;
-    if hash != sha256(signer_cert_der) || issuer != issuer_name_der || serial != serial_der {
+    let expected = sha256(signer_cert_der);
+    if hash != expected.as_slice() || issuer != issuer_name_der || serial != serial_der {
         return Err(cms_err());
     }
     Ok(())
