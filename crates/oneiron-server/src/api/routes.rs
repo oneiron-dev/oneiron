@@ -73,6 +73,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        // Native line/call replay rechecks the live setting; never cache private metadata.
+        .route(
+            "/phone-lines/{identity_ref}/arrivals",
+            post(phone_line::submit_core_phone_line_arrival),
+        )
         // A consumed approval must never replay a cached 200, even with an idempotency key.
         .route("/consent/widen/accept", post(core_accept_widen))
         .route("/consent/widen/reject", post(core_reject_widen))
