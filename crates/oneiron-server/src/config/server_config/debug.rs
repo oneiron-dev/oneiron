@@ -53,6 +53,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("skills", &self.skills)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
@@ -140,6 +141,7 @@ impl fmt::Debug for ServeConfig {
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
