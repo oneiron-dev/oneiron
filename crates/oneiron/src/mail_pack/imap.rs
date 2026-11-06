@@ -44,8 +44,8 @@ use super::wire::{
     MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
 };
-use crate::Vault;
 use crate::error::Result;
+use crate::{EntityId, Vault};
 
 /// The effector an IMAP source's credential is injected at.
 pub const IMAP_CONNECTOR_EFFECTOR: &str = "connector:imap";
@@ -54,8 +54,11 @@ pub const IMAP_CONNECTOR_EFFECTOR: &str = "connector:imap";
 const LIST_PAGE: u64 = 100;
 /// The new messages one change read takes from one folder.
 const NEW_PER_FOLDER: usize = 200;
-/// The most folders one mailbox is read through.
-const MAX_FOLDERS: usize = 128;
+/// The most folders one mailbox is read through; a mailbox with more is
+/// refused whole rather than read in part.
+const MAX_FOLDERS: usize = 1_000;
+/// The old UIDs one read of a folder's `Message-ID`s covers.
+const DEPARTURE_BATCH: u64 = 2_000;
 /// The largest message read whole: a bigger one lands by its headers.
 const MAX_MESSAGE_BYTES: u64 = 40 * 1024 * 1024;
 /// The prefix of an anchor this wire wrote.
@@ -113,6 +116,8 @@ struct Location {
 
 struct OpenSession {
     session: ImapSession,
+    /// The source it reads.
+    source: EntityId,
     /// The keyed digest of the credential it signed in with.
     credential: [u8; 32],
     folders: Vec<Folder>,
@@ -124,7 +129,8 @@ pub struct ImapMailWire<'v> {
     /// This wire's own key for credential digests; it never leaves it.
     key: [u8; 32],
     session: RefCell<Option<OpenSession>>,
-    /// The headers this wire read, by message id, and where it read them.
+    /// The headers this wire's session read, by message id, and where it
+    /// read them; emptied when the session opens again.
     seen: RefCell<BTreeMap<String, (MailHeaders, Location)>>,
 }
 
@@ -154,7 +160,11 @@ fn digest_of(label: &str) -> String {
 }
 
 /// The folders a mailbox is read through, INBOX first.
-fn folders_of(listed: Vec<ListedFolder>) -> Vec<Folder> {
+///
+/// # Errors
+///
+/// A mailbox of more than [`MAX_FOLDERS`] folders.
+fn folders_of(listed: Vec<ListedFolder>) -> Result<Vec<Folder>> {
     let mut folders: Vec<Folder> = listed
         .into_iter()
         .filter_map(|folder| {
@@ -208,8 +218,10 @@ fn folders_of(listed: Vec<ListedFolder>) -> Vec<Folder> {
             folder.name.clone(),
         )
     });
-    folders.truncate(MAX_FOLDERS);
-    folders
+    if folders.len() > MAX_FOLDERS {
+        return Err(refused("imap_mailbox_has_too_many_folders"));
+    }
+    Ok(folders)
 }
 
 /// A message's id from its `Message-ID`, as an mbox import gives it.
@@ -265,7 +277,7 @@ fn read_of<'f>(fetched: &'f Fetched, section: &str) -> Option<MessageRead<'f>> {
     let thread = fetched
         .value("THREADID")
         .and_then(Item::list)
-        .and_then(|items| items.first())
+        .and_then(<[Item]>::first)
         .and_then(Item::atom)
         .map(str::to_owned);
     Some(MessageRead {
@@ -447,13 +459,15 @@ impl ImapMailWire<'_> {
             &mut |secret: &[u8]| {
                 let credential = *blake3::keyed_hash(&self.key, secret).as_bytes();
                 let mut slot = self.session.borrow_mut();
-                if slot
-                    .as_ref()
-                    .is_none_or(|open| open.credential != credential)
-                {
+                // A session is one source's, signed in with one credential:
+                // another source, or a changed record, opens a new one.
+                if slot.as_ref().is_none_or(|open| {
+                    open.credential != credential || open.source != source.source_ref
+                }) {
                     if let Some(old) = slot.take() {
                         old.session.logout();
                     }
+                    self.seen.borrow_mut().clear();
                     *slot = Some(open_session(source, secret, credential)?);
                 }
                 let open = slot
@@ -466,6 +480,7 @@ impl ImapMailWire<'_> {
                     }
                     Err(error) => {
                         *slot = None;
+                        self.seen.borrow_mut().clear();
                         Err(error)
                     }
                 }
@@ -537,8 +552,15 @@ impl ImapMailWire<'_> {
         provider_id: &str,
         all: bool,
     ) -> Result<Vec<Location>> {
-        if !all && let Some((_, at)) = self.seen.borrow().get(provider_id) {
-            return Ok(vec![*at]);
+        if !all {
+            let seen = self.seen.borrow().get(provider_id).map(|(_, at)| *at);
+            if let Some(at) = seen {
+                if self.still_at(open, provider_id, at)? {
+                    return Ok(vec![at]);
+                }
+                // Moved or gone since it was read: look for it again.
+                self.seen.borrow_mut().remove(provider_id);
+            }
         }
         if let Some(place) = provider_id.strip_prefix("imapuid.") {
             let mut fields = place.split('.');
@@ -587,7 +609,9 @@ impl ImapMailWire<'_> {
             let uids = open
                 .session
                 .uid_search(&format!("HEADER Message-ID {criterion}"))?;
-            if let Some(&uid) = uids.last() {
+            // The search matches a substring: a hit is taken only when its
+            // own Message-ID is the one asked for.
+            if let Some(uid) = self.exact_hit(open, folder, status, &uids, provider_id)? {
                 found.push(Location {
                     folder,
                     uid_validity: status.uid_validity,
@@ -599,6 +623,54 @@ impl ImapMailWire<'_> {
             }
         }
         Ok(found)
+    }
+
+    /// Whether the message read at `at` is there still.
+    fn still_at(&self, open: &mut OpenSession, provider_id: &str, at: Location) -> Result<bool> {
+        let name = open.folders[at.folder].name.clone();
+        let status = open.session.examine(&name)?;
+        if status.uid_validity != at.uid_validity {
+            return Ok(false);
+        }
+        let uids = open.session.uid_search(&format!("UID {}", at.uid))?;
+        if uids.first() != Some(&at.uid) {
+            return Ok(false);
+        }
+        // A place id names the place itself; a content id is checked.
+        if provider_id.starts_with("imapuid.") {
+            return Ok(true);
+        }
+        Ok(self
+            .exact_hit(open, at.folder, status, &[at.uid], provider_id)?
+            .is_some())
+    }
+
+    /// The highest of `uids` in the open `folder` whose own `Message-ID`
+    /// names `provider_id`.
+    fn exact_hit(
+        &self,
+        open: &mut OpenSession,
+        folder: usize,
+        status: FolderStatus,
+        uids: &[u64],
+        provider_id: &str,
+    ) -> Result<Option<u64>> {
+        if uids.is_empty() {
+            return Ok(None);
+        }
+        let start = uids.len().saturating_sub(16);
+        let fetched = open.session.uid_fetch(
+            &uid_set(&uids[start..]),
+            "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
+        )?;
+        let place = &open.folders[folder];
+        Ok(fetched
+            .iter()
+            .filter(|message| {
+                fetched_id(message, place, status.uid_validity).as_deref() == Some(provider_id)
+            })
+            .filter_map(Fetched::uid)
+            .max())
     }
 
     /// The headers and the whole message at the first place `provider_id`
@@ -684,30 +756,23 @@ impl ImapMailWire<'_> {
     ) -> Result<()> {
         let place = open.folders[folder].clone();
         let mut held = BTreeSet::new();
-        if uid_next > 1 {
-            let status = open.session.examine(&place.name)?;
+        let status = open.session.examine(&place.name)?;
+        // The folder's old messages by id, read a bounded batch at a time.
+        let mut low = 1;
+        while low < uid_next {
+            let high = low.saturating_add(DEPARTURE_BATCH - 1).min(uid_next - 1);
             let fetched = open.session.uid_fetch(
-                &format!("1:{}", uid_next - 1),
+                &format!("{low}:{high}"),
                 "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
             )?;
             for message in &fetched {
-                let Some(uid) = message.uid() else {
-                    continue;
-                };
-                if uid >= uid_next {
-                    continue;
+                if message.uid().is_some_and(|uid| uid < uid_next)
+                    && let Some(id) = fetched_id(message, &place, status.uid_validity)
+                {
+                    held.insert(id);
                 }
-                let id = message
-                    .value_starting("BODY[HEADER.FIELDS")
-                    .and_then(Item::bytes)
-                    .and_then(|raw| MimeMessage::parse(raw).header("message-id"))
-                    .filter(|id| !id.is_empty())
-                    .map_or_else(
-                        || place_id(&place, status.uid_validity, uid),
-                        |id| content_id(&id),
-                    );
-                held.insert(id);
             }
+            low = high + 1;
         }
         let gone: Vec<String> = {
             let txn = self.vault.store.env.read_txn()?;
@@ -746,6 +811,19 @@ impl ImapMailWire<'_> {
     }
 }
 
+/// The id of a message fetched with its `Message-ID` field.
+fn fetched_id(message: &Fetched, folder: &Folder, uid_validity: u64) -> Option<String> {
+    let uid = message.uid()?;
+    Some(
+        message
+            .value_starting("BODY[HEADER.FIELDS")
+            .and_then(Item::bytes)
+            .and_then(|raw| MimeMessage::parse(raw).header("message-id"))
+            .filter(|id| !id.is_empty())
+            .map_or_else(|| place_id(folder, uid_validity, uid), |id| content_id(&id)),
+    )
+}
+
 fn dedup(mut labels: Vec<String>) -> Vec<String> {
     labels.sort();
     labels.dedup();
@@ -782,9 +860,13 @@ fn open_session(
     {
         return Err(refused("imap_credential_host_invalid"));
     }
-    // The credential reads the account the source names, and no other.
-    let account = format!("{}@{host}", stored.username);
-    if !source.provider_account.eq_ignore_ascii_case(&account) {
+    // The credential reads the account the source names, and no other: its
+    // user exactly, as a server may tell case apart, and its host.
+    let reads_account = source
+        .provider_account
+        .rsplit_once('@')
+        .is_some_and(|(user, named)| user == stored.username && named.eq_ignore_ascii_case(&host));
+    if !reads_account {
         return Err(refused("imap_credential_reads_another_account"));
     }
     let mut session = ImapSession::connect(&host, stored.port.unwrap_or(993))?;
@@ -793,9 +875,10 @@ fn open_session(
         stored.password.as_deref(),
         stored.access_token.as_deref(),
     )?;
-    let folders = folders_of(session.list()?);
+    let folders = folders_of(session.list()?)?;
     Ok(OpenSession {
         session,
+        source: source.source_ref,
         credential,
         folders,
     })
@@ -858,8 +941,11 @@ impl MailProviderWire for ImapMailWire<'_> {
             let below = cursor.below;
             let (mut uids, more, end) = match query.newer_than {
                 Some(after) => {
-                    let since =
-                        search_date(after).ok_or_else(|| refused("imap_cutoff_unreadable"))?;
+                    // SINCE reads a day in the server's own zone: a day early,
+                    // the copy setting's exact cutoff applies to each
+                    // message's received time.
+                    let since = search_date(after.saturating_sub(86_400))
+                        .ok_or_else(|| refused("imap_cutoff_unreadable"))?;
                     let mut uids = open.session.uid_search(&format!("SINCE {since}"))?;
                     uids.retain(|&uid| below.is_none_or(|below| uid < below));
                     let start = uids
@@ -889,15 +975,17 @@ impl MailProviderWire for ImapMailWire<'_> {
                 }
             };
             uids.sort_unstable();
-            let headers = self.read_headers(open, folder, status, &uids)?;
-            let mut messages: Vec<MailMessageRef> = headers
+            uids.dedup();
+            let mut headers = self.read_headers(open, folder, status, &uids)?;
+            // Newest first, by when the mailbox received each.
+            headers.sort_by_key(|headers| std::cmp::Reverse(headers.received_at));
+            let messages: Vec<MailMessageRef> = headers
                 .into_iter()
                 .map(|headers| MailMessageRef {
                     provider_id: headers.provider_id,
                     thread_id: headers.thread_id,
                 })
                 .collect();
-            messages.reverse();
             let next = if more {
                 ListCursor {
                     below: uids.first().copied().or(below),
@@ -928,15 +1016,15 @@ impl MailProviderWire for ImapMailWire<'_> {
     }
 
     fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
-        let seen = self
-            .seen
-            .borrow()
-            .get(provider_id)
-            .map(|(headers, _)| headers.clone());
-        if let Some(headers) = seen {
-            return Ok(Some(headers));
-        }
         self.with_session(source, |open| {
+            let seen = self
+                .seen
+                .borrow()
+                .get(provider_id)
+                .map(|(headers, _)| headers.clone());
+            if let Some(headers) = seen {
+                return Ok(Some(headers));
+            }
             let places = self.locate(open, source, provider_id, true)?;
             let Some(&first) = places
                 .iter()
@@ -1019,10 +1107,23 @@ impl MailProviderWire for ImapMailWire<'_> {
                 let kept_old = status.exists.saturating_sub(count(new.len()));
                 let taken: Vec<u64> = new.iter().copied().take(NEW_PER_FOLDER).collect();
                 for headers in self.read_headers(open, at, status, &taken)? {
-                    changes.push(MailHistoryChange::Added(MailMessageRef {
-                        provider_id: headers.provider_id,
-                        thread_id: headers.thread_id,
-                    }));
+                    // A message already landed, filed here too, carries this
+                    // folder as well.
+                    match self.landed_labels(source, &headers.provider_id)? {
+                        Some(labels) if labels.contains(&folder.label) => {}
+                        Some(mut labels) => {
+                            labels.push(folder.label.clone());
+                            changes.push(MailHistoryChange::Labels {
+                                provider_id: headers.provider_id,
+                                labels: dedup(labels),
+                                trash_or_spam: false,
+                            });
+                        }
+                        None => changes.push(MailHistoryChange::Added(MailMessageRef {
+                            provider_id: headers.provider_id,
+                            thread_id: headers.thread_id,
+                        })),
+                    }
                 }
                 if kept_old < mark.count {
                     self.departures(open, source, at, mark.uid_next, &mut changes)?;
@@ -1071,6 +1172,24 @@ impl MailProviderWire for ImapMailWire<'_> {
 }
 
 impl ImapMailWire<'_> {
+    /// The labels of the source's live copy of `provider_id`, when it has
+    /// landed one.
+    fn landed_labels(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<Option<Vec<String>>> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(OCCURRENCES
+            .get(
+                &self.vault.store,
+                &txn,
+                &occurrence_key(source.source_ref, provider_id),
+            )?
+            .filter(|occurrence| matches!(occurrence.presence, MailPresence::Present))
+            .map(|occurrence| occurrence.labels))
+    }
+
     /// The labels the source's copies carry whose digest is `digest`.
     fn labels_with_digest(&self, source: &MailSyncSource, digest: &str) -> Result<Vec<String>> {
         let txn = self.vault.store.env.read_txn()?;
@@ -1099,5 +1218,6 @@ fn uid_next_of(session: &mut ImapSession, status: FolderStatus) -> Result<u64> {
         return Ok(1);
     }
     let last = session.uid_search("ALL")?.last().copied().unwrap_or(0);
-    Ok(last + 1)
+    last.checked_add(1)
+        .ok_or_else(|| refused("imap_response_malformed"))
 }

@@ -2,15 +2,15 @@
 //! 15425): implicit TLS through rustls with the platform's roots, one
 //! command at a time, each response parsed into items. It speaks what the
 //! wire needs: `LOGIN` or `AUTHENTICATE` (`PLAIN`, `XOAUTH2`), `LIST`,
-//! `EXAMINE`, `UID SEARCH`, `UID FETCH`, `LOGOUT`. Every read is bounded and
-//! times out.
+//! `EXAMINE`, `UID SEARCH`, `UID FETCH`, `LOGOUT`. Every read is bounded,
+//! and every command ends by a deadline, however slowly a server answers.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 
@@ -21,10 +21,55 @@ use crate::error::Result;
 const MAX_LITERAL_BYTES: usize = 48 * 1024 * 1024;
 /// The largest response read, its literals included.
 const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+/// The most one command reads, all its responses together.
+const MAX_COMMAND_BYTES: usize = 192 * 1024 * 1024;
 /// How long one read or write may wait.
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long connecting, the TLS handshake and the greeting may take.
+const CONNECT_DEADLINE: Duration = Duration::from_secs(90);
+/// How long one command may take, its answer read whole.
+const COMMAND_DEADLINE: Duration = Duration::from_secs(300);
+/// The largest UID, UIDVALIDITY or UIDNEXT: IMAP numbers are 32-bit.
+pub(super) const MAX_IMAP_NUMBER: u64 = u32::MAX as u64;
 
-type TlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
+/// A TCP stream whose every read and write ends by its deadline: a server
+/// that drips bytes, or never ends a command, times out with it.
+struct DeadlineStream {
+    tcp: TcpStream,
+    deadline: Instant,
+}
+
+impl DeadlineStream {
+    fn remaining(&self) -> std::io::Result<Duration> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        }
+        Ok(left.min(IO_TIMEOUT))
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.remaining()?;
+        self.tcp.set_read_timeout(Some(left))?;
+        self.tcp.read(buf)
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let left = self.remaining()?;
+        self.tcp.set_write_timeout(Some(left))?;
+        self.tcp.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.tcp.flush()
+    }
+}
+
+type TlsStream = rustls::StreamOwned<rustls::ClientConnection, DeadlineStream>;
 
 /// One parsed element of a response.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,7 +174,9 @@ impl Fetched {
     }
 
     pub(super) fn uid(&self) -> Option<u64> {
-        self.value("UID").and_then(Item::number)
+        self.value("UID")
+            .and_then(Item::number)
+            .filter(|uid| (1..=MAX_IMAP_NUMBER).contains(uid))
     }
 }
 
@@ -138,7 +185,6 @@ pub(super) struct ImapSession {
     reader: BufReader<TlsStream>,
     next_tag: u32,
     capabilities: BTreeSet<String>,
-    selected: Option<(String, FolderStatus)>,
 }
 
 fn malformed() -> crate::Error {
@@ -408,20 +454,27 @@ impl ImapSession {
             .map_err(|_| refused("imap_host_invalid"))?;
         let tls = rustls::ClientConnection::new(Arc::new(config), name)
             .map_err(|_| refused("imap_tls_setup_failed"))?;
+        let deadline = Instant::now() + CONNECT_DEADLINE;
         let mut addresses = (host, port)
             .to_socket_addrs()
             .map_err(|_| refused("imap_host_unresolved"))?;
         let tcp = addresses
-            .find_map(|address| TcpStream::connect_timeout(&address, IO_TIMEOUT).ok())
+            .find_map(|address| {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return None;
+                }
+                TcpStream::connect_timeout(&address, left.min(IO_TIMEOUT)).ok()
+            })
             .ok_or_else(|| refused("imap_connect_failed"))?;
-        tcp.set_read_timeout(Some(IO_TIMEOUT))
-            .and_then(|()| tcp.set_write_timeout(Some(IO_TIMEOUT)))
-            .map_err(|_| refused("imap_connect_failed"))?;
+        // The handshake runs within the first read: the greeting's.
         let mut session = Self {
-            reader: BufReader::new(rustls::StreamOwned::new(tls, tcp)),
+            reader: BufReader::new(rustls::StreamOwned::new(
+                tls,
+                DeadlineStream { tcp, deadline },
+            )),
             next_tag: 1,
             capabilities: BTreeSet::new(),
-            selected: None,
         };
         let greeting = session.read_response()?;
         let greeting = greeting
@@ -525,6 +578,7 @@ impl ImapSession {
     /// `AUTHENTICATE mechanism` with its one response, sent in the command
     /// where the server takes an initial response, else on its prompt.
     fn sasl(&mut self, mechanism: &str, response: &str) -> Result<()> {
+        self.arm();
         let tag = self.tag();
         if self.has("SASL-IR") {
             self.write(&format!("{tag} AUTHENTICATE {mechanism} {response}\r\n"))?;
@@ -537,10 +591,15 @@ impl ImapSession {
             self.write(&format!("{response}\r\n"))?;
         }
         let mut answers = Vec::new();
+        let mut prompts = 0_u32;
         loop {
             let response = self.read_response()?;
             if response.starts_with(b"+") {
                 // A refusal's details: answer with an empty line to end it.
+                prompts += 1;
+                if prompts > 2 {
+                    return Err(refused("imap_login_refused"));
+                }
                 self.write("\r\n")?;
                 continue;
             }
@@ -552,6 +611,11 @@ impl ImapSession {
                 };
             }
         }
+    }
+
+    /// Gives the next command its own deadline.
+    fn arm(&mut self) {
+        self.reader.get_mut().sock.deadline = Instant::now() + COMMAND_DEADLINE;
     }
 
     fn tag(&mut self) -> String {
@@ -630,11 +694,17 @@ impl ImapSession {
     ///
     /// A `NO` or `BAD` completion, a closed session, a transport failure.
     pub(super) fn command(&mut self, text: &str) -> Result<Vec<Untagged>> {
+        self.arm();
         let tag = self.tag();
         self.write(&format!("{tag} {text}\r\n"))?;
         let mut answers = Vec::new();
+        let mut read = 0_usize;
         loop {
             let response = self.read_response()?;
+            read = read.saturating_add(response.len());
+            if read > MAX_COMMAND_BYTES {
+                return Err(refused("imap_response_too_large"));
+            }
             match Self::completion(&tag, &response, &mut answers)? {
                 None => {}
                 Some(true) => return Ok(answers),
@@ -661,19 +731,13 @@ impl ImapSession {
         Ok(folders)
     }
 
-    /// Opens `folder` read-only (`EXAMINE`) unless it is open already, and
-    /// answers its status.
+    /// Opens `folder` read-only (`EXAMINE`), again each time so its status
+    /// is current, and answers that status.
     ///
     /// # Errors
     ///
-    /// No such mailbox, or the command's own.
+    /// No such mailbox, a status out of IMAP's range, or the command's own.
     pub(super) fn examine(&mut self, folder: &str) -> Result<FolderStatus> {
-        if let Some((open, status)) = &self.selected
-            && open == folder
-        {
-            return Ok(*status);
-        }
-        self.selected = None;
         let name = mailbox_argument(folder)?;
         let answers = self.command(&format!("EXAMINE {name}"))?;
         let mut status = FolderStatus::default();
@@ -700,7 +764,12 @@ impl ImapSession {
         if status.uid_validity == 0 {
             return Err(refused("imap_mailbox_has_no_uidvalidity"));
         }
-        self.selected = Some((folder.to_owned(), status));
+        if status.uid_validity > MAX_IMAP_NUMBER
+            || status.uid_next > MAX_IMAP_NUMBER + 1
+            || status.exists > MAX_IMAP_NUMBER
+        {
+            return Err(malformed());
+        }
         Ok(status)
     }
 
@@ -716,7 +785,12 @@ impl ImapSession {
             if let Untagged::Data { kind, rest } = answer
                 && kind == "SEARCH"
             {
-                uids.extend(parse_items(rest)?.iter().filter_map(Item::number));
+                uids.extend(
+                    parse_items(rest)?
+                        .iter()
+                        .filter_map(Item::number)
+                        .filter(|uid| (1..=MAX_IMAP_NUMBER).contains(uid)),
+                );
             }
         }
         uids.sort_unstable();
