@@ -19,7 +19,9 @@ impl RecordingJsHost<'_, '_> {
         // Typed replies use the guest's sweeping sink and full result card.
         if matches!(
             &outcome,
-            SelfDispatchOutcome::InferenceDefaults(_) | SelfDispatchOutcome::TaskAskStatus(_)
+            SelfDispatchOutcome::InferenceDefaults(_)
+                | SelfDispatchOutcome::TaskAskStatus(_)
+                | SelfDispatchOutcome::TaskWaitSet(_)
         ) {
             return self.store_large_typed_reply(outcome);
         }
@@ -50,9 +52,9 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// A typed reply too large for one message (FIX449): the inference
-    /// defaults, a settled ask, or a world-privacy answer, spilled pre-record
-    /// through the EXISTING `store_reply` (sweeping mask, tainted card with
-    /// facets), never `store_answer`. Under the inline size, or with no
+    /// defaults, a settled ask, a world-privacy answer, or a wait set without
+    /// program feedback, spilled through `store_reply` (sweeping mask, tainted
+    /// card with facets), never `store_answer`. Under the inline size, or with no
     /// result store, the original outcome stays inline, unchanged.
     fn store_large_typed_reply(
         &mut self,
@@ -82,6 +84,10 @@ impl RecordingJsHost<'_, '_> {
                 SelfStoredReplyKind::TaskAskWorldPrivacy,
                 json!({"output": TaskAskWait::WorldPrivacyReady(request.clone())}),
             ),
+            // Nonempty feedback stays typed for its independent release projection.
+            SelfDispatchOutcome::TaskWaitSet(result) if result.program_steps.is_empty() => {
+                (SelfStoredReplyKind::TaskWaitSet, json!({"output": result}))
+            }
             _ => return Ok(outcome),
         };
         let mut size = ByteCount::default();

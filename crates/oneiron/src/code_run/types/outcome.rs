@@ -75,6 +75,8 @@ pub enum SelfStoredReplyKind {
     InferenceDefaults,
     TaskAskSettled,
     TaskAskWorldPrivacy,
+    /// A wait-set reply with no program feedback to release separately.
+    TaskWaitSet,
 }
 
 /// What one callable skill returned: JSON its contract's `returns` shape
