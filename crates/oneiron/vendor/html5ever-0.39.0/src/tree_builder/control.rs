@@ -32,7 +32,7 @@ pub(crate) struct TagAttributesHooks<Handle, Sink> {
         dyn Fn(&Sink, QualName, crate::tokenizer::TagAttributes, super::ElementFlags) -> Option<Handle>
             + Send,
     >,
-    pub(crate) add: Box<dyn Fn(&Sink, &Handle, crate::tokenizer::TagAttributes) + Send>,
+    pub(crate) add: Box<dyn Fn(&Sink, &Handle, crate::tokenizer::TagAttributes) -> bool + Send>,
 }
 
 pub(super) type SinkCheckpoint<Handle, Sink> =
@@ -183,15 +183,18 @@ where
         &self,
         target: &Handle,
         attrs: crate::tokenizer::TagAttributes,
-    ) {
+    ) -> Option<()> {
         match &self.tag_attributes_hooks {
-            Some(hooks) => (hooks.add)(&self.sink, target, attrs),
-            None => self.sink.add_attrs_if_missing(
-                target,
-                attrs
-                    .into_unreserved()
-                    .expect("guarded attributes require a native sink"),
-            ),
+            Some(hooks) => (hooks.add)(&self.sink, target, attrs).then_some(()),
+            None => {
+                self.sink.add_attrs_if_missing(
+                    target,
+                    attrs
+                        .into_unreserved()
+                        .expect("guarded attributes require a native sink"),
+                );
+                Some(())
+            }
         }
     }
 

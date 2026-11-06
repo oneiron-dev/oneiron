@@ -339,21 +339,32 @@ impl Element {
         }
     }
 
-    pub(crate) fn add_tag_attributes_if_missing(
+    pub(crate) fn add_tag_attributes_if_missing<R, E>(
         &mut self,
         attrs: html5ever::tokenizer::TagAttributes,
-    ) {
+        reserve: impl Fn(usize) -> Result<R, E>,
+        settle: impl Fn(&mut R, usize) -> Result<(), E>,
+    ) -> Result<(), ArenaReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
         let original_len = self.attrs.len();
         for attr in attrs {
-            let attr = wrap_attr(attr);
             if self.attrs[..original_len]
                 .iter()
                 .any(|existing| existing.name == attr.name)
             {
                 continue;
             }
+            let attr = crate::entities::try_wrap_attr_with_reservation(attr, &reserve, &settle)
+                .map_err(|error| match error {
+                    tendril::ReserveError::Refused(error) => ArenaReserveError::Refused(error),
+                    tendril::ReserveError::CapacityOverflow => ArenaReserveError::CapacityOverflow,
+                    tendril::ReserveError::Allocation(error) => ArenaReserveError::Allocation(error),
+                })?;
             self.attrs.push(attr);
         }
+        Ok(())
     }
 
     /// Renames the element.
