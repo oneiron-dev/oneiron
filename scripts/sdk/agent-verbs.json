@@ -13634,6 +13634,20 @@
       "section": false
     },
     {
+      "name": "vault.rooms.leave",
+      "description": "Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership.",
+      "input": "crate::workspace_roster::RoomLeaveRequest",
+      "output": "crate::workspace_roster::RoomLeaveOutcome",
+      "call": "memory.rooms_leave(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.offer",
       "description": "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card.",
       "input": "crate::workspace_roster::OfferDraft",

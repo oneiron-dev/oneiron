@@ -4296,6 +4296,11 @@ export_facade! {
     let output = client.vault_rooms_consent(&input)?;
     crate::codec::lift_record("vault.rooms.consent", &output)
 };
+"vault.rooms.leave" => fn vault_rooms_leave(&self, input: RoomLeaveRequest) -> RoomLeaveOutcome = |client| {
+    let input: oneiron::workspace_roster::RoomLeaveRequest = crate::codec::lower_record("vault.rooms.leave", input)?;
+    let output = client.vault_rooms_leave(&input)?;
+    crate::codec::lift_record("vault.rooms.leave", &output)
+};
 "vault.rooms.offer" => fn vault_rooms_offer(&self, input: OfferDraft) -> OfferCard = |client| {
     let input: oneiron::workspace_roster::OfferDraft = crate::codec::lower_record("vault.rooms.offer", input)?;
     let output = client.vault_rooms_offer(&input)?;

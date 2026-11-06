@@ -865,6 +865,7 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.join`
 - `vault.rooms.invite`
 - `vault.rooms.consent`
+- `vault.rooms.leave`
 - `vault.rooms.offer`
 - `vault.rooms.offer.answer`
 - `vault.rooms.offer.vote`

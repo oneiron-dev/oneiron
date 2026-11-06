@@ -894,6 +894,7 @@ vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsInvite(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultRoomsLeave(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
 vaultRoomsOfferVote(input: unknown): unknown

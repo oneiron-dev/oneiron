@@ -4823,6 +4823,9 @@ class Oneiron:
         def consent(self, spec):
             """One party's answer to a join that waits on it, after which the join is decided again."""
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
+        def leave(self, spec):
+            """Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_leave(json.dumps(spec))))
         @property
         def offer(self) -> "Oneiron._VaultRoomsOfferVerbs":
             return Oneiron._VaultRoomsOfferVerbs(self._client)

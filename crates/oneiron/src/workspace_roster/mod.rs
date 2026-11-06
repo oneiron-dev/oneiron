@@ -274,6 +274,7 @@ mod join_consent;
 mod join_door;
 mod join_history;
 mod join_receipt;
+mod room_leave;
 mod workplace_join;
 pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
@@ -295,3 +296,4 @@ pub use join_receipt::{
     ACTOR_ERASE_PENDING_JOIN, JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer,
     RosterActor, RosterErase,
 };
+pub use room_leave::{RoomLeaveOutcome, RoomLeaveRequest};
