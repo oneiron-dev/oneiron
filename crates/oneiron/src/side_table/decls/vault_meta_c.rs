@@ -355,7 +355,7 @@ side_tables! {
     CODE_RUN_READ_WORLD: VaultMeta b"code_run:read_world:v1:" Named Engine;
     /// The last actual parent entry's full destination, route, actor and loaded install
     /// machine (JSON), qualified again on recovery. Key: id16(parent run).
-    CODE_RUN_READER_CALLER: VaultMeta b"code_run:reader_caller:v1:" Named Engine
+    CODE_RUN_READER_CALLER: VaultMeta b"code_run:reader_caller:v1:" Raw Engine
         => crate::code_run::erase_reader_caller_actor_in_txn;
     /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
     /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
