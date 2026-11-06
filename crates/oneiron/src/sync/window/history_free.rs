@@ -670,6 +670,7 @@ fn scrub_for_export(
     // FIX 6279: and a birth carrier whose maker this vault erased.
     let births_scrubbed =
         crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    let positions_scrubbed = crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // Last of the removals: the source audiences the rows left carried need,
     // each at this vault's current revision (Engine A, 6 Nov 03:46).
@@ -694,6 +695,7 @@ fn scrub_for_export(
         || section_fit_scrubbed
         || births_scrubbed
         || source_audiences_scrubbed
+        || positions_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)

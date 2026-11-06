@@ -37,6 +37,23 @@ pub(crate) fn retire_replay_bodies_in_rows(
                 start.erased = true;
                 changed = true;
             }
+            // The step's replay context (FIX 6351), as its start.
+            if let Some(context) = &mut capsule.context
+                && !context.erased
+                && digests.contains(&context.body.hash)
+            {
+                context.erased = true;
+                changed = true;
+            }
+            // The answering rung's route prompt (FIX 6255), as its request.
+            if let Some(binding) = &mut capsule.binding
+                && let Some(CapsuleRequest::Kept { body, erased, .. }) = &mut binding.prompt
+                && !*erased
+                && digests.contains(&body.hash)
+            {
+                *erased = true;
+                changed = true;
+            }
             if changed {
                 *value = CAPSULES.encode_value(&capsule)?;
             }
