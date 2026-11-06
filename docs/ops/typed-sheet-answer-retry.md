@@ -37,9 +37,14 @@ edit plan through application and the exact applied-operation comparison;
 it does not clone a second operation vector just to borrow that plan. Before
 allocating the native plan vector, the same caller resource port reserves its
 validated operation count, excluding abstentions. Any allocator-reported capacity
-surplus is admitted before filling the vector. Its hold remains alive until the
-plan is freed. This counts the operation-vector backing only, not cloned strings
-or cell-value payloads, validation scratch or transient allocator surplus.
+surplus is admitted before filling the vector. The same hold covers each copied
+sheet name and the text or error strings in validated before and after values.
+Their byte lengths are reserved before allocating, and allocator-reported
+capacity is settled before copying the text into those fixed-capacity strings.
+The hold remains alive until the plan and its payloads are freed. The ordinary
+operation builder keeps its existing unadmitted clone path; it creates no new
+resource port. Validation scratch, native application and manifest copies, and
+transient allocator surplus remain outside this admission.
 
 The facade rechecks the original read rows through the current credential
 before continuing or restaging and before returning or retaining results.

@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
-use oneiron_docedit::resource::Resources;
+use oneiron_docedit::resource::{Hold, Resources};
 
 mod batches;
 
@@ -96,7 +96,7 @@ impl SheetAnswerBundle {
     pub(crate) fn ops(&self) -> Result<Vec<EditOp>> {
         self.checked_op_count()?;
         let mut ops = Vec::new();
-        self.append_ops(&mut ops);
+        self.append_ops(&mut ops, None)?;
         Ok(ops)
     }
 
@@ -150,17 +150,50 @@ impl SheetAnswerBundle {
         Ok(count)
     }
 
-    fn append_ops(&self, ops: &mut Vec<EditOp>) {
+    fn append_ops(&self, ops: &mut Vec<EditOp>, mut backing: Option<&mut Hold>) -> Result<()> {
         for answer in &self.answers {
             if let Some(value) = &answer.value {
                 ops.push(EditOp::SetCell {
-                    sheet: self.sheet.clone(),
+                    sheet: clone_plan_text(&self.sheet, backing.as_deref_mut())?,
                     cell: answer.cell,
-                    before: answer.before.clone(),
-                    after: value.clone(),
+                    before: answer
+                        .before
+                        .as_ref()
+                        .map(|value| clone_plan_cell(value, backing.as_deref_mut()))
+                        .transpose()?,
+                    after: clone_plan_cell(value, backing.as_deref_mut())?,
                 });
             }
         }
+        Ok(())
+    }
+}
+
+fn clone_plan_text(text: &str, backing: Option<&mut Hold>) -> Result<String> {
+    let Some(backing) = backing else {
+        return Ok(text.to_owned());
+    };
+    backing
+        .take_len::<u8>(text.len())
+        .map_err(crate::office_body::machine_memory_refused)?;
+    let mut copy = String::new();
+    copy.try_reserve_exact(text.len())
+        .map_err(|error| Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error)))?;
+    if copy.capacity() > text.len() {
+        backing
+            .take_len::<u8>(copy.capacity() - text.len())
+            .map_err(crate::office_body::machine_memory_refused)?;
+    }
+    copy.push_str(text);
+    Ok(copy)
+}
+
+fn clone_plan_cell(value: &CellValue, backing: Option<&mut Hold>) -> Result<CellValue> {
+    match value {
+        CellValue::Text(text) => Ok(CellValue::Text(clone_plan_text(text, backing)?)),
+        CellValue::Error(text) => Ok(CellValue::Error(clone_plan_text(text, backing)?)),
+        // checked_op_count excludes formulas before operation construction.
+        value => Ok(value.clone()),
     }
 }
 
@@ -221,7 +254,7 @@ impl Vault {
                 .take_len::<EditOp>(ops.capacity() - count)
                 .map_err(crate::office_body::machine_memory_refused)?;
         }
-        bundle.append_ops(&mut ops);
+        bundle.append_ops(&mut ops, Some(&mut plan_backing))?;
         let plan = EditPlan::new(ops);
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
