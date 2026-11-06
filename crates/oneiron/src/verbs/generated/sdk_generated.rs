@@ -4637,6 +4637,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "tasks.answer.forward.challenge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardStatusRequest,
+                >(),
+            ),
+            (
                 "tasks.outcomes",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
             ),
@@ -16617,6 +16635,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "tasks.answer.forward.challenge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "tasks.outcomes" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22472,6 +22511,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.answer" => {
             let _input: crate::task_verb::sdk::TaskAnswerRequest = decode(value.clone())?;
         }
+        "tasks.answer.forward.challenge" => {
+            let _input: crate::task_verb::sdk::TaskAnswerForwardChallengeRequest =
+                decode(value.clone())?;
+        }
+        "tasks.answer.forward" => {
+            let _input: crate::task_verb::sdk::TaskAnswerForwardRequest = decode(value.clone())?;
+        }
+        "tasks.answer.forward.status" => {
+            let _input: crate::task_verb::sdk::TaskAnswerForwardStatusRequest =
+                decode(value.clone())?;
+        }
         "tasks.outcomes" => {
             let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
         }
@@ -25699,6 +25749,13 @@ pub fn invoke(
         "ask" => encode(ask(memory, decode(value)?)?),
         "wait" => encode(wait(memory, decode(value)?)?),
         "tasks.answer" => encode(tasks_answer(memory, decode(value)?)?),
+        "tasks.answer.forward.challenge" => {
+            encode(tasks_answer_forward_challenge(memory, decode(value)?)?)
+        }
+        "tasks.answer.forward" => encode(tasks_answer_forward(memory, decode(value)?)?),
+        "tasks.answer.forward.status" => {
+            encode(tasks_answer_forward_status(memory, decode(value)?)?)
+        }
         "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
         "vault.rooms.list" => encode(vault_rooms_list(memory, decode(value)?)?),
         "vault.rooms.messages" => encode(vault_rooms_messages(memory, decode(value)?)?),
@@ -33684,6 +33741,37 @@ pub fn tasks_answer(
         ],
     )?;
     memory.tasks_answer(&input.handle, &input.word)
+}
+pub fn tasks_answer_forward_challenge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+) -> MemoryResult<crate::task_verb::sdk::TaskAnswerForwardChallenge> {
+    Ok(
+        crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(
+            &memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?,
+        ),
+    )
+}
+pub fn tasks_answer_forward(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardRequest,
+) -> MemoryResult<crate::task_verb::AskForwardReceipt> {
+    crate::task_verb::admit_ask_references(
+        memory,
+        "tasks.answer.forward",
+        &input,
+        &[
+            "/act/word/provenance_refs/*/claim",
+            "/act/word/provenance_refs/*/turn",
+        ],
+    )?;
+    memory.tasks_answer_forward(&input.handle, &input.intent_key, &input.act, &input.proof)
+}
+pub fn tasks_answer_forward_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardStatusRequest,
+) -> MemoryResult<crate::task_verb::AskForwardReceipt> {
+    memory.tasks_answer_forward_status(input.intent_ref)
 }
 pub fn tasks_outcomes(
     memory: &Memory<'_>,

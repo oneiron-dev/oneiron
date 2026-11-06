@@ -978,6 +978,9 @@ pub(crate) fn mcp_agent_verb_input(
         "ask" => a.spec.clone().ok_or_else(invalid),
         "wait" => a.spec.clone().ok_or_else(invalid),
         "tasks.answer" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.challenge" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.status" => a.spec.clone().ok_or_else(invalid),
         "tasks.outcomes" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.rooms.messages" => {
@@ -4064,6 +4067,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.challenge" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.outcomes" => {
@@ -20194,6 +20206,33 @@ async fn execute_agent_verb_row_on(
             served.extend([input.handle.group_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.answer.forward.challenge" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
+            let output = oneiron::task_verb::sdk::tasks_answer_forward_challenge(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.answer.forward" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerForwardRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
+            let output = oneiron::task_verb::sdk::tasks_answer_forward(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.answer.forward.status" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.intent_ref]);
+            let output = oneiron::task_verb::sdk::tasks_answer_forward_status(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
