@@ -6,7 +6,9 @@
 //! pauses again and comes here as its own. A destination refusal the handler
 //! answers is kept in the session's custody before the request fails, so a
 //! navigation or an act that the failure ends answers it, not a generic
-//! error; every other failure fails only its request, as before.
+//! error; every other failure fails only its request, as before. A
+//! navigation, or a request the browser did not classify, is admitted by the
+//! handler before it is performed, and one it refuses fails unsent.
 //!
 //! The answer to each main-document request is noted by its page session
 //! and frame: the URL answered and its status, for the session's rendered
@@ -62,6 +64,15 @@ impl Pipe {
         event: &Value,
         request: HttpRequest,
     ) -> Option<PausedResponse> {
+        if let Some(handler) = self.custody.handler()
+            && navigates(event)
+            && let Err(error) = handler.admit_navigation(&request.url)
+        {
+            if let BrowserError::DestinationRefused(refusal) = error {
+                self.custody.refuse(refusal);
+            }
+            return None;
+        }
         let answered = match self.custody.handler() {
             None => relay.fetch(request).ok().map(PausedResponse::Whole),
             Some(handler) if handler.provides_spooled() => match handler.fetch_spooled(request) {
@@ -159,6 +170,14 @@ impl Pipe {
     pub(crate) fn refusal_pending(&self) -> Option<DestinationRefusal> {
         self.custody.pending()
     }
+}
+
+/// Whether paused `event` is a navigation the host's handler admits before
+/// it is performed: a document request, or one the browser did not classify.
+fn navigates(event: &Value) -> bool {
+    event["params"]["resourceType"]
+        .as_str()
+        .is_none_or(|kind| kind == "Document")
 }
 
 /// The status a rendered document names (`document_status_policy`, CALLS

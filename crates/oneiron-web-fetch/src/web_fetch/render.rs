@@ -80,13 +80,43 @@ pub(super) fn renderer_canonical_url(raw: &str) -> RendererResult<Url> {
 /// wire or into a provider request body. Nothing reaches a network boundary
 /// without passing it.
 pub(super) fn renderer_request_url(raw: &str) -> RendererResult<String> {
-    let Some(url) = validated_web_url(raw) else {
-        return Err(RendererError::transport(format!(
+    renderer_request_target(raw).map(String::from)
+}
+
+/// [`renderer_request_url`]'s check, its URL kept parsed.
+pub(super) fn renderer_request_target(raw: &str) -> RendererResult<Url> {
+    validated_web_url(raw).ok_or_else(|| {
+        RendererError::transport(format!(
             "refusing to request a URL that is not credential-free absolute http(s): {}",
             redact_url_credentials(raw)
+        ))
+    })
+}
+
+/// The URL a redirect hop goes to (FIX 4734): `location`, the raw value of
+/// the hop's `Location`, resolved against `from`, the URL of the response it
+/// came on, then normalized and checked credential-free absolute http(s),
+/// before anything else judges or sends it. The `Location` is the peer's and
+/// nothing has vouched for it, so every diagnostic here is redacted.
+pub(super) fn redirect_target(from: &Url, location: Option<&[u8]>) -> RendererResult<Url> {
+    let Some(location) = location.and_then(|bytes| std::str::from_utf8(bytes).ok()) else {
+        return Err(RendererError::transport(format!(
+            "web fetch GET was redirected with no usable Location (target {})",
+            redact_url_credentials(from.as_str())
         )));
     };
-    Ok(url.to_string())
+    let joined = from.join(location.trim()).map_err(|_| {
+        RendererError::transport(format!(
+            "web fetch GET was redirected to a Location that does not resolve: {}",
+            redact_url_credentials(location)
+        ))
+    })?;
+    validated_web_url(joined.as_str()).ok_or_else(|| {
+        RendererError::transport(format!(
+            "refusing to follow a redirect to a URL that is not credential-free absolute http(s): {}",
+            redact_url_credentials(joined.as_str())
+        ))
+    })
 }
 
 /// Renders one `reqwest` failure into a credential-safe rung error, its

@@ -9,6 +9,12 @@
 //! refusal it answers comes back as a [`DestinationRefusal`], data the host
 //! filled. A session given no handler takes its relay as before.
 //!
+//! Before the handler performs a navigation (a document request: a page's
+//! load, each redirect hop of it, a script's or a meta refresh's move, a
+//! frame's load) or a request the browser did not classify, it admits its
+//! URL ([`BrowserRequestHandler::admit_navigation`]); one it refuses fails
+//! unsent, its refusal kept as any other.
+//!
 //! The session keeps the first refusal not yet delivered. A navigation or
 //! an act answers it in place of its own success, `open` stops waiting for
 //! its load on it, and the host can take it at any time. What the session
@@ -72,6 +78,13 @@ pub struct SpooledResponse {
 /// The host's custody of a session's requests: it performs each one.
 #[cfg(feature = "driver")]
 pub trait BrowserRequestHandler: Send + Sync {
+    /// Admit a navigation to `url` before it is performed: a document
+    /// request, or a request the browser did not classify. A refusal by the
+    /// host's rule answers [`BrowserError::DestinationRefused`], and the
+    /// request fails unsent; a host with no rule for navigations admits
+    /// every one.
+    fn admit_navigation(&self, url: &str) -> Result<(), BrowserError>;
+
     /// Check the destination and perform this ONE request; never follow
     /// redirects. A redirect's answer goes back to the browser, whose next
     /// hop is handed here as its own request. A refusal by the host's rule
