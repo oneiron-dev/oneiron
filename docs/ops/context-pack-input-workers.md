@@ -302,13 +302,19 @@ drop the producer or board payload before the caller's holder. A missing or
 filtered-out section has no backing to charge. The independent turn-record clone
 still needs its own holder.
 
+The pins-only producer also records its initial metadata and each successful
+explicit, manifest and hook pin change through the caller's same holder. If no
+row survives, the empty section drops before its charge is cleared. The HTTP
+caller keeps that holder through the response. The MCP caller uses a holder
+from the same server memory account, declared before producing the raw section.
+It drops only after that section has been rendered and dropped. The separately
+allocated rendered sections do not inherit the raw section's charge.
+
 Projection and pin construction scratch, partially mutated failing pin
 operations, allocation and reallocation peaks, dynamic JSON copies, serializer
-buffers and other metadata backing remain separate work. The pins-only
-producer's internal construction is recorded only after it returns its finished
-section. No clone is claimed covered because it came from
-a charged source. No memory wait, size cap, deadline, refusal, policy or format
-version changes here.
+buffers and other metadata backing remain separate work. No clone is claimed
+covered because it came from a charged source. No memory wait, size cap,
+deadline, refusal, policy or format version changes here.
 
 
 ## Chat capture buffer custody

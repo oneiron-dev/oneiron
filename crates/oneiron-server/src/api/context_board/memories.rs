@@ -339,10 +339,11 @@ pub(crate) async fn board_pins_section(
         hooks: hook_pins,
     };
     let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
-    let Some(pinned) = board_pins_projection(&server.vault, auth, read, room_id, &pins)? else {
+    let Some(pinned) =
+        board_pins_projection(&server.vault, auth, read, room_id, &pins, memories_storage)?
+    else {
         return Ok(None);
     };
-    memories_storage.retain(Some(&pinned.section));
     pinned.receipt.record(&server.vault).await?;
     Ok(Some(pinned.section))
 }
@@ -378,6 +379,7 @@ pub(crate) fn board_pins_projection<'a>(
     read: oneiron::claim::ScopedRead<'a>,
     room_id: Option<oneiron::EntityId>,
     pins: &BoardPinSources<'_>,
+    memories_storage: &mut super::super::context_pack::output_memory::RetainedMemoriesOutput,
 ) -> Result<Option<BoardPins>, ApiError> {
     if pins.refs.is_empty() && !pins.manifest && pins.hooks.is_empty() {
         return Ok(None);
@@ -390,9 +392,11 @@ pub(crate) fn board_pins_projection<'a>(
     } = super::super::resolve_core_audience(vault, auth, read, room_id)?;
     let mut section =
         oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
+    memories_storage.retain(Some(&section));
     section
         .include_pinned_refs_with_disclosure(&read, pins.refs, disclosure.as_ref())
         .map_err(|error| core_engine_error("memory pin read failed", error))?;
+    memories_storage.retain(Some(&section));
     if pins.manifest {
         let automatic = read
             .manifest_pinned_refs()
@@ -400,11 +404,15 @@ pub(crate) fn board_pins_projection<'a>(
         section
             .include_pinned_refs_with_disclosure(&read, &automatic.value, disclosure.as_ref())
             .map_err(|error| core_engine_error("manifest pin disclosure failed", error))?;
+        memories_storage.retain(Some(&section));
     }
     section
         .include_hook_pins(&read, pins.hooks, disclosure.as_ref())
         .map_err(|error| core_engine_error("hook pin read failed", error))?;
+    memories_storage.retain(Some(&section));
     if section.rows.is_empty() {
+        drop(section);
+        memories_storage.retain(None);
         return Ok(None);
     }
     let delivered = pinned_row_ids(&section)?;
