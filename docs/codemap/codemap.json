@@ -17399,7 +17399,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 22,
       "re-export": 2,
       "struct": 9
@@ -18454,14 +18454,15 @@
       "SelfSpeechResult",
       "SelfStoredReply",
       "SelfStoredReplyKind",
-      "SelfTaskRefusalResult"
+      "SelfTaskRefusalResult",
+      "SelfTeamResult"
      ],
      "path": "src/code_run/types/outcome.rs",
      "purpose": "Answers and durable waits recorded for first-party calls",
      "surface": {
       "enum": 4,
       "fn": 3,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -35096,7 +35097,7 @@
      "path": "src/engine_executor/host/results.rs",
      "purpose": "Stored result binding, admission and reads for one JS host",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
