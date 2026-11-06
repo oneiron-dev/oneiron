@@ -1,11 +1,10 @@
 # Published artifact backends over HTTP/1 stdio
 
-**Source candidate, not deployment-ready.** The selected native Firecracker
-backend does not yet supply `GuestSpec.read_only_mounts` to its guest. The
-projected `/app` bundle therefore has a known missing-file path on KVM hosts.
-That native producer/consumer must be implemented without bypassing KVM-first
-selection before this candidate is submitted for merge. The contract below
-describes the source and its intended completed behavior, not a runtime proof.
+**Source implementation, not a deployment or runtime proof.** The native
+Firecracker path transfers the projected directory bytes before starting the
+command. It verifies their digest and mounts them read-only inside the guest.
+Host and guest must be deployed together with the matching native protocol.
+The contract below describes the source, not a completed deployment.
 
 A host can run a published code artifact on its artifact-only listener. This
 initial runtime is one isolated guest per HTTP request. It holds no engine
@@ -64,6 +63,22 @@ contract, not an adapter for an arbitrary process listening on a TCP port.
 The guest sees admitted regular-file projections under read-only `/app`.
 Executable bits are retained; snapshot symlink metadata is not recreated as
 host symlinks. Writable temporary storage is the native guest's bounded tmpfs.
+
+On KVM hosts the existing selector still chooses Firecracker. The host makes a
+private archive from every caller-selected read-only directory. Descendant host
+symlinks are copied as link metadata, never followed to collect host bytes. The
+archive's length and BLAKE3 digest, plus the explicit uid/gid, travel in the small
+native Start frame; file bytes follow separately on the same channel. The digest
+is part of the session's argument receipt. The guest verifies the entire stream
+before mounting files or starting the fenced command.
+
+The guest uses an OverlayFS view of its pinned image to create arbitrary mount
+destinations, then makes that root read-only again. The original system mounts
+and writable scratch remain separate. Source directories are bind-mounted
+read-only, nosuid and nodev. Archive extraction and the overlay upper tree share
+the configured tmpfs budget; no additional file-count or bundle-size default is
+introduced. The ordinary component guest keeps its existing identity defaults;
+native sessions use the caller's actual non-root uid and gid.
 
 On the artifact listener, use `/_apps/<artifact>/`. The native `_t/<token>` and
 `_s/<selector-kind>/<selector-value>` URL positions work after the artifact id,
