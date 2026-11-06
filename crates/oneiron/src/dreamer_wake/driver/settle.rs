@@ -44,7 +44,8 @@ impl DreamerWakeDriver<'_> {
                 step_bindings,
             } => {
                 let native = spend_meter.result_native(completed_units);
-                self.store.settle_budget_with_native_meter(
+                let net = spend_meter.result_net(completed_units);
+                self.store.settle_budget_with_native_evidence(
                     SettleDreamerBudget {
                         budget_id: line.clone(),
                         child_attempt: attempt_id,
@@ -53,6 +54,7 @@ impl DreamerWakeDriver<'_> {
                     },
                     &step_bindings,
                     native.as_ref(),
+                    net.as_ref(),
                 )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
                 self.log_attempt_completed(admitted);
@@ -108,12 +110,23 @@ impl DreamerWakeDriver<'_> {
                 // A try the frozen preparation did not hold ran nothing: its
                 // next run is its first, not a selection retry that widens
                 // over its conversations' TURNs.
+                let net = spend_meter.result_net(completed_units);
                 if stage == Some(super::dispatch::BACKLOG_DEFERRED_STAGE) {
-                    self.store
-                        .defer_backlog(admitted, budget, retry_at, &step_bindings)?;
+                    self.store.defer_backlog(
+                        admitted,
+                        budget,
+                        retry_at,
+                        &step_bindings,
+                        net.as_ref(),
+                    )?;
                 } else {
-                    self.store
-                        .defer_selection(admitted, budget, retry_at, &step_bindings)?;
+                    self.store.defer_selection(
+                        admitted,
+                        budget,
+                        retry_at,
+                        &step_bindings,
+                        net.as_ref(),
+                    )?;
                 }
                 let stage = stage.unwrap_or("deferred");
                 self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
@@ -163,7 +176,8 @@ impl DreamerWakeDriver<'_> {
                 // at this boundary without refunding its real spend or
                 // publishing post-deadline output.
                 let native = spend_meter.result_native(completed_units);
-                self.store.settle_checkpoint_budget_with_native_meter(
+                let net = spend_meter.result_net(completed_units);
+                self.store.settle_checkpoint_budget_with_native_evidence(
                     SettleDreamerBudget {
                         budget_id: line.clone(),
                         child_attempt: attempt_id,
@@ -181,6 +195,7 @@ impl DreamerWakeDriver<'_> {
                     },
                     admitted_lease(admitted, &input.lease_owner),
                     native.as_ref(),
+                    net.as_ref(),
                 )?;
                 let stage = stage.unwrap_or("park_with_spend");
                 let settled = "checkpoint_settled";

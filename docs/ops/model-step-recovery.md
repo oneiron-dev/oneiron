@@ -259,9 +259,9 @@ The program's result uses its existing absolute total, while error settlement
 uses the registered baseline delta. A result-total equality check only pairs the
 capture with its reported result; native membership comes from the producer's
 actual selected tokens. The program has no Deferred or Landed result producer,
-so those paths gain no invented coverage. Native NET tally coverage, complete House producer coverage,
-paid-fact checks and late-call reconciliation remain separate
-work. No durable guard pointer is serialized. Automatic native invoice payment
+so those paths gain no invented GROSS coverage. The partition NET tally has its
+own producer and inclusion path below. Complete House producer coverage,
+paid-fact checks and late-call reconciliation remain separate work. No durable guard pointer is serialized. Automatic native invoice payment
 and aggregate charge subtraction remain off; a known empty GROSS interval is not
 a zero NET invoice.
 
@@ -318,3 +318,34 @@ before any later durable allocation commit and host publication, so this native
 meter observation proves neither of those operations succeeded. It records no
 extra settlement, charge, NET payment, aggregate credit or fabricated terminal
 claim. Reads that never retain an input do not gain invented meter provenance.
+
+
+### Partition NET tally inclusion
+
+A prepared partition registers its own fresh tally on that attempt's context.
+Each newly counted terminal contributes the exact StepReceipt and that response's
+native usage. Usage without a terminal remains explicitly unpaired, including a
+known zero entry. A child guard total invalidates this NET-only capture rather
+than being treated as native response usage. Other tally constructors and restored
+follower tallies keep their existing behavior and supply no invented capture.
+
+The actual Completed, Deferred and ParkWithSpend producers publish that tally.
+The error handoff publishes it beside the original error spend. A snapshot is
+owned before any vault writer starts, and no tally lock crosses IO. A registered
+GROSS guard, an unpublished tally, overflow or a different reported total supplies
+no NET inclusion data. Result-total equality only checks alignment; it never
+selects invoices or turns missing usage into zero.
+
+Inside the original budget writer, exact terminal aliases resolve a unique
+original O0 row without consulting the mutable memo index. Its captured response
+population selects the original physical invoices. Every selected ordinal,
+quantity, line, step and alias is checked again in that same writer. Overlapping
+original invoices are not silently deduplicated. The optional child transaction
+records NET inclusion beside the aggregate charge, receipts and any park or
+deferral; its failure leaves those existing operations unchanged. NoReservation
+records no coverage, and a parent abort rolls back both operations.
+
+This data does not change a native invoice to Paid. Unpaired usage, distinct
+recovery selection, cross-alias aggregate overlap and late original-call
+reconciliation remain open. The old aggregate arithmetic and automatic payer
+remain unchanged, and the direct native payment primitive is still uncalled.
