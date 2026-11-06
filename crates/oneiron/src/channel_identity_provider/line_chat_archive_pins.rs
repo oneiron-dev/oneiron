@@ -3,6 +3,7 @@
 
 mod lifetime;
 mod prune;
+pub(super) use lifetime::accept_line_chat_observation_erase_in_txn;
 pub(crate) use lifetime::{
     erase_line_chat_source_observations_in_txn, line_chat_archive_keeps_version_in_txn,
     line_chat_archive_releases_owed_in_txn, release_line_chat_archive_pin_in_txn,

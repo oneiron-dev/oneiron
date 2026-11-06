@@ -88,7 +88,7 @@ pub(super) fn note_sources_in_txn(
             raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
                 && raw[0] == crate::registry::ENTITY_TYPE_ASSET
         });
-        for source in &release.sources {
+        for source in release.sources.keys() {
             crate::store::erase_bodies_for_owner_in_txn(
                 store,
                 txn,
@@ -121,7 +121,7 @@ pub(super) fn finish_in_txn(
     // released. Only the independently captured original instances count.
     #[cfg(unix)]
     if let Some(inventory) = release.inventory.as_mut() {
-        let sources: Vec<_> = release.sources.iter().copied().collect();
+        let sources: Vec<_> = release.sources.keys().copied().collect();
         inventory
             .retirements
             .extend(store.body_erase_retirement_names_in_txn(

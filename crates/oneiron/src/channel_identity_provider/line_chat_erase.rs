@@ -40,8 +40,66 @@ pub(crate) fn erase_line_chat_observations_for_delete_in_txn(
     now: u64,
 ) -> Result<()> {
     let store = writer.store;
+    let mut rows_to_delete = Vec::new();
+    for (claim_id, observation) in
+        line_chat_observations_for_identity_in_txn(store, wtxn, identity)?
+    {
+        rows_to_delete.push((claim_id, ENTITY_TYPE_CLAIM));
+        if let Some((artifact, version)) = archived_version(&observation.payload_ref)
+            && archives_line_join_in_txn(store, &*wtxn, &artifact, version)?
+        {
+            rows_to_delete.push((artifact, ENTITY_TYPE_BLOB_ARTIFACT));
+        }
+    }
+    rows_to_delete.sort_unstable();
+    rows_to_delete.dedup();
+    for (id, kind) in rows_to_delete {
+        hard_delete_row_in_txn(writer, wtxn, &id, kind, now)?;
+    }
+    Ok(())
+}
+
+/// Native replacement for the old independent whole-artifact schedule.
+/// Only original private captures may release a join version. All accepted
+/// native selectors are recorded before the first observation teardown;
+/// held observations stay pending with their source identity attribution.
+pub(crate) fn erase_line_chat_observations_with_captures_in_txn(
+    writer: &ClaimHeadWriter<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    identity: &EntityId,
+    now: u64,
+) -> Result<()> {
+    let store = writer.store;
+    let write = crate::secret_custody::CustodyWrite {
+        store,
+        config: writer.config,
+        analyzer: writer.analyzer,
+        text_index_trusted: writer.text_index_trusted,
+    };
+    let observations = line_chat_observations_for_identity_in_txn(store, txn, identity)?;
+    let mut uncaptured = Vec::new();
+    for (claim, _) in observations {
+        if !super::line_chat_archive_pins::accept_line_chat_observation_erase_in_txn(
+            store, txn, identity, &claim,
+        )? {
+            // Public-only observations still lose their own record. Their
+            // payload_ref never establishes ownership of archive bytes.
+            uncaptured.push(claim);
+        }
+    }
+    for claim in uncaptured {
+        hard_delete_row_in_txn(writer, txn, &claim, ENTITY_TYPE_CLAIM, now)?;
+    }
+    super::line_chat_archive_pins::settle_line_chat_archive_releases_in_txn(&write, txn)
+}
+
+fn line_chat_observations_for_identity_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &EntityId,
+) -> Result<Vec<(EntityId, LineChatObservation)>> {
     let mut chats = Vec::new();
-    if let Some(row) = store.port_entity_record(&*wtxn, identity)?
+    if let Some(row) = store.port_entity_record(txn, identity)?
         && let Ok(record) = crate::channel_identity::decode_channel_identity_body(&row.body)
         && record.channel() == LINE_CHANNEL
         && let Some(chat) = line_chat_of_address(record.address_or_handle())
@@ -49,7 +107,7 @@ pub(crate) fn erase_line_chat_observations_for_delete_in_txn(
         chats.push(chat);
     }
     if let Ok(Some(facts)) =
-        crate::channel_identity::channel_identity_facts_in_txn(store, &*wtxn, identity)
+        crate::channel_identity::channel_identity_facts_in_txn(store, txn, identity)
         && facts.channel == LINE_CHANNEL
         && let Some(chat) = line_chat_of_address(&facts.address_or_handle)
         && !chats.contains(&chat)
@@ -57,20 +115,20 @@ pub(crate) fn erase_line_chat_observations_for_delete_in_txn(
         chats.push(chat);
     }
     if chats.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let subject = provider_inbound_actor()?;
-    let mut rows_to_delete = Vec::new();
+    let mut observations = Vec::new();
     for entry in crate::ports::EdgeStoreRead::port_edges(
         store,
-        &*wtxn,
+        txn,
         &subject,
         crate::ports::EdgeDirection::In,
         Some(crate::edge::EdgeKind::ClaimOf),
         None,
     )? {
         let claim_id = entry?.target;
-        let Some(raw) = store.port_entity_record(&*wtxn, &claim_id)? else {
+        let Some(raw) = store.port_entity_record(txn, &claim_id)? else {
             continue;
         };
         if raw.entity_type != ENTITY_TYPE_CLAIM {
@@ -90,19 +148,9 @@ pub(crate) fn erase_line_chat_observations_for_delete_in_txn(
         }) {
             continue;
         }
-        rows_to_delete.push((claim_id, ENTITY_TYPE_CLAIM));
-        if let Some((artifact, version)) = archived_version(&observation.payload_ref)
-            && archives_line_join_in_txn(store, &*wtxn, &artifact, version)?
-        {
-            rows_to_delete.push((artifact, ENTITY_TYPE_BLOB_ARTIFACT));
-        }
+        observations.push((claim_id, observation));
     }
-    rows_to_delete.sort_unstable();
-    rows_to_delete.dedup();
-    for (id, kind) in rows_to_delete {
-        hard_delete_row_in_txn(writer, wtxn, &id, kind, now)?;
-    }
-    Ok(())
+    Ok(observations)
 }
 
 /// One row's hard delete through the batch delete door, with the marker and
