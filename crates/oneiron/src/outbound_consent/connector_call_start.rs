@@ -171,6 +171,7 @@ impl Vault {
             attempt_id: invocation.attempt_id,
             call_seq: invocation.call_seq,
             principal_ref: memory.actor().to_hex(),
+            remember_context: super::connector_remember::capture(memory),
             held_at_ms: now_ms(),
             settled: None,
             held_reasons: Vec::new(),

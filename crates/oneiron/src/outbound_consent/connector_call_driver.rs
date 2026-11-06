@@ -679,12 +679,13 @@ impl Vault {
         // call still goes to its admission, which spends the owner's press
         // on exactly this call if one is waiting and else holds it naming
         // the digest; `never allow` mints nothing to send.
-        let prepared = match self.prepare_connector_tool_call(
+        let prepared = match self.prepare_connector_tool_call_with_context(
             &key_id,
             call,
             descriptor,
             &arguments,
             pending.mutation,
+            pending.remember_context,
         ) {
             Ok(ConnectorToolCallPreparation::Ready(prepared)) => prepared,
             Ok(ConnectorToolCallPreparation::ConsentRequired { candidate }) => candidate,
