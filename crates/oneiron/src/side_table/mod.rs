@@ -450,7 +450,20 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         txn: &RoTxn<'_>,
         key: &K,
     ) -> Result<bool> {
-        Ok(self.get_raw(dbs, txn, &self.key_bytes(key))?.is_some())
+        self.contains_with_key_capacity(dbs, txn, key, |_| {})
+    }
+
+    /// Checks one row, observing its encoded key capacity before the database read.
+    pub(crate) fn contains_with_key_capacity(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &RoTxn<'_>,
+        key: &K,
+        observe: impl FnOnce(u64),
+    ) -> Result<bool> {
+        let full = self.key_bytes(key);
+        observe(full.capacity() as u64);
+        Ok(self.get_raw(dbs, txn, &full)?.is_some())
     }
 
     pub(crate) fn put(

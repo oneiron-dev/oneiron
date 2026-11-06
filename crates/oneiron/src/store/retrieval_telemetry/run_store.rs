@@ -1068,14 +1068,34 @@ fn stage_retained_context_pack_retrieval_run_finalize(
     wtxn: &mut RwTxn<'_>,
     finalize: RetrievalRunFinalize<'_>,
     input_backing_bytes: u64,
-    memory: Option<&mut crate::host_memory::MemoryLease>,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     let run_id = finalize.run_id;
-    if RETRIEVAL_RUN_PROVISIONAL.contains(target, wtxn, &run_id)? {
+    let provisional = if let Some(memory) = memory.as_deref_mut() {
+        RETRIEVAL_RUN_PROVISIONAL.contains_with_key_capacity(target, wtxn, &run_id, |bytes| {
+            memory.materialized(0, bytes);
+        })?
+    } else {
+        RETRIEVAL_RUN_PROVISIONAL.contains(target, wtxn, &run_id)?
+    };
+    if provisional {
         super::retention::require_prune_retrieval_runs(target, wtxn, 1)?;
     }
-    stage_context_pack_retrieval_run_finalize(target, wtxn, finalize, input_backing_bytes, memory)?;
-    if RETRIEVAL_RUN.contains(target, wtxn, &run_id)? {
+    stage_context_pack_retrieval_run_finalize(
+        target,
+        wtxn,
+        finalize,
+        input_backing_bytes,
+        memory.as_deref_mut(),
+    )?;
+    let present = if let Some(memory) = memory.as_deref_mut() {
+        RETRIEVAL_RUN.contains_with_key_capacity(target, wtxn, &run_id, |bytes| {
+            memory.materialized(0, bytes);
+        })?
+    } else {
+        RETRIEVAL_RUN.contains(target, wtxn, &run_id)?
+    };
+    if present {
         super::retention::put_retrieval_age(
             target,
             wtxn,

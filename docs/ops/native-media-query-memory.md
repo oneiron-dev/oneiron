@@ -358,6 +358,21 @@ unwind; its capacity stays charged conservatively until that lease drops.
 This separate charge does not cover overlay key copies, database pages,
 transaction scratch, key construction peaks or a full working-set bound.
 
+The retained finalizer also records the actual encoded key capacities of its
+provisional-marker read before pruning and its finalized-row read before aging.
+Each typed contains call creates its original key once, reports that buffer's
+capacity before the same raw read, and keeps the original presence result and
+errors. The same optional caller lease is reborrowed for both reads and the
+intervening finalize; no new lease or resource owner is made.
+
+These are separate key buffers from the delete and staged-put keys. Their
+capacities stay charged conservatively until the caller's lease drops, after
+the native read keys have dropped, including absent rows, errors and unwind.
+An unbound finalizer keeps ordinary contains calls. Pruning, finalization,
+aging and the original clock read keep their order and conditions. Any owned
+value copy made by the raw read, overlay storage, database pages, transaction
+scratch and key construction peaks remain outside this key-only charge.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,
