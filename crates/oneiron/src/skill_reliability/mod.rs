@@ -63,7 +63,7 @@ pub use self::floor::{
 pub(crate) use self::ledger::{
     attributed_outcome_receipts, attributed_outcome_results, attributed_outcome_results_sourced,
     attributed_outcomes_weighted, attributed_outcomes_weighted_sourced,
-    mark_displaced_outcome_in_txn, record_skill_settled_loss,
+    mark_displaced_outcome_in_txn, record_skill_settled_loss, stored_outcome_executors_in_txn,
     record_skill_settled_loss_with_position,
 };
 pub use self::ledger::{
