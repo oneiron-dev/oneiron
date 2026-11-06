@@ -188,14 +188,13 @@ pub(crate) fn admitted_author_in_txn(
     author_in_txn(store, rtxn, target, true)
 }
 
-/// The actors an undo judges `target`'s forks against (FIX 9869): the one
-/// this vault's own carriers name, alone, when it wrote any; else every
-/// distinct actor a peer's carrier names. Each fork's birth names its writer,
-/// so the candidate that re-derives the forks exactly is theirs: a peer's
-/// disagreeing carrier then neither vetoes an undo nor selects another birth
-/// where this vault recorded its own. A redacted decision, or one no carrier
-/// names, has none. This vault's own carriers disagreeing is corruption, as
-/// for [`admitted_author_in_txn`].
+/// Every distinct actor the carriers of `target` name, this vault's own
+/// first (FIX 9869): the writers an undo judges the event's forks against.
+/// Each fork's birth names its writer, so the actor that re-derives the forks
+/// exactly is theirs; a peer's disagreeing carrier then neither vetoes an
+/// undo nor names a writer the forks do not carry. A redacted decision, or
+/// one no carrier names, has none. This vault's own carriers disagreeing is
+/// corruption, as for [`admitted_author_in_txn`].
 pub(crate) fn carrier_authors_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -225,9 +224,6 @@ pub(crate) fn carrier_authors_in_txn(
         if actors.is_empty() {
             actors.push(carrier.actor);
         }
-    }
-    if !actors.is_empty() {
-        return Ok(actors);
     }
     for carrier in carriers.iter().filter(|carrier| !carrier.here) {
         if !actors.contains(&carrier.actor) {

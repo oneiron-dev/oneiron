@@ -232,12 +232,12 @@ impl Vault {
             )));
         };
         // A local event keeps its deciding actor in the attribution sidecar,
-        // not its immutable core. The forks are judged against the actor this
-        // vault's own carriers name, else each a peer's names, and the one
-        // that re-derives them exactly is their writer (FIX 9869): an unsigned
-        // peer carrier cannot veto the undo. One no carrier names is judged as
-        // unattributed; a redacted one re-derives no actor its forks carry, so
-        // its forks read as touched: undo fails closed.
+        // not its immutable core. The forks are judged against each actor a
+        // carrier names, this vault's own first, and the one that re-derives
+        // them exactly is their writer (FIX 9869): an unsigned peer carrier
+        // cannot veto the undo. One no carrier names is judged as unattributed;
+        // a redacted one re-derives no actor its forks carry, so its forks
+        // read as touched: undo fails closed.
         let candidates: Vec<Option<WriteActor>> = {
             let actors = super::attribution::carrier_authors_in_txn(&self.store, &*wtxn, *event)?;
             if actors.is_empty() {
