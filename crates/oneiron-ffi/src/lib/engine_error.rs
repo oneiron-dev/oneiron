@@ -73,7 +73,12 @@ thread_local! {
 /// An engine failure: its cause and words stay on this thread for
 /// `oneiron_engine_last_error`, and the call fails `EngineError`.
 pub(super) fn engine_failure(error: anyhow::Error) -> OneironStatus {
-    let code = OneironEngineErrorCode::from(engine_error_kind(&error));
+    engine_failure_ref(&error)
+}
+
+/// The same error channel for a failure retained by an opaque outcome.
+pub(super) fn engine_failure_ref(error: &anyhow::Error) -> OneironStatus {
+    let code = OneironEngineErrorCode::from(engine_error_kind(error));
     let message = format!("{error:#}");
     LAST_ENGINE_ERROR.with(|last| *last.borrow_mut() = Some((code, message)));
     OneironStatus::EngineError

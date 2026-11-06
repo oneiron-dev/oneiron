@@ -79,6 +79,8 @@ mod limit_questions;
 mod parse;
 mod query;
 mod session_reads;
+#[cfg(feature = "engine")]
+mod shared_env;
 mod types;
 
 #[cfg(test)]
@@ -111,6 +113,18 @@ pub use self::query::{
     oneiron_vault_put_edge, oneiron_vault_put_vector, oneiron_vault_search_text,
     oneiron_vault_search_vector, oneiron_vault_sources, oneiron_vault_subtree,
     oneiron_vault_targets, oneiron_vault_would_create_cycle,
+};
+#[cfg(feature = "engine")]
+pub use self::shared_env::{
+    OneironRemote, OneironSharedAcceptance, OneironSharedOutcome,
+    oneiron_engine_bootstrap_shared_env, oneiron_engine_retain_shared_env,
+    oneiron_remote_accept_https, oneiron_remote_connect, oneiron_remote_free,
+    oneiron_remote_retry_https, oneiron_shared_acceptance_free, oneiron_shared_acceptance_home_url,
+    oneiron_shared_acceptance_member_client, oneiron_shared_acceptance_reply_json,
+    oneiron_shared_acceptance_request_json, oneiron_shared_acceptance_url,
+    oneiron_shared_last_error_json, oneiron_shared_outcome_committed,
+    oneiron_shared_outcome_error_json, oneiron_shared_outcome_free,
+    oneiron_shared_outcome_vault_path,
 };
 pub use self::types::{
     OneironBuffer, OneironByteSlice, OneironEdgeInfo, OneironEdgeInfoArray, OneironEntityInput,

@@ -125,6 +125,15 @@ fn with_engine<R>(
     f(engine)
 }
 
+/// The engine behind a shared-env call: the same live handle `with_engine`
+/// checks, as the `BlockingEngine` the call runs on.
+pub(super) fn with_blocking_engine<R>(
+    engine: *mut OneironEngine,
+    f: impl FnOnce(&BlockingEngine<CAppHost>) -> Result<R, OneironStatus>,
+) -> Result<R, OneironStatus> {
+    with_engine(engine, |handle| f(&handle.engine))
+}
+
 fn with_connection<R>(
     connection: *mut OneironEngineConnection,
     f: impl FnOnce(&OneironEngineConnection) -> Result<R, OneironStatus>,
@@ -163,7 +172,7 @@ impl Drop for HostTable {
 
 /// The app's table as the engine's host.
 #[derive(Clone)]
-struct CAppHost(Arc<HostTable>);
+pub(super) struct CAppHost(Arc<HostTable>);
 
 impl AppHost for CAppHost {
     fn keychain(&mut self, name: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {

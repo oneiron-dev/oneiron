@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 # its host (`AppHost`), and the keychain's secrets cross as `Zeroizing` bytes.
 oneiron-server = { path = "../oneiron-server", optional = true }
 oneiron-vault-contract = { path = "../oneiron-vault-contract", optional = true }
+oneiron-remote = { path = "../oneiron-remote", optional = true }
 anyhow = { version = "1", optional = true }
 zeroize = { version = "1", optional = true }
 
@@ -34,6 +35,7 @@ tempfile = "3"
 engine = [
   "dep:oneiron-server",
   "dep:oneiron-vault-contract",
+  "dep:oneiron-remote",
   "dep:anyhow",
   "dep:zeroize",
 ]

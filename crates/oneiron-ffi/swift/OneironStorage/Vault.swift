@@ -655,6 +655,40 @@ public final class Engine {
         guard let vaultHandle = rawVault else { throw OneironStorageError.missingHandle }
         return Vault(handle: vaultHandle)
     }
+
+    /// Bootstrap the original native acceptance into this running engine. entryJSON is the
+    /// native SharedEnvConfig (path, vault_id, member, home_url, credential_file). Setup failure
+    /// throws directly. An import outcome keeps its result separate from its committed bit.
+    /// This does not retain the entry for the next start; call retainSharedEnv explicitly.
+    public func bootstrapSharedEnv(
+        acceptance: SharedInvitationAcceptance,
+        entryJSON: Data,
+        dimensions: Int = 0,
+        configFile: String? = nil
+    ) throws -> SharedBootstrapOutcome {
+        try withExtendedLifetime(acceptance) {
+            var raw: OpaquePointer?
+            let status = withBytes(entryJSON) { entryPtr, entryLen in
+                withOptionalUTF8(configFile) { configPtr, configLen in
+                    oneiron_engine_bootstrap_shared_env(
+                        handle, acceptance.handle, entryPtr, entryLen, dimensions,
+                        configPtr, configLen, &raw)
+                }
+            }
+            try OneironStorageError.checkShared(status)
+            guard let raw else { throw OneironStorageError.missingHandle }
+            return SharedBootstrapOutcome(handle: raw)
+        }
+    }
+
+    /// Explicitly retain this native SharedEnvConfig in the same config file this engine
+    /// originally served, for its next start. The running registry is unchanged.
+    public func retainSharedEnv(entryJSON: Data) throws {
+        let status = withBytes(entryJSON) { entryPtr, entryLen in
+            oneiron_engine_retain_shared_env(handle, entryPtr, entryLen)
+        }
+        try OneironStorageError.checkShared(status)
+    }
 }
 
 /// One connection this app holds to its `Engine`'s server (OF-237): bytes both ways over one
