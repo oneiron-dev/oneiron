@@ -180,6 +180,27 @@ impl PublicSession {
         Ok(())
     }
 
+    pub(crate) fn require_phone_tool_context(&self) -> MemoryResult<()> {
+        let journal = self.journal.lock().map_err(|_| unavailable())?;
+        if self.phone.is_none()
+            || journal.ended
+            || journal.epochs.values().any(|epoch| !epoch.finished)
+        {
+            return Err(invalid("tool context needs an idle phone session"));
+        }
+        Ok(())
+    }
+
+    /// Conjoins the original phone key on the connector's already collected handle.
+    pub(crate) fn within_phone_tool_memory<'a>(
+        &self,
+        memory: oneiron::memory::Memory<'a>,
+    ) -> MemoryResult<oneiron::memory::Memory<'a>> {
+        let phone = self.phone.as_ref().ok_or_else(unavailable)?;
+        phone.current_scope().map_err(|_| unavailable())?;
+        phone.within_memory(memory)
+    }
+
     pub(crate) fn processed(&self) -> MemoryResult<LiveVoiceProcessed> {
         Ok(self.journal.lock().map_err(|_| unavailable())?.processed())
     }

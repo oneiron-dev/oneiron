@@ -114,6 +114,14 @@ impl PhoneCallRead {
         .within_phone_line_read(&self.key)?)
     }
 
+    /// Narrows the caller's existing handle without replacing its collectors or invocation.
+    pub(super) fn within_memory<'a>(
+        &self,
+        memory: oneiron::memory::Memory<'a>,
+    ) -> oneiron::memory::MemoryResult<oneiron::memory::Memory<'a>> {
+        memory.within_phone_line_read(&self.key)
+    }
+
     /// Capture before context/history assembly, not after a model has already
     /// heard it. A changed scope requires fresh context, not re-stamping it.
     pub(super) fn current_scope(&self) -> Result<Scope, HostError> {
