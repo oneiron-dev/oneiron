@@ -28,7 +28,10 @@
 //! owner's verdict on the team's deliverable ([`super::owner_outcome`]): a
 //! run's own word is no anchor.
 
+mod attempt_capture;
 mod input_capture;
+
+pub(crate) use attempt_capture::{TeamAttemptCapture, TeamAttemptSource};
 
 pub(super) use input_capture::INPUT_PREDICATE;
 pub(crate) use input_capture::record_led_team_captured;
@@ -79,6 +82,10 @@ pub struct TeamStartInput {
     /// Optional publication of this start's newly authored membership at an
     /// explicit native claim position. Capture never changes whether it starts.
     pub capture_scope: Option<crate::memory::ClaimScope>,
+    /// Optional publication of each newly enqueued direct member's dispatch
+    /// output. A replay captures nothing; a later member's refusal keeps earlier
+    /// successful enqueues and their publications.
+    pub member_capture_scope: Option<crate::memory::ClaimScope>,
 }
 
 /// One member a start spawns.
@@ -320,6 +327,7 @@ fn record_led_team_with_input_in_txn(
         return Ok(Err("team_unbound"));
     };
     let lead_input = decode_agent_dispatch_input(&lead.payload.input)?;
+    let mut attempt_sources: Vec<_> = TeamAttemptSource::of(&lead.attempt).into_iter().collect();
     // A planned team's launch froze its axis and the pack revision its
     // leader was shown, and bound the team under the leader it queued
     // (DOOR-111).
@@ -349,6 +357,7 @@ fn record_led_team_with_input_in_txn(
     for id in &members {
         if let Some(row) = store.status_in_txn(txn, *id)? {
             started = started.min(row.attempt.created_at);
+            attempt_sources.extend(TeamAttemptSource::of(&row.attempt));
         }
     }
     let mut seen = HashSet::new();
@@ -367,6 +376,7 @@ fn record_led_team_with_input_in_txn(
             _ => return Ok(Err("team_record_member_outside_team")),
         }
         started = started.min(row.attempt.created_at);
+        attempt_sources.extend(TeamAttemptSource::of(&row.attempt));
         members.push(id);
     }
     let Some(pattern) = pattern else {
@@ -460,6 +470,7 @@ fn record_led_team_with_input_in_txn(
         None,
         input_source,
         team_start_source,
+        attempt_sources,
     )?;
     Ok(Ok(recorded(&receipt, false)))
 }

@@ -85,12 +85,15 @@ impl HostSelfDispatcher<'_> {
                 context = context
                     .with_context_spec(ContextSpec::default().with_briefing(briefing.clone()));
             }
-            let spawned = self.dispatch_agents_spawn(SelfAgentSpawnCall {
-                target: Some(AgentDispatchTarget::Custom(agent)),
-                context,
-                intent_key: member_spawn_key(&input, member),
-                ask: None,
-            })?;
+            let spawned = self.dispatch_agents_spawn_captured(
+                SelfAgentSpawnCall {
+                    target: Some(AgentDispatchTarget::Custom(agent)),
+                    context,
+                    intent_key: member_spawn_key(&input, member),
+                    ask: None,
+                },
+                input.member_capture_scope.as_ref(),
+            )?;
             let (attempt_ref, proposal_ref) = match spawned {
                 SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
                     attempt_ref,

@@ -23,6 +23,31 @@ native key, and a canonical hash of every `TeamRunBinding` field. Source metadat
 is outside that hash. An unchanged replay keeps the witness. A changed native
 binding clears it. Deleting and recreating a row cannot revive its old witness.
 
+## New member dispatches
+
+`self.team.start` also accepts a separate optional `memberCaptureScope`. It
+chooses the position for publications of newly enqueued direct members only.
+An absent position changes nothing. An existing/deduped attempt, planned spawn
+or workflow wrapper mints no witness. A later member's failure keeps earlier
+successful enqueues and their publications, as it keeps those members today.
+
+Each publication contains the new attempt's identity and creation time, its
+actor, placed type and project, and team stamp. It contains no briefing,
+private payload, model, manifest or TASK value. The original actual host-turn
+key must admit the fresh claim in the enqueue's savepoint. A capture failure
+discards only that publication and preserves the ordinary enqueue.
+
+The native payload retains the source pointer. Its binding hashes the physical
+attempt id, kind, creation time and complete original payload, excluding the
+source metadata itself. A normal typed payload rewrite drops the pointer; a
+retry's different id cannot reuse it. Neither case grants access to old native
+rows. A receipt keeps available descriptors from the status rows it actually
+consumed. Coach first admits each exact publication with its own scoped reader,
+then verifies the current native pointer, birth hash and projection in the same
+snapshot. Missing, changed, retired, withheld or malformed sources stay unknown.
+Lease state, later model/manifest measurements and all other receipt cohorts
+remain separate. A partial witness never completes the receipt's fact-source set.
+
 ## Receipt and Coach reads
 
 A receipt retains the start descriptor from the same native-row read used to

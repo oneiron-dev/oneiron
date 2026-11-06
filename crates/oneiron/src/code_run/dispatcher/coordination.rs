@@ -253,6 +253,14 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         call: SelfAgentSpawnCall,
     ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_agents_spawn_captured(call, None)
+    }
+
+    pub(super) fn dispatch_agents_spawn_captured(
+        &self,
+        call: SelfAgentSpawnCall,
+        selected: Option<&crate::memory::ClaimScope>,
+    ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         let parent = self.agent_parent.ok_or_else(invalid)?;
         let live = DreamerRunnerStore::new(vault)
@@ -322,7 +330,17 @@ impl<'a> HostSelfDispatcher<'a> {
         // an attenuated fork among them, is noted as it resolves.
         let capture = &self.spawn_capture;
         let observe = move |seat| capture.observe(seat);
-        let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
+        let source_capture = selected.and_then(|selected| {
+            crate::team::run::TeamAttemptCapture::new(
+                vault,
+                selected,
+                self.write_envelope(SelfEffect::AgentsSpawn, None).ok()?,
+                self.host_turn_read_key(),
+            )
+        });
+        let dispatcher = AgentDispatcher::new(vault)
+            .observing_seats(&observe)
+            .capturing_team_attempts(source_capture.as_ref());
         let result = dispatcher.dispatch_with_context(
             DispatchAgent {
                 target,

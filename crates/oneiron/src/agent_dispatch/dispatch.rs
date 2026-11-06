@@ -60,6 +60,7 @@ pub struct AgentDispatcher<'a> {
     /// The host's observer of each AGENT_DEF a dispatch resolves (FIX 9180),
     /// when a code run's spawn binds one: told, never asked.
     seats: Option<&'a (dyn Fn(EntityId) + Sync)>,
+    team_attempt_capture: Option<&'a crate::team::run::TeamAttemptCapture>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -70,6 +71,7 @@ impl<'a> AgentDispatcher<'a> {
             vault,
             runner: DreamerRunnerStore::new(vault),
             seats: None,
+            team_attempt_capture: None,
         }
     }
 
@@ -81,6 +83,16 @@ impl<'a> AgentDispatcher<'a> {
     #[must_use]
     pub(crate) fn observing_seats(mut self, observer: &'a (dyn Fn(EntityId) + Sync)) -> Self {
         self.seats = Some(observer);
+        self
+    }
+
+    /// Optional publication of newly enqueued team members only. Existing
+    /// rows and workflow wrappers never inherit this caller's publication.
+    pub(crate) fn capturing_team_attempts(
+        mut self,
+        capture: Option<&'a crate::team::run::TeamAttemptCapture>,
+    ) -> Self {
+        self.team_attempt_capture = capture;
         self
     }
 
@@ -371,6 +383,12 @@ impl<'a> AgentDispatcher<'a> {
                         hold,
                         input.now,
                     )?;
+                }
+                if let Some(capture) = self.team_attempt_capture
+                    && let Some(record) =
+                        capture.capture_in_txn(self.vault, wtxn, &status, input.now)
+                {
+                    status.attempt = record;
                 }
                 AgentDispatchOutcome::Dispatched(status)
             }
