@@ -296,6 +296,16 @@ pub(crate) trait OutboundTransport {
         false
     }
 
+    /// Whether `call`'s provider deduplicates a resend under its key only
+    /// for a window and then forgets it (LINE's retry key, 24 hours), so an
+    /// uncertain resend of it goes through [`Self::uncertain_send_step`]
+    /// like a non-idempotent one: inside the window the lookup lets it go,
+    /// after it the owner is asked (FIX 4747, review #6555). By default no
+    /// provider's key lapses.
+    fn idempotent_resend_is_time_bounded(&self, _call: &FrozenOutboundCall) -> bool {
+        false
+    }
+
     /// The step for `call`, an outcome-free Pending row that may have gone
     /// out, before its resend (FIX 4747). Asked only when
     /// [`Self::looks_up_uncertain_sends`]; by default nobody can tell.
