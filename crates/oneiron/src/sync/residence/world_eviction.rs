@@ -40,16 +40,21 @@
 //! to take it back if the owner turns the switch off. A window held open, or
 //! a member a keep rule holds, waits for the next pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use loro::VersionVector;
 
+use super::{ContentWorld, WindowIndexEntry};
 use crate::EntityId;
 use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::store::legal_hold::{HoldActor, is_hold_refusal};
-use crate::store::local_replica::{KeepControls, KeepReason, remove_local_replica_window_in_txn};
+use crate::store::local_replica::{
+    KeepControls, KeepReason, discard_bundle_payload_in_txn, remove_local_members_in_txn,
+    remove_local_replica_window_in_txn,
+};
 use crate::sync::WindowKey;
 
 /// Whether `fold` keeps `world` on one machine other than `me`, by the owner's
@@ -134,6 +139,14 @@ pub struct WorldEviction {
     pub cached_items_removed: usize,
     /// Thin read caches a legal hold keeps.
     pub cached_items_held: usize,
+    /// Sealed updates this install made of the worlds and the home had not
+    /// stored, which the owner's discard took.
+    pub sealed_sends_discarded: usize,
+    /// BASE windows whose persisted copy an owner's discard projected, the
+    /// rows it took gone from their history too (FIX 14534 part E).
+    pub base_windows_projected: usize,
+    /// BASE windows whose projection waits for a later pass.
+    pub base_windows_waiting: usize,
 }
 
 /// The home's version vector of world window `window_key`, as this device
@@ -158,6 +171,22 @@ pub(crate) fn put_home_window_vv(
     vault.sync_state_put(&home_window_vv_key(window_key), &home.encode())
 }
 
+/// The home's version vector of window `window_key`, as this device last
+/// exchanged it and kept it ([`put_home_window_vv`]), read in `txn`.
+///
+/// # Errors
+/// Store errors.
+pub(crate) fn home_window_vv_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    window_key: &str,
+) -> Result<Option<VersionVector>> {
+    Ok(store
+        .sync_state
+        .get(txn, &home_window_vv_key(window_key))?
+        .and_then(|home| VersionVector::decode(&home).ok()))
+}
+
 /// Evicts this install's local copy of every world its fold keeps on one
 /// other machine ([`world_placed_elsewhere_in`]), losing no write: a window
 /// goes only once the home's version vector for it, as this device last
@@ -176,9 +205,14 @@ pub fn evict_worlds_placed_elsewhere(vault: &Vault) -> Result<WorldEviction> {
 /// every window of it goes as the pass's would, its queued sends and the
 /// rows its local writes still owed it with it, once the owner keeps the
 /// world on one other machine. The owner's act: nothing here waits for the
-/// home. A window with a member its document does not carry, or one with
-/// local work pending, stays whole, named on the report
-/// ([`WorldEviction::windows_with_local_members`]).
+/// home. A member its document does not carry, or one whose only pending
+/// local work is its promotion pickup, document frames or NOTE requests,
+/// goes too, with that work and every edge it touches (Engine 11-06 08:34 =
+/// A); a pending tombstone still travels, as an id. Then every CLAIM of the
+/// world its claim posting list names, still in one of its windows, goes the
+/// same way, and so does each row of the world alone that sits in a BASE
+/// window (`world_base_rows`). What a legal hold, a control or the fold's own
+/// records keep stays.
 ///
 /// # Errors
 /// An owner proof that no longer stands; [`Error::InvalidConfig`] while this
@@ -221,11 +255,14 @@ fn evict(
         ..WorldEviction::default()
     };
     if worlds.is_empty() {
+        project_base_windows(vault, &mut report)?;
         return Ok(report);
     }
     let (removed, held) = evict_cached_items(vault, worlds)?;
     report.cached_items_removed = removed;
     report.cached_items_held = held;
+    // Every member the passes' writes take, for the bundles that span them.
+    let mut taken = BTreeSet::new();
     for window in local_world_windows(vault, worlds)? {
         if matches!(confirmation, Confirmation::Home) && !home_holds_window(vault, &window)? {
             report.windows_unconfirmed += 1;
@@ -238,8 +275,9 @@ fn evict(
             None => report.windows_busy += 1,
             Some(step) => {
                 let step = step?;
-                report.removed += step.removed;
+                report.removed += step.removed.len();
                 report.kept += step.kept;
+                taken.extend(step.removed);
                 match step.progress {
                     Progress::Complete => report.windows_evicted += 1,
                     Progress::Busy => report.windows_busy += 1,
@@ -249,18 +287,59 @@ fn evict(
             }
         }
     }
+    // The owner's discard takes the world's CLAIMs its windows no longer
+    // list too (FIX 14534, Engine 11-06 08:34 = A).
+    if matches!(confirmation, Confirmation::Owner) {
+        for world in worlds {
+            let leftover = discard_leftover_claims(vault, *world)?;
+            report.removed += leftover.removed.len();
+            report.kept += leftover.kept;
+            report.windows_busy += leftover.windows_busy;
+            taken.extend(leftover.removed);
+            // And its rows that sit in BASE windows (Engine call 1 = A).
+            let base = super::world_base_rows::discard_base_rows(vault, *world)?;
+            report.removed += base.removed.len();
+            report.kept += base.kept;
+            report.windows_busy += base.windows_busy;
+            taken.extend(base.removed);
+        }
+        // A bundle whose members two of those writes took goes once all have
+        // (call 4 = A).
+        if !taken.is_empty() {
+            vault.with_write_txn_grouped(|wtxn| {
+                discard_bundle_payload_in_txn(&vault.store, wtxn, &taken)
+            })?;
+        }
+    }
     if report.windows_busy == 0
         && report.windows_unconfirmed == 0
         && report.windows_with_local_members == 0
     {
-        vault.with_write_txn_grouped(|wtxn| {
+        report.sealed_sends_discarded = vault.with_write_txn_grouped(|wtxn| {
+            let mut discarded = 0;
             for world in worlds {
                 crate::world_keys::purge_world_mirrors_in_txn(&vault.store, wtxn, *world)?;
+                // The owner's discard takes its unsent sealed updates of the
+                // world too, once nothing of it waits here (call 3 = A).
+                if matches!(confirmation, Confirmation::Owner) {
+                    discarded +=
+                        super::sealed_updates::discard_world_outbox_in_txn(vault, wtxn, *world)?;
+                }
             }
-            Ok(())
+            Ok(discarded)
         })?;
     }
+    project_base_windows(vault, &mut report)?;
     Ok(report)
+}
+
+/// Projects every BASE window an owner's discard took rows from and whose
+/// projection is still owed, into `report` (FIX 14534 part E).
+fn project_base_windows(vault: &Vault, report: &mut WorldEviction) -> Result<()> {
+    let pass = super::base_projection::project_owed_windows(vault)?;
+    report.base_windows_projected += pass.installed;
+    report.base_windows_waiting += pass.waiting;
+    Ok(())
 }
 
 /// Whether the home's version vector for `window`, as this device last
@@ -324,11 +403,16 @@ fn local_world_windows(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<Vec
         .collect())
 }
 
-/// Removes the thin read caches of `worlds`' items: each item an opened
+/// Removes the thin read caches of `worlds`' items. An item an opened
 /// marker (`ro:e:`) maps to one of their windows, or a thin index row
-/// (`ri:w:{window}:{item}`) of one lists, with every index row of those
-/// windows' index rows. A cache a legal hold names stays. Returns the caches
-/// removed and the ones held.
+/// (`ri:w:{window}:{item}`) of one lists, is that world's by its window: its
+/// cache goes whole, with every index row that lists it. A copy fetched or
+/// listed in any other window, a base one included, goes when the home
+/// witnessed its row as of one of `worlds` alone (FIX 14534, Engine 11-06
+/// 08:34 call 5 = A): that copy only, as another fetch or listing of the
+/// same item may witness it shared. A copy with no witness, or a shared or
+/// base one, stays, and so does a cache a legal hold names. Returns the
+/// fetched copies removed and the items held.
 fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
         let mut items = BTreeSet::new();
@@ -342,47 +426,101 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
                 items.insert(item);
             }
         }
+        let witnessed = |witness: ContentWorld| {
+            witness
+                .exclusive()
+                .is_some_and(|world| worlds.contains(&world))
+        };
+        let mut copies = BTreeSet::new();
+        for row in vault.store.sync_state.prefix_iter(txn, "ri:c:")? {
+            let (key, witness) = row?;
+            if witnessed(ContentWorld::decode(&witness))
+                && let Some(item) = key
+                    .strip_prefix("ri:c:")
+                    .and_then(|id| EntityId::from_hex(id).ok())
+            {
+                copies.insert(item);
+            }
+        }
+        let mut listings = Vec::new();
         for row in vault.store.sync_state.prefix_iter(txn, "ri:w:")? {
-            let (key, _) = row?;
+            let (key, entry) = row?;
             let Some((window, item)) = key
                 .strip_prefix("ri:w:")
                 .and_then(|rest| rest.rsplit_once(':'))
             else {
                 continue;
             };
-            if of_worlds(window, worlds)
-                && let Ok(item) = EntityId::from_hex(item)
-            {
+            let Ok(item) = EntityId::from_hex(item) else {
+                continue;
+            };
+            if of_worlds(window, worlds) {
                 items.insert(item);
-            }
-        }
-        let mut erased = Vec::new();
-        let mut held = 0;
-        for item in items {
-            match vault
-                .store
-                .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+            } else if rmp_serde::from_slice::<WindowIndexEntry>(&entry)
+                .is_ok_and(|entry| witnessed(entry.content_world))
             {
-                Ok(()) => erased.push(item),
-                Err(error) if is_hold_refusal(&error) => held += 1,
-                Err(error) => return Err(error),
+                listings.push((item, key.to_string()));
             }
         }
-        let cached = erased
-            .iter()
-            .map(|item| format!("ri:b:{}", item.to_hex()))
-            .collect::<Vec<_>>();
+        let mut held = BTreeSet::new();
+        let mut erased = Vec::new();
+        for item in items {
+            if cache_held(vault, txn, item)? {
+                held.insert(item);
+            } else {
+                erased.push(item);
+            }
+        }
         let mut removed = 0;
-        for key in &cached {
-            if vault.store.sync_state.get(txn, key)?.is_some() {
+        for item in &erased {
+            if vault
+                .store
+                .sync_state
+                .get(txn, &format!("ri:b:{}", item.to_hex()))?
+                .is_some()
+            {
                 removed += 1;
             }
         }
         // Each erased item's cache rows go with its index rows, in whichever
         // window listed it.
         super::prune::erase_item_caches_in_txn(&vault.store, txn, &erased)?;
-        Ok((removed, held))
+        for item in copies {
+            if held.contains(&item) || cache_held(vault, txn, item)? {
+                held.insert(item);
+                continue;
+            }
+            if vault
+                .store
+                .sync_state
+                .get(txn, &format!("ri:b:{}", item.to_hex()))?
+                .is_some()
+            {
+                removed += 1;
+            }
+            super::prune::clear_thin_item_cache_in_txn(&vault.store, txn, item)?;
+        }
+        for (item, key) in listings {
+            if held.contains(&item) || cache_held(vault, txn, item)? {
+                held.insert(item);
+                continue;
+            }
+            vault.store.sync_state.delete(txn, &key)?;
+        }
+        Ok((removed, held.len()))
     })
+}
+
+/// Whether a legal hold keeps `item`'s cache; any other failure fails.
+fn cache_held(vault: &Vault, txn: &heed::RoTxn<'_>, item: EntityId) -> Result<bool> {
+    match vault
+        .store
+        .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+    {
+        Ok(()) => Ok(false),
+        Err(error) if is_hold_refusal(&error) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// Removes `window`'s local copy in bounded steps, with the window held
@@ -390,6 +528,87 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
 /// marker. A queued send for it defers the step, unless the owner discards
 /// the copy, whose sends go with its last step. Returns the rows removed,
 /// the members kept and whether the window's rows are gone.
+/// The tear's keep controls on each path. The automatic pass leaves a window
+/// whole while a member only this install may hold stays; the owner's
+/// discard releases such a member, with its local work and every edge it
+/// touches, and keeps what every other rule keeps (FIX 14534).
+fn keep_controls(confirmation: Confirmation) -> KeepControls {
+    let discard = matches!(confirmation, Confirmation::Owner);
+    KeepControls {
+        defer_on_queued_writes: !discard,
+        defer_on_local_members: !discard,
+        release_local_members: discard,
+        ..KeepControls::default()
+    }
+}
+
+/// The world CLAIMs a discard took after their windows' rows went.
+#[derive(Default)]
+struct Leftover {
+    removed: Vec<EntityId>,
+    kept: usize,
+    windows_busy: usize,
+}
+
+/// The CLAIMs one page of the world's claim posting list reads.
+const LEFTOVER_PAGE: usize = 256;
+
+/// Takes the CLAIMs of `world` this install still keeps after its windows'
+/// rows went: each one its claim posting list names whose row still sits in
+/// one of the world's windows, through the tear's own rules for that window,
+/// held closed ([`remove_local_members_in_txn`]). A claim a keep rule holds
+/// stays; a window held open waits for the next discard.
+fn discard_leftover_claims(vault: &Vault, world: EntityId) -> Result<Leftover> {
+    let mut leftover = Leftover::default();
+    let keep = keep_controls(Confirmation::Owner);
+    let mut after = None;
+    loop {
+        let mut by_window: HashMap<WindowKey, Vec<EntityId>> = HashMap::new();
+        let page = {
+            let txn = vault.store.env.read_txn()?;
+            let page = crate::store::claim_projection::claim_ids_for_world_page_in_txn(
+                &vault.store,
+                &txn,
+                world,
+                after,
+                LEFTOVER_PAGE,
+            )?;
+            for id in &page {
+                let Some(raw) = vault.store.port_entity_raw(&txn, id)? else {
+                    continue;
+                };
+                let Ok(window) = super::residence_window_for_blob(&raw) else {
+                    continue;
+                };
+                if window.world() == Some(world) {
+                    by_window.entry(window).or_default().push(*id);
+                }
+            }
+            page
+        };
+        for (window, ids) in by_window {
+            vault.unload_idle_window(&window)?;
+            let step = vault.while_window_closed(&window, || {
+                vault.with_write_txn_grouped(|txn| {
+                    remove_local_members_in_txn(&vault.store, txn, &window, &ids, keep.clone())
+                })
+            });
+            match step {
+                None => leftover.windows_busy += 1,
+                Some(step) => {
+                    let step = step?;
+                    leftover.removed.extend_from_slice(&step.removed);
+                    leftover.kept += step.kept.len();
+                }
+            }
+        }
+        match page.last() {
+            Some(last) if page.len() == LEFTOVER_PAGE => after = Some(*last),
+            _ => return Ok(leftover),
+        }
+    }
+}
+
 /// How far one window's eviction got.
 enum Progress {
     /// Its copy is gone.
@@ -404,7 +623,7 @@ enum Progress {
 
 /// What one window's eviction did.
 struct WindowStep {
-    removed: usize,
+    removed: Vec<EntityId>,
     kept: usize,
     progress: Progress,
 }
@@ -415,12 +634,8 @@ fn evict_window(
     confirmation: Confirmation,
 ) -> Result<WindowStep> {
     let discard = matches!(confirmation, Confirmation::Owner);
-    let keep = KeepControls {
-        defer_on_queued_writes: !discard,
-        defer_on_local_members: true,
-        ..KeepControls::default()
-    };
-    let mut removed = 0;
+    let keep = keep_controls(confirmation);
+    let mut removed = Vec::new();
     loop {
         let step = vault.with_write_txn_grouped(|txn| {
             if !discard {
@@ -463,7 +678,7 @@ fn evict_window(
                 });
             }
         };
-        removed += step.removed.len();
+        removed.extend_from_slice(&step.removed);
         let local = step
             .kept
             .iter()

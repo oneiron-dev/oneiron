@@ -1,7 +1,8 @@
 # Your vault: where it lives, backups, restore, export, and one-act approvals
 
-Everything here works with no model configured. Each action has a CLI command and, for a
-running server, a route under `/v1/owner`. The CLI commands read the same config as
+Everything here works with no model configured. Each action has a CLI command. Except for
+notes-to-Files conversion, each also has a running-server route under `/v1/owner`.
+The CLI commands read the same config as
 `oneiron serve` (`--config FILE`, `--vault-path DIR`, `ONEIRON_*`). Commands that open the
 vault need the server stopped, because one process holds a vault at a time. Two commands
 also work while `serve` runs: `restore --rehearse`, which never opens the vault, and
@@ -338,6 +339,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `gate_decision_retention` | hour, and at start | gate decisions past the horizon you set |
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
+| `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -789,6 +791,21 @@ default list, and a list, even an empty one, replaces it.
 files one holds, and `oneiron files detach <folder>` stops every rescan from reading
 it again (a folder that is gone is detached by the name it was attached by; its notes
 stay).
+
+`oneiron files convert <folder>` changes a folder already attached as notes into a
+Files source in one owner act. Its include patterns, note kind and source attribution
+stay. The notes already imported, their history and their links stay where they are;
+they are not moved into the Files world. The conversion clears only the old rescan
+ledger and replaces the source placement in the same transaction. It then runs the
+ordinary Files rescan, which creates Files copies under that source's own identity.
+A first rescan that reports an error does not undo the conversion; `oneiron files
+rescan <folder>` retries it. A missing source or one already attached as Files is not
+converted, and its ledger is unchanged.
+
+Conversion uses the Files default exclusions. `--exclude <pattern>` adds to them;
+`--no-default-exclude` drops the defaults, just as for attach. The command requires a
+stopped vault. There is no running-server conversion verb in this slice; the existing
+attach, rescan and detach verbs keep their behavior.
 
 ## Approve an import in one act
 
@@ -1581,6 +1598,17 @@ exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
 `.get` views also include `staged`, read anew on each request. An embedder approval
 can therefore be shown as waiting or filling while the old index still serves;
 answering the offer does not mean that its new binding is already applied.
+
+For an approved stock embedder with no compatible declared space, the media worker now
+observes its native vector width from the first eligible stored input. It uses the existing
+configured offer order for that exact model and the ordinary inference, source-release,
+egress and device-local checks. It never guesses a width from the old index or sends a
+synthetic input. The space accepts the kinds the current text-slot incumbent serves and
+encodes those same query kinds through the ordinary `ai.embed` operation. The worker declares
+it only while the complete approval and kind-slot snapshot still match, then the ordinary
+space move begins. The old index keeps serving throughout. With no admitted input, the
+binding stays waiting until a later pass has one. Existing compatible spaces, refills and
+trained embedder bindings keep their current paths; this does not supply a trained-weight loader.
 
 ## Swap in a trained model
 

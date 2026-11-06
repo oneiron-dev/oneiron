@@ -357,24 +357,6 @@ fn run_curl_output_inner(
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
-    // `_staged` holds the body's file until curl is done with it.
-    let (child, _staged) = spawn_curl(program, request, credential, stdout, stderr)?;
-    child
-        .wait_with_output()
-        .map_err(|error| anyhow::anyhow!("wait for curl: {error}"))
-}
-
-/// Starts curl for one request and hands it its config, returning the child
-/// and the staged body file it reads, which must outlive it. The child
-/// inherits no variable the credential
-/// could be in, and no proxy setting routes it anywhere but the selected server.
-fn spawn_curl(
-    program: &OsStr,
-    request: &CurlRequest,
-    credential: CurlCredential<'_>,
-    stdout: Stdio,
-    stderr: Stdio,
-) -> anyhow::Result<(Child, Option<TempBody>)> {
     let config = match credential.secret {
         Some(secret) => Some(match credential.binding {
             Some(binding) => curl_config_with_binding(secret, Some(binding))?,
@@ -382,6 +364,68 @@ fn spawn_curl(
         }),
         None => None,
     };
+    // `_staged` holds the body's file until curl is done with it.
+    let (child, _staged) = spawn_curl(
+        program,
+        request,
+        config.as_deref(),
+        credential.env,
+        stdout,
+        stderr,
+    )?;
+    child
+        .wait_with_output()
+        .map_err(|error| anyhow::anyhow!("wait for curl: {error}"))
+}
+
+/// One request through the host's curl with `config` on its config channel
+/// (header lines a caller built, such as a seat helper's slip and holder
+/// proof, FIX 10624 step 2), its reply captured rather than streamed. The
+/// child inherits none of `env`, nor any of [`CREDENTIAL_ENV`]; its stderr
+/// is this process's.
+pub(crate) fn run_curl_capture(
+    request: &CurlRequest,
+    config: &str,
+    env: &[String],
+) -> anyhow::Result<Output> {
+    let (child, _staged) = spawn_curl(
+        OsStr::new(CURL_PROGRAM),
+        request,
+        Some(config),
+        env,
+        Stdio::piped(),
+        Stdio::inherit(),
+    )?;
+    child
+        .wait_with_output()
+        .map_err(|error| anyhow::anyhow!("wait for curl: {error}"))
+}
+
+/// One curl config line that sets header `name` to `value`, refusing a value
+/// that is empty or holds a control character, which could smuggle a second
+/// option onto a following line.
+pub(crate) fn curl_header_line(name: &str, value: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !value.is_empty() && !value.chars().any(char::is_control),
+        "the {name} header is empty or contains a control character; nothing was sent"
+    );
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    Ok(format!("header = \"{name}: {escaped}\"\n"))
+}
+
+/// Starts curl for one request and hands it `config`, returning the child
+/// and the staged body file it reads, which must outlive it. The child
+/// inherits none of `env` (the variables the credential came from), nor any
+/// of [`CREDENTIAL_ENV`], and no proxy setting routes it anywhere but the
+/// selected server.
+fn spawn_curl(
+    program: &OsStr,
+    request: &CurlRequest,
+    config: Option<&str>,
+    env: &[String],
+    stdout: Stdio,
+    stderr: Stdio,
+) -> anyhow::Result<(Child, Option<TempBody>)> {
     let body = match request.body.as_deref() {
         Some(bytes) => Some(TempBody::create(bytes)?),
         None => None,
@@ -401,7 +445,7 @@ fn spawn_curl(
     if let Some(body) = &body {
         command.arg("--data-binary").arg(body.curl_value());
     }
-    let named = credential.env.iter().map(String::as_str);
+    let named = env.iter().map(String::as_str);
     for name in named.chain(CREDENTIAL_ENV) {
         command.env_remove(name);
     }
