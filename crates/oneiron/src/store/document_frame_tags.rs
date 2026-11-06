@@ -31,4 +31,6 @@ pub mod document_sub_tags {
     /// The authority's answer to one fork upload, sent only to the requesting
     /// connection.
     pub const NOTE_FORK_RECEIPT: u8 = 10;
+    /// One ordered piece of a logical document, verified whole before admission.
+    pub const PART: u8 = 13;
 }
