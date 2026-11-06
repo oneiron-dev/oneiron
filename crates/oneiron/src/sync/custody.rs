@@ -54,7 +54,9 @@
 
 pub(super) mod checkpoint;
 mod export_output;
+mod isolated;
 mod materialize;
+pub(in crate::sync) use isolated::IsolatedCustody;
 mod witness;
 
 pub(super) use export_output::ExportOutputBatch;

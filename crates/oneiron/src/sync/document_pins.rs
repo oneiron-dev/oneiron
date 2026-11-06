@@ -346,6 +346,18 @@ pub(super) struct PinBatch {
 }
 
 impl PinBatch {
+    pub(super) fn prepare_full(doc: &LoroDoc, key: &WindowKey) -> Option<Self> {
+        if key.world().is_some() || !holds_document_pin_map(doc) {
+            return None;
+        }
+        let map = doc.get_map(DOCUMENT_PINS_MAP);
+        Some(Self::prepare(
+            &map,
+            key.as_str(),
+            pin_rows(&map, |_, _| true),
+        ))
+    }
+
     pub(super) fn prepare(map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) -> Self {
         let mut carried = Vec::new();
         for (map_key, bytes) in rows {

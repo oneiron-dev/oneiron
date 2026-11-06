@@ -368,13 +368,14 @@ impl SyncClient {
                 .into_payload()
                 .try_map_owned(|payload| self.admitted_window_payload(&key, payload))?
             {
-                self.staged_world_updates
-                    .push(super::super::home_claim_copies::StagedWorldUpdate {
+                self.staged_world_updates.push(
+                    super::super::home_claim_copies::StagedWorldUpdate {
                         key,
                         bytes: payload.to_vec(),
                         from: deferred.from,
                         copies: Vec::new(),
-                    });
+                    },
+                );
             }
         }
         Ok(progressed)

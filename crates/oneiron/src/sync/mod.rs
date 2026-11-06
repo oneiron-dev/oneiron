@@ -37,6 +37,7 @@ pub(crate) use crate::room_codec::carrier_parts;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;
 pub mod client;
+mod isolated_receiver;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
