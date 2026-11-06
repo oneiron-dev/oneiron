@@ -22,7 +22,10 @@ impl BigModel {
             } else {
                 self.decide_with_context(&call, context)?
             };
-            stopped = matches!(&outcome, DecisionReadOutcome::NotStarted);
+            stopped = matches!(
+                &outcome,
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped
+            );
             decisions.push(outcome);
         }
         Ok(decisions)
@@ -213,7 +216,7 @@ pub(super) fn ordinary_decision(
 ) -> ProviderDecision {
     match outcome {
         DecisionReadOutcome::Answered(decision) => decision,
-        DecisionReadOutcome::NotStarted => {
+        DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
             unreachable!("an ordinary decision has no generation gate")
         }
     }
