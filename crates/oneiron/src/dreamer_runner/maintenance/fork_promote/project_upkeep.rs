@@ -35,8 +35,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use self::admission::UpkeepGoalVerdict;
 use self::state::{StoredCandidate, UpkeepKey, UpkeepRow, UpkeepState};
 use super::super::applied;
-use super::super::coach::COACH_FORK_PROMOTE_FACET;
-use super::super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes, team_leader};
+use super::super::coach::{COACH_FORK_PROMOTE_FACET, TypeTreeOutcomeReadRequests};
+use super::super::type_tree_gate::{
+    TreeReplayScorer, record_team_shape_outcomes_with_requests, team_leader,
+};
 use super::super::type_tree_prior::DonorTree;
 use super::super::type_tree_upkeep::{
     Reshape, TypeEvidence, fit_split, held_out_hits_with_donor, recount, reshape, type_evidence,
@@ -74,6 +76,7 @@ struct Upkeep<'a> {
     /// The pass's donor, lent to the project tree reads (FIX 5176): the
     /// reshape's held-out check and both arms of the judge.
     donor: Option<&'a DonorTree>,
+    requests: Option<&'a TypeTreeOutcomeReadRequests>,
     now: u64,
 }
 
@@ -103,6 +106,7 @@ pub(super) fn run(
     scorer: Option<&dyn HeldOutReplayNotes>,
     by_project: &BTreeMap<EntityId, Vec<TeamReceipt>>,
     donor: Option<&DonorTree>,
+    requests: Option<&TypeTreeOutcomeReadRequests>,
     now: u64,
     report: &mut ForkPromoteReport,
 ) -> Result<BTreeSet<EntityId>> {
@@ -121,6 +125,7 @@ pub(super) fn run(
         actor: vault.dreamer_actor_for_attempt(id)?,
         tasks: team_run_tasks(vault)?,
         donor,
+        requests,
         now,
     };
     let mut largest = 0_usize;
@@ -262,7 +267,13 @@ impl Upkeep<'_> {
         };
         // Each settled team fills the reserve of the tree in force its leader
         // loaded, whatever this evidence's row says.
-        let write = record_team_shape_outcomes(vault, &incumbent.id, &incumbent.record, teams)?;
+        let write = record_team_shape_outcomes_with_requests(
+            vault,
+            &incumbent.id,
+            &incumbent.record,
+            teams,
+            self.requests,
+        )?;
         let key = (project, state::evidence_digest(teams, &self.tasks));
         let open = match state::row(vault, &key)? {
             // A loss, a win and the owner's revert of a win all stand for
