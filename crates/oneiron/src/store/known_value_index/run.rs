@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{Keys, KnownSource, KnownValues, MatchedSpan, ValueOrigin, replace_spans};
 use crate::entity_id::EntityId;
@@ -80,6 +80,53 @@ impl Vault {
 }
 
 impl RunKnownSource {
+    /// Replaces this run's PERSON values only in a typed text payload.
+    /// Custody exclusions come from the complete serialized reply, since
+    /// its greedy selection can start before the Text scalar itself.
+    pub(crate) fn replace_person_text(
+        &self,
+        text: &str,
+        reply: &[u8],
+        encoded_text: std::ops::Range<usize>,
+    ) -> Result<Option<String>> {
+        self.pass(|custody, person| {
+            let Some(person) = person else {
+                return Ok(None);
+            };
+            let data = text.as_bytes();
+            let mut spans = person.matched_spans_except(data, |_| false);
+            if spans.is_empty() {
+                return Ok(None);
+            }
+            if let Some(known) = custody {
+                let held = known.matched_spans_except(reply, |_| false);
+                let view = super::forms::json_view(&reply[encoded_text.clone()]);
+                spans.retain(|hit| {
+                    // The decoded scalar is quote + Text + quote.
+                    let quoted = (hit.span.start + 1)..(hit.span.end + 1);
+                    let scalar_span = match &view {
+                        Some(view) => view
+                            .source_mapped(quoted)
+                            .expect("serialized text maps every source byte"),
+                        None => quoted,
+                    };
+                    let encoded_span = (encoded_text.start + scalar_span.start)
+                        ..(encoded_text.start + scalar_span.end);
+                    !held.iter().any(|held| {
+                        encoded_span.start < held.span.end && held.span.start < encoded_span.end
+                    })
+                });
+            }
+            if spans.is_empty() {
+                return Ok(None);
+            }
+            let (bytes, _) = replace_spans(data, data.len(), spans);
+            String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|_| Error::CorruptedIndex("PERSON output text encoding"))
+        })?
+    }
+
     pub(super) fn pass<T>(
         &self,
         use_pass: impl FnOnce(Option<&KnownValues>, Option<&KnownValues>) -> T,
@@ -150,13 +197,21 @@ pub(super) fn replaced_until(
     let mut spans = custody
         .map(|known| known.matched_spans_except(data, |_| false))
         .unwrap_or_default();
-    let mut persons = person.matched_spans_except(data, |_| false);
-    persons.retain(|hit| {
-        !spans
-            .iter()
-            .any(|custody| hit.span.start < custody.span.end && custody.span.start < hit.span.end)
-    });
-    spans.extend(persons);
+    spans.extend(person_spans(person, data, &spans));
     spans.sort_by_key(|hit: &MatchedSpan<'_>| hit.span.start);
     replace_spans(data, limit, spans)
+}
+
+fn person_spans<'k>(
+    person: &'k KnownValues,
+    data: &[u8],
+    custody: &[MatchedSpan<'_>],
+) -> Vec<MatchedSpan<'k>> {
+    let mut persons = person.matched_spans_except(data, |_| false);
+    persons.retain(|hit| {
+        !custody
+            .iter()
+            .any(|held| hit.span.start < held.span.end && held.span.start < hit.span.end)
+    });
+    persons
 }

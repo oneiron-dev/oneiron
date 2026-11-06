@@ -140,6 +140,10 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             properties.insert("needed".to_owned(), json!({ "type": "integer" }));
             properties.insert("waitedMs".to_owned(), json!({ "type": "integer" }));
         }
+        ErrorCode::TooManyAttempts => {
+            required.push("retryAfterSecs");
+            properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
+        }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");
         }

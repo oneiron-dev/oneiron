@@ -274,6 +274,7 @@ impl SyncServer {
             asr_sessions: Default::default(),
             model_streams: Default::default(),
             export_transfers: Default::default(),
+            pairing_backoff: Default::default(),
             lens_frames,
             retained,
             presence,

@@ -3,8 +3,8 @@
 use rmpv::Value;
 
 use crate::attempt_queue::{
-    AcceptAttemptLanding, AttemptId, AttemptQueue, FinishAttemptLanding, LandingOutcome,
-    LandingReserveSpendOutcome, LandingTrigger, RecordAttemptResumePoint,
+    AcceptAttemptLanding, AttemptId, AttemptQueue, FinishAttemptLanding, FinishLandingOutcome,
+    LandingOutcome, LandingReserveSpendOutcome, LandingTrigger, RecordAttemptResumePoint,
     SpendAttemptLandingReserve,
 };
 use crate::dreamer_runner::{
@@ -164,19 +164,16 @@ impl DreamerWakeDriver<'_> {
         })
     }
 
-    /// Runs the durable landing protocol for one admitted attempt and returns
-    /// the reserve units it actually spent.
+    /// Runs the durable landing protocol and returns the reserve units spent.
     ///
-    /// Order is the invariant: ENTER landing (the row stops being ordinary
-    /// running work and keeps its lease), SPEND from the reserve (never from
-    /// the ordinary meter, and never more than the reserve holds), RECORD the
-    /// exact resume point, then FINISH through the queue's own transaction —
-    /// optionally minting the successor that carries the point. Nothing here
-    /// can report the attempt completed.
+    /// ENTER landing, SPEND its reserve, RECORD the resume point, then FINISH
+    /// the honest stop or handoff. Those changes and their actual budget charge
+    /// commit together, so no terminal landing can strand its reservation.
     pub(super) fn land_attempt(
         &self,
         admitted: &DreamerAdmittedAttempt,
         request: LandingRequest,
+        completed_units: u64,
         now: u64,
     ) -> Result<u64> {
         let queue = AttemptQueue::new(self.vault);
@@ -188,63 +185,80 @@ impl DreamerWakeDriver<'_> {
             .clone()
             .unwrap_or_default();
         let attempt_count = admitted.status.attempt.attempt_count;
-        // Entering is idempotent (`AlreadyLanding`), so a re-executed attempt
-        // that already entered still finishes its landing here.
-        let _entered: LandingOutcome = queue.accept_landing(AcceptAttemptLanding {
-            id: attempt_id,
-            lease_owner: lease_owner.clone(),
-            attempt_count,
-            // Fallback only: a landing answering a recorded request takes that
-            // request's trigger, so a worker cannot relabel why it was asked.
-            trigger: LandingTrigger::CancelRequest,
-            status: request.status,
-            resume_point: None,
-            request_sequence: None,
-            now,
-        })?;
-
-        let mut spent_units = 0;
-        if request.reserve_units > 0 {
-            match queue.spend_landing_reserve(SpendAttemptLandingReserve {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        // A recorded request keeps its own trigger, not the fallback.
+        let _entered: LandingOutcome = queue.accept_landing_in_txn(
+            &mut wtxn,
+            AcceptAttemptLanding {
                 id: attempt_id,
                 lease_owner: lease_owner.clone(),
                 attempt_count,
-                units: request.reserve_units,
+                trigger: LandingTrigger::CancelRequest,
+                status: request.status,
+                resume_point: None,
+                request_sequence: None,
                 now,
-            })? {
+            },
+        )?;
+
+        let mut spent_units = 0;
+        if request.reserve_units > 0 {
+            match queue.spend_landing_reserve_in_txn(
+                &mut wtxn,
+                SpendAttemptLandingReserve {
+                    id: attempt_id,
+                    lease_owner: lease_owner.clone(),
+                    attempt_count,
+                    units: request.reserve_units,
+                    now,
+                },
+            )? {
                 LandingReserveSpendOutcome::Spent { .. } => {
                     spent_units = request.reserve_units;
                 }
-                // Fail closed and keep landing: an over-ask spends NOTHING, and
-                // the attempt still gets to record where it stopped rather than
-                // losing the landing because its final work was too large.
                 LandingReserveSpendOutcome::Exhausted { .. } => {}
             }
         }
 
         if let Some(resume_point) = request.resume_point {
-            queue.record_resume_point(RecordAttemptResumePoint {
-                id: attempt_id,
-                lease_owner: lease_owner.clone(),
-                attempt_count,
-                resume_point,
-                now,
-            })?;
+            queue.record_resume_point_in_txn(
+                &mut wtxn,
+                RecordAttemptResumePoint {
+                    id: attempt_id,
+                    lease_owner: lease_owner.clone(),
+                    attempt_count,
+                    resume_point,
+                    now,
+                },
+            )?;
         }
 
-        queue.finish_landing(FinishAttemptLanding {
-            id: attempt_id,
-            lease_owner,
-            attempt_count,
-            hand_off: request.hand_off,
-            // The successor is NEXT-pass work. A pass runs on one fixed `now`,
-            // so scheduling one second out makes the handoff unclaimable by the
-            // very pass that just asked this attempt to stop — otherwise a
-            // budget- or lease-pressured pass would immediately re-admit the
-            // work it landed and spin against the pressure that caused it.
-            scheduled_at: Some(now.saturating_add(1)),
-            now,
-        })?;
+        let outcome = queue.finish_landing_in_txn(
+            &mut wtxn,
+            FinishAttemptLanding {
+                id: attempt_id,
+                lease_owner,
+                attempt_count,
+                hand_off: request.hand_off,
+                // Keep the successor out of this pass's fixed clock.
+                scheduled_at: Some(now.saturating_add(1)),
+                now,
+            },
+        )?;
+        self.store.settle_budget_in_txn(
+            &mut wtxn,
+            SettleDreamerBudget {
+                budget_id: admitted.reservation.budget_id.clone(),
+                child_attempt: attempt_id,
+                actual_units: completed_units.saturating_add(spent_units),
+                now,
+            },
+        )?;
+        wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        if matches!(outcome, FinishLandingOutcome::Landed(_)) {
+            self.vault.store.notify_notification_updates();
+        }
         Ok(spent_units)
     }
 
