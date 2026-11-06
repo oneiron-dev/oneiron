@@ -229,7 +229,7 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
             let plan = match &spool.known {
                 Some(source) => source.pass(|known| {
                     plan_retained_repo_blob(
-                        &blob.path,
+                        blob.path_bytes(),
                         &blob.content,
                         known,
                         hit.reason,
@@ -237,7 +237,7 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
                     )
                 })??,
                 None => plan_retained_repo_blob(
-                    &blob.path,
+                    blob.path_bytes(),
                     &blob.content,
                     None,
                     hit.reason,
