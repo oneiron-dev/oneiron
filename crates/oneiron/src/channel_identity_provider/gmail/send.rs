@@ -157,6 +157,10 @@ pub struct GmailSendPlan {
     /// frozen and held by its host; `None` for a send without files, which
     /// renders at egress.
     message: Option<MailMessageIdentity>,
+    /// The ref of the carrier its host holds that message in; `None` for a
+    /// send without files. Its kept row names it beside the manifest's
+    /// digest, and the plan stands only beside that carrier's holder.
+    carrier: Option<String>,
     content_ref: String,
 }
 
@@ -230,6 +234,7 @@ impl GmailSendPlan {
             reply,
             attachments: Vec::new(),
             message: None,
+            carrier: None,
             content_ref: String::new(),
         };
         plan.seal();
@@ -335,6 +340,7 @@ impl GmailSendPlan {
         }
         self.attachments = attachments;
         self.message = None;
+        self.carrier = None;
         self.seal();
         Ok(self)
     }
@@ -370,11 +376,13 @@ impl GmailSendPlan {
     }
 
     /// Binds this plan with files to `message`, the exact bytes
-    /// [`Self::render_with_files`] wrote: their length and BLAKE3 seal into
-    /// its content ref, so the one press is for exactly those bytes.
+    /// [`Self::render_with_files`] wrote, held in the carrier `carrier`
+    /// names: their length and BLAKE3 seal into its content ref, so the one
+    /// press is for exactly those bytes.
     #[must_use]
-    pub(crate) fn with_message(mut self, message: MailMessageIdentity) -> Self {
+    pub(crate) fn with_message(mut self, message: MailMessageIdentity, carrier: String) -> Self {
         self.message = Some(message);
+        self.carrier = Some(carrier);
         self.seal();
         self
     }
@@ -720,6 +728,10 @@ pub struct GmailSendAuthority<'a> {
     adapter: &'a GmailDelegatedAdapter,
     vault: &'a Vault,
     identity_id: EntityId,
+    /// The frozen send with files this door releases, judged once more in
+    /// the door's own writer (fix list row 17645); `None` for a send
+    /// without files.
+    retained: Option<&'a dyn RetainedMailMessage>,
     used: Cell<bool>,
 }
 
@@ -730,7 +742,8 @@ impl GmailSendAuthority<'_> {
     /// # Errors
     ///
     /// When the row was withdrawn, the grant lost send, or custody no longer
-    /// proves it, the callback is not invoked.
+    /// proves it, the callback is not invoked; nor when a send with files no
+    /// longer stands in the door's writer.
     pub fn with_token_at_door(
         &self,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
@@ -740,8 +753,12 @@ impl GmailSendAuthority<'_> {
             self.used.set(true);
             Ok(())
         };
-        self.adapter
-            .with_send_token_at_door(self.vault, self.identity_id, &mut guarded)
+        self.adapter.with_send_token_at_door_admitting(
+            self.vault,
+            self.identity_id,
+            self.retained,
+            &mut guarded,
+        )
     }
 }
 
@@ -860,9 +877,10 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
         let Some(content_ref) = request.intent.content_ref.as_deref() else {
             return OutboundExecutionOutcome::failed("gmail_send_plan_missing");
         };
-        // A plan its host kept is read back by its ref (FIX 1053).
+        // A plan its host kept is read back by its ref (FIX 1053); one with
+        // files only beside its message's holder (fix list row 17645).
         if !self.plans.contains_key(content_ref) {
-            match GmailSendPlan::kept(self.vault, content_ref) {
+            match GmailSendPlan::kept(self.vault, content_ref, self.retained) {
                 Ok(Some(plan)) => self.add_plan(plan),
                 Ok(None) => {}
                 Err(_) => return OutboundExecutionOutcome::failed("gmail_send_plan_unreadable"),
@@ -918,10 +936,18 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     .join(" "),
             );
         }
+        // The credential door judges a send with files once more in its own
+        // writer before the token leaves it; an erase or a revocation that
+        // commits first stops the send there (fix list row 17645).
         let authority = GmailSendAuthority {
             adapter: self.adapter,
             vault: self.vault,
             identity_id: self.identity_id,
+            retained: if plan.attachments.is_empty() {
+                None
+            } else {
+                self.retained
+            },
             used: Cell::new(false),
         };
         let thread_id = plan.reply.as_ref().map(GmailReplyThread::gmail_thread_id);
