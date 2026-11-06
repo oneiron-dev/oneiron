@@ -11,8 +11,8 @@
 //! optional browser planner unbound leaves it unseated, as no rung does.
 use std::sync::Arc;
 
+use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{LlmRequest, ModelId, ModelLocality, ModelTierRef, Vault};
 
 use super::{ModelRuntime, OfferLadder, Seat};
@@ -125,10 +125,13 @@ impl ModelRuntime {
         // A role whose work never leaves the device is served nowhere off
         // it, whatever a manifest pins.
         let stays = self.stays_on_device.contains(&role) && route == ModelLocality::ThirdParty;
+        // An on-device route takes the model's on-device view, the native
+        // channels of the workers this server supervises alone (I2-LOCAL);
+        // any other route, its default one.
         match self
             .router
             .as_ref()
-            .and_then(|router| router.served(&model))
+            .and_then(|router| router.served_at(&model, route))
         {
             Some((served, ladder)) if served == route && !stays => {
                 // A manifest-bound model on this role's own ladder (else the
@@ -139,7 +142,7 @@ impl ModelRuntime {
                     .seat(role)
                     .into_iter()
                     .chain([seat])
-                    .find_map(|seat| seat.rung(&model));
+                    .find_map(|seat| seat.rung_at(&model, served));
                 // Only a reranker rung speaks the rerank protocol: the bare
                 // model may be the provider's chat route.
                 if role == ModelRole::Reranker && rung.is_none() {
@@ -192,11 +195,9 @@ impl ModelRuntime {
                 role,
                 request,
                 &HostInferenceContext {
-                    binding: HostInferenceBinding::Advertised {
-                        model: route.model,
-                        locality: route.locality,
-                        keyless: false,
-                    },
+                    binding: route
+                        .ladder
+                        .host_binding(route.model, route.locality, false),
                     extraction_egress: None,
                 },
             )
@@ -233,7 +234,7 @@ impl ModelRuntime {
         let (served, ladder) = self
             .router
             .as_ref()
-            .and_then(|router| router.served(&model))
+            .and_then(|router| router.served_at(&model, request.envelope.locality))
             .ok_or_else(refused)?;
         if served != request.envelope.locality || served > route {
             return Err(refused());
@@ -242,11 +243,7 @@ impl ModelRuntime {
             .authorize_raw_inference(
                 request,
                 &HostInferenceContext {
-                    binding: HostInferenceBinding::Advertised {
-                        model: model.clone(),
-                        locality: served,
-                        keyless: false,
-                    },
+                    binding: ladder.host_binding(model.clone(), served, false),
                     extraction_egress: None,
                 },
             )

@@ -67,6 +67,7 @@ mod memories;
 mod memories_frame;
 mod memories_projection;
 mod memory_pins;
+mod memory_writers;
 pub use hook_pins::{HookPin, HookShare};
 mod notifications;
 pub use memories::MemoryTier;

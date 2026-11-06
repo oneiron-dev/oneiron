@@ -118,9 +118,11 @@ pub(crate) fn content_world_in(
         });
     }
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    Ok(match record_world_in(store, txn, id, header.entity_type, body)? {
-        Some(Some(world)) if world != base => ContentWorld::Exclusive(world),
-        Some(_) => ContentWorld::Base,
-        None => ContentWorld::Unknown,
-    })
+    Ok(
+        match record_world_in(store, txn, id, header.entity_type, body)? {
+            Some(Some(world)) if world != base => ContentWorld::Exclusive(world),
+            Some(_) => ContentWorld::Base,
+            None => ContentWorld::Unknown,
+        },
+    )
 }
