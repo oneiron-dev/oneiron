@@ -49,6 +49,7 @@ pub(crate) fn setup_entity_type_in_txn(
     }))
 }
 
+#[derive(Debug)]
 pub(crate) struct PreparedSetupOwner {
     person: EntityId,
     body: Vec<u8>,
@@ -57,6 +58,18 @@ pub(crate) struct PreparedSetupOwner {
 }
 
 impl PreparedSetupOwner {
+    pub(crate) fn is_before(&self, id: EntityId) -> bool {
+        self.before == id
+    }
+
+    pub(crate) fn matches(&self, id: EntityId, person: EntityId) -> bool {
+        self.before == id && self.person == person
+    }
+
+    pub(crate) fn into_person_put(self) -> (Vec<u8>, PreparedPersonSubstrate) {
+        (self.body, self.substrate)
+    }
+
     fn append_puts(&self, puts: &mut Vec<SetupEntityPut<'_>>) {
         // These two small owned rows keep the ordered projection independent
         // of the growable owner-plan list, not of the native prepared tuples.
@@ -75,21 +88,86 @@ impl PreparedSetupOwner {
     }
 }
 
+pub(crate) fn take_setup_owner_before(
+    owners: &mut Vec<PreparedSetupOwner>,
+    id: EntityId,
+) -> Option<PreparedSetupOwner> {
+    let position = owners.iter().position(|owner| owner.is_before(id))?;
+    Some(owners.remove(position))
+}
+
 /// All of these units were prepared in the caller's writer. No definition,
 /// PERSON, credential consumption, or entity effect has been written yet.
 pub(crate) struct PreparedAgentSetup {
     pub(super) birth: PreparedAgentDefinitionBirth,
     pub(super) person: Option<PreparedAgentPerson>,
     pub(super) owners: Vec<PreparedSetupOwner>,
+    definition_body: Vec<u8>,
     entity_puts: Vec<SetupEntityPut<'static>>,
+    occurred: TimeRange,
+    learned_at: u64,
 }
 
 impl PreparedAgentSetup {
     /// Every encoded native Put, in order, including repeated ids and superseded heads.
     pub(crate) fn entity_puts(&self) -> impl Iterator<Item = (EntityId, u8, &[u8])> + '_ {
-        self.entity_puts
-            .iter()
-            .map(|put| (put.id, put.entity_type, put.data.as_ref()))
+        std::iter::once((
+            self.birth.id(),
+            ENTITY_TYPE_AGENT_DEF,
+            self.definition_body.as_slice(),
+        ))
+        .chain(
+            self.entity_puts
+                .iter()
+                .map(|put| (put.id, put.entity_type, put.data.as_ref())),
+        )
+    }
+
+    /// Consumes the native setup tuples after the caller's Allow decision.
+    /// The caller owns effect admission, credential spending and commit.
+    pub(crate) fn apply_after_allow_in_txn(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        let Self {
+            birth,
+            person,
+            mut owners,
+            definition_body,
+            entity_puts: _entity_puts,
+            occurred,
+            learned_at,
+        } = self;
+        let id = birth.id();
+        let source_owner = birth
+            .entity_put()
+            .and_then(|(source, _)| take_setup_owner_before(&mut owners, source));
+        crate::batch::apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                occurred,
+                learned_at,
+                row_version: None,
+                data: definition_body,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            crate::batch::ApplyOpsGateMode::for_agent_setup(birth, source_owner),
+        )?;
+        if let Some(person) = person {
+            person.apply_with_setup_owners(vault, txn, &mut owners)?;
+        }
+        Ok(())
     }
 }
 
@@ -174,8 +252,10 @@ pub(crate) fn prepare_agent_setup_in_txn(
             }
         }
     }
+    let definition_body = definition_data.to_vec();
     let entity_puts = preceding
         .into_iter()
+        .skip(1)
         .map(|put| SetupEntityPut {
             id: put.id,
             entity_type: put.entity_type,
@@ -186,7 +266,10 @@ pub(crate) fn prepare_agent_setup_in_txn(
         birth,
         person,
         owners,
+        definition_body,
         entity_puts,
+        occurred,
+        learned_at,
     })
 }
 

@@ -95,6 +95,15 @@ pub(crate) fn prepare_agent_person_after_puts_in_txn(
 
 impl PreparedAgentPerson {
     pub(crate) fn apply(self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        self.apply_with_setup_owners(vault, txn, &mut Vec::new())
+    }
+
+    pub(crate) fn apply_with_setup_owners(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        owners: &mut Vec<crate::agent_def::PreparedSetupOwner>,
+    ) -> Result<()> {
         if let Some(body) = self.person_put {
             let mut batch = vault.batch_in().put(
                 &self.person,
@@ -111,7 +120,7 @@ impl PreparedAgentPerson {
             }
             batch.apply(txn)?;
         }
-        self.subjects.apply(vault, txn)
+        self.subjects.apply_with_setup_owners(vault, txn, owners)
     }
 
     pub(crate) fn person_puts(&self) -> impl Iterator<Item = crate::agent_def::SetupEntityPut<'_>> {
