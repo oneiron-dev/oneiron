@@ -22,7 +22,8 @@ use oneiron_llm_systemone::{
 use zeroize::Zeroizing;
 
 use super::broker::{
-    BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key, open_with_key,
+    BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key_released,
+    open_with_key,
 };
 use super::http::is_cloud_node;
 use super::seat_model::{SeatModelProvider, seat_model_providers};
@@ -186,12 +187,19 @@ impl BrokerContext {
         body: &[u8],
         wait: Duration,
     ) -> LlmResult<BrokerAnswer> {
-        self.send_with_keys(&self.inner.keys, secret, header, body, wait)
+        self.send_with_keys(&self.inner.keys, secret, header, body, wait, None, None)
             .await
     }
 
     /// [`Self::send`] with the key read at `keys`, a door scoped to one
     /// caller (a seat's model door, FIX 15702), over this context's broker.
+    /// `release`, when given, runs after the key is read and before the
+    /// broker sends: an admitted call's permit starts there (slice 3), and
+    /// `lease` counts the physical attempt.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one broker call's request, its key door and its release"
+    )]
     pub(crate) async fn send_with_keys(
         &self,
         keys: &Arc<dyn KeyDoor>,
@@ -199,6 +207,8 @@ impl BrokerContext {
         header: &CallHeader,
         body: &[u8],
         wait: Duration,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+        lease: Option<&BudgetLease>,
     ) -> LlmResult<BrokerAnswer> {
         header
             .check(body)
@@ -206,7 +216,8 @@ impl BrokerContext {
         // The reply timeout runs a frame past `wait`, so the broker answers
         // `Timeout` before the daemon gives up (FIX 8559).
         let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
-        let reply = call_with_key(&client, keys, secret, header, body).await?;
+        let reply =
+            call_with_key_released(&client, keys, secret, header, body, release, lease).await?;
         let (status, _) = answered(reply.outcome)?;
         Ok(BrokerAnswer {
             status,
@@ -218,7 +229,12 @@ impl BrokerContext {
     /// `keys` (a seat's model door, FIX 15702 slice 2), and leaves its reply
     /// to the caller: its outcome, then its body as the broker clears it.
     /// The request is checked before the broker is reached and the key read;
-    /// the whole reply must end within `wait`.
+    /// the whole reply must end within `wait`. `release` and `lease` are as
+    /// [`Self::send_with_keys`] takes them.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one broker call's request, its key door and its release"
+    )]
     pub(crate) async fn open_with_keys(
         &self,
         keys: &Arc<dyn KeyDoor>,
@@ -226,12 +242,14 @@ impl BrokerContext {
         header: &CallHeader,
         body: &[u8],
         wait: Duration,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+        lease: Option<&BudgetLease>,
     ) -> LlmResult<oneiron_broker::BrokerStream> {
         header
             .check(body)
             .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
         let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
-        open_with_key(&client, keys, secret, header, body).await
+        open_with_key(&client, keys, secret, header, body, release, lease).await
     }
 
     /// [`Self::send`] for a blocking caller, run on the serve runtime: from

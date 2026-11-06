@@ -13,12 +13,19 @@
 //! while the run's seat-child credential holds, its slip names the key and
 //! carries the model door's channel, and the run's registration is open and
 //! records the key's taint first.
+//!
+//! Each request is a paid call of the run's claim (slice 3,
+//! [`super::seat_model_admission`]): admitted for its exact bytes through
+//! the offer its provider binds for the model it names, before the key is
+//! read; its permit started after the key is read and before the broker
+//! sends; and settled on what the reply reports, as the reply goes back.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::authority::SeatChildCredential;
+use oneiron::llm::run_admission::{OfferBinding, RunDenied};
 use oneiron::{FatalLlmError, LlmError, LlmResult, Vault};
 use oneiron_broker::{CallHeader, Shape};
 use serde_json::Value as JsonValue;
@@ -27,7 +34,9 @@ use zeroize::Zeroizing;
 use super::broker::{KeyDoor, answered, join};
 use super::broker_context::{BrokerAnswer, BrokerContext};
 use super::http::is_cloud_node;
-use crate::config::models::{ModelsConfig, ProviderConfig, ProviderKind};
+use super::offer::provider_offer;
+use super::seat_model_admission::{SeatModelCall, SeatModelMeter};
+use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
 use crate::runtime::{SeatHelperRun, SeatModelProtocol};
 
 /// The Anthropic API version a request that names none is sent with.
@@ -49,6 +58,11 @@ const CHAT_PATH_UNVERSIONED: &str = "unversioned";
 /// `key_secret` provider that speaks OpenAI chat or Anthropic Messages.
 #[derive(Debug, Clone)]
 pub(crate) struct SeatModelProvider {
+    /// Its name in `[models]`.
+    name: String,
+    /// Its `[models]` entry, which binds the offer each call is admitted
+    /// through: its route, locality, payer, key custody and rates.
+    config: ProviderConfig,
     /// The custody name of its key.
     pub(crate) secret: String,
     pub(crate) protocol: SeatModelProtocol,
@@ -67,12 +81,12 @@ pub(super) fn seat_model_providers(models: &ModelsConfig) -> BTreeMap<String, Se
     models
         .providers
         .iter()
-        .filter_map(|(name, provider)| Some((name.clone(), SeatModelProvider::of(provider)?)))
+        .filter_map(|(name, provider)| Some((name.clone(), SeatModelProvider::of(name, provider)?)))
         .collect()
 }
 
 impl SeatModelProvider {
-    fn of(provider: &ProviderConfig) -> Option<Self> {
+    fn of(name: &str, provider: &ProviderConfig) -> Option<Self> {
         let secret = provider.key_secret.clone()?;
         let url = reqwest::Url::parse(&provider.base_url).ok()?;
         let prefix = url.path().trim_end_matches('/');
@@ -100,6 +114,8 @@ impl SeatModelProvider {
             _ => return None,
         };
         Some(Self {
+            name: name.to_owned(),
+            config: provider.clone(),
             secret,
             protocol,
             shape,
@@ -112,6 +128,22 @@ impl SeatModelProvider {
                 .collect(),
             timeout: Duration::from_secs(provider.timeout_secs),
         })
+    }
+}
+
+impl SeatModelProvider {
+    /// The offer this provider binds for `wire_model`, the model a request
+    /// names on the wire: the engine model id `[models]` gives it, at this
+    /// provider's route, payer, key custody and rates. `None` when the name
+    /// makes no model id or the provider's URL no route.
+    fn offer(&self, wire_model: &str) -> Option<OfferBinding> {
+        let model = ModelRef {
+            provider: self.name.clone(),
+            model: wire_model.to_owned(),
+        }
+        .engine_id(&self.config.revision)
+        .ok()?;
+        provider_offer(&self.config, model, false).ok()
     }
 }
 
@@ -164,16 +196,33 @@ impl KeyDoor for SeatKeyDoor {
     }
 }
 
-/// What the provider answered a seat request: one buffered body, or, for a
-/// request that asked for events, its status, whether its reply is an event
-/// stream, and the reply as the broker clears it.
+/// What the provider answered a seat request: one buffered body, its call
+/// settled, or, for a request that asked for events, its status, whether its
+/// reply is an event stream, the reply as the broker clears it, and the call
+/// the reply settles as it goes back.
 pub(crate) enum SeatModelAnswer {
     Whole(BrokerAnswer),
     Events {
         status: u16,
         event_stream: bool,
         reply: oneiron_broker::BrokerStream,
+        call: SeatModelCall,
     },
+}
+
+/// Why a seat request was not sent, or got no answer.
+#[derive(Debug)]
+pub(crate) enum SeatModelRefusal {
+    /// The door, the broker or the provider's transport refused it.
+    Llm(LlmError),
+    /// The claim's run admission refused it: nothing was reserved or sent.
+    Denied(RunDenied),
+}
+
+impl From<LlmError> for SeatModelRefusal {
+    fn from(error: LlmError) -> Self {
+        Self::Llm(error)
+    }
 }
 
 /// Sends one seat request through `provider`: `body` as the seat sent it,
@@ -183,6 +232,12 @@ pub(crate) enum SeatModelAnswer {
 /// is one JSON object naming one of `models`, whose `stream` is absent,
 /// null, `false` or `true`, each once. A request with `stream: true` goes as
 /// a stream and its events come back as the broker clears them (slice 2).
+/// Each request is admitted on the claim's `meter` before its key is read,
+/// and settled on what its reply reports (slice 3).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one seat request, its provider, its key door and its claim's meter"
+)]
 pub(crate) async fn send_seat_model(
     context: &BrokerContext,
     provider: &SeatModelProvider,
@@ -191,7 +246,8 @@ pub(crate) async fn send_seat_model(
     beta: bool,
     body: &[u8],
     keys: &Arc<dyn KeyDoor>,
-) -> LlmResult<SeatModelAnswer> {
+    meter: &Arc<SeatModelMeter>,
+) -> Result<SeatModelAnswer, SeatModelRefusal> {
     let (model, events) = admitted_request(body, models)?;
     let invalid = || LlmError::from(FatalLlmError::InvalidRequest);
     let shape = if events {
@@ -214,29 +270,61 @@ pub(crate) async fn send_seat_model(
             path.push_str(ANTHROPIC_BETA_QUERY);
         }
     } else if beta {
-        return Err(invalid());
+        return Err(invalid().into());
     }
     headers.insert("content-type".to_owned(), "application/json".to_owned());
-    let header = CallHeader::new(
-        format!("seat-model-{}", oneiron::EntityId::now().to_hex()),
+    let offer = provider.offer(&model);
+    let mut header = CallHeader::new(
+        String::new(),
         shape,
         provider.origin.clone(),
         path,
         headers.into_iter().collect(),
-        model,
+        model.clone(),
         is_cloud_node(),
         body,
     );
+    let Some(offer) = offer else {
+        return Err(SeatModelRefusal::Denied(meter.refuse_unoffered(&model)));
+    };
+    let mut call = meter
+        .admit(&offer, &model, &header.digest, provider.protocol)
+        .map_err(SeatModelRefusal::Denied)?;
+    // The broker echoes the permit's lease as the call's id.
+    header.call = call
+        .lease()
+        .map(|lease| lease.id().to_owned())
+        .unwrap_or_default();
+    // The permit starts after the key is read, immediately before the send.
+    let release: oneiron::llm::DispatchRelease<'_> = &|| call.start();
     if !events {
-        return context
-            .send_with_keys(keys, &provider.secret, &header, body, provider.timeout)
-            .await
-            .map(SeatModelAnswer::Whole);
+        let answer = context
+            .send_with_keys(
+                keys,
+                &provider.secret,
+                &header,
+                body,
+                provider.timeout,
+                Some(release),
+                call.lease(),
+            )
+            .await?;
+        call.end_whole(answer.status, &answer.body);
+        return Ok(SeatModelAnswer::Whole(answer));
     }
     let reply = context
-        .open_with_keys(keys, &provider.secret, &header, body, provider.timeout)
+        .open_with_keys(
+            keys,
+            &provider.secret,
+            &header,
+            body,
+            provider.timeout,
+            Some(release),
+            call.lease(),
+        )
         .await?;
     let (status, reply_headers) = answered(reply.outcome().clone())?;
+    call.answered(status);
     let event_stream = reply_headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("content-type")
             && value
@@ -248,6 +336,7 @@ pub(crate) async fn send_seat_model(
         status,
         event_stream,
         reply,
+        call,
     })
 }
 

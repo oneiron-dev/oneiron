@@ -20,6 +20,7 @@
 //! the model door released, for the run's exhaust.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use ed25519_dalek::{Signer as _, SigningKey};
 use oneiron::AttemptId;
@@ -40,6 +41,7 @@ use super::super::{
     SeatModelEnv, SeatModelProtocol, SeatModelSlot, is_helper_destination_name,
     is_seat_model_slot_name, mint_reference,
 };
+use crate::models::SeatModelMeter;
 use crate::server::SyncServer;
 
 /// One run's credential helper and model door while its CLI runs.
@@ -48,6 +50,9 @@ pub(super) struct SeatHelper {
     holder: EntityId,
     slip_id: [u8; 32],
     registration: SeatHelperRun,
+    /// The claim's run its model door calls are admitted on, when a slot is
+    /// offered (FIX 15702 slice 3).
+    meter: Option<Arc<SeatModelMeter>>,
     env: Option<SeatHelperEnv>,
     model_env: Option<SeatModelEnv>,
 }
@@ -196,6 +201,19 @@ impl SeatHelper {
         let model_env = (!presented.is_empty())
             .then(|| SeatModelEnv::new(&origin, &presented))
             .filter(|env| !env.is_empty());
+        // Every model door call is a paid call of the claim's own run, on
+        // the vault's budget policy for its agent and its spend scope.
+        let meter = if registered.is_empty() {
+            None
+        } else {
+            match SeatModelMeter::open(server, fence, holder) {
+                Ok(meter) => Some(meter),
+                Err(error) => {
+                    revoke_slip(server, slip_id);
+                    return Err(error.into());
+                }
+            }
+        };
         let registration = server.seat_helpers.register(
             fence.attempt_id,
             &fence.lease_owner,
@@ -203,12 +221,14 @@ impl SeatHelper {
             destinations,
             registered,
             credential,
+            meter.clone(),
         );
         Ok(Some(Self {
             attempt: fence.attempt_id,
             holder,
             slip_id,
             registration,
+            meter,
             env,
             model_env,
         }))
@@ -236,6 +256,11 @@ impl SeatHelper {
         let end = server
             .seat_helpers
             .retire_own(self.attempt, &self.registration);
+        // What the claim's model calls spent and no look booked goes on its
+        // spend scope; a call still settling books its own.
+        if let Some(meter) = &self.meter {
+            meter.book_rest();
+        }
         if !end.grants.is_empty() {
             teardown(server.vault(), self.attempt, self.holder, &end.grants);
         }

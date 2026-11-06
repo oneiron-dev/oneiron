@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::seat_models::SeatModelSlot;
+use crate::models::SeatModelMeter;
 
 /// The prefix of a helper destination's name, `helper:<name>`.
 pub const HELPER_DESTINATION_PREFIX: &str = "helper:";
@@ -142,9 +143,14 @@ impl SeatHelperRuns {
     /// its name in the operator's table, for the run of `attempt` under the
     /// claim of `lease_owner` at `attempt_count`, and answers its handle.
     /// `credential` is the run's seat-child credential the host admitted for
-    /// the model door; with no slot there is none. A second registration of
-    /// the attempt replaces the first, which closes.
-    pub fn register(
+    /// the model door, and `meter` the claim's run every model door call is
+    /// admitted on (FIX 15702 slice 3); with no slot there are none. A
+    /// second registration of the attempt replaces the first, which closes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one claim's registration: its id, what it may reach and its credential"
+    )]
+    pub(crate) fn register(
         &self,
         attempt: AttemptId,
         lease_owner: &str,
@@ -152,6 +158,7 @@ impl SeatHelperRuns {
         destinations: BTreeMap<String, HelperDestination>,
         slots: BTreeMap<String, SeatModelSlot>,
         credential: Option<SeatChildCredential>,
+        meter: Option<Arc<SeatModelMeter>>,
     ) -> SeatHelperRun {
         let registered = SeatHelperRun {
             state: Arc::new(Mutex::new(HelperRunState {
@@ -160,6 +167,7 @@ impl SeatHelperRuns {
                 destinations,
                 slots,
                 credential,
+                meter,
                 grants: Vec::new(),
                 taints: Vec::new(),
                 closed: false,
@@ -188,8 +196,9 @@ impl SeatHelperRuns {
     }
 
     /// The open registration whose model door slot `slot` `reference` is
-    /// the reference to, beside that slot and the run's credential. `None`
-    /// for every other reference, a closed run and a run with no credential.
+    /// the reference to, beside that slot, the run's credential and its
+    /// claim's meter. `None` for every other reference, a closed run and a
+    /// run with no credential or meter.
     #[must_use]
     pub fn model_door(&self, slot: &str, reference: &str) -> Option<SeatModelDoor> {
         let runs: Vec<SeatHelperRun> = lock(&self.runs).values().cloned().collect();
@@ -205,6 +214,7 @@ impl SeatHelperRuns {
             let door = SeatModelDoor {
                 slot: bound.clone(),
                 credential: state.credential.clone()?,
+                meter: state.meter.clone()?,
                 run: run.clone(),
             };
             drop(state);
@@ -241,6 +251,8 @@ struct HelperRunState {
     destinations: BTreeMap<String, HelperDestination>,
     slots: BTreeMap<String, SeatModelSlot>,
     credential: Option<SeatChildCredential>,
+    /// The claim's run its model door calls are admitted on.
+    meter: Option<Arc<SeatModelMeter>>,
     grants: Vec<EntityId>,
     taints: Vec<SecretTaintRef>,
     closed: bool,
@@ -262,12 +274,13 @@ impl fmt::Debug for SeatHelperRun {
 }
 
 /// What the model door resolves a reference to: the run's registration, the
-/// slot it names and the run's seat-child credential.
+/// slot it names, the run's seat-child credential and its claim's meter.
 #[derive(Clone)]
 pub struct SeatModelDoor {
     pub run: SeatHelperRun,
     pub slot: SeatModelSlot,
     pub credential: SeatChildCredential,
+    pub(crate) meter: Arc<SeatModelMeter>,
 }
 
 impl fmt::Debug for SeatModelDoor {
@@ -353,6 +366,7 @@ impl SeatHelperRun {
         state.closed = true;
         state.slots.clear();
         state.credential = None;
+        state.meter = None;
         HelperRunEnd {
             grants: std::mem::take(&mut state.grants),
             taints: std::mem::take(&mut state.taints),

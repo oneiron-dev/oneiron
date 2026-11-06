@@ -82,6 +82,8 @@ mod run_backend;
 mod runtime;
 // FIX 15702: a seat's model door, its key read at the custody door per call.
 mod seat_model;
+// FIX 15702 slice 3: each of its calls admitted and settled on the claim's run.
+mod seat_model_admission;
 mod served;
 mod siwc_responses;
 pub(crate) mod soniox;
@@ -124,7 +126,8 @@ pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
-pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, send_seat_model};
+pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, SeatModelRefusal, send_seat_model};
+pub(crate) use seat_model_admission::{SeatModelCall, SeatModelMeter};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,

@@ -22,6 +22,13 @@
 //! Every refusal before the send reads as unauthorized and names nothing.
 //! A relayed stream the broker cuts ends with a body error: what was relayed
 //! before the cut cannot be taken back.
+//!
+//! Each request is a paid call of the run's claim (slice 3): the claim's run
+//! admits it before the key is read, and it settles on what its reply
+//! reports as the reply goes back, or on its reservation. A refused
+//! admission sends nothing and reads as `budget_exhausted` (429),
+//! `admission_denied` (403) or `admission_unavailable` (503), naming no
+//! key, slot, provider, balance or reference.
 
 use std::sync::Arc;
 
@@ -33,11 +40,14 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use oneiron::claim::CallerLocality;
+use oneiron::llm::run_admission::RunDenied;
 use oneiron::{FatalLlmError, LlmError, RetryableLlmError};
 
 use super::caller_locality;
 use crate::error::{ApiError, EnvelopedApiError};
-use crate::models::{KeyDoor, SeatKeyDoor, SeatModelAnswer, send_seat_model};
+use crate::models::{
+    KeyDoor, SeatKeyDoor, SeatModelAnswer, SeatModelCall, SeatModelRefusal, send_seat_model,
+};
 use crate::runtime::{SEAT_MODEL_PATH, SEAT_MODEL_REFERENCE_PREFIX, SeatModelProtocol};
 use crate::server::SyncServer;
 
@@ -147,6 +157,7 @@ async fn model_door(
         beta,
         &bytes,
         &keys,
+        &door.meter,
     )
     .await;
     let mut response = match answered {
@@ -164,6 +175,7 @@ async fn model_door(
             status,
             event_stream,
             reply,
+            call,
         }) => {
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             // A success that is not an event stream is not relayed as one;
@@ -176,7 +188,7 @@ async fn model_door(
                 } else {
                     "application/json"
                 };
-                let mut response = Response::new(relayed(reply));
+                let mut response = Response::new(relayed(reply, call));
                 *response.status_mut() = status;
                 response
                     .headers_mut()
@@ -184,7 +196,8 @@ async fn model_door(
                 response
             }
         }
-        Err(error) => refused(&error),
+        Err(SeatModelRefusal::Llm(error)) => refused(&error),
+        Err(SeatModelRefusal::Denied(denied)) => admission_refused(&denied),
     };
     response
         .headers_mut()
@@ -193,22 +206,33 @@ async fn model_door(
 }
 
 /// The reply's body as the broker clears it, chunk by chunk, owning the
-/// broker's stream: a client that stops reading drops it, and the broker
-/// then drops the provider's call. A cut ends the body with an error, never
-/// as a clean end.
-fn relayed(reply: oneiron_broker::BrokerStream) -> Body {
-    let chunks = futures_util::stream::unfold(Some(reply), |reply| async move {
-        let mut reply = reply?;
+/// broker's stream and the call it settles: a client that stops reading
+/// drops both, so the broker drops the provider's call and the call settles
+/// on what had come back. Each chunk is read for the reply's usage as it
+/// goes back, unchanged. A cut ends the body with an error, never as a
+/// clean end.
+fn relayed(reply: oneiron_broker::BrokerStream, call: SeatModelCall) -> Body {
+    let chunks = futures_util::stream::unfold(Some((reply, call)), |state| async move {
+        let (mut reply, mut call) = state?;
         match reply.next().await {
-            Ok(oneiron_broker::StreamPart::Chunk(mut chunk)) => Some((
-                Ok(axum::body::Bytes::from(std::mem::take(&mut *chunk))),
-                Some(reply),
-            )),
-            Ok(oneiron_broker::StreamPart::End) => None,
-            Ok(oneiron_broker::StreamPart::Cut(_)) | Err(_) => Some((
-                Err(std::io::Error::other("the provider's stream was cut")),
-                None,
-            )),
+            Ok(oneiron_broker::StreamPart::Chunk(mut chunk)) => {
+                call.relayed(&chunk);
+                Some((
+                    Ok(axum::body::Bytes::from(std::mem::take(&mut *chunk))),
+                    Some((reply, call)),
+                ))
+            }
+            Ok(oneiron_broker::StreamPart::End) => {
+                call.end();
+                None
+            }
+            Ok(oneiron_broker::StreamPart::Cut(_)) | Err(_) => {
+                call.end();
+                Some((
+                    Err(std::io::Error::other("the provider's stream was cut")),
+                    None,
+                ))
+            }
         }
     });
     Body::from_stream(chunks)
@@ -235,6 +259,24 @@ fn presented_reference(headers: &HeaderMap) -> Option<zeroize::Zeroizing<String>
     reference
         .starts_with(SEAT_MODEL_REFERENCE_PREFIX)
         .then(|| zeroize::Zeroizing::new(reference.to_owned()))
+}
+
+/// A request the claim's run admission refused, before any key was read:
+/// a spent line or allocation, a refused admission, or one the host cannot
+/// make now. It names no key, slot, provider, balance or reference.
+fn admission_refused(denied: &RunDenied) -> Response {
+    let (status, code) = match denied {
+        RunDenied::Budget { .. }
+        | RunDenied::AllocationExhausted
+        | RunDenied::ResidentShareSpent { .. } => {
+            (StatusCode::TOO_MANY_REQUESTS, "budget_exhausted")
+        }
+        RunDenied::NoAllocation | RunDenied::AllocationRefused { .. } => {
+            (StatusCode::SERVICE_UNAVAILABLE, "admission_unavailable")
+        }
+        _ => (StatusCode::FORBIDDEN, "admission_denied"),
+    };
+    (status, Json(serde_json::json!({"error": {"code": code}}))).into_response()
 }
 
 /// A request the door or its broker refused, or one that got no answer:
