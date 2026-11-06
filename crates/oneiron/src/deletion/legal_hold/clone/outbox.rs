@@ -178,10 +178,11 @@ pub(super) struct ProspectiveAttempt {
 impl ProspectiveAttempt {
     fn wait_ended(&self) {
         let ended = self.ended.lock().unwrap_or_else(PoisonError::into_inner);
-        let _ = self
-            .ended_changed
-            .wait_while(ended, |ended| !*ended)
-            .unwrap_or_else(PoisonError::into_inner);
+        drop(
+            self.ended_changed
+                .wait_while(ended, |ended| !*ended)
+                .unwrap_or_else(PoisonError::into_inner),
+        );
     }
 }
 
