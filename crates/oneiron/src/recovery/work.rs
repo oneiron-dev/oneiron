@@ -19,7 +19,8 @@
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
 //! completion turn; pure snapshot equality resumes between rows, within native
-//! strings and byte payloads, and between nested EntityDoc history items.
+//! strings and byte payloads (including native SKILL witnesses), and between
+//! nested EntityDoc history items.
 //! EntityDoc metadata maps resume between owned entries and within their value
 //! bytes on the same work budget; each entry's native key lookup remains whole.
 //! The rebuild, forward replay and per-row checks run a page at a time, with

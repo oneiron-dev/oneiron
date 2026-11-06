@@ -39,6 +39,7 @@ enum PayloadPart {
     Third,
     Fourth,
     Fifth,
+    Sixth,
 }
 
 #[derive(Default)]
@@ -444,6 +445,7 @@ fn compare_entity_documents(
         document_id,
         field,
         text,
+        native_skill_state,
         metadata,
         summary_meta,
         record_fields,
@@ -459,6 +461,7 @@ fn compare_entity_documents(
         document_id: expected_document,
         field: expected_field,
         text: expected_text,
+        native_skill_state: expected_native_skill_state,
         metadata: expected_metadata,
         summary_meta: expected_summary_meta,
         record_fields: expected_record_fields,
@@ -485,14 +488,21 @@ fn compare_entity_documents(
         return Ok(false);
     }
     if *payload == PayloadPart::Third {
-        if metadata_state.advance(metadata, expected_metadata, remaining)? {
+        if compare_optional_bytes(native_skill_state, expected_native_skill_state, byte)? {
             *payload = PayloadPart::Fourth;
+            *byte = 0;
         }
         return Ok(false);
     }
     if *payload == PayloadPart::Fourth {
-        if metadata_state.advance(summary_meta, expected_summary_meta, remaining)? {
+        if metadata_state.advance(metadata, expected_metadata, remaining)? {
             *payload = PayloadPart::Fifth;
+        }
+        return Ok(false);
+    }
+    if *payload == PayloadPart::Fifth {
+        if metadata_state.advance(summary_meta, expected_summary_meta, remaining)? {
+            *payload = PayloadPart::Sixth;
         }
         return Ok(false);
     }
@@ -678,6 +688,21 @@ fn compare_head_receipts(
         *byte = 0;
     }
     Ok(false)
+}
+
+fn compare_optional_bytes(
+    actual: &Option<Vec<u8>>,
+    wanted: &Option<Vec<u8>>,
+    next: &mut usize,
+) -> Result<bool> {
+    match (actual, wanted) {
+        (Some(actual), Some(wanted)) => compare_bytes(actual, wanted, next),
+        (None, None) => Ok(true),
+        _ => {
+            compare_value(&actual.is_some(), &wanted.is_some())?;
+            Ok(false)
+        }
+    }
 }
 
 fn compare_optional_text(
