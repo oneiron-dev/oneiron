@@ -47,8 +47,12 @@ resource port. Each native batch also reserves its local workbook-change vector
 before allocation and admits its actual capacity before filling it. The copied
 sheet names and text or error values use that same batch-local hold, which stays
 alive until those changes are freed after workbook projection. Validation
-scratch, native workbook parsing and projection output, applied-operation
-manifest copies, and transient allocator surplus remain outside this admission.
+compares choice text through the same borrowed answer-to-cell projection used
+by the owned converter, instead of cloning a temporary cell string just to
+compare it. Abstentions, value kinds and native numeric equality stay unchanged.
+Validation sets and other scratch, native workbook parsing and projection
+output, applied-operation manifest copies, and transient allocator surplus
+remain outside this admission.
 
 The facade rechecks the original read rows through the current credential
 before continuing or restaging and before returning or retaining results.

@@ -6,7 +6,8 @@
 //! copy and carries their receipts through Keep.
 
 use super::artifact_question::{
-    ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, answer_cell, cell_text,
+    ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, answer_cell, answer_cell_matches,
+    cell_text,
 };
 use super::judgment_cells::{named_sheet_cells, verify_sheet_answer_bytes};
 use super::{
@@ -133,7 +134,7 @@ impl SheetAnswerBundle {
                     &answer.decision,
                 )
                 .is_err()
-                || answer_cell(&answer.decision.answer).ok().as_ref() != Some(&answer.value)
+                || answer_cell_matches(&answer.decision.answer, &answer.value).ok() != Some(true)
                 || answer.source.as_ref().is_some_and(|source| {
                     !answer.decision.receipt.evidence_versions.contains(source)
                 })

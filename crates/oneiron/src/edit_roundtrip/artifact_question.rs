@@ -339,17 +339,46 @@ pub struct ArtifactAskRun {
     pub read_rows: Vec<EntityId>,
 }
 
-/// The cell a decided answer writes: a yes/no as a boolean, a pick as its
-/// text, a score as its number. An abstention writes none.
-pub(crate) fn answer_cell(answer: &DecisionAnswer) -> Result<Option<CellValue>> {
+enum AnswerCellRef<'a> {
+    Bool(bool),
+    Text(&'a str),
+    Number(f64),
+}
+
+fn answer_cell_ref(answer: &DecisionAnswer) -> Result<Option<AnswerCellRef<'_>>> {
     Ok(match answer {
         DecisionAnswer::Abstain => None,
-        DecisionAnswer::Noul(value) => Some(CellValue::Bool(*value)),
-        DecisionAnswer::Choice(value) => Some(CellValue::Text(value.clone())),
-        DecisionAnswer::Score(value) => Some(CellValue::Number(*value)),
+        DecisionAnswer::Noul(value) => Some(AnswerCellRef::Bool(*value)),
+        DecisionAnswer::Choice(value) => Some(AnswerCellRef::Text(value)),
+        DecisionAnswer::Score(value) => Some(AnswerCellRef::Number(*value)),
         DecisionAnswer::Box(_) | DecisionAnswer::Point(_) => {
             return Err(invalid("a cell does not hold a box or point answer"));
         }
+    })
+}
+
+/// The cell a decided answer writes: a yes/no as a boolean, a pick as its
+/// text, a score as its number. An abstention writes none.
+pub(crate) fn answer_cell(answer: &DecisionAnswer) -> Result<Option<CellValue>> {
+    Ok(answer_cell_ref(answer)?.map(|value| match value {
+        AnswerCellRef::Bool(value) => CellValue::Bool(value),
+        AnswerCellRef::Text(value) => CellValue::Text(value.to_owned()),
+        AnswerCellRef::Number(value) => CellValue::Number(value),
+    }))
+}
+
+pub(super) fn answer_cell_matches(
+    answer: &DecisionAnswer,
+    value: &Option<CellValue>,
+) -> Result<bool> {
+    Ok(match (answer_cell_ref(answer)?, value) {
+        (None, None) => true,
+        (Some(AnswerCellRef::Bool(answer)), Some(CellValue::Bool(value))) => answer == *value,
+        (Some(AnswerCellRef::Text(answer)), Some(CellValue::Text(value))) => {
+            answer == value.as_str()
+        }
+        (Some(AnswerCellRef::Number(answer)), Some(CellValue::Number(value))) => answer == *value,
+        _ => false,
     })
 }
 
