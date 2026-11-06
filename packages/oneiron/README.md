@@ -15,7 +15,7 @@ Node 20 or newer. The package ships prebuilt native artifacts for macOS
 SDKs, embedded `Oneiron.open()` is currently supported only on Unix
 (macOS/Linux). On other targets, including Windows, use `Oneiron.connect()`
 to reach a server on a supported host; embedded open fails closed because
-writer locking is unsupported.
+writer locking is unsupported. One verb is narrower: `putCodebaseSnapshot` refuses SharedArrayBuffer-backed inputs on Node runtimes below 22.21 (22.x) / 24.9 (24+), which cannot measure the shared backing.
 
 ## Quickstart
 
@@ -429,9 +429,12 @@ history, or receipts. Keep the true source and use a separate key for generated
 output. Only a genuine new user statement may be submitted as `user_stated`.
 Never relabel model output or delete then put to bypass the protection.
 
-Erased shells and malformed rows are not live heads. Reads skip them and never
-fall back to superseded values. Unrelated keys remain usable. Replaying a
-request against an erased/malformed revision refuses instead of restoring it.
+Erased shells and malformed rows are not live heads. Nor is a value the
+canonical claim read withholds: deleted, archived or withdrawn words, a stale
+value, or a value whose recorded source was deleted or is being withdrawn.
+Reads skip them and never fall back to superseded values; a put at that key
+writes a fresh head. Unrelated keys remain usable. Replaying a request against
+an erased/malformed revision refuses instead of restoring it.
 
 Delete retracts the caller's current claim and returns `existed` plus receipt
 refs. It is idempotent while absent and retains history. It is not an owner

@@ -53,6 +53,14 @@ impl Vault {
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         let pending = self.pending_dreamer_vad_approval_in_txn(&wtxn, id, body.approval)?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
+        if body.predicate == crate::calendar::claims::PREDICATE_CALENDAR_PASSPORT {
+            crate::calendar::settle_generic_calendar_claim_in_txn(
+                self,
+                &mut wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
+        }
         let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
         // The approval's commit carries its consolidation debt (FIX 9598).
         if !approved.is_empty() {
@@ -349,31 +357,7 @@ impl Vault {
         landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            // The batch door's pairing: an overwrite drops the prospective
-            // query hints the prior claim carried (H83).
-            vec![
-                BatchOp::ClaimCandidate {
-                    id: *id,
-                    candidate: Box::new(candidate),
-                    envelope: envelope.clone(),
-                    occurred,
-                    learned_at,
-                    internal_lexical_query_hint: false,
-                },
-                BatchOp::ReconcileLexicalQueryHints {
-                    source: *id,
-                    keep: Vec::new(),
-                },
-            ],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
-        )?;
+        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();

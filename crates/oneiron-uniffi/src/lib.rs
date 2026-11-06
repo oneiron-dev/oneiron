@@ -283,7 +283,7 @@ impl Oneiron {
         let request: oneiron_remote::LensFrameEventRequest =
             codec::lower_record("lens_frame_event", request)?;
         let reply = self.inner.lens_frame_event(&card_id, &request)?;
-        codec::lift_record("lens_frame_event", &reply)
+        codec::Lift::lift(reply)
     }
 
     /// Closes a lens card the connected server rendered and frees its frame

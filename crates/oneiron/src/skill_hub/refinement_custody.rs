@@ -237,22 +237,24 @@ impl Vault {
 /// A replayed soft tombstone can arrive before a carrier or even its holder.
 /// Close the holder id so delayed ASSET replay cannot reintroduce payload.
 pub(crate) fn retire_refinement_holder_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     candidate: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     RETIRED_HOLDER.put(store, txn, candidate, &())?;
-    erase_refinement_custody_in_txn(store, txn, candidate)?;
+    erase_refinement_custody_in_txn(write, txn, candidate)?;
     Ok(())
 }
 
 /// Erase at most 128 carrier ids per iteration. Removing the OWNED key makes
 /// the next prefix cursor start at new work; no total-history delete ceiling.
 pub(crate) fn erase_refinement_custody_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     candidate: &EntityId,
 ) -> Result<bool> {
+    let store = write.store;
     let had_payload = refinement_custody_exists_in_txn(store, txn, candidate)?;
     if !had_payload {
         return Ok(false);
@@ -273,7 +275,7 @@ pub(crate) fn erase_refinement_custody_in_txn(
                 return Err(Error::CorruptedIndex("refinement owned source binding"));
             }
             if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
-                let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &id)?;
+                let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, &id)?;
                 crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
                 if graph {
                     crate::ppr::increment_graph_version(store, txn)?;

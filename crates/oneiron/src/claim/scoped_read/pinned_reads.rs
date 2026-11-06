@@ -14,7 +14,6 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::new();
-        let mut suppressed = 0;
         // One relationship authority for every pinned row (FIX 11648).
         let held = HeldAuthority::default();
         crate::claim::projection_index::for_each_pinned_claim_id_in_txn(
@@ -36,8 +35,8 @@ impl ScopedRead<'_> {
                 if !policy.pins_predicate(&body.predicate) {
                     return Ok(());
                 }
+                // No requested filter: a pin this key denies stays opaque.
                 if !self.is_entity_retrievable_held_in(&txn, &policy, &filter, &id, &held)? {
-                    suppressed += 1;
                     return Ok(());
                 }
                 let Some((short_id, hash)) = self.vault.store.port_short_id_reference(&txn, &id)?
@@ -50,7 +49,7 @@ impl ScopedRead<'_> {
         )?;
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(None, &policy, &filter, suppressed),
+            receipt: self.receipt_for(None, &policy, &filter, 0),
         })
     }
 }

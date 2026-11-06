@@ -193,6 +193,26 @@ pub struct BoardSection {
     policy: SectionPolicy,
     discovery_rows: Vec<String>,
     foreign_host: Option<String>,
+    /// The key an agent's board layout names this section by (BOARD-LAYOUT).
+    layout_key: String,
+    /// The typed id behind each detail row, where the producer knows one;
+    /// empty when it knows none. A fold keeps rows open by these ids only,
+    /// never by parsing a rendered line.
+    row_ids: Vec<Option<crate::EntityId>>,
+    /// The section's live state as a fold renders it, built by its producer
+    /// from typed state every render.
+    fold_summary: Option<super::layout::FoldSummary>,
+    /// Set on a folded section: the one line its name line carries.
+    fold_line: Option<String>,
+    /// Set when a layout narrowed the full view: the ids of the detail rows
+    /// it still shows. `None` shows every detail row of the full view.
+    shown_ids: Option<Vec<crate::EntityId>>,
+    /// The rows a fold keeps open in the pinned floor, by id: shown in
+    /// every view.
+    kept_ids: Vec<crate::EntityId>,
+    /// The detail rows a hook block pins, by typed id (OF-579): no fold or
+    /// share takes them off the board.
+    hook_pinned_ids: Vec<crate::EntityId>,
 }
 
 impl BoardSection {
@@ -239,6 +259,7 @@ impl BoardSection {
             }
         }
 
+        let layout_key = super::layout::section_layout_key(&name);
         Ok(Self {
             name,
             pinned_rows,
@@ -247,7 +268,259 @@ impl BoardSection {
             policy,
             discovery_rows: Vec::new(),
             foreign_host: None,
+            layout_key,
+            row_ids: Vec::new(),
+            fold_summary: None,
+            fold_line: None,
+            shown_ids: None,
+            kept_ids: Vec::new(),
+            hook_pinned_ids: Vec::new(),
         })
+    }
+
+    /// The section with the detail rows a hook block pins, by typed id: a
+    /// layout never folds or fits them away (OF-579).
+    #[must_use]
+    pub fn with_hook_pinned_ids(mut self, ids: Vec<crate::EntityId>) -> Self {
+        self.hook_pinned_ids = ids;
+        self
+    }
+
+    /// The section's name line as the frame renders it: its name, and on a
+    /// folded section its fold line after it.
+    pub fn header_line(&self) -> String {
+        match &self.fold_line {
+            Some(line) => format!("{} {line}", self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    /// Whether the section renders folded to its one line.
+    pub fn is_folded(&self) -> bool {
+        self.fold_line.is_some()
+    }
+
+    /// The key an agent's board layout names this section by: the first
+    /// word of its engine-owned name, lower case (`MEMORIES world=…` is
+    /// `memories`), so every world's MEMORIES section shares one layout.
+    pub fn layout_key(&self) -> &str {
+        &self.layout_key
+    }
+
+    /// The section with the typed id behind each detail row. A list whose
+    /// length differs from the detail rows names no row.
+    #[must_use]
+    pub fn with_row_ids(mut self, ids: Vec<Option<crate::EntityId>>) -> Self {
+        self.row_ids = if ids.len() == self.detail_rows.len() {
+            ids
+        } else {
+            Vec::new()
+        };
+        self
+    }
+
+    /// The section with its live fold summary, built from typed state.
+    #[must_use]
+    pub fn with_fold_summary(mut self, summary: super::layout::FoldSummary) -> Self {
+        self.fold_summary = Some(summary);
+        self
+    }
+
+    /// The live fold summary its producer built, if any.
+    pub fn fold_summary(&self) -> Option<&super::layout::FoldSummary> {
+        self.fold_summary.as_ref()
+    }
+
+    /// The section folded to one line: its name line carries `line`, and
+    /// under it stay its pinned floor (PINNED never folds) and the detail
+    /// rows whose typed id `keep` names, in their own order. The folded
+    /// section keeps its name, policy and host. It has no detail or count
+    /// view left to shed, so the shed ladder never grows it back.
+    pub(super) fn folded(&self, line: String, keep: &[crate::EntityId]) -> Self {
+        let base = self.with_rows_held(keep);
+        let pinned_rows = base.pinned_rows;
+        let kept_ids = base.kept_ids;
+        let room = MAX_BOARD_ROW_BYTES.saturating_sub(self.name.len() + 1);
+        let line = if line.len() > room {
+            one_line_prefix(&line, room)
+        } else {
+            line
+        };
+        Self {
+            name: self.name.clone(),
+            pinned_rows,
+            detail_rows: Vec::new(),
+            count_rows: Vec::new(),
+            policy: self.policy,
+            discovery_rows: Vec::new(),
+            foreign_host: self.foreign_host.clone(),
+            layout_key: self.layout_key.clone(),
+            row_ids: Vec::new(),
+            fold_summary: self.fold_summary.clone(),
+            fold_line: Some(line),
+            shown_ids: Some(kept_ids.clone()),
+            kept_ids,
+            hook_pinned_ids: self.hook_pinned_ids.clone(),
+        }
+    }
+
+    /// Tokens this section's full view costs as the frame renders it: its
+    /// name line, pinned floor, detail rows and discovery hints, each
+    /// escaped and newline-joined.
+    pub(super) fn full_view_tok(&self) -> usize {
+        section_tok(
+            &self.header_line(),
+            self.pinned_rows
+                .iter()
+                .chain(&self.detail_rows)
+                .chain(&self.discovery_rows),
+        )
+    }
+
+    /// The section fitted to `share_tok`: unchanged when its full view fits;
+    /// otherwise its discovery hints go first, then trailing detail rows,
+    /// which an additive `+N more` row counts. The pinned floor always
+    /// stays. When no detail row fits beside the `+N more` row, the section
+    /// shows its count fallback.
+    pub(super) fn fitted(&self, share_tok: usize) -> Self {
+        if self.full_view_tok() <= share_tok {
+            return self.clone();
+        }
+        let mut fitted = self.with_rows_held(&[]);
+        fitted.discovery_rows.clear();
+        if fitted.full_view_tok() <= share_tok {
+            return fitted;
+        }
+        let base = fitted.clone();
+        let total = base.detail_rows.len();
+        let candidate = |shown: usize| -> Vec<String> {
+            let mut rows = base.detail_rows[..shown].to_vec();
+            if shown < total {
+                rows.push(format!("+{} more", total - shown));
+            }
+            rows
+        };
+        let cost = |shown: usize| {
+            section_tok(&base.name, base.pinned_rows.iter().chain(&candidate(shown)))
+        };
+        let (mut low, mut high) = (0, total);
+        while low < high {
+            let mid = low + (high - low).div_ceil(2);
+            if cost(mid) <= share_tok {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        // One typed row may render as several physical rows (a long
+        // snippet): the cut never splits it, so a row is shown whole or not.
+        while low > 0
+            && low < total
+            && base.row_ids.get(low).copied().flatten().is_some()
+            && base.row_ids.get(low) == base.row_ids.get(low - 1)
+        {
+            low -= 1;
+        }
+        let known = !base.row_ids.is_empty();
+        let held = base.kept_ids.clone();
+        // Without row ids the cut names no shown row: the shown ids stay as
+        // they were (`None`, or the rows a filter narrowed to).
+        let held_only = || {
+            if known {
+                Some(held.clone())
+            } else {
+                base.shown_ids.clone()
+            }
+        };
+        if low == 0 {
+            fitted.detail_rows = base.count_rows.clone();
+            fitted.row_ids = Vec::new();
+            fitted.shown_ids = held_only();
+            return fitted;
+        }
+        fitted.detail_rows = candidate(low);
+        fitted.row_ids = if known {
+            let mut ids = base.row_ids[..low].to_vec();
+            if low < total {
+                ids.push(None);
+            }
+            ids
+        } else {
+            Vec::new()
+        };
+        fitted.shown_ids = if known {
+            let mut shown = held.clone();
+            shown.extend(fitted.row_ids.iter().flatten().copied());
+            Some(shown)
+        } else {
+            base.shown_ids.clone()
+        };
+        if rows_tok(&fitted.count_rows) > rows_tok(&fitted.detail_rows) {
+            fitted.detail_rows = fitted.count_rows.clone();
+            fitted.row_ids = Vec::new();
+            fitted.shown_ids = held_only();
+        }
+        fitted
+    }
+
+    /// The section narrowed to the detail rows whose typed id `keep` accepts
+    /// (a layout's `who` filter, BOARD-LAYOUT add-on 2). Its pinned floor and
+    /// the rows a hook block pins always stay. A row with no typed id names
+    /// no writer, so no filter keeps it. When no detail row stays, the
+    /// section shows its count fallback, so a filter never takes it off the
+    /// board. A section whose producer named no row ids is unchanged.
+    #[must_use]
+    pub fn narrowed(&self, keep: impl Fn(crate::EntityId) -> bool) -> Self {
+        if self.row_ids.is_empty() || self.detail_rows.is_empty() {
+            return self.clone();
+        }
+        let mut narrowed = self.clone();
+        narrowed.detail_rows.clear();
+        narrowed.row_ids.clear();
+        for (row, id) in self.detail_rows.iter().zip(self.row_ids.iter().copied()) {
+            if id.is_some_and(|id| self.hook_pinned_ids.contains(&id) || keep(id)) {
+                narrowed.detail_rows.push(row.clone());
+                narrowed.row_ids.push(id);
+            }
+        }
+        let mut shown = self.kept_ids.clone();
+        for id in narrowed.row_ids.iter().flatten() {
+            if !shown.contains(id) {
+                shown.push(*id);
+            }
+        }
+        if narrowed.detail_rows.is_empty() {
+            narrowed.detail_rows = self.count_rows.clone();
+        }
+        narrowed.shown_ids = Some(shown);
+        narrowed
+    }
+
+    /// The section with the detail rows a layout must keep shown moved into
+    /// its pinned floor, in their own order: every row a hook block pins,
+    /// and the rows `keep` names. Their ids join `kept_ids`.
+    fn with_rows_held(&self, keep: &[crate::EntityId]) -> Self {
+        let mut held = self.clone();
+        if self.row_ids.is_empty() || (keep.is_empty() && self.hook_pinned_ids.is_empty()) {
+            return held;
+        }
+        held.detail_rows.clear();
+        held.row_ids.clear();
+        for (row, id) in self.detail_rows.iter().zip(&self.row_ids) {
+            match id.filter(|id| keep.contains(id) || self.hook_pinned_ids.contains(id)) {
+                Some(id) => {
+                    held.pinned_rows.push(row.clone());
+                    if !held.kept_ids.contains(&id) {
+                        held.kept_ids.push(id);
+                    }
+                }
+                None => {
+                    held.detail_rows.push(row.clone());
+                    held.row_ids.push(*id);
+                }
+            }
+        }
+        held
     }
 
     /// Foreign-vault sections render outside the authoritative memory wrapper.
@@ -305,15 +578,25 @@ pub fn assemble_tasks_section(
     tasks: &TasksSection,
     lead: Vec<String>,
 ) -> Result<BoardSection, BoardFrameError> {
+    let mut ids: Vec<Option<crate::EntityId>> = vec![None; lead.len()];
     let mut detail = lead;
     detail.extend(tasks.rows.iter().map(|row| row.line.clone()));
-    detail.extend(tasks.overflow.and_then(|overflow| overflow.line()));
+    ids.extend(
+        tasks
+            .rows
+            .iter()
+            .map(|row| crate::EntityId::from_hex(&row.id).ok()),
+    );
+    if let Some(line) = tasks.overflow.and_then(|overflow| overflow.line()) {
+        detail.push(line);
+        ids.push(None);
+    }
     let count = vec![format!("count: {}", tasks.rows.len())];
     let fits: Vec<String> = tasks.rows.iter().filter_map(fits_row).collect();
-    let (detail, fits) = if detail.iter().any(|row| row.len() > MAX_BOARD_ROW_BYTES) {
-        (count.clone(), Vec::new())
+    let (detail, fits, ids) = if detail.iter().any(|row| row.len() > MAX_BOARD_ROW_BYTES) {
+        (count.clone(), Vec::new(), Vec::new())
     } else {
-        (detail, fits)
+        (detail, fits, ids)
     };
     Ok(BoardSection::new(
         "TASKS",
@@ -325,6 +608,7 @@ pub fn assemble_tasks_section(
             shed_rank: Some(ShedRank::TasksToCounts),
         },
     )?
+    .with_row_ids(ids)
     .with_discovery_rows(fits))
 }
 
@@ -356,6 +640,10 @@ pub struct ShedSection {
     pub name: String,
     pub rows: Vec<String>,
     pub view: SectionView,
+    /// Set when the actor's board layout narrowed what the section shows:
+    /// the ids of the detail rows it still shows in this view. `None`
+    /// shows every detail row of a full view, and none of a count view.
+    pub shown_ids: Option<Vec<crate::EntityId>>,
 }
 
 impl ShedSection {
@@ -370,10 +658,15 @@ impl ShedSection {
         if view == SectionView::Full {
             rows.extend(section.discovery_rows.iter().cloned());
         }
+        let shown_ids = match view {
+            SectionView::Full => section.shown_ids.clone(),
+            SectionView::Counts => (!section.kept_ids.is_empty()).then(|| section.kept_ids.clone()),
+        };
         Self {
             name: section.name.clone(),
             rows,
             view,
+            shown_ids,
         }
     }
 }
@@ -563,7 +856,7 @@ fn render_candidate(
         if original.foreign_host.is_some() {
             continue;
         }
-        lines.push(xml_text_token(&section.name));
+        lines.push(xml_text_token(&original.header_line()));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
     }
     lines.push("</memory>".to_owned());
@@ -575,7 +868,7 @@ fn render_candidate(
             "<evidence role=\"guest\" host=\"{}\" consolidatable=\"false\">",
             xml_attr_token(host)
         ));
-        lines.push(xml_text_token(&section.name));
+        lines.push(xml_text_token(&original.header_line()));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
         lines.push("</evidence>".to_owned());
     }
@@ -732,7 +1025,7 @@ fn part_lines(
         if original.foreign_host.is_some() {
             continue;
         }
-        lines.push(xml_text_token(&section.name));
+        lines.push(xml_text_token(&original.header_line()));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
     }
     lines.push("</memory>".to_owned());
@@ -744,7 +1037,7 @@ fn part_lines(
             "<evidence role=\"guest\" host=\"{}\" consolidatable=\"false\">",
             xml_attr_token(host)
         ));
-        lines.push(xml_text_token(&section.name));
+        lines.push(xml_text_token(&original.header_line()));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
         lines.push("</evidence>".to_owned());
     }
@@ -752,6 +1045,24 @@ fn part_lines(
 
 fn rows_tok(rows: &[String]) -> usize {
     count_context_pack_tokens(&rows.join("\n"))
+}
+
+/// Tokens of one section as the frame renders it: its escaped name line and
+/// each escaped row, newline-joined.
+fn section_tok(name: &str, rows: impl Iterator<Item = impl AsRef<str>>) -> usize {
+    let mut lines = vec![xml_text_token(name)];
+    lines.extend(rows.map(|row| xml_text_token(row.as_ref())));
+    count_context_pack_tokens(&lines.join("\n"))
+}
+
+/// The longest prefix of `line` that fits `max_bytes` with an ellipsis,
+/// cut at a character boundary.
+fn one_line_prefix(line: &str, max_bytes: usize) -> String {
+    let mut end = max_bytes.saturating_sub('…'.len_utf8()).min(line.len());
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &line[..end])
 }
 
 /// Which delimiters a leaf position must escape.

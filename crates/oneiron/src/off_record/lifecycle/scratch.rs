@@ -179,6 +179,7 @@ impl PreparedScratchSave {
                             end: header.occurred_end,
                         },
                         learned_at: header.learned_at,
+                        row_version: Some(header.row_version),
                         data: body,
                         allow_maintenance: false,
                         allow_reserved_predicate: false,
