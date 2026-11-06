@@ -764,20 +764,7 @@ fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
     });
 }
 
-/// Reason the steady-state loop exited.
-enum LoopExit {
-    /// Clean shutdown requested.
-    Shutdown,
-    /// WebSocket disconnected (with error description).
-    Disconnected(String),
-    /// The server closed the socket with a close frame, read by its code
-    /// (FIX 5927): a server fault takes the retry path, a refusal is
-    /// reported as one.
-    Closed(server_close::ServerClose),
-    /// The residence mode changed (FIX 8869): what was buffered is queued,
-    /// and the next connect sends the new mode's hello.
-    Renegotiate,
-}
+use self::session::LoopExit;
 
 #[cfg(test)]
 mod tests;
