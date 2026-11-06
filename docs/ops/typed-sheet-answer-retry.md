@@ -1,53 +1,71 @@
-# Completed typed-sheet answer retry
+# Typed-sheet answer retry
 
-`vault.artifacts.ask` and `vault.artifacts.admit` preserve a completed sheet-row
-or folder-item answer bundle before the native workbook writer stages it.
-The stored row includes the original question, principal, reversibility,
-evidence and selected units, every decision and receipt, the workbook version
-and content hash, the read rows, and the abstentions and refusals.
+`vault.artifacts.ask` and `vault.artifacts.admit` preserve sheet-row and
+folder-item progress after each completed unit, before the next paid call.
+They use the same content row that retains the complete answer bundle before
+the native workbook writer stages it. The stored row includes the original
+question, principal, reversibility, evidence and selected units, every committed
+decision and receipt, the workbook version and content hash, the read rows,
+and the abstentions and refusals.
 
-If staging fails, repeat the ask with the same artifact, run reference and
-request. The engine restages the stored bundle without calling the unit decider
-again. The retry uses the new caller deadline and resolves the current write
-batch policy. It does not change the original decisions, source pins or base.
-A moved workbook still fails the existing current-source check; the engine does
-not silently apply old answers to a new source. Use a new run reference for a
-new question or selection. A mismatched request leaves the original row intact.
+Repeat an interrupted ask with the same artifact, run reference and request.
+The engine continues after the committed prefix without calling the unit
+decider for those units again. Sheet inputs, headers and answer-cell before
+values are captured before the first paid call. A retry uses those original
+inputs with their original version, content hash and live pin, not a new live
+head relabelled with an old pin. Folder output cells use the original workbook
+basis. Remaining files are read as the original loop reads each file; completed
+files keep their own source, version and live pins. Their later edits remain
+subject to the existing withdrawal-at-Keep rules, not a new resume gate.
+
+If staging fails after all units complete, the retry restages the stored bundle
+without calling any unit decider again. The retry uses the new caller deadline
+and resolves the current write batch policy. It does not change the original
+decisions, source pins or base. A moved workbook still fails the existing
+current-source check; the engine does not silently apply old answers to a new
+source. Use a new run reference for a new question or selection. A mismatched
+request leaves the original row intact.
 
 The facade rechecks the original read rows through the current credential
-before restaging and before returning or retaining results. Folder files are
-still filtered through that credential. Answers based on stored secret spans
-cannot be resumed by a caller now seeing only masked spans. A stored visibility
-flag is not a grant or read receipt. Direct Vault callers remain responsible
-for the read authority they supply, including `SecretSight::Granted`.
+before continuing or restaging and before returning or retaining results.
+Folder files are still filtered through that credential. Answers based on
+stored secret spans cannot be resumed by a caller now seeing only masked spans.
+A continuation that reads stored spans records that visibility too. A stored
+visibility flag is not a grant or read receipt. Direct Vault callers remain
+responsible for the read authority they supply, including `SecretSight::Granted`.
 
-A successful proposal retention atomically deletes the completed-answer row.
+A successful proposal retention atomically deletes the answer-progress row.
 The existing held proposal and its Keep, Discard, current-source, withdrawal,
 made-by and consume-once checks remain. An existing held proposal or settlement
 is detected before deciding again. Direct native settlement also deletes the
-same-key completed-answer row in its ledger transaction.
+same-key answer-progress row in its ledger transaction.
 
 Completed runs with no proposal remain reusable, including their abstentions
-and refusals. A stale or unwanted completed-answer row can be released with
+and refusals. A stale or unwanted partial or completed row can be released with
 `vault.artifacts.release_answers`: use `ProposalSettleRequest`, put the original
 run reference in `proposal_ref`, and supply the same consent as Discard. The
-response is `released: true` only if a completed-answer row was deleted. This
+response is `released: true` only if an answer-progress row was deleted. This
 does not discard a held proposal, fabricate an edit or settlement receipt, or
 consume the run reference. The caller may deliberately ask again after release.
-There is no automatic expiry or new count cap. Artifact deletion purges these
-rows; checkpoints restore them as content. They are not part of the archive's
-consume-once settlement-ledger export.
+A fresh row has a new generation id: an old in-flight unit cannot append its
+answer to that later ask. There is no automatic expiry or new count cap.
+Artifact deletion purges these rows; checkpoints restore them as content.
+They are not part of the archive's consume-once settlement-ledger export.
 
 ## Remaining FIX 9815 work
 
-This covers a complete decision loop followed by a staging or retention error.
-An error before the loop completes can still lose unfinished run state. A
-failure to commit the completed-answer row itself is not durable recovery.
-Concurrent first requests are not single-flight: they can both call the decider;
-the first completed row committed under the ref wins and is never overwritten.
-A staging clone while the durable original remains is not full-heap admission.
-No runtime, hard-time or full FIX 9815 completion claim is made here.
+A unit that fails before its outcome commits can still be called again. This
+includes failure in the decider, answer conversion or the progress commit
+itself; earlier committed units remain intact. Concurrent callers are not
+single-flight and may both call the next unit. The first prepared basis wins;
+a continuation commits only if the stored row still equals the exact prefix
+it read, including original inputs, decisions, receipts, pins, visibility and
+generation. A losing writer adopts the canonical row instead of overwriting it.
+The first complete row is never extended or overwritten.
 
-Normal engine rebuild only. This adds one content side table and one additive
-release verb. There is no migration, compatibility reader, new operational
-numeric constant, default cap, timer or configuration key.
+Progress writes and local prefix clones are not full-heap admission. No runtime,
+hard-time or full FIX 9815 completion claim is made here.
+
+Normal engine rebuild only. The same content side table and additive release
+verb cover both partial and complete rows. There is no migration, compatibility
+reader, new operational numeric constant, default cap, timer or configuration key.

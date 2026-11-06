@@ -10,7 +10,10 @@ use super::artifact_question::{
 use super::judgment::{SheetAnswerBundle, SheetCellAnswer};
 use super::judgment_cells::named_sheet_cells;
 use super::{CellRef, CellValue, OfficeFormat, RangeRef};
-use crate::edit_settle::{DecidedSheetAnswers, DecidedSheetRequest, DecidedSheetShape};
+use crate::edit_settle::{
+    DecidedSheetAnswers, DecidedSheetInputs, DecidedSheetProgress, DecidedSheetRequest,
+    DecidedSheetShape,
+};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionImage, EvidenceVersion, MAX_DECISION_IMAGE_BYTES};
 use crate::llm::image::ImageBytes;
@@ -85,24 +88,87 @@ impl Vault {
             },
         );
         let unmasked = request.sight != crate::secret_custody::SecretSight::Masked;
-        if let Some(row) = self.decided_sheet_answers(output, &identity, unmasked)? {
+        let mut row = if let Some(row) = self.decided_sheet_answers(output, &identity, unmasked)? {
+            row
+        } else {
+            let base_live = self.office_body_pin(output)?;
+            let (version, bytes, read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
+            let frontier = *blake3::hash(&bytes).as_bytes();
+            let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
+                cell.col == answer_col && rows.contains(&cell.row)
+            })?;
+            let before = request
+                .items
+                .iter()
+                .map(|item| {
+                    cells
+                        .get(&CellRef {
+                            col: answer_col,
+                            row: item.row,
+                        })
+                        .cloned()
+                        .unwrap_or(CellValue::Blank)
+                })
+                .collect();
+            self.retain_decided_sheet_answers(
+                output,
+                DecidedSheetAnswers {
+                    request: identity,
+                    generation: EntityId::now(),
+                    bundle: SheetAnswerBundle {
+                        question: ask.question.clone(),
+                        principal: ask.principal,
+                        sheet: request.sheet.to_owned(),
+                        range: RangeRef {
+                            start: CellRef {
+                                col: answer_col,
+                                row: first,
+                            },
+                            end: CellRef {
+                                col: answer_col,
+                                row: last,
+                            },
+                        },
+                        answers: Vec::new(),
+                        max_count_override: request.max_count_override,
+                        reads: None,
+                        base_live,
+                    },
+                    version,
+                    frontier,
+                    read_rows,
+                    abstained: Vec::new(),
+                    refused: Vec::new(),
+                    progress: Some(DecidedSheetProgress {
+                        next: 0,
+                        inputs: DecidedSheetInputs::FolderItems { before },
+                    }),
+                    unmasked,
+                },
+            )?
+        };
+        if row.progress.is_none() {
             return self.stage_decided_sheet_answers(output, &row, ask.deadline);
         }
-        let base_live = self.office_body_pin(output)?;
-        let (version, bytes, mut read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
-        let frontier = *blake3::hash(&bytes).as_bytes();
-        let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
-            cell.col == answer_col && rows.contains(&cell.row)
-        })?;
         let package_limits = self.docedit_package_limits()?;
         let archive_limits = {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(ask.principal))?
         };
-        let mut answers = Vec::new();
-        let mut abstained = Vec::new();
-        let mut refused = Vec::new();
-        for item in request.items {
+        while let Some(progress) = &row.progress {
+            let DecidedSheetInputs::FolderItems { before } = &progress.inputs else {
+                return Err(invalid("folder ask has different stored inputs"));
+            };
+            let expected = row.clone();
+            let Some(item) = request.items.get(progress.next) else {
+                row.progress = None;
+                row = self.advance_decided_sheet_answers(output, &expected, row)?;
+                continue;
+            };
+            let before = before
+                .get(progress.next)
+                .cloned()
+                .ok_or_else(|| invalid("folder ask has missing stored inputs"))?;
             let target = CellRef {
                 col: answer_col,
                 row: item.row,
@@ -112,135 +178,115 @@ impl Vault {
                 "row": item.row,
                 "cell": target.to_a1(),
             });
-            let before = cells.get(&target).cloned().unwrap_or(CellValue::Blank);
-            if matches!(before, CellValue::Formula { .. }) {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "answer_cell_formula".into(),
-                    judged_live: None,
+            // A completed unit commits below, including no-call outcomes.
+            // Errors in this unit leave every earlier committed unit intact.
+            (|| -> Result<()> {
+                if matches!(before, CellValue::Formula { .. }) {
+                    row.refused.push(UnitRefusal {
+                        unit,
+                        reason: "answer_cell_formula".into(),
+                        judged_live: None,
+                    });
+                    return Ok(());
+                }
+                // Read only the next file now. Completed files keep their own
+                // pins and the existing withdrawal-at-Keep behavior.
+                let live = self.live_head_text(&item.artifact, request.sight)?;
+                let judged_live = live.as_ref().map(|(pin, _)| pin.clone());
+                let (Some(head), Some(body)) = (
+                    self.blob_artifact_head(&item.artifact)?,
+                    self.get_blob_artifact(&item.artifact)?,
+                ) else {
+                    row.refused.push(UnitRefusal {
+                        unit,
+                        reason: "missing_file".into(),
+                        judged_live,
+                    });
+                    return Ok(());
+                };
+                let Some((file, rows)) =
+                    self.read_blob_artifact_version_listing(&item.artifact, head.version)?
+                else {
+                    row.refused.push(UnitRefusal {
+                        unit,
+                        reason: "missing_file".into(),
+                        judged_live,
+                    });
+                    return Ok(());
+                };
+                // The file's head version is read for its unit (FIX 5455).
+                row.read_rows.extend(rows);
+                let pin = EvidenceVersion {
+                    id: item.artifact,
+                    body_hash: *blake3::hash(&file).as_bytes(),
+                };
+                let (text, images) = match live {
+                    Some((_, text)) => (
+                        Some(text).filter(|text| !text.trim().is_empty()),
+                        Vec::new(),
+                    ),
+                    None => file_content(
+                        &self.sighted_asset_bytes_with_digest(
+                            file,
+                            &pin.body_hash,
+                            request.sight,
+                        )?,
+                        &body.media_type,
+                        &pin,
+                        package_limits,
+                        archive_limits,
+                    )?,
+                };
+                if text.is_none() && (images.is_empty() || !ask.decider.reads_images()) {
+                    row.abstained.push(UnitAbstention {
+                        unit,
+                        decision: None,
+                        judged_live,
+                    });
+                    return Ok(());
+                }
+                let state = json!({
+                    "unit": {
+                        "file": item.artifact.to_hex(),
+                        "version": head.version,
+                        "media_type": body.media_type,
+                    },
+                    "text": text,
                 });
-                continue;
-            }
-            // A file with a live body is read there at its head, pinned with
-            // it; the answer stays pinned to the stored version (FIX 11981).
-            let live = self.live_head_text(&item.artifact, request.sight)?;
-            let judged_live = live.as_ref().map(|(pin, _)| pin.clone());
-            let (Some(head), Some(body)) = (
-                self.blob_artifact_head(&item.artifact)?,
-                self.get_blob_artifact(&item.artifact)?,
-            ) else {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "missing_file".into(),
-                    judged_live: judged_live.clone(),
+                let Some(decision) = ask.decide(&state, std::slice::from_ref(&pin), &images)?
+                else {
+                    row.refused.push(UnitRefusal {
+                        unit,
+                        reason: "evidence_budget".into(),
+                        judged_live,
+                    });
+                    return Ok(());
+                };
+                let value = answer_cell(&decision.answer)?;
+                if value.is_none() {
+                    // A unit asked of its role holder keeps its ask (FIX 11231).
+                    keep_artifact_unit_ask(self, &pin, &unit, &decision);
+                    row.abstained.push(UnitAbstention {
+                        unit,
+                        decision: Some(decision.clone()),
+                        judged_live: judged_live.clone(),
+                    });
+                }
+                row.bundle.answers.push(SheetCellAnswer {
+                    cell: target,
+                    before: Some(before),
+                    value,
+                    decision,
+                    source: Some(pin),
+                    judged_version: Some(head.version),
+                    judged_live,
                 });
-                continue;
-            };
-            let Some((file, rows)) =
-                self.read_blob_artifact_version_listing(&item.artifact, head.version)?
-            else {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "missing_file".into(),
-                    judged_live: judged_live.clone(),
-                });
-                continue;
-            };
-            // The file's head version is read for its unit (FIX 5455).
-            read_rows.extend(rows);
-            let pin = EvidenceVersion {
-                id: item.artifact,
-                body_hash: *blake3::hash(&file).as_bytes(),
-            };
-            let (text, images) = match live {
-                Some((_, text)) => (
-                    Some(text).filter(|text| !text.trim().is_empty()),
-                    Vec::new(),
-                ),
-                None => file_content(
-                    &self.sighted_asset_bytes_with_digest(file, &pin.body_hash, request.sight)?,
-                    &body.media_type,
-                    &pin,
-                    package_limits,
-                    archive_limits,
-                )?,
-            };
-            if text.is_none() && (images.is_empty() || !ask.decider.reads_images()) {
-                abstained.push(UnitAbstention {
-                    unit,
-                    decision: None,
-                    judged_live: judged_live.clone(),
-                });
-                continue;
-            }
-            let state = json!({
-                "unit": {
-                    "file": item.artifact.to_hex(),
-                    "version": head.version,
-                    "media_type": body.media_type,
-                },
-                "text": text,
-            });
-            let Some(decision) = ask.decide(&state, std::slice::from_ref(&pin), &images)? else {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "evidence_budget".into(),
-                    judged_live: judged_live.clone(),
-                });
-                continue;
-            };
-            let value = answer_cell(&decision.answer)?;
-            if value.is_none() {
-                // A unit asked of its role holder keeps its ask (FIX 11231).
-                keep_artifact_unit_ask(self, &pin, &unit, &decision);
-                abstained.push(UnitAbstention {
-                    unit,
-                    decision: Some(decision.clone()),
-                    judged_live: judged_live.clone(),
-                });
-            }
-            answers.push(SheetCellAnswer {
-                cell: target,
-                before: Some(before),
-                value,
-                decision,
-                source: Some(pin),
-                judged_version: Some(head.version),
-                judged_live,
-            });
+                Ok(())
+            })()?;
+            row.unmasked |= unmasked;
+            row.progress.as_mut().expect("partial folder answers").next += 1;
+            row = self.advance_decided_sheet_answers(output, &expected, row)?;
         }
-        let bundle = SheetAnswerBundle {
-            question: ask.question.clone(),
-            principal: ask.principal,
-            sheet: request.sheet.to_owned(),
-            range: RangeRef {
-                start: CellRef {
-                    col: answer_col,
-                    row: first,
-                },
-                end: CellRef {
-                    col: answer_col,
-                    row: last,
-                },
-            },
-            answers,
-            max_count_override: request.max_count_override,
-            reads: None,
-            base_live,
-        };
-        let row = self.retain_decided_sheet_answers(
-            output,
-            DecidedSheetAnswers {
-                request: identity,
-                bundle,
-                version,
-                frontier,
-                read_rows,
-                abstained,
-                refused,
-                unmasked,
-            },
-        )?;
         self.stage_decided_sheet_answers(output, &row, ask.deadline)
     }
 }

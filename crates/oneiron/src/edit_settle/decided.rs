@@ -1,4 +1,4 @@
-//! Completed typed sheet decisions kept before workbook staging can fail.
+//! Typed sheet decisions and their original inputs kept between paid units.
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -9,8 +9,8 @@ use super::pending::{PENDING, validate_pending_ref};
 use super::receipts::already_settled;
 use crate::Vault;
 use crate::edit_roundtrip::{
-    ArtifactAsk, ArtifactAskRun, FolderItem, RangeRef, SheetAnswerBundle, UnitAbstention,
-    UnitRefusal,
+    ArtifactAsk, ArtifactAskRun, CellRef, CellValue, FolderItem, RangeRef, SheetAnswerBundle,
+    UnitAbstention, UnitRefusal,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -66,14 +66,44 @@ pub(crate) enum DecidedSheetShape {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct DecidedSheetRow {
+    pub(crate) cell: CellRef,
+    pub(crate) before: CellValue,
+    pub(crate) read: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum DecidedSheetInputs {
+    SheetRows {
+        headers: serde_json::Map<String, serde_json::Value>,
+        rows: Vec<DecidedSheetRow>,
+    },
+    FolderItems {
+        before: Vec<CellValue>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DecidedSheetProgress {
+    pub(crate) next: usize,
+    pub(crate) inputs: DecidedSheetInputs,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DecidedSheetAnswers {
     pub(crate) request: DecidedSheetRequest,
+    pub(crate) generation: EntityId,
     pub(crate) bundle: SheetAnswerBundle,
     pub(crate) version: u64,
     pub(crate) frontier: [u8; 32],
     pub(crate) read_rows: Vec<EntityId>,
     pub(crate) abstained: Vec<UnitAbstention>,
     pub(crate) refused: Vec<UnitRefusal>,
+    /// None only after every selected unit has a committed outcome.
+    pub(crate) progress: Option<DecidedSheetProgress>,
     /// Folder decisions made from stored secret spans cannot be resumed by
     /// a caller now reading only masked spans. This is not a grant receipt.
     pub(crate) unmasked: bool,
@@ -116,8 +146,8 @@ impl Vault {
         Ok(row.read_rows)
     }
 
-    /// Never overwrite the first completed answers under a run ref. Racing
-    /// initial asks are not single-flight; the committed original wins.
+    /// The first prepared read basis wins, before any paid unit is called.
+    /// Racing initial asks are not single-flight.
     pub(crate) fn retain_decided_sheet_answers(
         &self,
         artifact: &EntityId,
@@ -139,12 +169,46 @@ impl Vault {
         })
     }
 
+    /// Commit only a continuation of the exact canonical prefix it read.
+    /// A racing writer follows the committed row instead of replacing it.
+    pub(crate) fn advance_decided_sheet_answers(
+        &self,
+        artifact: &EntityId,
+        expected: &DecidedSheetAnswers,
+        row: DecidedSheetAnswers,
+    ) -> Result<DecidedSheetAnswers> {
+        let key = settlement_key_parts(artifact, &row.request.run_ref);
+        self.with_write_txn_grouped(|txn| {
+            check_available(&self.store, txn, artifact, &row.request.run_ref)?;
+            if super::artifact_retention_deleted_in_txn(&self.store, txn, artifact)? {
+                return Err(Error::EntityNotFound);
+            }
+            let existing = DECIDED
+                .get(&self.store, txn, &key)?
+                .ok_or(Error::EntityNotFound)?;
+            existing.matches(&row.request, row.unmasked)?;
+            if existing.generation != expected.generation {
+                return Err(Error::EntityNotFound);
+            }
+            if &existing != expected {
+                return Ok(existing);
+            }
+            DECIDED.put(&self.store, txn, &key, &row)?;
+            Ok(row)
+        })
+    }
+
     pub(crate) fn stage_decided_sheet_answers(
         &self,
         artifact: &EntityId,
         row: &DecidedSheetAnswers,
         deadline: Instant,
     ) -> Result<ArtifactAskRun> {
+        if row.progress.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "typed sheet answers are not complete",
+            )));
+        }
         Ok(ArtifactAskRun {
             proposal: self.stage_sheet_answers(
                 artifact,
@@ -160,7 +224,7 @@ impl Vault {
         })
     }
 
-    /// Release completed answers that have not become a held proposal.
+    /// Release partial or completed answers that have not become a held proposal.
     /// Uses the same actor and consent as Discard, but creates no fabricated
     /// proposal or settlement receipt and does not consume the run ref.
     pub fn release_decided_sheet_answers(
