@@ -213,8 +213,9 @@ fn answer_in_txn(
     {
         return Err(Error::ConcurrentWrite("code consent wait target changed"));
     }
-    let remember_asking_lineage =
-        input.choice == CodeConsentChoice::ApproveAndStopAsking && input.remember_asking_lineage;
+    let remember_asking_lineage = input.choice == CodeConsentChoice::ApproveAndStopAsking
+        && row.binding.remember_offer.is_some()
+        && input.remember_asking_lineage;
     if let Some(first) = &row.answer {
         let same = first.choice == input.choice
             && first.word_ref == input.word_ref
@@ -723,8 +724,9 @@ fn view_of(
         consumed_at_ms: consumed.map(|consumed| consumed.consumed_at_ms),
         consumption_links: ledger.consumed,
         remember_asking_lineage: row.answer.as_ref().and_then(|answer| {
-            (answer.choice == CodeConsentChoice::ApproveAndStopAsking)
-                .then_some(answer.remember_asking_lineage)
+            (answer.choice == CodeConsentChoice::ApproveAndStopAsking
+                && row.binding.remember_offer.is_some())
+            .then_some(answer.remember_asking_lineage)
         }),
         remembered: row
             .answer
