@@ -607,6 +607,7 @@ import os
 from typing import Any, Literal, NotRequired, TypedDict, overload
 
 from . import facade_types as Facade
+from .shared_env import SharedAcceptance
 
 __all__ = ["Oneiron", "OneironError"]
 
@@ -1065,6 +1066,14 @@ class Oneiron:
         body: bytes,
     ) -> Facade.SecretCustodySubmitRequest:
         """Seals a custody register or rotate on the caller's own side; answers the custody.submit input."""
+    def accept_shared_invitation_https(
+        self, request: Facade.SharedInvitationAcceptWithCredentialRequest
+    ) -> SharedAcceptance:
+        """Accepts through this connected HTTPS handle with its own holder key; keep the returned object for bootstrap."""
+    def retry_shared_invitation_https(
+        self, pending: OneironError, request: Facade.SharedInvitationAcceptWithCredentialRequest
+    ) -> SharedAcceptance:
+        """Retries a pending HTTPS acceptance under its original invocation."""
 # BEGIN GENERATED FACADE VERBS
     @property
     def vault(self) -> "Oneiron._VaultVerbs": ...
