@@ -28,6 +28,19 @@ use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result};
 
 impl ConsolidationExecutor<'_> {
+    /// A rung job a partition window runs whole, by its shape: a TURN's
+    /// typing carrier, or a span's own rungs or a window's audit.
+    pub(in crate::dreamer_consolidation) async fn run_rung_job(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        if attempt.status.payload.attempt_type == sieve::TYPING_BATCH_ATTEMPT {
+            return self.run_typing_batch(attempt, ctx).await;
+        }
+        self.run_sieve_rungs(attempt, ctx).await
+    }
+
     pub(in crate::dreamer_consolidation) async fn run_typing_batch(
         &self,
         attempt: &DreamerAdmittedAttempt,
