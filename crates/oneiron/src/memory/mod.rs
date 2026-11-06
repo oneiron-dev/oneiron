@@ -192,6 +192,7 @@ pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
 };
+pub(crate) use claim_admission::{ClaimPosition, slip_admits_claim_position_in_txn};
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,

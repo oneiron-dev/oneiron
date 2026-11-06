@@ -33,13 +33,115 @@ use super::{ExecutorCallSite, HostSelfDispatcher};
 /// slip narrows a position axis (FIX 10666; Engine 19:20, CALLS
 /// FIX-10666-narrowed-in-core-write): the in-core call carries no position
 /// to check, so it is refused, and the memory door that checks one takes
-/// the write. FIX 20094 tests the position in the write instead.
+/// the write. A canonical claim write tests the position in its write
+/// transaction instead (FIX 20094).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NarrowedSlipInCoreWrite {
     Refuse,
 }
 
 const NARROWED_SLIP_IN_CORE_WRITE: NarrowedSlipInCoreWrite = NarrowedSlipInCoreWrite::Refuse;
+
+/// Refuses `body`, a claim a narrowed program's in-core write stores or
+/// changes, unless `slip`, which `holder` presents, admits its position (its
+/// world, facet, project, the CLAIM band and its sensitivity) now, in `txn`
+/// (FIX 20094): the memory door's own test.
+///
+/// # Errors
+/// The refusal, or a storage error.
+pub(super) fn admit_claim_body_position_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    slip: &VerifiedSlip,
+    holder: EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    let sensitivity = crate::claim::claim_sensitivity_band(body).ok_or(Error::Claim(
+        crate::error::ClaimError::ActorLacksClaimAuthority {
+            reason: "the claim's sensitivity does not read",
+        },
+    ))?;
+    crate::memory::slip_admits_claim_position_in_txn(
+        vault,
+        txn,
+        slip,
+        holder,
+        crate::memory::ClaimPosition {
+            world: body.world.unwrap_or_else(crate::claim::base_world_id),
+            facet: body.scope_facet,
+            project: body.scope_project,
+            sensitivity: Some(sensitivity),
+        },
+    )
+}
+
+/// [`admit_claim_body_position_in_txn`] for the body `candidate` stores at
+/// `id`, as its write places it (the facet it names, else the row's birth
+/// facet), and for the claim already stored there, which the write
+/// replaces or supersedes.
+///
+/// # Errors
+/// The refusal, or a storage error.
+pub(super) fn admit_candidate_position_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    slip: &VerifiedSlip,
+    holder: EntityId,
+    id: &EntityId,
+    candidate: &crate::ClaimCandidate,
+    envelope: &crate::WriteEnvelope,
+) -> Result<()> {
+    let facet =
+        crate::batch::claim_candidate_apply::claim_candidate_birth_facet(&vault.store, txn, id)?;
+    let body = candidate.clone().into_claim_body(envelope, facet)?;
+    admit_claim_body_position_in_txn(vault, txn, slip, holder, &body)?;
+    match stored_claim_body_in_txn(vault, txn, id)? {
+        Some(stored) => admit_claim_body_position_in_txn(vault, txn, slip, holder, &stored),
+        None => Ok(()),
+    }
+}
+
+/// [`admit_claim_body_position_in_txn`] for the claim stored at `id`; a row
+/// that holds no claim body is refused.
+///
+/// # Errors
+/// The refusal, or a storage error.
+pub(super) fn admit_stored_claim_position_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    slip: &VerifiedSlip,
+    holder: EntityId,
+    id: &EntityId,
+) -> Result<()> {
+    let body = stored_claim_body_in_txn(vault, txn, id)?.ok_or(Error::Claim(
+        crate::error::ClaimError::ActorLacksClaimAuthority {
+            reason: "a superseded claim must read as a claim",
+        },
+    ))?;
+    admit_claim_body_position_in_txn(vault, txn, slip, holder, &body)
+}
+
+/// The CLAIM body stored at `id`, when the row holds one that decodes.
+fn stored_claim_body_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<crate::claim::ClaimBody>> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+            .filter(|raw| {
+                crate::batch::EntityMetadataHeader::parse(raw)
+                    .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+            })
+            .and_then(|raw| {
+                crate::claim::decode_claim_body(
+                    raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
+                    true,
+                )
+                .ok()
+            }),
+    )
+}
 
 /// Whether `scope` narrows where a write may land: any of its worlds,
 /// facets, audience, bands or sensitivity short of the whole vault. Its
@@ -139,13 +241,14 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()))
     }
 
-    /// Refuses an in-core write that places a row (a claim, a fixture
-    /// claim, a supersession or an edge) for a slip-woken program whose slip
-    /// narrows where its writes may land (FIX 10666): the in-core call
-    /// proves no position, so the program places its claims through
+    /// Refuses an in-core write that places a row for a slip-woken program
+    /// whose slip narrows where its writes may land (FIX 10666): an edge,
+    /// and any row a session-bound run writes, whose write tests no
+    /// position, so the program places its claims through
     /// `vault.claims.upsert`, whose door checks the position against the
-    /// slip. A run no slip woke, and a slip whose position is the whole
-    /// vault, write as before.
+    /// slip. A canonical claim, fixture or supersession is tested in its
+    /// write instead (FIX 20094). A run no slip woke, and a slip whose
+    /// position is the whole vault, write as before.
     ///
     /// # Errors
     /// The refusal, when the slip narrows a position axis.
@@ -162,6 +265,14 @@ impl<'a> HostSelfDispatcher<'a> {
             ),
             NarrowedSlipInCoreWrite::Refuse => Ok(()),
         }
+    }
+
+    /// The slip a slip-woken program's in-core claim writes are tested
+    /// against in their write transaction, when it narrows a position axis
+    /// (FIX 20094); `None` for a run no slip woke and a whole-vault slip.
+    pub(super) fn narrowed_program_slip(&self) -> Option<&VerifiedSlip> {
+        self.program_proof()
+            .filter(|proof| narrows_position(proof.scope()))
     }
 
     /// `door`'s answer to `call`, unless a slip-woken program's slip does

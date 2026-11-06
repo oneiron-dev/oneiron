@@ -278,34 +278,81 @@ impl Memory<'_> {
                 Ok(())
             };
         };
-        if proof.claims().holder_ref != self.actor.to_hex()
-            || !proof.claims().records.is_empty()
-            || !proof.claims().channels.is_empty()
-            || !self.vault.capability_slip_is_live_in_txn(txn, proof)?
-        {
-            return Err(refused());
-        }
-        let verb = ["core:write", "write", "core:propose"]
-            .into_iter()
-            .find(|verb| proof.allows_verb(verb))
-            .ok_or_else(refused)?;
-        let mut position = Scope::top();
-        position.worlds = ScopeAxis::from_iter([ScopeId(world)]);
-        position.facets = ScopeAxis::from_iter([ScopeId(facet)]);
-        position.audience = ScopeAxis::from_iter([ScopeId(project)]);
-        position.bands = ScopeAxis::from_iter([crate::registry::ENTITY_TYPE_CLAIM]);
-        position.verbs = ScopeAxis::from_iter([verb.to_owned()]);
-        position.sensitivity = oneiron_authority::federation::SensitivityCeiling::AtMost(
-            match sensitivity.unwrap_or(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND) {
-                0 => oneiron_authority::federation::Sensitivity::Public,
-                1 => oneiron_authority::federation::Sensitivity::Private,
-                2 => oneiron_authority::federation::Sensitivity::Sensitive,
-                _ => oneiron_authority::federation::Sensitivity::Restricted,
+        slip_admits_claim_position_in_txn(
+            self.vault,
+            txn,
+            proof,
+            self.actor,
+            ClaimPosition {
+                world,
+                facet,
+                project,
+                sensitivity,
             },
-        );
-        if !position.is_narrowing_of(proof.scope()) {
-            return Err(refused());
-        }
-        Ok(())
+        )
     }
+}
+
+/// Where one claim lands: its world, facet, project audience and
+/// sensitivity band (`None`: unstamped).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClaimPosition {
+    pub(crate) world: EntityId,
+    pub(crate) facet: EntityId,
+    pub(crate) project: EntityId,
+    pub(crate) sensitivity: Option<u8>,
+}
+
+/// Refuses a claim at `position` that `proof`, the slip `holder` presents,
+/// does not admit now, in `txn`: a slip held by another, one bound to
+/// records or channels, one no longer live, one without a write verb, or
+/// one whose scope does not hold the position. The memory door's test, and
+/// a slip-woken program's in-core claim writes' (FIX 20094).
+///
+/// # Errors
+/// The refusal, or a storage error.
+pub(crate) fn slip_admits_claim_position_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &crate::authority::VerifiedSlip,
+    holder: EntityId,
+    position: ClaimPosition,
+) -> crate::Result<()> {
+    let refused = || {
+        Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
+            reason: "the caller credential does not admit this claim position",
+        })
+    };
+    if proof.claims().holder_ref != holder.to_hex()
+        || !proof.claims().records.is_empty()
+        || !proof.claims().channels.is_empty()
+        || !vault.capability_slip_is_live_in_txn(txn, proof)?
+    {
+        return Err(refused());
+    }
+    let verb = ["core:write", "write", "core:propose"]
+        .into_iter()
+        .find(|verb| proof.allows_verb(verb))
+        .ok_or_else(refused)?;
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::from_iter([ScopeId(position.world)]);
+    scope.facets = ScopeAxis::from_iter([ScopeId(position.facet)]);
+    scope.audience = ScopeAxis::from_iter([ScopeId(position.project)]);
+    scope.bands = ScopeAxis::from_iter([crate::registry::ENTITY_TYPE_CLAIM]);
+    scope.verbs = ScopeAxis::from_iter([verb.to_owned()]);
+    scope.sensitivity = oneiron_authority::federation::SensitivityCeiling::AtMost(
+        match position
+            .sensitivity
+            .unwrap_or(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)
+        {
+            0 => oneiron_authority::federation::Sensitivity::Public,
+            1 => oneiron_authority::federation::Sensitivity::Private,
+            2 => oneiron_authority::federation::Sensitivity::Sensitive,
+            _ => oneiron_authority::federation::Sensitivity::Restricted,
+        },
+    );
+    if !scope.is_narrowing_of(proof.scope()) {
+        return Err(refused());
+    }
+    Ok(())
 }
