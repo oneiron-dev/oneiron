@@ -16,6 +16,8 @@
 //! this device made carries no mark, so the set never takes it; once the
 //! authority sends it back, it is the authority's like any other.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::documents::{NOTE_HEAD_DOC, NOTE_PROPOSAL_DOC, head_in, invalid};
@@ -53,7 +55,10 @@ fn decode_fork_state(payload: &[u8]) -> Result<(NoteFork, &[u8])> {
 
 /// The frames that carry `note`'s pending forks from this authority to an
 /// own device: each fork's state, then the set. None from a replica, which
-/// is no authority, and none for a row that is not a NOTE.
+/// is no authority, and none for a row that is not a NOTE. A fork that cites
+/// a source in one of the `withheld` worlds kept off that device is neither
+/// sent nor named, so the device drops a copy it was sent before; so is a
+/// fork whose document does not read.
 ///
 /// # Errors
 ///
@@ -62,6 +67,7 @@ pub(crate) fn authority_fork_frames_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
+    withheld: &BTreeSet<EntityId>,
 ) -> Result<Vec<Vec<u8>>> {
     if vault.get_entity_type_in_txn(txn, &note)? != Some(crate::registry::ENTITY_TYPE_NOTE)
         || SYNC_DS_E.contains(&vault.store, txn, &HexId(note))?
@@ -78,6 +84,14 @@ pub(crate) fn authority_fork_frames_in_txn(
         };
         if fork.note != note || fork.fork != id || fork.decided || fork.proposal.is_some() {
             continue;
+        }
+        match cites_withheld(vault, txn, note, &document, withheld) {
+            Ok(false) => {}
+            Ok(true) => continue,
+            Err(error) => {
+                tracing::warn!(%error, fork = %id.to_hex(), "a NOTE fork does not read");
+                continue;
+            }
         }
         set.push(id.to_hex());
         // A fork past the document frame stays named in the set, so a device
@@ -101,6 +115,28 @@ pub(crate) fn authority_fork_frames_in_txn(
             .map_err(|_| invalid("NOTE fork set exceeds the document frame"))?,
     );
     Ok(frames)
+}
+
+/// Whether the fork document `document` of `note` cites a claim or a source
+/// in one of the `withheld` worlds, as the NOTE's own text is judged.
+fn cites_withheld(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    document: &[u8],
+    withheld: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    if withheld.is_empty() {
+        return Ok(false);
+    }
+    for pin in super::document::NoteDocument::load(note, document)?.pins()? {
+        for source in [pin.document, pin.claim] {
+            if crate::settings::device_only_withholds(&vault.store, txn, withheld, &source)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Whether this vault holds `note` on the owner lane: an own device's
@@ -138,6 +174,11 @@ pub(crate) fn install_authority_fork(vault: &Vault, note: EntityId, payload: &[u
         {
             return Err(invalid("NOTE fork state names a head"));
         }
+        // An opener erased here keeps its pending fork gone, however late
+        // the authority's copy arrives.
+        let Some(fork) = fork.clone().carried_here(vault, txn)? else {
+            return Ok(());
+        };
         let doc = super::document::NoteDocument::load(note, document)?;
         super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
         let key = HexPair(HexId(note), HexId(fork.fork));
@@ -167,7 +208,7 @@ pub(crate) fn install_authority_fork(vault: &Vault, note: EntityId, payload: &[u
 /// that does not read, and storage errors.
 pub(crate) fn settle_authority_forks(vault: &Vault, note: EntityId, payload: &[u8]) -> Result<()> {
     let set: NoteForkSet = serde_json::from_slice(payload).map_err(|_| invalid("NOTE fork set"))?;
-    let mut held = std::collections::BTreeSet::new();
+    let mut held = BTreeSet::new();
     for fork in &set.forks {
         held.insert(EntityId::from_hex(fork).map_err(|_| invalid("NOTE fork set"))?);
     }

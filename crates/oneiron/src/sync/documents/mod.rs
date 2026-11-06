@@ -317,7 +317,8 @@ impl DocumentRegistry {
     ) -> Result<Vec<Vec<u8>>> {
         let txn = self.vault.store.env.read_txn()?;
         owner_note_admission_for(&self.vault, &txn, id, withhold)?;
-        crate::note::authority_fork_frames_in_txn(&self.vault, &txn, id)
+        let withheld = withhold.worlds_in(&self.vault, &txn)?;
+        crate::note::authority_fork_frames_in_txn(&self.vault, &txn, id, &withheld)
     }
     pub fn resident_count(&self) -> usize {
         self.residents
