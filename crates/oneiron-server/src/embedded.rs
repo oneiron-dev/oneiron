@@ -33,6 +33,8 @@
 //! raises as a stable code.
 
 mod blocking;
+#[cfg(feature = "mesh")]
+mod device;
 mod engine;
 mod failure;
 mod process_host;
@@ -56,6 +58,8 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 pub use self::blocking::{BlockingBody, BlockingConnection, BlockingEngine, BlockingReply};
+#[cfg(feature = "mesh")]
+pub use self::device::EmbeddedDeviceSync;
 pub use self::engine::{
     ENGINE_RECEIVE_CHUNK_BYTES, EmbeddedBody, EmbeddedConnection, EmbeddedEngine, EmbeddedReply,
     EmbeddedReplyStream, EmbeddedRequest, embedded_serve_config, ensure_app_thread, host_limits,

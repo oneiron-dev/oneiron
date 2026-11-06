@@ -36,8 +36,7 @@
 //! fails hides the read's result, one that does not block fails open, and
 //! with no sandbox installed, hooks off or none matching the call passes
 //! through. When a session keeps no records for a call, its hooks' outcomes
-//! apply all the same and each hook's disposition says why the receipt was
-//! not kept.
+//! apply all the same and each hook's disposition says why the receipt was not kept.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -70,6 +69,7 @@ use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chai
 
 mod named_pause;
 mod room_pause;
+mod room_tail;
 mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
@@ -293,16 +293,15 @@ impl SessionHookKeep {
         let Some(overlay) = self.with_live(vault, key, |kept| Arc::clone(&kept.overlay)) else {
             return Ok(HookRecordsKept::NotKept(SessionHookNotKept::NoRetention));
         };
-        HookRecordsKept::of(
-            vault
-                .with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    let view = vault.store.session_view(Arc::clone(&overlay))?;
-                    rows(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
-                    Ok(segment)
-                })
-                .and_then(TxnSegmentGuard::commit),
-        )
+        HookRecordsKept::of(vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                let view = vault.store.session_view(Arc::clone(&overlay))?;
+                rows(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
+                Ok(segment)
+            },
+            TxnSegmentGuard::commit,
+        ))
     }
 
     /// Reads `key`'s kept records through the keep's composed view; `None`
@@ -711,11 +710,43 @@ impl Vault {
         check: VerbArgsCheck<'_>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let VerbHookStorage::Session(hooks) = storage else {
-            return chain::pre(self, storage, call, args, check, None, turn);
+        self.pre_verb_hooks_in_with_saved(storage, call, args, check, turn, false)
+    }
+
+    /// A caller-only retained retry on the original storage. A missing
+    /// saved call or an unread chain never passes through as a fresh call.
+    pub(crate) fn pre_verb_hooks_retained_in(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        turn: Option<Arc<TaskWorkTurn>>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_in_with_saved(storage, call, args, check, turn, true)
+    }
+
+    fn pre_verb_hooks_in_with_saved(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        turn: Option<Arc<TaskWorkTurn>>,
+        require_saved: bool,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        let pre = |call, args| {
+            if require_saved {
+                chain::pre_retained(self, storage, call, args, check, turn)
+            } else {
+                chain::pre(self, storage, call, args, check, None, turn)
+            }
         };
-        let own = hooks.answers_unread.then(|| (call.clone(), args.clone()));
-        let ended = match chain::pre(self, storage, call, args, check, None, turn) {
+        let VerbHookStorage::Session(hooks) = storage else {
+            return pre(call, args);
+        };
+        let own = (hooks.answers_unread && !require_saved).then(|| (call.clone(), args.clone()));
+        let ended = match pre(call, args) {
             Ok(ended) => ended,
             Err(error) => {
                 let (Some((call, args)), Some(note)) =
@@ -731,6 +762,7 @@ impl Vault {
                     landing: None,
                     session: Some(hooks.carry()),
                     resumed_ask: None,
+                    read_capture: None,
                 }));
             }
         };
