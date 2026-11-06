@@ -42,7 +42,7 @@ impl ConnectorAdmissionPolicy {
     pub(crate) fn decode(value: &Value) -> Option<Self> {
         let rows = value
             .as_array()
-            .filter(|rows| !rows.is_empty() && rows.len() <= 512)?;
+            .filter(|rows| !rows.is_empty())?;
         let mut table = Self::default();
         for row in rows {
             let entries = row.as_map()?;
