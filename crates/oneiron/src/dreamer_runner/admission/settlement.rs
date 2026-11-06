@@ -148,6 +148,17 @@ impl DreamerRunnerStore<'_> {
         input: SettleDreamerBudget,
         step_bindings: &[StepReceipt],
     ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.settle_budget_with_native_meter(input, step_bindings, None)
+    }
+
+    /// The actual registered meter's selected native intervals, committed
+    /// beside the existing aggregate charge. They do not pay a NET invoice.
+    pub(crate) fn settle_budget_with_native_meter(
+        &self,
+        input: SettleDreamerBudget,
+        step_bindings: &[StepReceipt],
+        native: Option<&NativeMeterSnapshot>,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
         self.vault.with_write_txn_grouped(|wtxn| {
             let mut unpinned = Vec::with_capacity(step_bindings.len());
             for binding in step_bindings {
@@ -155,7 +166,20 @@ impl DreamerRunnerStore<'_> {
                     unpinned.push(*binding);
                 }
             }
-            self.settle_budget_and_step_receipts_in_txn(wtxn, input, &unpinned)
+            let settled =
+                self.settle_budget_and_step_receipts_in_txn(wtxn, input.clone(), &unpinned)?;
+            if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
+                && let Some(native) = native
+            {
+                super::native_call::record_native_gross_settlement_in_txn(
+                    self.vault,
+                    wtxn,
+                    &input,
+                    actual.actual_units,
+                    native,
+                );
+            }
+            Ok(settled)
         })
     }
 
@@ -170,6 +194,17 @@ impl DreamerRunnerStore<'_> {
         park: ParkDreamerAttempt,
         lease: crate::dreamer_runner::DreamerTryLease<'_>,
     ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.settle_checkpoint_budget_with_native_meter(input, step_bindings, park, lease, None)
+    }
+
+    pub(crate) fn settle_checkpoint_budget_with_native_meter(
+        &self,
+        input: SettleDreamerBudget,
+        step_bindings: &[StepReceipt],
+        park: ParkDreamerAttempt,
+        lease: crate::dreamer_runner::DreamerTryLease<'_>,
+        native: Option<&NativeMeterSnapshot>,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
         if park.attempt_id != input.child_attempt {
             return Err(invalid_dreamer_runner(
                 "checkpoint park target differs from settlement",
@@ -177,7 +212,7 @@ impl DreamerRunnerStore<'_> {
         }
         let settled = self.vault.with_write_txn_grouped(|wtxn| {
             let settled =
-                self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_bindings)?;
+                self.settle_budget_and_step_receipts_in_txn(wtxn, input.clone(), step_bindings)?;
             if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
                 return Err(invalid_dreamer_runner(
                     "checkpoint has no budget reservation",
@@ -187,6 +222,17 @@ impl DreamerRunnerStore<'_> {
             // Settle completed siblings without stealing that park.
             if !self.is_parked_in_txn(wtxn, park.attempt_id)? {
                 self.park_if_current_lease_in_txn(wtxn, park, lease)?;
+            }
+            if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
+                && let Some(native) = native
+            {
+                super::native_call::record_native_gross_settlement_in_txn(
+                    self.vault,
+                    wtxn,
+                    &input,
+                    actual.actual_units,
+                    native,
+                );
             }
             Ok(settled)
         })?;

@@ -29,10 +29,15 @@ impl<'a> DecisionCallSource<'a> {
         Ok(self
             .deadline
             .admitted_call_id(self.attempt_id)?
-            .map(|origin| DecisionCallAdmission {
-                origin,
-                guard: guard.clone(),
-                lease: lease.clone(),
+            .map(|origin| {
+                if let Some(line) = self.deadline.original_budget_line() {
+                    line.retain_native_lease(origin, lease);
+                }
+                DecisionCallAdmission {
+                    origin,
+                    guard: guard.clone(),
+                    lease: lease.clone(),
+                }
             }))
     }
 }

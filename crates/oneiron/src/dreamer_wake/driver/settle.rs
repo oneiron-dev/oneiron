@@ -43,7 +43,8 @@ impl DreamerWakeDriver<'_> {
                 completed_units,
                 step_bindings,
             } => {
-                self.store.settle_budget_with_step_receipts(
+                let native = spend_meter.result_native(completed_units);
+                self.store.settle_budget_with_native_meter(
                     SettleDreamerBudget {
                         budget_id: line.clone(),
                         child_attempt: attempt_id,
@@ -51,6 +52,7 @@ impl DreamerWakeDriver<'_> {
                         now: input.now,
                     },
                     &step_bindings,
+                    native.as_ref(),
                 )?;
                 self.complete_attempt(exec, admitted, input.now).await?;
                 self.log_attempt_completed(admitted);
@@ -63,12 +65,18 @@ impl DreamerWakeDriver<'_> {
             } => {
                 // Terminal for this try alone: its spend settles, the queue
                 // records why, and the pass goes on (FIX 11090).
-                self.store.settle_budget(SettleDreamerBudget {
+                let budget = SettleDreamerBudget {
                     budget_id: line.clone(),
                     child_attempt: attempt_id,
                     actual_units: completed_units,
                     now: input.now,
-                })?;
+                };
+                if let Some(native) = spend_meter.result_native(completed_units) {
+                    self.store
+                        .settle_budget_with_native_meter(budget, &[], Some(&native))?;
+                } else {
+                    self.store.settle_budget(budget)?;
+                }
                 self.store.fail(FailDreamerAttempt {
                     id: attempt_id,
                     lease_owner: admitted
@@ -154,7 +162,8 @@ impl DreamerWakeDriver<'_> {
                 // The in-flight call finished and was charged. Stop the run
                 // at this boundary without refunding its real spend or
                 // publishing post-deadline output.
-                self.store.settle_checkpoint_budget(
+                let native = spend_meter.result_native(completed_units);
+                self.store.settle_checkpoint_budget_with_native_meter(
                     SettleDreamerBudget {
                         budget_id: line.clone(),
                         child_attempt: attempt_id,
@@ -171,6 +180,7 @@ impl DreamerWakeDriver<'_> {
                         now: input.now,
                     },
                     admitted_lease(admitted, &input.lease_owner),
+                    native.as_ref(),
                 )?;
                 let stage = stage.unwrap_or("park_with_spend");
                 let settled = "checkpoint_settled";
