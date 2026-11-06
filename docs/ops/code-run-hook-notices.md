@@ -54,7 +54,12 @@ refusal. The call's output, error, source rows, observation and release stay the
 same, and the hook still runs once. Existing value-only host helpers keep their
 original result APIs.
 
-Browser, resident board/self-brief/lens and owner-program helper paths are not
+Resident board calls also keep the supplied notice bit, including a hooked
+`self.focus.unsubscribe`. The rewritten input is still validated, and the board
+operation and hook-row delivery keep their original order. Only an actual
+positive bit adds the same content-free summary; no argument detail is copied.
+
+Browser, resident self-brief/lens and owner-program helper paths are not
 extended by this run-host change. Typed hook stops, provider retry errors,
 media traps and channel failures keep their existing paths. A missing notice
 source stays unknown; no notice is inferred from a verb, output or error code.
