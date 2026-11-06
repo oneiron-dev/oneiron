@@ -83,6 +83,11 @@ struct StoredAdmission {
 const ADMISSIONS: SideTable<[u8; 32], StoredAdmission, Named> =
     SideTable::new(&side_table::ADMISSION_INTENT);
 
+/// The reason code of an intent another request is running now: a retry
+/// that met it may try again once that one answers, so a paced turn that
+/// meets it goes back in line, never ends (FIX 8753).
+pub const ADMISSION_INTENT_ACTIVE: &str = "admission.intent_active";
+
 fn intent(text: &str) -> MemoryResult<InvocationId> {
     InvocationId::parse_hex(text)
         .ok_or_else(|| MemoryError::bad_request("intent_key must be a 32-hex invocation id"))
@@ -141,10 +146,20 @@ impl AdmissionTracker {
                         &[],
                     ));
                 }
-                if stored.active || stored.receipt.state.terminal() {
+                if stored.active {
+                    return Err(MemoryError {
+                        reason_codes: vec![ADMISSION_INTENT_ACTIVE.to_owned()],
+                        ..MemoryError::new(
+                            oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
+                            "admission intent is already running; read its status",
+                            &[],
+                        )
+                    });
+                }
+                if stored.receipt.state.terminal() {
                     return Err(MemoryError::new(
                         oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
-                        "admission intent is already running or settled; read its status",
+                        "admission intent is already settled; read its status",
                         &[],
                     ));
                 }
@@ -222,6 +237,38 @@ impl AdmissionTracker {
             reason: "call stopped before settlement was observed; inspect effects before a new intent".to_owned(),
         }, false)
     }
+}
+
+/// Settles `actor`'s held intent of `invocation` as refused with `code` and
+/// `reason`, when its held call ended with no door running it again (FIX
+/// 8753): a paced call past its deadline, or one the host refused before
+/// its door. An intent a request runs now, or one already settled, stays.
+///
+/// # Errors
+///
+/// Storage errors as they occur.
+pub(crate) fn refuse_held_intent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    invocation: InvocationId,
+    code: &str,
+    reason: &str,
+) -> crate::Result<()> {
+    let key = key(actor, class, invocation);
+    let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? else {
+        return Ok(());
+    };
+    if stored.active || !matches!(stored.receipt.state, AdmissionStatus::Held { .. }) {
+        return Ok(());
+    }
+    stored.receipt.state = AdmissionStatus::Refused {
+        code: code.to_owned(),
+        reason: reason.to_owned(),
+    };
+    stored.receipt.updated_at = vault.store.clock.now_recorded_at();
+    ADMISSIONS.put(vault, txn, &key, &stored)
 }
 
 impl LineObserver for AdmissionTracker {

@@ -45,7 +45,7 @@ pub use credential::{
 };
 pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
 pub(crate) use paced::{
-    end_paced_verb_call_in_txn, hold_paced_verb_call, paced_verb_reply, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_verb_reply, runs_paced_turn,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};

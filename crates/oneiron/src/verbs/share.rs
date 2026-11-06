@@ -26,7 +26,7 @@ use crate::memory::{
 };
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::runtime_hooks::verb::{
-    end_paced_verb_call_in_txn, hold_paced_verb_call, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, runs_paced_turn,
 };
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
@@ -154,11 +154,8 @@ pub fn create_share_as_caller(
     };
     let landed = match turn {
         Some(invocation) => {
-            let value = serde_json::to_value(&created).map_err(|_| {
-                MemoryError::from(Error::InvariantViolation("share created encode"))
-            })?;
             vault.create_share_travelling_then(&share_id, &issuer, &share, &travel, &|txn| {
-                end_paced_verb_call_in_txn(vault, txn, invocation, &value)
+                land_paced_verb_call_in_txn(vault, txn, invocation)
             })
         }
         None => vault.create_share_travelling(&share_id, &issuer, &share, &travel),

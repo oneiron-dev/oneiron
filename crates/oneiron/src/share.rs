@@ -589,7 +589,7 @@ impl Vault {
 
     /// [`Self::create_share_travelling`], running `then` in the write that
     /// admits the share, after its grant is written: a paced call's turn
-    /// ends its held call there, so the share and the call's end commit
+    /// marks its held call landed there, so the share and the mark commit
     /// together (FIX 8753). A refused or paced share runs no `then`.
     pub(crate) fn create_share_travelling_then(
         &self,

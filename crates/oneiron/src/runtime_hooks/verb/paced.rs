@@ -30,6 +30,7 @@ use crate::memory::{
     MemoryError, MemoryResult,
 };
 use crate::receipt::CallReceiptInput;
+use crate::receipt::admission::{ADMISSION_INTENT_ACTIVE, refuse_held_intent_in_txn};
 use crate::runtime_hooks::filter;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::HookActorClass;
@@ -54,6 +55,8 @@ const PACED_VERB_KEEP_SECS: u64 = 7 * 24 * 60 * 60;
 const PACED_VERB_RETRY_SECS: u64 = 60;
 /// The most rows one expiry pass ends or deletes.
 const PACED_VERB_EXPIRE_MAX: usize = 256;
+/// What a call whose deadline passed before its turn ends with.
+const EXPIRED: &str = "this paced call's deadline passed before its turn; it never ran";
 
 /// Held calls, by invocation.
 const CALLS: SideTable<[u8; 16], PacedVerbCall, Named> =
@@ -92,6 +95,9 @@ struct PacedVerbCall {
     /// The earliest its budget window lets it run, Unix seconds.
     next_eligible_at: u64,
     state: PacedState,
+    /// The verb's effect committed on a turn, in its own write: the call
+    /// never runs again, whatever its turn's end saves.
+    landed: bool,
     /// What the call came to, once ended.
     outcome: Option<SavedOutcome>,
     ended_at: Option<u64>,
@@ -232,6 +238,7 @@ pub(crate) fn hold_paced_verb_call(
             deadline: now.saturating_add(wait),
             next_eligible_at: next_eligible_at.max(now),
             state: PacedState::Waiting,
+            landed: false,
             outcome: None,
             ended_at: None,
         };
@@ -296,17 +303,19 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
     })
 }
 
-/// Ends the paced call `invocation`'s turn runs with `value`, in the verb's
-/// own effect write, so the effect and the call's end commit together.
+/// Marks the paced call `invocation`'s turn runs as landed, in the verb's
+/// own effect write, so the effect and the mark commit together: the call
+/// never runs again, and its witness goes. What it came to is saved at the
+/// turn's end, as its caller's view after every post hook, never the
+/// verb's own result.
 ///
 /// # Errors
 ///
-/// Encoding the value, or storage errors.
-pub(crate) fn end_paced_verb_call_in_txn(
+/// Storage errors as they occur.
+pub(crate) fn land_paced_verb_call_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     invocation: InvocationId,
-    value: &Value,
 ) -> Result<()> {
     let key = invocation.0;
     let Some(mut row) = CALLS.get(&vault.store, txn, &key)? else {
@@ -315,17 +324,35 @@ pub(crate) fn end_paced_verb_call_in_txn(
     if row.state != PacedState::Running {
         return Ok(());
     }
-    row.state = PacedState::Ended;
-    row.outcome = Some(SavedOutcome::result(value)?);
-    row.ended_at = Some(vault.store.clock.now_recorded_at());
+    row.landed = true;
     CALLS.put(&vault.store, txn, &key, &row)?;
     WITNESSES.delete(&vault.store, txn, &key).map(drop)
+}
+
+/// What a landed call whose turn kept no answer saves: it ran, and must not
+/// be sent again.
+fn not_retained() -> SavedOutcome {
+    SavedOutcome::error(
+        super::HOOK_RESULT_NOT_RETAINED.to_owned(),
+        "this paced call ran on its turn, but its answer was not kept; do not send it again",
+    )
+}
+
+/// What a turn's claim found.
+enum Claim {
+    /// The call is the turn's to run.
+    Taken,
+    /// Its effect had landed: it ended without running.
+    Ended,
+    /// Another took it, it ended, or its window or deadline moved.
+    Skipped,
 }
 
 /// How a turn's run left its call.
 enum TurnEnd {
     /// It ran or was refused: what it came to, and the refusal receipt a
-    /// failure leaves.
+    /// failure leaves. A refusal before its door also settles its held
+    /// admission intent, which no door run settles.
     Ended(SavedOutcome, Option<CallReceiptInput>),
     /// Its window paced it again, or a passing fault stopped it: back in
     /// line, not before this time.
@@ -460,24 +487,34 @@ impl Vault {
         let claimed = self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
             let Some(mut current) = CALLS.get(&self.store, txn, &key)? else {
-                return Ok(false);
+                return Ok(Claim::Skipped);
             };
-            if current.work != row.work
-                || current.state == PacedState::Ended
-                || current.deadline <= now
-                || current.next_eligible_at > now
-            {
-                return Ok(false);
+            if current.work != row.work || current.state == PacedState::Ended {
+                return Ok(Claim::Skipped);
+            }
+            // A call whose effect landed before its turn's end was saved (a
+            // crash between them) never runs again.
+            if current.landed {
+                current.state = PacedState::Ended;
+                current.outcome = Some(not_retained());
+                current.ended_at = Some(now);
+                CALLS.put(&self.store, txn, &key, &current)?;
+                return Ok(Claim::Ended);
+            }
+            if current.deadline <= now || current.next_eligible_at > now {
+                return Ok(Claim::Skipped);
             }
             current.state = PacedState::Running;
             CALLS.put(&self.store, txn, &key, &current)?;
             let mut line = LINE.get(&self.store, txn, &())?.unwrap_or_default();
             line.last_served = Some(current.actor);
             LINE.put(&self.store, txn, &(), &line)?;
-            Ok(true)
+            Ok(Claim::Taken)
         })?;
-        if !claimed {
-            return Ok(false);
+        match claimed {
+            Claim::Taken => {}
+            Claim::Ended => return Ok(true),
+            Claim::Skipped => return Ok(false),
         }
         let class = filter::edge_class(row.class);
         let Ok(args) = serde_json::from_str::<Value>(&row.args) else {
@@ -504,6 +541,16 @@ impl Vault {
                     .unwrap_or_else(|| now.saturating_add(PACED_VERB_RETRY_SECS)),
             ),
             Err(error) if error.code == MEMORY_CODE_PENDING_ASK => TurnEnd::HandedToAsk,
+            // A retry of its invocation holds the admission intent now: the
+            // turn waits for it, never ends the call.
+            Err(error)
+                if error
+                    .reason_codes
+                    .iter()
+                    .any(|code| code == ADMISSION_INTENT_ACTIVE) =>
+            {
+                TurnEnd::Back(now.saturating_add(PACED_VERB_RETRY_SECS))
+            }
             Err(error) if run_failed_transient(&error) => {
                 TurnEnd::Back(now.saturating_add(PACED_VERB_RETRY_SECS))
             }
@@ -569,6 +616,18 @@ impl Vault {
             if row.work != work || row.state != PacedState::Running {
                 return Ok(());
             }
+            // A call whose effect landed keeps its caller's answer, or that
+            // it ran: it never goes back in line or to an ask.
+            let end = match end {
+                TurnEnd::Ended(SavedOutcome::Err { .. }, _)
+                | TurnEnd::Back(_)
+                | TurnEnd::HandedToAsk
+                    if row.landed =>
+                {
+                    TurnEnd::Ended(not_retained(), None)
+                }
+                end => end,
+            };
             match end {
                 TurnEnd::Back(at) => {
                     row.state = PacedState::Waiting;
@@ -579,10 +638,26 @@ impl Vault {
                     CALLS.delete(&self.store, txn, &key)?;
                 }
                 TurnEnd::Ended(mut outcome, receipt) => {
-                    if let (Some(receipt), SavedOutcome::Err { receipt: saved, .. }) =
-                        (receipt, &mut outcome)
+                    if let SavedOutcome::Err {
+                        code,
+                        message,
+                        receipt: saved,
+                    } = &mut outcome
                     {
-                        *saved = Some(self.record_call_receipt_in_txn(txn, receipt)?);
+                        if let Some(receipt) = receipt {
+                            *saved = Some(self.record_call_receipt_in_txn(txn, receipt)?);
+                        }
+                        // A call refused before its door left its admission
+                        // intent held; no door run settles it.
+                        refuse_held_intent_in_txn(
+                            self,
+                            txn,
+                            row.actor,
+                            filter::edge_class(row.class),
+                            InvocationId(key),
+                            code,
+                            message,
+                        )?;
                     }
                     row.state = PacedState::Ended;
                     row.outcome = Some(outcome);
@@ -624,11 +699,21 @@ impl Vault {
                 if row.deadline > now || self.verb_hook_state.drain_holds(InvocationId(key)) {
                     continue;
                 }
+                row.outcome = Some(if row.landed {
+                    not_retained()
+                } else {
+                    refuse_held_intent_in_txn(
+                        self,
+                        txn,
+                        row.actor,
+                        filter::edge_class(row.class),
+                        InvocationId(key),
+                        MEMORY_CODE_INVALID_STATE,
+                        EXPIRED,
+                    )?;
+                    SavedOutcome::error(MEMORY_CODE_INVALID_STATE.to_owned(), EXPIRED)
+                });
                 row.state = PacedState::Ended;
-                row.outcome = Some(SavedOutcome::error(
-                    MEMORY_CODE_INVALID_STATE.to_owned(),
-                    "this paced call's deadline passed before its turn; it never ran",
-                ));
                 row.ended_at = Some(now);
                 CALLS.put(&self.store, txn, &key, &row)?;
                 WITNESSES.delete(&self.store, txn, &key)?;
