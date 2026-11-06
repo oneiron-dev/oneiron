@@ -10,6 +10,7 @@ use crate::compaction::{
     land_folds_in_overlay,
 };
 use crate::session_overlay::RouteTarget;
+use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
 impl ExecutorStorage<'_> {
@@ -19,9 +20,7 @@ impl ExecutorStorage<'_> {
         match self {
             Self::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
-                let mut ledger = FOLDS.get(&vault.store, &txn, &run_id)?.unwrap_or_default();
-                fence_withdrawn_folds_in(&vault.store, &txn, run_id, &mut ledger)?;
-                Ok(ledger)
+                base_code_run_folds_in_txn(&vault.store, &txn, run_id)
             }
             Self::Session(binding) => binding.answered(|| {
                 let view = binding.session.read_view()?;
@@ -140,6 +139,18 @@ impl ExecutorStorage<'_> {
             }),
         }
     }
+}
+
+/// `run_id`'s base ledger as `txn` holds it, empty before its first fold
+/// verb, without the words of any fold a withdrawn record reached.
+pub(super) fn base_code_run_folds_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    run_id: EntityId,
+) -> Result<FoldLedger> {
+    let mut ledger = FOLDS.get(store, txn, &run_id)?.unwrap_or_default();
+    fence_withdrawn_folds_in(store, txn, run_id, &mut ledger)?;
+    Ok(ledger)
 }
 
 /// The folds of `landed` this write adds that a self writer wrote.
