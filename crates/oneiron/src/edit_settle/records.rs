@@ -148,6 +148,10 @@ pub struct SettlementRecord {
     /// The native deck transaction a Keep settled: its handoff hash, part
     /// diff report and context (made_by, thread, review renders).
     pub deck: Option<Box<crate::edit_roundtrip::DeckSettleEvidence>>,
+    /// The identifiers the record's words carried, once the owner's discard
+    /// took its artifact's payload off this machine and the words with it
+    /// (FIX 14534); `None` while the words stand.
+    pub discarded_words: Option<super::DiscardedSettleWords>,
 }
 
 /// One cell's kept answer, linked to the file version and consume-once receipt.
