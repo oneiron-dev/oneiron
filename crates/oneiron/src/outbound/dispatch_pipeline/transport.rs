@@ -10,8 +10,8 @@ use crate::outbound::dispatch_types::{
     OutboundExecutionRequest, OutboundExecutionSink,
 };
 use crate::outbound::send_lookup::{
-    SENT_LOOKUP_CANNOT_TELL, SENT_LOOKUP_CANNOT_TELL_REASON, SENT_LOOKUP_FIELD,
-    SENT_LOOKUP_NOT_SENT, SENT_LOOKUP_SENT,
+    SENT_LOOKUP_CANNOT_TELL, SENT_LOOKUP_CANNOT_TELL_REASON, SENT_LOOKUP_DEDUPED_RESEND,
+    SENT_LOOKUP_FIELD, SENT_LOOKUP_NOT_SENT, SENT_LOOKUP_SENT,
 };
 use crate::outbound::{SentLookup, SentLookupTarget};
 use crate::outbound_chokepoint::UncertainSendStep;
@@ -31,6 +31,7 @@ pub(super) struct DispatchChokepointTransport<'a, S> {
 enum LookupFound {
     Sent,
     NotSent,
+    DedupedResend,
     CannotTell,
 }
 impl<'a, S> DispatchChokepointTransport<'a, S> {
@@ -187,6 +188,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                     return crate::outbound_intent_ledger::OutboundSendOutcome::Acked;
                 }
                 SentLookup::NotSent => self.looked_up = Some(LookupFound::NotSent),
+                SentLookup::DedupedResend => self.looked_up = Some(LookupFound::DedupedResend),
                 SentLookup::CannotTell => {
                     self.looked_up = Some(LookupFound::CannotTell);
                     self.execution = Some(looked_up_cannot_tell());
@@ -195,11 +197,15 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             }
         }
         let mut execution = self.sink.execute(&execution_request);
-        if self.looked_up == Some(LookupFound::NotSent) {
-            execution.receipt_fields.insert(
-                SENT_LOOKUP_FIELD.to_owned(),
-                SENT_LOOKUP_NOT_SENT.to_owned(),
-            );
+        let looked_up_field = match self.looked_up {
+            Some(LookupFound::NotSent) => Some(SENT_LOOKUP_NOT_SENT),
+            Some(LookupFound::DedupedResend) => Some(SENT_LOOKUP_DEDUPED_RESEND),
+            _ => None,
+        };
+        if let Some(found) = looked_up_field {
+            execution
+                .receipt_fields
+                .insert(SENT_LOOKUP_FIELD.to_owned(), found.to_owned());
         }
         // Only the pipeline may author the normalized re-arm authority, even
         // when the adapter's raw `retry_after` is missing or malformed.
@@ -261,6 +267,19 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.request.engine_send_id.is_some()
     }
 
+    /// A LINE push or narrowcast of a connector-send TASK: LINE keeps its
+    /// retry key for 24 hours only (FIX 4747, review #6555). Engine call
+    /// (CALLS, FIX 4747): the channels and verbs whose key lapses.
+    fn idempotent_resend_is_time_bounded(
+        &self,
+        _call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> bool {
+        self.request.engine_send_id.is_some()
+            && crate::outbound::capability::normalize_key(&self.request.intent.channel)
+                == crate::channel_identity_provider::LINE_CHANNEL
+            && matches!(self.request.intent.verb.as_str(), "push" | "narrowcast")
+    }
+
     /// The owner's resend releases the uncertain call; else the sink's
     /// provider lookup for a call this transport would send decides (FIX
     /// 4747). A call this transport would not send, or a second lookup in
@@ -297,6 +316,10 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             SentLookup::NotSent => {
                 self.looked_up = Some(LookupFound::NotSent);
                 UncertainSendStep::LookedUpUnsent
+            }
+            SentLookup::DedupedResend => {
+                self.looked_up = Some(LookupFound::DedupedResend);
+                UncertainSendStep::ResendDeduplicated
             }
             SentLookup::CannotTell => {
                 self.looked_up = Some(LookupFound::CannotTell);

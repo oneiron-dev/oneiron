@@ -63,9 +63,14 @@ pub(super) fn engine_send_id(task: &super::ConnectorSendTask) -> EngineSendId {
 pub enum SentLookup {
     /// The provider kept the send: it went, under `provider_ref`.
     Sent { provider_ref: String },
-    /// The provider answered and has no such send: it did not go, or a
-    /// resend under the same id is the provider's to drop.
+    /// The provider answered and has no such send: it did not go. A proven
+    /// non-delivery.
     NotSent,
+    /// The provider would drop a resend under the same id for now (LINE's
+    /// retry key, inside its window): the resend may go, but nothing is
+    /// proven, so the send stays uncertain and every later resend asks
+    /// again (review #6555).
+    DedupedResend,
     /// Nobody can tell: the provider keeps no id of ours, or its answer did
     /// not come.
     CannotTell,
@@ -98,6 +103,8 @@ pub(crate) const SENT_LOOKUP_SENT: &str = "sent";
 pub(crate) const SENT_LOOKUP_NOT_SENT: &str = "not_sent";
 /// Nobody can tell.
 pub(crate) const SENT_LOOKUP_CANNOT_TELL: &str = "cannot_tell";
+/// The provider drops a resend under the same id for now; nothing is proven.
+pub(crate) const SENT_LOOKUP_DEDUPED_RESEND: &str = "deduped_resend";
 /// The execution's `retry_state` when nobody can tell: nothing was sent now.
 pub(crate) const SENT_LOOKUP_CANNOT_TELL_REASON: &str = "sent_lookup_cannot_tell";
 

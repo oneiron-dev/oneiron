@@ -763,7 +763,7 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
                     crate::unix_seconds_now(),
                 ) =>
             {
-                SentLookup::NotSent
+                SentLookup::DedupedResend
             }
             (EMAIL_CHANNEL, "send") => self.email_lookup_sent(engine_send_id, target),
             _ => SentLookup::CannotTell,

@@ -127,6 +127,16 @@ pub(super) fn replay_record<T: OutboundTransport>(
                 let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
                 return replay_record(vault, authority, proven, prepared, now_ms, transport);
             }
+            // FIX 4747: a provider that forgets its key after a window (LINE's
+            // retry key) deduplicates this resend only inside it, so the lookup
+            // decides, and the owner is asked once the window may have lapsed
+            // (review #6555).
+            if transport.looks_up_uncertain_sends()
+                && transport
+                    .idempotent_resend_is_time_bounded(&FrozenOutboundCall::from_record(&record))
+            {
+                return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
+            }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
             // BEFORE a resumed no-wire failure can replace its retry marker.
@@ -544,6 +554,15 @@ fn step_uncertain_send<T: OutboundTransport>(
         UncertainSendStep::OwnerReleased => {
             let released = record_definite_non_delivery(vault, record.id, now_ms)?;
             replay_record(vault, authority, released, prepared, now_ms, transport)
+        }
+        // A provider's time-bounded dedupe proves nothing: the row is sent
+        // again still Pending and uncertain, never recorded as a non-delivery,
+        // so a resend resumed after the window looks up again (review #6555).
+        UncertainSendStep::ResendDeduplicated => {
+            let uncertain = record_possible_delivery(vault, record.id)?;
+            send_pending_with_gate(
+                vault, authority, uncertain, prepared, None, now_ms, true, transport,
+            )
         }
         UncertainSendStep::Hold => {
             let uncertain = record_possible_delivery(vault, record.id)?;
