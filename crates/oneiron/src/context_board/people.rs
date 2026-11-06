@@ -8,6 +8,9 @@
 //! roster per vault; the live board names persons by handle, and a handle the
 //! reader's cached roster does not hold carries its name inline.
 
+mod prepared;
+pub(crate) use prepared::{PreparedAgentPerson, prepare_agent_person_in_txn};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::one_line_token;
