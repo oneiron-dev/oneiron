@@ -102,3 +102,44 @@ Post-loss CLI and HTTP recovery remain separate from these pre-loss enrollment
 surfaces. The public Rust operations do not themselves claim those surfaces are
 implemented, nor do they change kit confirmation, piece-count options, kit
 replacement or ordinary key revocation.
+
+## Post-loss CLI recovery
+
+On a stopped copy of the vault, open its data with the existing unlock inputs and
+recover authority with a kit whose distinct authority key was enrolled before loss:
+
+```sh
+oneiron recovery-kit recover-authority --config serve.toml \
+  --piece /private/kit/piece-1.txt --piece /private/kit/piece-2.txt \
+  --new-device /private/successor-device.json
+```
+
+`--new-device` is a JSON file, not stdin. It supplies every native successor field:
+
+- `key`: an object with `suite` (`ed25519` or `p256`) and hex `public_key`.
+  Ed25519 uses 32 bytes; P-256 uses canonical compressed SEC1 bytes.
+- `transport_key_binding`: the actual 32-byte binding, in hex.
+- `attestation`: an object with the actual `kind` and hex `evidence`.
+- `tier`: `software`, `hardware` or `cloud_custodial`.
+- `roles`: the native role-bit integer, with no inferred owner or admin role.
+
+No field defaults to the lost host's key, a minted attestation, an empty binding
+or an assumed tier. Supply the real successor public key and its truthful device
+envelope. The file contains no signing seed or private key; custody of the
+successor's private key remains the caller's responsibility. Its envelope is a
+recovery target, not a credential or proof of possession for enrollment.
+
+The command does not call the local-owner or host-predecessor door. It restores
+kit material for the vault's actual authority identity, then calls the core
+counted recovery operation. Only the previously enrolled, still-standing recovery
+key authenticates it. Native successor, posture, role, freshness, frontier and
+signature checks still apply. The JSON receipt contains the committed entry hash,
+its authority vault id and its signer sequence. No kit material is printed.
+
+This command needs an existing openable vault copy. It neither restores missing
+vault data nor grants authority merely because world keys or a sealed bundle
+were restored. Kit confirmation, piece-count options, kit replacement and
+ordinary key revocation are unchanged. Its kit and data-unlock readers use the
+same exact kept-piece and stdin rules as pre-loss enrollment.
+
+Post-loss HTTP ingress remains separate and is not claimed implemented here.
