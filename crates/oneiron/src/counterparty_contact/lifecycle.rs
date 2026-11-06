@@ -26,6 +26,7 @@ use rmpv::Value;
 
 mod claim_heads;
 use claim_heads::contact_claim_values_in_txn;
+pub(super) use claim_heads::counterparty_contact_label_with_memory_in_claims_in_txn;
 
 /// Closes `old_id` in favour of `new_id` for one claim whose FAMILY DOOR owns
 /// the transition, inside the caller's write transaction.
@@ -394,7 +395,7 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
-    contact_claim_values_in_txn(vault, rtxn, contact_id, None)
+    contact_claim_values_in_txn(vault, rtxn, contact_id, None, true)
         .map_err(ClaimBodyReadError::into_unbound_error)?
         .into_read()
         .map(CounterpartyContactRead::into_unbound_record)
@@ -430,7 +431,7 @@ fn live_counterparty_contact_heads_with_memory_in_txn(
     if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
         return Ok(None);
     }
-    let bodies = contact_claim_values_in_txn(vault, rtxn, contact_id, memory)?;
+    let bodies = contact_claim_values_in_txn(vault, rtxn, contact_id, memory, true)?;
     if bodies.is_empty() {
         return Ok(None);
     }

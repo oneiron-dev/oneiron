@@ -19,7 +19,7 @@ use crate::Vault;
 use crate::conversation::ContainerAttendee;
 use crate::conversation::voice_roster::{VoiceAttributionEvidence, VoiceResolvedSegment};
 use crate::counterparty_contact::{
-    CounterpartyContactRead, CounterpartyContactRecord, CounterpartyContactStatus,
+    CounterpartyContactLabelRead, CounterpartyContactRecord, CounterpartyContactStatus,
     CounterpartyFirstTouch,
 };
 use crate::disclosure::AttendeeIdentityChoice;
@@ -552,7 +552,7 @@ impl Vault {
     fn contact_read_interlocutor(
         &self,
         contact_ref: EntityId,
-        record: CounterpartyContactRead,
+        record: CounterpartyContactLabelRead,
     ) -> Result<Interlocutor> {
         let status = record.status();
         let first_touch = record.first_touch();

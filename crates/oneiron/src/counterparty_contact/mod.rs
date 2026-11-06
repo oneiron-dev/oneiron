@@ -14,6 +14,7 @@ mod identity_index;
 mod lifecycle;
 mod read_memory;
 
+pub(crate) use self::read_memory::CounterpartyContactLabelRead;
 pub use self::read_memory::{CounterpartyContactRead, CounterpartyContactState};
 mod storage;
 mod trusted_contact;

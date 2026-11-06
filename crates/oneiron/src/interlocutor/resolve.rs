@@ -132,7 +132,7 @@ impl Vault {
                         return Err(Error::EntityNotFound.into());
                     }
                     let record = self
-                        .get_counterparty_contact_with_memory_in_txn(rtxn, id, memory)?
+                        .get_counterparty_contact_label_with_memory_in_txn(rtxn, id, memory)?
                         .ok_or(Error::EntityNotFound)?;
                     self.contact_read_interlocutor(*id, record)?
                 }

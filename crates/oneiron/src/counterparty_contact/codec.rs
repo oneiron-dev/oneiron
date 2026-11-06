@@ -198,14 +198,33 @@ impl CounterpartyContactScalarHeads {
         self,
         field: impl Fn(&str) -> Result<&'a Value>,
     ) -> Result<CounterpartyContactFields<'a>> {
+        let (state, counterparty) = self.decode_state(|| field(KEY_COUNTERPARTY))?;
+        let notes = decode_notes_borrowed(field(KEY_NOTES)?)?;
+        finish_contact_fields(state, counterparty, notes)
+    }
+
+    pub(super) fn decode_label_state(
+        self,
+        counterparty: &Value,
+        notes_validation: Result<()>,
+    ) -> Result<super::read_memory::CounterpartyContactState> {
+        let (state, counterparty) = self.decode_state(|| Ok(counterparty))?;
+        // The staged result validated the immutable note contents before their drop.
+        notes_validation?;
+        state.validate(counterparty)?;
+        Ok(state)
+    }
+
+    fn decode_state<'a>(
+        self,
+        counterparty: impl FnOnce() -> Result<&'a Value>,
+    ) -> Result<(super::read_memory::CounterpartyContactState, &'a str)> {
         // Preserve the original field-error order after all reads and head checks.
         let identity_ref = self
             .identity_ref
             .expect("complete contact scalar heads")
             .map_err(|()| invalid_contact())?;
-        let counterparty = field(KEY_COUNTERPARTY)?
-            .as_str()
-            .ok_or_else(invalid_contact)?;
+        let counterparty = counterparty()?.as_str().ok_or_else(invalid_contact)?;
         let first_touch = self
             .first_touch
             .expect("complete contact scalar heads")
@@ -234,7 +253,6 @@ impl CounterpartyContactScalarHeads {
             .promo_consent
             .expect("complete contact scalar heads")
             .map_err(|()| invalid_contact())?;
-        let notes = decode_notes_borrowed(field(KEY_NOTES)?)?;
         let state = super::read_memory::CounterpartyContactState {
             identity_ref,
             first_touch,
@@ -245,7 +263,7 @@ impl CounterpartyContactScalarHeads {
             opt_out,
             promo_consent,
         };
-        finish_contact_fields(state, counterparty, notes)
+        Ok((state, counterparty))
     }
 }
 
@@ -441,6 +459,10 @@ fn decode_notes(value: &Value) -> Result<Vec<String>> {
         .iter()
         .map(|note| note.as_str().expect("validated contact note").to_owned())
         .collect())
+}
+
+pub(super) fn validate_contact_notes_value(value: &Value) -> Result<()> {
+    decode_notes_borrowed(value).map(|_| ())
 }
 
 fn decode_notes_borrowed(value: &Value) -> Result<&[Value]> {
