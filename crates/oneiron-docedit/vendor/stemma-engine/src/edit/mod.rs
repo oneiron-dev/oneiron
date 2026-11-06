@@ -8458,6 +8458,62 @@ fn set_mark_surface(marks: &mut Vec<Mark>, style_props: &mut StyleProps, target:
     }
 }
 
+/// Keep each structural marker once between the old and replacement readings.
+/// The caller supplies an all-Normal paragraph to the segment builder and
+/// applies exact replacement marks before this pass can split its text runs.
+fn reposition_segment_replacement_markers(
+    para: &mut ParagraphNode,
+    marker_source: &[TrackedSegment],
+) {
+    let Some(pos) = para
+        .segments
+        .iter()
+        .position(|segment| matches!(segment.status, TrackingStatus::Inserted(_)))
+    else {
+        return;
+    };
+    let mut replacement = vec![para.segments.remove(pos)];
+    crate::tracked_model::inject_structural_markers_at_offsets(
+        &mut replacement,
+        marker_source,
+        None,
+    );
+    let replacement = replacement.pop().expect("one replacement segment");
+    let replacement_status = replacement.status;
+    let mut replacement_inlines = replacement.inlines.into_iter();
+    let mut rebuilt = Vec::new();
+    for segment in std::mem::take(&mut para.segments) {
+        if segment.status != TrackingStatus::Normal {
+            rebuilt.push(segment);
+            continue;
+        }
+        for marker in segment.inlines {
+            let inlines: Vec<_> = replacement_inlines
+                .by_ref()
+                .take_while(|inline| !is_structural_marker(inline))
+                .collect();
+            if !inlines.is_empty() {
+                rebuilt.push(TrackedSegment {
+                    status: replacement_status.clone(),
+                    inlines,
+                });
+            }
+            rebuilt.push(TrackedSegment {
+                status: TrackingStatus::Normal,
+                inlines: vec![marker],
+            });
+        }
+    }
+    let inlines: Vec<_> = replacement_inlines.collect();
+    if !inlines.is_empty() {
+        rebuilt.push(TrackedSegment {
+            status: replacement_status,
+            inlines,
+        });
+    }
+    para.segments = rebuilt;
+}
+
 /// The shared segment builder emits one inline per fragment in its single
 /// Inserted segment. Set only those new text nodes; Deleted source runs and
 /// preserved opaque/break nodes keep their original formatting and history.
