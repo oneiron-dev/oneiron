@@ -334,6 +334,10 @@ impl Vault {
                 || receipt.session_id != session.session_id
                 || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
+                // A masked edit's receipt holds its handles, never the
+                // value: a replay offering the value again is not proved the
+                // same edit (a rotated custody record names a new value
+                // under the same handle), so it refuses (FIX 2372).
                 || receipt.edit != *edit
                 || receipt.metadata_edit.as_ref() != metadata
             {
