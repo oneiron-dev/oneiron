@@ -6,6 +6,7 @@ pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
     let mut cursor = 0;
     let mut nesting = Vec::new();
     let mut started = false;
+    let mut dictionary_start = 0;
     while cursor < end {
         match bytes[cursor] {
             b'%' => {
@@ -16,6 +17,9 @@ pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
             }
             byte if byte.is_ascii_whitespace() || byte == 0 => {}
             b'<' if bytes.get(cursor + 1) == Some(&b'<') => {
+                if !started {
+                    dictionary_start = cursor;
+                }
                 nesting.push(b'>');
                 started = true;
                 cursor += 1;
@@ -62,7 +66,7 @@ pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
                 }
                 cursor += 1;
                 if nesting.is_empty() {
-                    let object = super::operand(&bytes[..=cursor])?;
+                    let object = super::operand(&bytes[dictionary_start..=cursor])?;
                     return Ok((object.as_dict()?.clone(), cursor + 1));
                 }
             }
