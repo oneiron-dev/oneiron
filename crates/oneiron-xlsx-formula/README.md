@@ -411,8 +411,8 @@ Precedence, row order, nulls, base fallbacks and overlay statistics stay intact
 when not cancelled. The same token also reaches all six overlay layer scans.
 Each fragment and point is checked before its original filter or read; sparse
 and dense payload rows, run headers and run payload rows are checked before
-visiting the original values. The visitor stays infallible and each layer is
-walked once. Computed/user and fragment/point order stay unchanged. The six
+visiting the original values. The visitor returns native cancellation through
+the same single layer walk. Computed/user and fragment/point order stay unchanged. The six
 fallible projection guards and selector discovery paths also lend that token to
 overlay-presence and full-cover scans. Each original point and fragment is
 checked before its filter, with the original short circuits and user/computed
@@ -435,8 +435,11 @@ The two fallible lowered-text materializers also lend the same token to payload
 text folding. With a token, each original character is checked before the same
 Unicode-simple and sigma mapping is pushed into the local string. Without a
 token, the original whole-string fold and ASCII fast path remain. Missing tags,
-nulls and non-text conversions stay unchanged. The working infallible overlay
-layer caller keeps its no-token wrapper.
+nulls and non-text conversions stay unchanged. Fragment-layer readers also
+lend that token to lowered payload folding. A fallible value provider and
+visitor propagate cancellation through the original single walk, preserving
+other typed value expressions and computed/user, fragment/point order.
+Ordinary no-token results remain unchanged.
 Individual allocations, scalar folds and writes, null-array
 construction, fragment partition and interval checks, layer value reads and
 clones, zip selection, cell clones, Arrow finishes and reserves still contain
@@ -656,7 +659,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.66): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.67): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -707,7 +710,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.66`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.67`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
