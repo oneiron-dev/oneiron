@@ -147,7 +147,7 @@ impl RecordingJsHost<'_, '_> {
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id)? {
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };

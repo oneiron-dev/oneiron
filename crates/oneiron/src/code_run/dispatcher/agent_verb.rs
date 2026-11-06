@@ -184,7 +184,7 @@ impl HostSelfDispatcher<'_> {
             KeptWrite::Fresh(stopped) => stopped,
         };
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
-        let generation =
+        let mut generation =
             self.put_write_receipt(&receipt, stopped, program.as_ref(), false, site.run_id)?;
         // A call a code consent wait may bind carries its place in the run
         // (DOOR-079 1a), so a hold for consent alone binds the wait to it.
@@ -262,7 +262,13 @@ impl HostSelfDispatcher<'_> {
             Err(error) => return Err(error),
         };
         let mut outcome = outcome;
-        stored_answer::store(&self.storage, site.run_id, &mut receipt, &mut outcome)?;
+        stored_answer::store(
+            &self.storage,
+            site.run_id,
+            &mut receipt,
+            &mut generation,
+            &mut outcome,
+        )?;
         // A receipt keeps its call's answer as its record's first row.
         receipt.bridge_calls.push(CodeRunBridgeCall::record(
             0,

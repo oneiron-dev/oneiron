@@ -1,6 +1,8 @@
 //! The write receipt owns the durable descriptor; the answer only lends it.
 
-use crate::code_run::{CodeRunReplayRecord, ExecutorStorage, SelfDispatchOutcome};
+use crate::code_run::{
+    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, SelfDispatchOutcome,
+};
 use crate::engine_executor::{store_agent_verb_write_answer, write_receipt_result_output_path};
 use crate::{EntityId, Result};
 
@@ -8,12 +10,11 @@ pub(super) fn store(
     storage: &ExecutorStorage<'_>,
     owner: EntityId,
     receipt: &mut CodeRunReplayRecord,
+    generation: &mut CodeRunReplayGeneration,
     outcome: &mut SelfDispatchOutcome,
 ) -> Result<()> {
-    if let SelfDispatchOutcome::AgentVerb(answer) = outcome
-        && let Some(output) = store_agent_verb_write_answer(storage, owner, receipt.run_id, answer)?
-    {
-        receipt.outputs.push(output);
+    if let SelfDispatchOutcome::AgentVerb(answer) = outcome {
+        store_agent_verb_write_answer(storage, owner, receipt, generation, answer)?;
     }
     Ok(())
 }

@@ -10,9 +10,13 @@ The body's occurrence belongs to the executing code run. Its path contains
 the stable write-receipt identity, so moving reads before a write on replay
 does not change that occurrence. The receipt id is not the body owner.
 Actor erasure and source withdrawal resolve the receipt's stored response
-owner before releasing or retiring its output occurrences. This also covers
-a crash after the receipt is saved but before the executing run checkpoints.
-Later replay writes use the same owner when checking withdrawn occurrences.
+owner before releasing or retiring its output occurrences. Body publication
+and the receipt's output manifest commit in the same writer, with the
+receipt generation checked there. A crash before the later answer row is
+saved therefore leaves the manifest discoverable for erasure; it does not
+make the unfinished write replayable. This also covers a crash after the
+answer is saved but before the executing run checkpoints. Later replay
+writes use the same owner when checking withdrawn occurrences.
 
 The recording host imports the native manifest, assigns its normal result
 name and binds it to the run. It does not publish the body again. Immediate

@@ -46,10 +46,12 @@ impl ExecutorStorage<'_> {
         path: String,
         spool: BodySink,
         owner: EntityId,
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         match self {
             Self::Canonical(vault) => {
-                let published = vault.publish_admitted_code_run_output(path, spool, true, owner)?;
+                let published =
+                    vault.publish_admitted_code_run_output(path, spool, true, owner, receipt)?;
                 Ok(match published {
                     ReplyBody::Published(output) => Ok(output),
                     ReplyBody::Unplaceable {
@@ -59,7 +61,13 @@ impl ExecutorStorage<'_> {
                     } => Err(unplaced_answer(bytes, text, reason)),
                 })
             }
-            Self::Session(binding) => binding.publish_output(path, spool, true, owner).map(Ok),
+            Self::Session(binding) => {
+                let output = binding.publish_output(path, spool, true, owner)?;
+                if let Some((receipt, _)) = receipt {
+                    receipt.outputs.push(output.clone());
+                }
+                Ok(Ok(output))
+            }
         }
     }
 }
