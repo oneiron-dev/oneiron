@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod documents;
 mod entity_documents;
 mod entity_history;
+mod entity_pointer;
 mod manifest;
 mod window_rows;
 pub(super) use documents::DocumentRows;
@@ -98,34 +99,6 @@ pub(crate) fn trusted_soft_addressing_edge(
         ));
     }
     Ok(true)
-}
-
-/// A document pointer in a raw entity row MUST have its value in the artifact.
-/// Do not trust the writer: decoded payloads enter this gate too.
-fn pointer(body: &[u8]) -> Result<Option<String>> {
-    let mut reader = std::io::Cursor::new(body);
-    let Ok(value) = rmpv::decode::read_value(&mut reader) else {
-        return Ok(None);
-    };
-    let rmpv::Value::Map(fields) = value else {
-        return Ok(None);
-    };
-    let refs: Vec<_> = fields
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("entity_doc_ref"))
-        .collect();
-    if refs.is_empty() {
-        return Ok(None);
-    }
-    if refs.len() != 1 || reader.position() != body.len() as u64 {
-        return Err(invalid("entity document pointer encoding"));
-    }
-    let value = refs[0]
-        .1
-        .as_str()
-        .ok_or(invalid("entity document pointer type"))?;
-    id(super::canonical::parse_id(value)?)?;
-    Ok(Some(value.to_owned()))
 }
 
 /// A causal row binds inside itself: every version leads to the head, pins
