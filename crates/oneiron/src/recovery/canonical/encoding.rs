@@ -212,10 +212,46 @@ impl TextRow for CanonicalDocument {
             birth_at,
             authorship,
         } = self;
-        if let Some(next) = cursor.items.as_mut() {
-            write_named(out, &authorship[*next])?;
-            *next += 1;
-            return Ok(*next == authorship.len());
+        if let Some(next) = cursor.items {
+            let crate::note::NoteAuthorship {
+                operation,
+                actor,
+                actor_class,
+                grant,
+                command_hash,
+            } = &authorship[next];
+            if let Some(offset) = cursor.bytes.as_mut() {
+                if *offset < actor_class.len() {
+                    let end = offset
+                        .saturating_add(blake3::CHUNK_LEN)
+                        .min(actor_class.len());
+                    out.bytes
+                        .extend_from_slice(&actor_class.as_bytes()[*offset..end]);
+                    *offset = end;
+                    return Ok(false);
+                }
+                write_named(out, "grant")?;
+                write_named(out, grant)?;
+                write_named(out, "command_hash")?;
+                write_named(out, command_hash)?;
+                cursor.items = Some(next + 1);
+                cursor.bytes = None;
+                return Ok(next + 1 == authorship.len());
+            }
+            write_struct_header(out, "NoteAuthorship", 5)?;
+            write_named(out, "operation")?;
+            write_named(out, &operation.to_hex())?;
+            write_named(out, "actor")?;
+            write_named(out, actor)?;
+            write_named(out, "actor_class")?;
+            rmp::encode::write_str_len(&mut *out, actor_class.len() as u32)
+                .map_err(|_| out.refusal())?;
+            if !actor_class.is_empty() {
+                out.reserve_write(actor_class.len())
+                    .map_err(|_| out.refusal())?;
+            }
+            cursor.bytes = Some(0);
+            return Ok(false);
         }
         if let Some(next) = cursor.bytes.as_mut() {
             if let Some(title) = title {
@@ -233,6 +269,7 @@ impl TextRow for CanonicalDocument {
             write_named(out, "authorship")?;
             write_array_header(out, authorship.len())?;
             cursor.items = Some(0);
+            cursor.bytes = None;
             return Ok(authorship.is_empty());
         }
         write_named(out, "title")?;
