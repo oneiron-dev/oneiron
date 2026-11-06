@@ -576,7 +576,7 @@ pub fn offer_is_free_work(binding: &OfferBinding) -> bool {
     free_work(binding.payer, binding.locality, binding.custody)
 }
 
-/// Whether a paid connector is free work, by the same rule as an offer.
+/// Whether a paid connector is free work, by the run admission's one rule.
 #[must_use]
 pub fn connector_is_free_work(binding: &PaidConnector) -> bool {
     free_work(binding.payer, binding.locality, binding.custody)
