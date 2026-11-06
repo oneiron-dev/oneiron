@@ -399,6 +399,7 @@ impl DecisionHost {
     fn with_system_one(
         mut self,
         settings: Option<&SystemOneSettings>,
+        models: &Arc<crate::models::ModelRuntime>,
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
@@ -410,6 +411,7 @@ impl DecisionHost {
         };
         match SystemOneRung::bind(
             settings,
+            Arc::clone(models),
             default_units,
             posture,
             runtime,
@@ -687,9 +689,10 @@ impl HouseRead {
 }
 
 /// The remote System One seat as a ladder rung: each question is one
-/// measurement admitted and settled on the seat's own meter, sent on the
-/// server's runtime (so a call blocks its thread, inside the pass or run of
-/// the ladder call that asks it). It takes noul and choice questions; a
+/// measurement admitted and settled on a run, sent on the server's runtime
+/// (so a call blocks its thread, inside the pass or run of the ladder call
+/// that asks it). Without a caller's run, it opens one on the verdict's
+/// caller meter and payer, or its own meter outside a verdict. It takes noul and choice questions; a
 /// score question's level labels are the caller's, and a ladder call does
 /// not carry them. A `key_env` seat holds its bearer from bind; a
 /// `key_secret` seat reads its key at the vault's custody door for each
@@ -697,9 +700,10 @@ impl HouseRead {
 struct SystemOneRung {
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
-    /// A call that carries its caller's run admits its measurement on that run as this
-    /// paid connector (FIX 10443): the seat's key is the customer's own, and its usage
-    /// reports tokens, one unit each.
+    /// The host account and receipt sink for calls without a caller's run (FIX 3795).
+    models: Arc<crate::models::ModelRuntime>,
+    /// Every measurement uses this paid connector: the seat's key is the customer's
+    /// own, and its usage reports tokens, one unit each.
     connector: PaidConnector,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
@@ -709,6 +713,7 @@ struct SystemOneRung {
 impl SystemOneRung {
     fn bind(
         settings: &SystemOneSettings,
+        models: Arc<crate::models::ModelRuntime>,
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
@@ -763,6 +768,7 @@ impl SystemOneRung {
                 settings.budget_units.unwrap_or(default_units),
                 BudgetExhaustionPolicy::Suspend,
             ),
+            models,
             connector,
             posture,
             remote_opt_in: settings.remote_opt_in,
