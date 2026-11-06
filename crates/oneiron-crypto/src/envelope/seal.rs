@@ -165,7 +165,16 @@ fn seal_with_aad_inner<R: TryCryptoRng + ?Sized>(
     check_len("plaintext", plaintext.len(), 0, MAX_PLAINTEXT_LEN)?;
     let mut salt = [0u8; 32];
     fill(rng, &mut salt)?;
-    let mut nonce = vec![0u8; suite.nonce_len()];
+    let mut nonce = if ciphertext.is_some() {
+        let mut nonce = Vec::new();
+        nonce
+            .try_reserve_exact(suite.nonce_len())
+            .map_err(|_| Error::OutOfMemory)?;
+        nonce.resize(suite.nonce_len(), 0);
+        nonce
+    } else {
+        vec![0u8; suite.nonce_len()]
+    };
     fill(rng, &mut nonce)?;
 
     let (wrap, kdf, wrap_params, secret) = match key {
@@ -233,21 +242,38 @@ fn seal_with_aad_inner<R: TryCryptoRng + ?Sized>(
 
     let ciphertext_len =
         u32::try_from(plaintext.len() + TAG_LEN).map_err(|_| Error::Primitive("length"))?;
+    let (key_id, recipient, vault_id) = if ciphertext.is_some() {
+        (
+            copy_fallible(params.key_id)?,
+            copy_fallible(params.recipient)?,
+            copy_fallible(params.vault_id)?,
+        )
+    } else {
+        (
+            params.key_id.to_vec(),
+            params.recipient.to_vec(),
+            params.vault_id.to_vec(),
+        )
+    };
     let header = Header {
         suite: params.suite,
         wrap,
         purpose: params.purpose,
         epoch: params.epoch,
-        key_id: params.key_id.to_vec(),
-        recipient: params.recipient.to_vec(),
-        vault_id: params.vault_id.to_vec(),
+        key_id,
+        recipient,
+        vault_id,
         kdf,
         wrap_params,
         nonce,
         ciphertext_len,
     };
     header.validate()?;
-    let header_bytes = header.encode();
+    let header_bytes = if ciphertext.is_some() {
+        header.try_encode()?
+    } else {
+        header.encode()
+    };
     let mut key = Zeroizing::new([0u8; 32]);
     aead_key(&secret, header.kdf.salt(), &header_bytes, &mut key)?;
     let aad = if ciphertext.is_some() {
@@ -425,6 +451,15 @@ fn aad_with_extra(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
     aad.extend_from_slice(&len.to_be_bytes());
     aad.extend_from_slice(extra_aad);
     Ok(aad)
+}
+
+fn copy_fallible(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut copied = Vec::new();
+    copied
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| Error::OutOfMemory)?;
+    copied.extend_from_slice(bytes);
+    Ok(copied)
 }
 
 fn aad_with_extra_fallible(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
