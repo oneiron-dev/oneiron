@@ -32,13 +32,23 @@
 //!
 //! An entry's outcome replaces the registration: another wait registers that
 //! wait, and any other end removes it. The caller's own call stays a valid
-//! re-entry and takes its turn in the same single flight. The registry is
-//! memory of a live host binding: a restart keeps nothing, and the caller's
-//! next call enters the run as before.
+//! re-entry and takes its turn in the same single flight.
+//!
+//! The registry is memory, so a restart forgets it. A run parked on a code
+//! consent wait is entered again after a restart from its wait alone
+//! (`recovery`): the wait keeps the admitted caller's origin and slip
+//! witness, and the run keeps its caller's own task. Each settler pass
+//! builds such a run's continuation again for the same caller, verified
+//! again now, and enters it through the same path. This covers live paired
+//! slips and the attested owner. A custom registration a restart lost is
+//! not made again from its saved ceiling: its run stays parked, its caller
+//! unavailable, until the caller's own next call. Any other parked run
+//! waits for its caller's next call, as before.
 
 mod origin;
+mod recovery;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use oneiron::EntityId;
@@ -58,10 +68,15 @@ type WeakAdmission = Weak<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
 
 /// The served MCP runs parked on a durable wait, each with the owned
 /// continuation that enters it again once the wait's reply is delivered
-/// (FIX 4606). In memory only.
+/// (FIX 4606). In memory; a run parked on a code consent wait is built
+/// again from its wait after a restart (`recovery`).
 #[derive(Default)]
 pub(crate) struct McpCodeRunContinuations {
     runs: Mutex<HashMap<EntityId, McpCodeRunSlot>>,
+    /// The waits whose automatic re-entry ran and failed in this process
+    /// (FIX 4606). A run recovered from its wait is not entered again for
+    /// one, so a failing run is not run and spent again on every pass.
+    failed: Mutex<HashSet<WaitKey>>,
     /// The host's write gate for background work, the one its connector
     /// settler passes through. Each re-entry holds one admission of it from
     /// before it is spawned until it returns, so a managed vault frozen for
@@ -306,8 +321,9 @@ pub(super) struct McpCodeRunEntry {
     run_id: EntityId,
     /// Its slot's applied count when this entry began.
     applied: u64,
-    /// Whether this entry is the registry's re-entry, not a caller's call.
-    claimed: bool,
+    /// The wait this entry, the registry's re-entry, was claimed for;
+    /// `None` for a caller's own call.
+    claimed: Option<WaitKey>,
     settled: bool,
 }
 
@@ -324,7 +340,7 @@ impl McpCodeRunEntry {
             server: Arc::clone(server),
             run_id,
             applied,
-            claimed: false,
+            claimed: None,
             settled: false,
         }
     }
@@ -346,7 +362,7 @@ impl McpCodeRunEntry {
             server: Arc::clone(server),
             run_id,
             applied,
-            claimed: true,
+            claimed: Some(continuation.wait),
             settled: false,
         })
     }
@@ -380,9 +396,21 @@ impl McpCodeRunEntry {
         task: &str,
         outcome: &Result<EngineExecutorOutcome, McpCodeExecutionError>,
     ) {
+        // A re-entry that ran and failed is not made again for its wait in
+        // this process (FIX 4606), marked before its slot frees. A permit
+        // wait or a provider outage is tried again on a later pass.
+        if let (Some(wait), Err(error)) = (self.claimed, outcome)
+            && !matches!(
+                error,
+                McpCodeExecutionError::RunWaitedOut
+                    | McpCodeExecutionError::ProviderUnavailable { .. }
+            )
+        {
+            self.server.mcp_code_run_continuations.fail(wait);
+        }
         let end = McpCodeRunEnd::of(&self.server, caller, run_ref, task, outcome);
         if let Some(continuation) = self.end(end)
-            && !self.claimed
+            && self.claimed.is_none()
         {
             reenter_if_ready(&self.server, continuation);
         }
@@ -445,12 +473,15 @@ impl Drop for McpCodeRunEntry {
 
 /// The connector settler's drain of the parked MCP runs (FIX 4606): each
 /// registered run that is ready enters again on a task of its own; a run
-/// whose record moved since it registered loses its registration. Called on
-/// the settler's blocking worker, inside its admitted pass.
+/// whose record moved since it registered loses its registration. Then each
+/// run a restart left parked on a code consent wait is built again from its
+/// wait and enters the same way. Called on the settler's blocking worker,
+/// inside its admitted pass.
 pub(crate) fn reenter_ready_mcp_code_runs(server: &Arc<SyncServer>) {
     for continuation in server.mcp_code_run_continuations.idle() {
         reenter_if_ready(server, continuation);
     }
+    recovery::reenter_recovered_mcp_code_runs(server);
 }
 
 fn reenter_if_ready(server: &Arc<SyncServer>, continuation: McpCodeRunContinuation) {
