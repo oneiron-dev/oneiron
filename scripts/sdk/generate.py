@@ -2388,6 +2388,14 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_retrieval_run_evidence_opt({name}, output)'
             elif row['output'] == 'crate::task_verb::sdk::RetrievalDiagnosticExport':
                 result = f'crate::codec::lift_retrieval_diagnostic_export({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SkillLibraryView':
+                result = f'crate::codec::lift_skill_library_view({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SkillLibraryPage':
+                result = f'crate::codec::lift_skill_library_page({name}, output)'
+            elif row['output'] == 'Vec<crate::task_verb::sdk::BootstrapSkillView>':
+                result = f'crate::codec::lift_bootstrap_skills({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SkillLibraryRestoreReceipt':
+                result = f'crate::codec::lift_skill_library_restore({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):

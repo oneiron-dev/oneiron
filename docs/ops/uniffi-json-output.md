@@ -381,3 +381,19 @@ whole-result codec and per-verb diagnostics. Native telemetry reads,
 redaction, inputs, typed records, clients, hooks and authority are unchanged.
 This is selected output conversion, not end-to-end depth, heap or runtime
 proof.
+
+## Skill-library output JSON
+
+The bootstrap, get, list, archive, restore and fork result codecs consume
+`SkillLibraryView.provenance` and both `SkillLibraryCall.arguments` and
+`SkillLibraryCall.returns` through the existing owned `WireJson` conversion.
+Every skill's leaves are consumed before the first conversion error, including
+all residents in a bootstrap list and all entries in a library page. The
+remaining finite record uses the original whole-record codec. Converted leaves
+are then put back into the same records in order.
+
+Required JSON nulls remain present. An absent resident or call remains absent;
+a present call with null arguments or returns remains present. Restore keeps
+all three original outcome variants and the existing admission receipt. Native
+inputs, typed clients, hooks, authority and public result shapes are unchanged.
+This source change does not prove a runtime depth or memory bound.

@@ -81,6 +81,10 @@ mod shape_groups;
 mod shape_plans;
 pub(crate) use shape_groups::lift_shape_groups;
 mod skill_callables;
+mod skill_library;
+pub(crate) use skill_library::{
+    lift_bootstrap_skills, lift_skill_library_page, lift_skill_library_restore, lift_skill_library_view,
+};
 mod weave_reports;
 mod wire_json;
 

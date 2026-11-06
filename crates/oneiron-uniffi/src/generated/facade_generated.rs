@@ -1139,7 +1139,7 @@ export_facade! {
 "vault.skills.bootstrap" => fn vault_skills_bootstrap(&self) -> Vec<BootstrapSkillView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.bootstrap")?;
     let output = client.vault_skills_bootstrap(&input)?;
-    crate::codec::lift_record("vault.skills.bootstrap", &output)
+    crate::codec::lift_bootstrap_skills("vault.skills.bootstrap", output)
 };
 "vault.skill_hubs.default.get" => fn vault_skill_hubs_default_get(&self) -> DefaultSkillHub = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skill_hubs.default.get")?;
@@ -1219,27 +1219,27 @@ export_facade! {
 "vault.skills.get" => fn vault_skills_get(&self, input: HubSkillRequest) -> SkillLibraryView = |client| {
     let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.get", input)?;
     let output = client.vault_skills_get(&input)?;
-    crate::codec::lift_record("vault.skills.get", &output)
+    crate::codec::lift_skill_library_view("vault.skills.get", output)
 };
 "vault.skills.list" => fn vault_skills_list(&self, input: SkillLibraryListRequest) -> SkillLibraryPage = |client| {
     let input: oneiron::task_verb::sdk::SkillLibraryListRequest = crate::codec::lower_record("vault.skills.list", input)?;
     let output = client.vault_skills_list(&input)?;
-    crate::codec::lift_record("vault.skills.list", &output)
+    crate::codec::lift_skill_library_page("vault.skills.list", output)
 };
 "vault.skills.archive" => fn vault_skills_archive(&self, input: HubSkillRequest) -> SkillLibraryView = |client| {
     let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.archive", input)?;
     let output = client.vault_skills_archive(&input)?;
-    crate::codec::lift_record("vault.skills.archive", &output)
+    crate::codec::lift_skill_library_view("vault.skills.archive", output)
 };
 "vault.skills.restore" => fn vault_skills_restore(&self, input: SkillLibraryRestoreRequest) -> SkillLibraryRestoreReceipt = |client| {
     let input: oneiron::task_verb::sdk::SkillLibraryRestoreRequest = crate::codec::lower_record("vault.skills.restore", input)?;
     let output = client.vault_skills_restore(&input)?;
-    crate::codec::lift_record("vault.skills.restore", &output)
+    crate::codec::lift_skill_library_restore("vault.skills.restore", output)
 };
 "vault.skills.fork" => fn vault_skills_fork(&self, input: SkillLibraryForkRequest) -> SkillLibraryView = |client| {
     let input: oneiron::task_verb::sdk::SkillLibraryForkRequest = crate::codec::lower_record("vault.skills.fork", input)?;
     let output = client.vault_skills_fork(&input)?;
-    crate::codec::lift_record("vault.skills.fork", &output)
+    crate::codec::lift_skill_library_view("vault.skills.fork", output)
 };
 "vault.skills.rules.set" => fn vault_skills_rules_set(&self, input: SkillHashRuleRequest) -> HubConsentReceipt = |client| {
     let input: oneiron::task_verb::sdk::SkillHashRuleRequest = crate::codec::lower_record("vault.skills.rules.set", input)?;
