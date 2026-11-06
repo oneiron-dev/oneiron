@@ -16,7 +16,7 @@ use super::{
 use crate::Vault;
 use crate::edit_settle::{
     DecidedSheetAnswers, DecidedSheetInputs, DecidedSheetProgress, DecidedSheetRequest,
-    DecidedSheetRow, DecidedSheetShape,
+    DecidedSheetRow, DecidedSheetShape, DecidedSheetUnitDecision,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -374,6 +374,7 @@ impl Vault {
                             headers,
                             rows: inputs,
                         },
+                        decision: None,
                     }),
                     unmasked: false,
                 },
@@ -393,7 +394,9 @@ impl Vault {
             let unit = json!({"sheet": request.sheet, "row": target.row, "cell": target.to_a1()});
             let before = input.before.clone();
             let base_live = row.bundle.base_live.clone();
-            if matches!(before, CellValue::Formula { .. }) {
+            if progress.decision.is_some() {
+                finish_decided_sheet_unit(self, artifact, &mut row, unit, target, before)?;
+            } else if matches!(before, CellValue::Formula { .. }) {
                 row.refused.push(UnitRefusal {
                     unit,
                     reason: "answer_cell_formula".into(),
@@ -416,24 +419,14 @@ impl Vault {
                     body_hash: row.frontier,
                 }];
                 if let Some(decision) = ask.decide(&state, &sources, &[])? {
-                    let value = answer_cell(&decision.answer)?;
-                    if value.is_none() {
-                        // A unit asked of its role holder keeps its ask (FIX 11231).
-                        keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
-                        row.abstained.push(UnitAbstention {
-                            unit,
-                            decision: Some(decision.clone()),
-                            judged_live: base_live,
-                        });
-                    }
-                    row.bundle.answers.push(SheetCellAnswer {
-                        cell: target,
-                        before: Some(before),
-                        value,
+                    row.progress
+                        .as_mut()
+                        .expect("partial sheet answers")
+                        .decision = Some(DecidedSheetUnitDecision {
                         decision,
                         source: None,
-                        judged_version: Some(row.version),
-                        judged_live: None,
+                        version: row.version,
+                        live: None,
                     });
                 } else {
                     row.refused.push(UnitRefusal {
@@ -443,7 +436,10 @@ impl Vault {
                     });
                 }
             }
-            row.progress.as_mut().expect("partial sheet answers").next += 1;
+            let progress = row.progress.as_mut().expect("partial sheet answers");
+            if progress.decision.is_none() {
+                progress.next += 1;
+            }
             row = self.advance_decided_sheet_answers(artifact, &expected, row)?;
         }
         self.stage_decided_sheet_answers(artifact, &row, ask.deadline)
@@ -583,6 +579,54 @@ impl EditSession for NativeCellSession {
     fn supports_recalc(&self) -> bool {
         false
     }
+}
+
+pub(super) fn finish_decided_sheet_unit(
+    vault: &Vault,
+    artifact: &EntityId,
+    row: &mut DecidedSheetAnswers,
+    unit: Value,
+    cell: CellRef,
+    before: CellValue,
+) -> Result<()> {
+    let saved = row
+        .progress
+        .as_mut()
+        .and_then(|progress| progress.decision.take())
+        .ok_or_else(|| invalid("typed sheet unit has no retained decision"))?;
+    let value = answer_cell(&saved.decision.answer)?;
+    if value.is_none() {
+        let sheet_pin = EvidenceVersion {
+            id: *artifact,
+            body_hash: row.frontier,
+        };
+        // A unit asked of its role holder keeps its ask (FIX 11231).
+        keep_artifact_unit_ask(
+            vault,
+            saved.source.as_ref().unwrap_or(&sheet_pin),
+            &unit,
+            &saved.decision,
+        );
+        row.abstained.push(UnitAbstention {
+            unit,
+            decision: Some(saved.decision.clone()),
+            judged_live: if saved.source.is_some() {
+                saved.live.clone()
+            } else {
+                row.bundle.base_live.clone()
+            },
+        });
+    }
+    row.bundle.answers.push(SheetCellAnswer {
+        cell,
+        before: Some(before),
+        value,
+        decision: saved.decision,
+        source: saved.source,
+        judged_version: Some(saved.version),
+        judged_live: saved.live,
+    });
+    Ok(())
 }
 
 fn invalid(message: &str) -> Error {
