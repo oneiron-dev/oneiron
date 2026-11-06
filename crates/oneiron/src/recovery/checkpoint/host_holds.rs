@@ -193,6 +193,10 @@ pub struct BackupHolds {
     /// How the standing holds show to the owner, read in the same walk;
     /// `None` when none stands.
     held_visibility: Option<BackupHoldVisibility>,
+    /// Whether the vault's Owners deleted it, read in the same transaction
+    /// (FIX 11432): under [`Vault::with_backup_hold_exclusion`] no deletion
+    /// commits while it is read.
+    vault_deleted: bool,
 }
 
 /// How the holds that keep a vault's backups show to its owner, coarse on
@@ -210,6 +214,15 @@ impl BackupHolds {
     #[must_use]
     pub fn keeps_backups(&self) -> bool {
         self.standing > 0
+    }
+
+    /// Whether the vault's Owners deleted it, as the same transaction read
+    /// it: a caller that spares a deleted vault's backups until their
+    /// retention ends reads it here, where no deletion commits meanwhile
+    /// (FIX 11432).
+    #[must_use]
+    pub fn vault_deleted(&self) -> bool {
+        self.vault_deleted
     }
 
     /// How the standing holds show to the owner at the read
@@ -240,5 +253,6 @@ fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHol
     Ok(BackupHolds {
         standing,
         held_visibility,
+        vault_deleted: vault.shared_vault_deletion_in_txn(txn)?.is_some(),
     })
 }
