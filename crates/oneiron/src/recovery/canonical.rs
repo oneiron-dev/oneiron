@@ -100,7 +100,7 @@ impl CanonicalEntityDocument {
     }
 }
 
-fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+pub(super) fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
     fields
         .iter()
         .map(|(field, value)| field.len() + value.len())
@@ -172,7 +172,7 @@ impl CanonicalSnapshot {
             }
         }
         for doc in &self.doc_snapshots {
-            for (name, kind) in [("body", "text"), ("note", "map"), ("authorship", "map")] {
+            for (name, kind) in [("body", "text"), ("meta", "map"), ("authorship", "map")] {
                 rows.push(CanonicalContainerManifest {
                     container_id: format!("{}/{name}", doc.key()),
                     container_kind: kind.to_owned(),
