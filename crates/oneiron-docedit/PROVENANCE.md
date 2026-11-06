@@ -260,3 +260,18 @@ BREAK handling, opaque/static carries, cut paths and receipts are unchanged. Thi
 source-only outer-gap correction, part of the existing 17480/residual 18510 pack, not
 full 17480, full-feature, whole OF-509/OF-510 or PowerPoint fidelity proof, and no
 Office runtime comparison is claimed.
+
+The count-changing paired-prefix field-free gap carry (2026-11-06, FIX 17480) widens
+the one shared original-gap predicate from `index < head` to `index < head + paired`,
+so count-changing lines additionally keep contiguous head+paired prefix gaps wholly
+between two original prefix paragraphs under the same field-free gate and body scope.
+Same-count gaps keep their exact bytes and strict matched tail gaps are unchanged;
+head+paired stays within old-tail and new-tail so prefix, tail and added ranges do not
+overlap and no count-changed middle-tail gap carries. Gaps holding any direct or nested
+field, crossing added lines or nonconsecutive original paragraphs, and other unmatched
+gaps keep the existing drop so field-removal receipts stay truthful. Native partial-field 2->3
+(head 0, tail 0, paired 2) field-free gap 0->1 now carries; pairing, styled fallback,
+rendering, BREAK, cut paths and receipts are unchanged. This is a source-only
+paired-prefix gap correction, part of the existing 17480/residual 18510 pack, not full
+17480, full-feature, whole OF-509/OF-510 or PowerPoint fidelity proof, and no Office
+runtime comparison is claimed.
