@@ -499,6 +499,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         }
         SelfDispatchOutcome::ReportBlocked { receipt } => json!({"receipt": receipt.to_hex()}),
         SelfDispatchOutcome::InferenceDefaults(text) => json!({"json": text}),
+        SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
         SelfDispatchOutcome::Fold(text) => json!({"output": serde_json::from_str::<Value>(text)
             .unwrap_or_else(|_| Value::String(text.clone()))}),
         SelfDispatchOutcome::Context(value) => json!({"spec": value.spec}),
@@ -509,7 +510,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::Summarize(reply) => json!({"output": reply.output()}),
         SelfDispatchOutcome::Leader(text) => json!({"output": serde_json::from_str::<Value>(text)
             .unwrap_or_else(|_| Value::String(text.clone()))}),
-        SelfDispatchOutcome::Team(answer) => json!({"output": answer}),
+        SelfDispatchOutcome::Team(result) => json!({"output": result.answer}),
         SelfDispatchOutcome::TeamSubmitted(answer) => json!({"output": answer}),
     })
 }
@@ -923,6 +924,8 @@ enum FoldArgs {
         from: u64,
         through: u64,
         note: Option<String>,
+        #[serde(default)]
+        kind: Option<crate::compaction::FoldKind>,
     },
     Compact {
         note: Option<String>,
@@ -1220,10 +1223,12 @@ fn fold_rewrite(fold: &SelfFoldCall, args: &Value) -> Rewritten<SelfFoldCall> {
             from,
             through,
             note,
+            kind,
         } => SelfFoldCall::Mark {
             from,
             through,
             note,
+            kind,
         },
         FoldArgs::Compact { note } => SelfFoldCall::Compact { note },
         FoldArgs::Unfold { fold } => SelfFoldCall::Unfold { fold },

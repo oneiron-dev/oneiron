@@ -112,6 +112,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SYNC_M_U_SEQ_W,
     &side_table::SYNC_M_U_SEQ_E,
     &side_table::SHORT_ID_COUNTER,
+    &side_table::SHORT_ID_KIND_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,
     &side_table::COMPACTION_EPOCH_FLOOR,
@@ -129,7 +130,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::LEGAL_HOLD_USE_LIMIT,
     &side_table::LEGAL_HOLD_PENDING_ERASE,
     &side_table::LEGAL_HOLD_HOST_ROW,
-    &side_table::LEGAL_HOLD_HOST_TARGET,
     &side_table::LEGAL_HOLD_HOST_EVENT,
     &side_table::LEGAL_HOLD_HOST_ERASE_LINK,
     // The body collector's queue, and the device's residence choice.

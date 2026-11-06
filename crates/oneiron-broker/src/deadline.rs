@@ -15,7 +15,7 @@ pub const FRAME_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How far ahead a deadline lies whose length the clock cannot add: tokio's
 /// own reach for such a sleep.
-const FAR_FUTURE: Duration = Duration::from_secs(86_400 * 365 * 30);
+pub(crate) const FAR_FUTURE: Duration = Duration::from_secs(86_400 * 365 * 30);
 
 /// One call's deadline: the send policy's timeout, then one frame allowance,
 /// from the moment the broker accepted the call.
