@@ -373,7 +373,11 @@ fn anthropic_tool(tool: &LlmToolSpec) -> JsonValue {
     })
 }
 
-pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an Anthropic Messages `usage` object reports: input with its
+/// cache reads and writes counted in, and output. A relayed reply's own
+/// body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
     let input_tokens = u64_field(usage, "input_tokens");
     let cache_read = u64_field(usage, "cache_read_input_tokens");
     let cache_write = u64_field(usage, "cache_creation_input_tokens");
