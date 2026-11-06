@@ -190,6 +190,7 @@ pub(crate) async fn run_context_pack(
     let mut builder = server
         .vault
         .context_pack()
+        .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
@@ -588,9 +589,9 @@ fn read_reaction_signals(
         .as_deref()
         .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
         .transpose()?;
-    let deadline = req
-        .signals_deadline_ms
-        .map(|ms| oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms)));
+    let deadline = req.signals_deadline_ms.map(|ms| {
+        oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms))
+    });
     let signal_error = |error: oneiron::Error| match &error {
         oneiron::Error::Io(error)
             if error.get_ref().is_some_and(|source| {

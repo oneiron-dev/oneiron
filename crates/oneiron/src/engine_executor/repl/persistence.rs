@@ -113,6 +113,7 @@ impl EngineNativeExecutor<'_> {
         captured: Vec<CodeRunRawOutput>,
         bound: Vec<CodeRunResultBinding>,
         receipts: Vec<ReaderFoldReceipt>,
+        context_capture: StepContextCapture,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -177,6 +178,9 @@ impl EngineNativeExecutor<'_> {
         }
         let mut digests = StepResultDigests::of(&observation, false);
         digests.bindings = bindings;
+        // Where the failed step's calls end, and what its guest read before
+        // it failed (FIX 6354, FIX 6351, FIX 6352).
+        let (end, context) = self.step_context(config, record, bridge_start, context_capture)?;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
@@ -192,13 +196,18 @@ impl EngineNativeExecutor<'_> {
                 &digests,
                 None,
                 &record.bridge_calls[bridge_start..],
+                end,
             )?,
             config
                 .determinism
                 .frozen_unix_ms
                 .saturating_add(completed_steps),
-        )?;
-        record.step_checkpoints.push(checkpoint);
+        )?
+        .ending_at(end.bridge_end);
+        let bridge_end = record.bridge_calls.len();
+        record
+            .step_checkpoints
+            .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
         // A wait seen on a failed step is sealed with it too (DOOR-079 1b).
         let parked = parked_wait(record, terminal_status.as_ref(), bridge_start);
         // A flaky commit converts to success on one identical retry (FIX
@@ -212,6 +221,7 @@ impl EngineNativeExecutor<'_> {
                 healed.then_some(&config.model),
                 &receipts,
                 parked.as_ref(),
+                &context,
             ) {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!(
@@ -224,6 +234,7 @@ impl EngineNativeExecutor<'_> {
                         healed.then_some(&config.model),
                         &receipts,
                         parked.as_ref(),
+                        &context,
                     )?
             }
             result => result?,
