@@ -9,6 +9,7 @@ use crate::calendar::claims::is_calendar_claim_predicate;
 use crate::context_pack::ContextEntity;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::ppr::MAX_PPR_SEEDS;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE,
@@ -198,6 +199,7 @@ pub(crate) fn build_prep_pack_scoped(
                     _: &EntityId|
      -> Result<bool> { Ok(true) };
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
+        .reading(read.store_read())
         .authority_filter(filter.clone())
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
@@ -220,7 +222,9 @@ pub(crate) fn build_prep_pack_scoped(
     )?;
     let mut candidates = pack.results;
     candidates.extend(pack.neighbors);
-    let mut items = prep_items_from_candidates(read.vault(), &request.event, &candidates)?;
+    let txn = read.vault().store.env.read_txn()?;
+    let mut items =
+        prep_items_from_candidates(&read.store_read(), &txn, &request.event, &candidates)?;
     merge_prior_commitments(&mut items, prior_commitments);
     Ok(crate::claim::ScopedReadResult {
         value: assemble_prep_pack(&request.event, request.fired_at, request.policy, items),
@@ -252,7 +256,10 @@ fn pack_from_candidates(
     request: &PrepBuildRequest,
     candidates: &[ContextEntity],
 ) -> Result<Option<PrepPack>> {
-    let mut items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    let mut items = {
+        let txn = vault.store.env.read_txn()?;
+        prep_items_from_candidates(&vault.store.read(), &txn, &request.event, candidates)?
+    };
     let prior_commitments =
         super::ledger::unscoped_ledger_prep_items(vault, &request.event, request.fired_at)?;
     merge_prior_commitments(&mut items, prior_commitments);
@@ -322,7 +329,8 @@ fn prep_context_builder<'a>(
 /// nothing: the seeds themselves, duplicates, redirect and deleted shells,
 /// types outside the three sections, and rows with no readable text.
 fn prep_items_from_candidates(
-    vault: &Vault,
+    store: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
     event: &PrepEvent,
     candidates: &[ContextEntity],
 ) -> Result<Vec<(EntityId, PrepItem)>> {
@@ -362,10 +370,10 @@ fn prep_items_from_candidates(
         }) else {
             continue;
         };
-        if vault.is_deleted_shell(&candidate.id)? {
+        if store.port_deletion_state(txn, &candidate.id)?.deleted {
             continue;
         }
-        let Some(header) = vault.read_entity_header(&candidate.id)? else {
+        let Some(row) = store.port_entity_record(txn, &candidate.id)? else {
             continue;
         };
         items.push((
@@ -374,7 +382,7 @@ fn prep_items_from_candidates(
                 kind,
                 text,
                 source_refs: vec![candidate.id.to_hex()],
-                observed_at: header.learned_at,
+                observed_at: row.learned_at,
             },
         ));
     }
