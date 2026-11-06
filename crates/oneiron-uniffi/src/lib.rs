@@ -51,6 +51,7 @@ mod error;
 mod facade_types_generated;
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
+mod native_limit_questions;
 mod pairing;
 // FIX 10186: `vault.receipts`'s page record.
 mod receipt_page;
@@ -77,6 +78,7 @@ pub use embedded_engine::{
 pub use error::OneironError;
 pub use facade_types_generated::*;
 pub use host_root::HostRootProfile;
+pub use native_limit_questions::NativeLimitQuestion;
 pub use pairing::{
     CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy,
     CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite,
@@ -281,7 +283,7 @@ impl Oneiron {
         let request: oneiron_remote::LensFrameEventRequest =
             codec::lower_record("lens_frame_event", request)?;
         let reply = self.inner.lens_frame_event(&card_id, &request)?;
-        codec::lift_record("lens_frame_event", &reply)
+        codec::Lift::lift(reply)
     }
 
     /// Closes a lens card the connected server rendered and frees its frame

@@ -48,6 +48,14 @@ pub struct ServeArgs {
     #[arg(long = "managed-by-hypnos")]
     pub managed_by_hypnos: bool,
 
+    /// Operator enterprise/advanced capability for this hosted vault's owner
+    /// to select checkpoint roots without the host. Never owner settings.
+    #[arg(
+        long = "managed-checkpoint-host-opt-out",
+        requires = "managed_by_hypnos"
+    )]
+    pub managed_checkpoint_host_opt_out: bool,
+
     /// Supervisor⇄vault wire contract version this child was spawned against.
     /// Required in managed mode; an unknown version exits non-zero before any
     /// IO happens.
@@ -143,6 +151,17 @@ pub struct ServeArgs {
     /// ctl sockets through vsock ports (`oneiron_vault_contract::vm`).
     #[arg(long = "vsock-guest")]
     pub vsock_guest: bool,
+
+    /// A vault VM's outbox companion admission, which only the image's
+    /// `oneiron-vm-init` passes, only beside a companion it admitted: presence
+    /// is the proof the engine parks around idle. Hidden bootstrap plumbing,
+    /// never operator policy.
+    #[arg(
+        long = "vm-outbox-companion-admitted",
+        hide = true,
+        requires_all = ["vsock_guest", "managed_by_hypnos"]
+    )]
+    pub vm_outbox_companion_admitted: bool,
 
     /// A vault VM's cold restore handoff (FIX 6584), which only the image's
     /// `oneiron-vm-init` passes: the revision of the restore channel its
@@ -242,6 +261,16 @@ pub struct ServeArgs {
     /// trusts beside the system's. Repeat for each file; not for a separate user.
     #[arg(long = "broker-extra-roots", requires = "managed_by_hypnos")]
     pub broker_extra_roots: Option<Vec<PathBuf>>,
+
+    /// Managed mode: the explicit host memory allocation in bytes, as the
+    /// operator sized it. Absent is unbounded; no capacity is inferred.
+    #[arg(long = "host-memory-bytes", requires = "managed_by_hypnos")]
+    pub host_memory_bytes: Option<u64>,
+
+    /// Managed mode: the explicit host CPU share in CPU milliseconds per
+    /// second. Absent is unbounded. Advisory, not an OS-enforced quota.
+    #[arg(long = "host-cpu-millis", requires = "managed_by_hypnos")]
+    pub host_cpu_millis: Option<u32>,
 
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
@@ -484,6 +513,14 @@ pub struct ServeArgs {
     #[arg(long)]
     pub oauth_resource_indicator: Option<String>,
 
+    /// The host's own Git door base, `https://<host>/git` (or `http` on
+    /// loopback), that a run's checkout bind names instead of the caller's
+    /// endpoint (`ONEIRON_GIT_DOOR_BASE`; FIX 7181). Unset: the caller's
+    /// explicit endpoint stands. In managed mode the supervisor passes it,
+    /// as it owns the vault's public addresses.
+    #[arg(long, value_parser = git_door_base)]
+    pub git_door_base: Option<String>,
+
     /// Comma-separated public URLs a recovery kit may dial and sign its
     /// fetches for, one per address the home answers on
     /// (`ONEIRON_KIT_BUNDLE_PUBLIC_URLS`). Empty: `--oauth-resource-indicator`.
@@ -688,6 +725,16 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
 /// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
+}
+
+/// Clap value parser for `--git-door-base` (FIX 7181): the same door
+/// grammar GitWire binds a checkout to, so a bad base stops the start.
+fn git_door_base(value: &str) -> Result<String, String> {
+    oneiron::git_wire::validate_checkout_door(value)
+        .map(|()| value.to_owned())
+        .map_err(|_| {
+            "expected the host's Git door: https://<host>/git, or http on loopback".to_owned()
+        })
 }
 
 /// Clap value parser for `--trusted-organ-build`: a blake3 digest, 64 hex,

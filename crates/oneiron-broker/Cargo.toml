@@ -24,7 +24,10 @@ base64 = "0.22"
 blake3 = { workspace = true }
 # OF-603: gzip request bodies to the one route that takes them.
 flate2 = "1"
+futures-util = "0.3"
 memchr = "2"
+# OpenAI Responses: broker-upgraded WebSockets over rustls/WebPKI.
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 # rustls only, and both root stores. `retry(never())` and `Policy::none()` are
 # set on the client itself, so no feature another crate turns on can make it
 # resend.

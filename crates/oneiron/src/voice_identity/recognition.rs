@@ -18,17 +18,18 @@
 //! an earlier run, so a withdrawal or an erase while the match computed
 //! keeps its stale result out.
 //!
-//! The material itself (centroid, sample vectors) is not sealed under the
-//! world's key here: the world-key code exposes no seal and open for a side
-//! table's content, so sealing it waits for one (L04).
+//! Private-world centroid and sample payloads are sealed by `stored`; only
+//! vector-free metadata is read before these native admission checks. Base
+//! reality and Everywhere worlds have explicit world-bound unsealed cases.
 
 use heed::RoTxn;
 
 use super::math_keys::invalid_voice;
+use super::metadata::PrintMetadata;
 use super::storage_admission::{read_active_print, read_consent_event, read_consent_events};
 use super::types::{
     VoiceAttributionEvidence, VoiceConsentState, VoiceEnrollmentOrigin, VoiceEnrollmentRequest,
-    VoicePrintPurpose, VoicePrintRecordV1, VoiceResolvedSegment, VoiceSessionRosterV1,
+    VoicePrintPurpose, VoiceResolvedSegment, VoiceSessionRosterV1,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -153,10 +154,15 @@ pub(super) fn consent_live_for_in(
 pub(super) fn admit_recognition_candidate_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    record: &VoicePrintRecordV1,
+    record: &PrintMetadata,
     purpose: &VoicePrintPurpose,
 ) -> Result<bool> {
     if !record.consented_purposes.contains(purpose) {
+        return Ok(false);
+    }
+    if let Some(world) = record.world_ref
+        && crate::store::world_pad_rows::world_keys_destroyed_in_txn(&vault.store, txn, world)?
+    {
         return Ok(false);
     }
     let raw = vault.store.port_entity_raw(txn, &record.subject_ref)?;
@@ -219,9 +225,9 @@ fn evidence_current_in(
     };
     Ok(match read_active_print(&vault.store, txn, subject_ref)? {
         Some(print) => {
-            print.print_generation == *print_generation
-                && print.space.space_id == space_id
-                && admit_recognition_candidate_in(vault, txn, &print, purpose)?
+            print.metadata.print_generation == *print_generation
+                && print.metadata.space.space_id == space_id
+                && admit_recognition_candidate_in(vault, txn, &print.metadata, purpose)?
         }
         None => false,
     })
