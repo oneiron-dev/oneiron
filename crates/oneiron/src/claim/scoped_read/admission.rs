@@ -452,6 +452,39 @@ impl ScopedRead<'_> {
         }
     }
 
+    /// A code-memory payload projection counts only a readable, non-opaque row.
+    pub(crate) fn code_memory_payload_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> usize {
+        let readable = (|| {
+            if self.admit_in::<()>(txn, id, || Ok(None))?.suppression() == 0 {
+                return Ok(false);
+            }
+            let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+                return Ok(false);
+            };
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            // A header-only CLAIM cannot enter the nested shell reader here.
+            if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
+                return Ok(false);
+            }
+            let policy = self.policy_manifest_in(txn)?;
+            let floor = self.actor_retrieval_floor(&policy)?;
+            self.is_entity_raw_readable_held_in(
+                txn,
+                &policy,
+                id,
+                &raw,
+                &floor,
+                &super::access_gate::HeldAuthority::for_request(None),
+            )
+        })();
+        usize::from(readable.unwrap_or(false))
+    }
+
     /// Whether this read's credential is live in `txn` and the worlds the
     /// read asked for and its Scope both admit `world` (`None` is base
     /// reality): the world ceilings every row it serves lies under, before

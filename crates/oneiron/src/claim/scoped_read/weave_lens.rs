@@ -936,11 +936,12 @@ pub(crate) fn settle_weave_lens_axes(
 }
 
 /// The generate step's attempt input: the period it renders, as
-/// `[reader tag, reader id hex, scheduled_for, rendered_at]`.
+/// `[reader tag, reader id hex, scheduled_for, rendered_at, report revision hex]`.
 pub(crate) fn weave_lens_attempt_input(
     reader: WeaveDigestReader,
     scheduled_for: u64,
     rendered_at: u64,
+    report_revision: EntityId,
 ) -> rmpv::Value {
     let (tag, id) = reader.tag();
     rmpv::Value::Array(vec![
@@ -948,6 +949,7 @@ pub(crate) fn weave_lens_attempt_input(
         id.to_hex().into(),
         scheduled_for.into(),
         rendered_at.into(),
+        report_revision.to_hex().into(),
     ])
 }
 
@@ -957,7 +959,7 @@ pub(crate) fn weave_lens_attempt_period(
 ) -> Result<(WeaveDigestReader, u64, u64)> {
     let fields = input
         .as_array()
-        .filter(|fields| fields.len() == 4)
+        .filter(|fields| fields.len() == 5)
         .ok_or_else(|| invalid("attempt input"))?;
     let id = fields[1]
         .as_str()
@@ -974,4 +976,14 @@ pub(crate) fn weave_lens_attempt_period(
         .as_u64()
         .ok_or_else(|| invalid("attempt period"))?;
     Ok((reader, scheduled_for, rendered_at))
+}
+
+/// The exact saved report revision a generate-step attempt renders.
+pub(crate) fn weave_lens_attempt_revision(input: &rmpv::Value) -> Result<EntityId> {
+    input
+        .as_array()
+        .and_then(|fields| fields.get(4))
+        .and_then(rmpv::Value::as_str)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .ok_or_else(|| invalid("attempt report revision"))
 }
