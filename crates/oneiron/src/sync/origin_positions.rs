@@ -9,7 +9,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::record_scope::origin_positions::{self as facts, OriginPosition};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
-use crate::sync::checkpoint_payload::{OwnerRef, Placement, SyncUnclassified};
+use crate::store::checkpoint_payload::rows::OwnerRef;
+use crate::sync::checkpoint_payload::{Placement, SyncUnclassified};
 use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 
 mod import;
