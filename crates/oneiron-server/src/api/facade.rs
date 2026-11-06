@@ -112,6 +112,7 @@ mod hook_session;
 mod hooks;
 #[path = "facade/generated/host_door_rows.rs"]
 mod host_door_rows;
+pub(in crate::api) use host_door_rows::needs_caller_credential;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;
