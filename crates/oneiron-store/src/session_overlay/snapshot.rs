@@ -38,6 +38,12 @@ pub enum SnapshotLookup {
     Present(Vec<u8>),
 }
 
+pub enum SnapshotLookupRef<'view> {
+    Passthrough,
+    Tombstone,
+    Present(&'view [u8]),
+}
+
 pub enum SnapshotMergeRow {
     Single {
         key: Vec<u8>,
@@ -84,14 +90,23 @@ impl OverlaySnapshot {
     }
 
     pub fn lookup_single(&self, keyspace: OverlayKeyspace, key: &[u8]) -> SnapshotLookup {
+        match self.lookup_single_ref(keyspace, key) {
+            SnapshotLookupRef::Passthrough => SnapshotLookup::Passthrough,
+            SnapshotLookupRef::Tombstone => SnapshotLookup::Tombstone,
+            SnapshotLookupRef::Present(value) => SnapshotLookup::Present(value.to_vec()),
+        }
+    }
+
+    /// Classifies a single-valued row without copying its staged bytes.
+    pub fn lookup_single_ref(&self, keyspace: OverlayKeyspace, key: &[u8]) -> SnapshotLookupRef<'_> {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { clear_base, rows } => match rows.get(key) {
-                Some(OverlayValue::Present(value)) => SnapshotLookup::Present(value.clone()),
-                Some(OverlayValue::Tombstone) => SnapshotLookup::Tombstone,
-                None if *clear_base => SnapshotLookup::Tombstone,
-                None => SnapshotLookup::Passthrough,
+                Some(OverlayValue::Present(value)) => SnapshotLookupRef::Present(value),
+                Some(OverlayValue::Tombstone) => SnapshotLookupRef::Tombstone,
+                None if *clear_base => SnapshotLookupRef::Tombstone,
+                None => SnapshotLookupRef::Passthrough,
             },
-            KeyspaceState::DupSort { .. } => SnapshotLookup::Passthrough,
+            KeyspaceState::DupSort { .. } => SnapshotLookupRef::Passthrough,
         }
     }
 

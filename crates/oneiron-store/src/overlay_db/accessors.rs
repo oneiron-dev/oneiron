@@ -7,7 +7,10 @@ use std::sync::Arc;
 use heed::types::{Bytes, Str};
 use heed::{Database, RoTxn, RwTxn};
 
-use crate::session_overlay::{OverlayKeyspace, OverlaySnapshot, SessionOverlay, SnapshotLookup};
+use crate::session_overlay::{
+    OverlayKeyspace, OverlaySnapshot, SessionOverlay, SnapshotLookup, SnapshotLookupRef,
+};
+use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
 
 use super::iters::{
@@ -41,6 +44,36 @@ impl ComposedOverlay {
     /// snapshot when the writer's view cannot be leased.
     fn view_or_captured(&self) -> Arc<OverlaySnapshot> {
         self.view().unwrap_or_else(|_| Arc::clone(&self.snapshot))
+    }
+}
+
+/// Stored bytes at one accessor read position. A staged row retains its whole
+/// immutable snapshot; a base row borrows the caller's read transaction.
+pub struct EntityRowSource<'txn> {
+    value: EntityRowValue<'txn>,
+}
+
+enum EntityRowValue<'txn> {
+    Direct(Cow<'txn, [u8]>),
+    Staged {
+        snapshot: Arc<OverlaySnapshot>,
+        keyspace: OverlayKeyspace,
+        id: EntityId,
+    },
+}
+
+impl EntityRowSource<'_> {
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.value {
+            EntityRowValue::Direct(value) => value.as_ref(),
+            EntityRowValue::Staged {
+                snapshot,
+                keyspace,
+                id,
+            } => snapshot
+                .staged_value(*keyspace, id.as_bytes())
+                .expect("captured immutable snapshot retains its staged row"),
+        }
     }
 }
 
@@ -168,6 +201,50 @@ impl OverlayDb {
             SnapshotLookup::Tombstone => Ok(None),
             SnapshotLookup::Present(value) => Ok(Some(Cow::Owned(value))),
         }
+    }
+
+    /// [`Self::get`] for a copyable entity key, retaining staged source bytes
+    /// instead of copying them. This is a stored row, not a history projection.
+    pub fn get_entity_source<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityRowSource<'txn>>> {
+        let Some(overlay) = &self.overlay else {
+            return Ok(self
+                .base
+                .get(txn, id.as_bytes())?
+                .map(|value| EntityRowSource {
+                    value: EntityRowValue::Direct(Cow::Borrowed(value)),
+                }));
+        };
+        if overlay.keyspace.is_dupsort() {
+            return self.get(txn, id.as_bytes()).map(|row| {
+                row.map(|value| EntityRowSource {
+                    value: EntityRowValue::Direct(value),
+                })
+            });
+        }
+        let snapshot = overlay.view()?;
+        match snapshot.lookup_single_ref(overlay.keyspace, id.as_bytes()) {
+            SnapshotLookupRef::Passthrough => {
+                return Ok(self
+                    .base
+                    .get(txn, id.as_bytes())?
+                    .map(|value| EntityRowSource {
+                        value: EntityRowValue::Direct(Cow::Borrowed(value)),
+                    }));
+            }
+            SnapshotLookupRef::Tombstone => return Ok(None),
+            SnapshotLookupRef::Present(_) => {}
+        }
+        Ok(Some(EntityRowSource {
+            value: EntityRowValue::Staged {
+                snapshot,
+                keyspace: overlay.keyspace,
+                id: *id,
+            },
+        }))
     }
 
     pub fn put(&self, txn: &mut RwTxn<'_>, key: &[u8], data: &[u8]) -> Result<()> {

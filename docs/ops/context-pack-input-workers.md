@@ -537,18 +537,30 @@ owned copy. The full retained-input and typed-output findings remain open.
 
 ## Stored claim source ownership
 
-`Vault::stored_claim_body_in_txn` keeps the row from the original `entities.get`
-through a private `Cow` carrier. A base row borrows the same read transaction;
-a staged overlay row keeps its existing owned bytes. `body()` borrows that
-carrier, so it does not return a transaction loan into an owned overlay buffer.
-The existing callback read immediately decodes that body as before.
+`Vault::stored_claim_body_in_txn` keeps the original stored row through an
+`EntityRowSource` carrier. A base row borrows the same read transaction. A staged
+single-valued row borrows from the same immutable overlay snapshot, retained with
+the actual accessor keyspace and the caller's copied entity id. It no longer
+clones that row's `Vec` before readability and canonical decoding. `body()`
+borrows the carrier, not a transaction loan into a local owned buffer. The
+existing callback still immediately decodes that body.
+
+The borrowed lookup preserves Present, Tombstone, Passthrough, and clear-base
+classification. The original dupsort branch runs before taking a read view and
+keeps its existing owned-or-borrowed result. Existing owned `get` and snapshot
+lookup callers keep their behavior. The source carrier captures only one read
+view; it does not retry, reread base on a tombstone, or replace an error with a
+captured-view fallback.
 
 This port preserves the original readability, header, type, grammar, and history
 order. The carrier itself establishes only stored-row readability and type,
-not canonical grammar or a selected machine-history birth. It adds no row read
-or raw-body copy. It does not yet change the contact collector's retained
-counterparty and notes, admit an overlay's existing row clone, or establish FIFO
-progress. The retained-input and typed-output findings remain open.
+not canonical grammar, a selected machine-history birth, or a grant. It holds the
+whole snapshot and its native lease until the carrier drops, not just the desired
+row. A changed writer preview can still allocate a snapshot `Arc` and grow the
+native held-state list. Removing this row copy does not establish zero-heap
+reads, free memory credit, retained-input/FIFO progress, or typed-output custody.
+The contact collector's retained counterparty and notes remain separate work.
+
 
 ## Machine-history raw control reads
 
