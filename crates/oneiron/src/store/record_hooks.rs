@@ -451,6 +451,15 @@ pub trait StoreRecordHooks: Send + Sync {
     /// The engine's `federation::note_authority_row`.
     fn note_authority_row(&self);
 
+    /// The engine's `federation::witness_grant_rulings_in_txn`.
+    fn witness_grant_rulings_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        grant: &EntityId,
+        row: &[u8],
+    ) -> Result<()>;
+
     /// The engine's `skill_attribution::note_direct_derivation_in_txn`.
     fn note_direct_derivation_in_txn(
         &self,
