@@ -328,6 +328,7 @@ impl Store {
             if orcb::is_policy_partition(claim_id) {
                 continue;
             }
+            crate::claim::scrub_saved_weave_loop_reasons_in_txn(self, wtxn, *decision_id)?;
             let id = crate::entity_id::EntityId::from_bytes(*claim_id)
                 .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
             if self

@@ -19,6 +19,8 @@
 //! world keeps; without it the engine refuses the rung as before. Each pass
 //! also embeds what live off-record rooms stage, into the room (FIX 2345).
 
+mod stock;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -404,6 +406,7 @@ impl SyncServer {
             }
             Err(error) => tracing::warn!(%error, "unfilled embedding space moves not closed"),
         }
+        let stock_failures = self.declare_waiting_stock_spaces(runtime);
         match self.vault.begin_waiting_embedder_moves() {
             Ok(begun) => {
                 for candidate in begun {
@@ -453,6 +456,7 @@ impl SyncServer {
                 (space.to_owned(), pass)
             })
             .collect();
+        passes.extend(stock_failures);
         self.rederive_repo_index_texts(runtime);
         self.author_space_probes(runtime, &moves);
         self.check_space_moves(runtime, &moves, &mut passes);
