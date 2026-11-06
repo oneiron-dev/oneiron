@@ -413,6 +413,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultConsentDeny
         | Row::VaultConsentFailureSignalsHeld
         | Row::VaultConsentCreateStandingGrant
+        | Row::VaultConsentCreateNightlyLinkGrant
         | Row::VaultConsentRegistry
         | Row::VaultConsentRevoke
         | Row::VaultConsentBypassGrantWarning
