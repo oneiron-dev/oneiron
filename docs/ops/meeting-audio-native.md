@@ -142,3 +142,20 @@ TURN roles. This method does not run the FileDrop line parser, mint/close a
 SESSION, or queue either extraction path. The connected meeting SESSION caller
 still needs the native import-source and review propagation in both MESO and
 CHAT before activation; ordinary FileDrop behavior is unchanged.
+
+### CHAT source provenance
+
+The native CHAT writer now reads the actual cited SESSION/TURN evidence in the
+committing writer before native head lookup. Imported evidence yields an inert
+Imported/Proposed candidate with its full evidence and birth. It neither returns
+nor supersedes a native active head. Task/amendment writes and ordinary native
+CHAT claims keep their existing path.
+
+The CHAT brief carries each TURN's actual import-source and source speaker
+label separately from speaker identity. Only the new meeting-transcript source
+has unknown speaker identity in this brief: its stored `user` role remains a
+MESO admissibility role, not proof that the storage owner spoke. Existing
+FileDrop, live chat and history speaker resolution stay unchanged. The host
+keeps the source fields beside the original speaker/text values; it does not
+turn a source label, raw hex string or SESSION owner into a verified speaker.
+This is not activation of the meeting SESSION caller or a new approval door.
