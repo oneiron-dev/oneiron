@@ -409,18 +409,7 @@ impl RelayState {
     /// Whether `parts` carries this relay's ticket, compared in constant
     /// time.
     fn ticketed(&self, parts: &Parts) -> bool {
-        let presented = parts
-            .headers
-            .get(SOURCE_RELAY_TICKET_HEADER)
-            .map(HeaderValue::as_bytes)
-            .unwrap_or_default();
-        let expected = self.ticket.as_bytes();
-        presented.len() == expected.len()
-            && presented
-                .iter()
-                .zip(expected)
-                .fold(0_u8, |differ, (left, right)| differ | (left ^ right))
-                == 0
+        carries_relay_ticket(parts, &self.ticket)
     }
 
     /// Sends Git's request through the broker and answers with the reply:
@@ -621,13 +610,7 @@ impl SourceRelay {
         let mut secret = [0_u8; 32];
         rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut secret);
         let secret: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
-        let mut ticket = Zeroizing::new([0_u8; 32]);
-        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *ticket);
-        let mut hex = Zeroizing::new(String::with_capacity(64));
-        for &byte in ticket.iter() {
-            hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
-            hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
-        }
+        let hex = mint_relay_ticket();
         let state = Arc::new(RelayState {
             leg: Arc::clone(&leg),
             repository,
@@ -680,4 +663,35 @@ impl Drop for SourceRelay {
             let _ = stop.send(());
         }
     }
+}
+
+/// A fresh relay ticket: 32 random bytes as lowercase hex, drawn apart from
+/// the relay's unguessable path, held only in wiped memory. A relay child
+/// carries it in its environment alone (FIX 19233 for the door relay).
+pub(super) fn mint_relay_ticket() -> Zeroizing<String> {
+    let mut ticket = Zeroizing::new([0_u8; 32]);
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *ticket);
+    let mut hex = Zeroizing::new(String::with_capacity(64));
+    for &byte in ticket.iter() {
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
+    }
+    hex
+}
+
+/// Whether `parts` carries `ticket` in the [`SOURCE_RELAY_TICKET_HEADER`]
+/// header, compared in constant time.
+pub(super) fn carries_relay_ticket(parts: &Parts, ticket: &str) -> bool {
+    let presented = parts
+        .headers
+        .get(SOURCE_RELAY_TICKET_HEADER)
+        .map(HeaderValue::as_bytes)
+        .unwrap_or_default();
+    let expected = ticket.as_bytes();
+    presented.len() == expected.len()
+        && presented
+            .iter()
+            .zip(expected)
+            .fold(0_u8, |differ, (left, right)| differ | (left ^ right))
+            == 0
 }
