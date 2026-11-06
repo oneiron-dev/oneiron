@@ -176,6 +176,9 @@ impl EmbeddingTrainer {
                 "blake3": blake3_hex(blake3::hash(&feature_bytes).as_bytes()), "bytes": feature_bytes.len()},
             "training_blake3": blake3_hex(&request.training_blake3),
             "preparation_seconds": preparation.elapsed().as_secs_f64(),
+            "encoder": {"checkpoint_blake3": blake3_hex(&encoder.checkpoint_hash()),
+                "provenance": encoder.provenance(), "dimensions": encoder.dimensions(),
+                "requested_max_input_tokens": config.max_input_tokens},
             "probes": request.plan.probes.iter().map(|p| Ok(json!({"id": p.id,
                 "input_blake3": blake3_hex(blake3::hash(&oneiron::llm::canonical_json_bytes(&p.input).map_err(|_| invalid("projection probe did not encode"))?).as_bytes())})))
                 .collect::<oneiron::Result<Vec<_>>>()?,

@@ -90,6 +90,7 @@ pub(in crate::ai_host::training_pack) fn evaluate(
         "spec_blake3": run.spec_blake3, "exposure": input.exposure.id,
         "checkpoint_blake3": checkpoint_blake3, "held_out_blake3": run.corpus.held_out.blake3,
         "harness": input.harness, "criterion": evaluation, "metrics": metrics, "passed": passed,
+        "encoder_provenance": encoder.provenance(), "requested_max_input_tokens": host.max_input_tokens,
         "task": "retrieve the rejected view of the same reservoir artifact from its chosen view",
         "ties": "all other candidates with equal similarity rank ahead of the pair", "cases": cases});
     let bytes =
