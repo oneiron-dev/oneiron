@@ -39,7 +39,28 @@ impl<V: ErasedForm> Erased<V> {
     }
 }
 
+/// What an erase writes over a row that no longer decodes (FIX 6533): none
+/// of the row's own bytes, and still no value of any row type, so every
+/// reader reads it as the unreadable row it replaced.
+pub(crate) const ERASED_UNREADABLE_ROW: &[u8] = b"oneiron:erased-unreadable-row:v1";
+
 impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
+    /// Writes [`ERASED_UNREADABLE_ROW`] at `key`, past the side-row wall: an
+    /// erase's own write over a row whose value does not decode, so it has
+    /// no erased form to take (FIX 6533). It keeps none of the row's bytes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn put_erased_unreadable(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+    ) -> Result<()> {
+        self.write_raw(dbs, txn, &self.key_bytes(key), ERASED_UNREADABLE_ROW)
+    }
+
     /// Writes `value`, a row's erased form, at `key` as given, past the
     /// side-row wall: an erase's own write, which the wall never refuses.
     ///
