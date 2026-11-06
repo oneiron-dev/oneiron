@@ -41,8 +41,9 @@ pub(super) struct SettledCall {
 pub(in crate::engine_executor) enum InjectedAnswer {
     /// Issue it.
     Live,
-    /// Answer it so: an earlier entry settled it.
+    /// Answer it so: an earlier entry settled it, in the row at `seq`.
     Settled {
+        seq: u64,
         outcome: Box<SelfDispatchOutcome>,
         view: Option<serde_json::Value>,
     },
@@ -84,8 +85,10 @@ impl ProgramInjection {
             Err(_) => return self.hold(UNREADABLE),
         };
         self.answered.push(settled.listed);
+        let seq = settled.row.seq;
         let Some(reply) = settled.reply else {
             return InjectedAnswer::Settled {
+                seq,
                 outcome,
                 view: None,
             };
@@ -93,6 +96,7 @@ impl ProgramInjection {
         // The call parked on a wait whose reply is delivered: the reply is
         // its answer, as a verb's output reads.
         InjectedAnswer::Settled {
+            seq,
             view: Some(json!({ "output": reply.clone() })),
             outcome: Box::new(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
                 reply, None,
