@@ -12,10 +12,11 @@ use crate::ports::TombstoneStoreRead;
 pub use crate::store::default_skill_hub::default_skill_hub_id;
 use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, temporal::TimeRange};
 
-/// Released oneiron-hub revision for library skills, and the model catalog
-/// ref's pin until the owner sets that ref's own policy. A floating branch or
-/// network lookup never changes an opened vault's skill source.
-const HUB_COMMIT: &str = "c3f6b4569b069ef74466da090ce02d417508a691";
+/// Released oneiron-hub revision for library skills, the model catalog ref's
+/// pin until the owner sets that ref's own policy, and the commit a caller
+/// pins to install a first-party pack folder. A floating branch or network
+/// lookup never changes an opened vault's skill source.
+const HUB_COMMIT: &str = "5407656fbe1e94241bf3e4b15defbfb9ff259166";
 /// Library data, deliberately not a fifth build-embedded bootstrap skill.
 pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
 /// The model catalog has no authority of its own. Its rows count once the
@@ -24,8 +25,18 @@ pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explaine
 pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
 /// The first-party model catalog's pack name.
 pub const MODEL_PACK_NAME: &str = "oneiron.models";
-/// The publisher an owner admits when syncing the first-party catalog.
-const MODEL_PACK_PUBLISHER: &str = "publisher:oneiron-hub";
+/// The publisher an owner admits for a first-party pack: the model catalog
+/// on sync, and any first-party pack through `vault.packs.install`.
+pub const FIRST_PARTY_PACK_PUBLISHER: &str = "publisher:oneiron-hub";
+/// The first-party productivity pack's folder (FIX 3961): the native
+/// productivity model (TASK roles, the ChildOf tree, habit check-ins and
+/// streaks) as skills. It installs through `vault.packs.install` at the
+/// released commit with [`FIRST_PARTY_PACK_PUBLISHER`]; nothing installs it
+/// on open.
+pub const PRODUCTIVITY_PACK_SUBTREE: &str = "packs/productivity";
+/// The first-party productivity pack's name. Canon's label
+/// `oneiron-productivity` names this pack; a capability pack name needs a dot.
+pub const PRODUCTIVITY_PACK_NAME: &str = "oneiron.productivity";
 
 /// The first hub and its pinned skill-library source. The owner can point
 /// `record.endpoint` at a mirror through `configure_skill_hub`, and set
@@ -396,7 +407,7 @@ impl Vault {
     pub fn sync_model_catalog(&self, owner: &AuthenticatedOwner) -> Result<PackInstallDisposition> {
         let at = self.now_recorded_at();
         let hub = default_skill_hub_id()?;
-        let publisher = self.admit_skill_publisher(owner, MODEL_PACK_PUBLISHER, hub)?;
+        let publisher = self.admit_skill_publisher(owner, FIRST_PARTY_PACK_PUBLISHER, hub)?;
         let tracked = self.model_catalog_ref()?;
         let (source_id, pinned, commit) =
             self.fetch_model_catalog_at_ref(&publisher, TimeRange { start: at, end: at }, at)?;
