@@ -77,8 +77,8 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
 use oneiron::failure_ladder::{
-    DetectorTier, FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
-    HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
+    DetectorTier, FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure,
+    TypedFailureEvidence, TypedFailureVerdict,
 };
 use oneiron::learning::TypeRef;
 use oneiron::llm::SpentKind;
@@ -481,7 +481,16 @@ impl SyncServer {
         };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
         if let Err(error) = self.live_runs.settle(run, waits, || {
-            settle(vault, self.decision_host(), &claimed, ran)
+            settle(
+                vault,
+                self.decision_host(),
+                &claimed,
+                ran,
+                self.config
+                    .agent_failure_healer
+                    .clone()
+                    .unwrap_or(HealerSlot::Reserved),
+            )
         }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
