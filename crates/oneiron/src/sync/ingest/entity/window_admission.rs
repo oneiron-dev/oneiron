@@ -117,12 +117,14 @@ pub(super) fn check_discarded(
 }
 
 /// The worlds the `InWorld` edges `doc` carries for the NOTE `id` name, in
-/// order.
+/// order. An edge whose value is not an edge value's bytes is one the edge
+/// pass refuses, and names no world.
 fn carried_worlds(doc: &loro::LoroDoc, id: EntityId) -> Vec<EntityId> {
     let mut worlds = std::collections::BTreeSet::new();
-    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
+    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, value| {
         if let Some((source, EdgeKind::InWorld, target)) = crate::sync::bridge::parse_edge_key(key)
             && source == id
+            && value.and_then(crate::sync::bridge::parse_edge_value).is_some()
         {
             worlds.insert(target);
         }

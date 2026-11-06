@@ -67,6 +67,7 @@ pub(super) fn discard_base_rows(vault: &Vault, world: EntityId) -> Result<BaseRo
         defer_on_queued_writes: true,
         defer_on_local_members: false,
         release_local_members: true,
+        keep_birth_facets: true,
         ..KeepControls::default()
     };
     let mut rows = BaseRows::default();
