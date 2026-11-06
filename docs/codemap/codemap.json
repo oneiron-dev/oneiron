@@ -14650,7 +14650,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -14710,13 +14710,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/agent_grants.rs",
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -14879,7 +14879,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 15,
       "struct": 1
      }
@@ -15000,7 +15000,7 @@
      "path": "src/claim/scoped_read/receipt.rs",
      "purpose": "Mandatory read receipts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 2
      }
@@ -15046,7 +15046,7 @@
      "path": "src/claim/scoped_read/retrieval_loop.rs",
      "purpose": "Scoped admission shared by the read-only retrieval loop's verbs",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -15066,7 +15066,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "fn": 7
      }
     },
@@ -19629,7 +19629,7 @@
      "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
      "surface": {
       "const": 4,
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 2
      }
     },
@@ -19654,7 +19654,7 @@
      "path": "src/code_symbol/keys.rs",
      "purpose": "Manifest and revision-index key families and the deterministic symbol entity id",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -19844,6 +19844,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoIdentity"
+     ],
+     "path": "src/codebase/identity.rs",
+     "purpose": "The repository identity code symbols and code documents are keyed by (FIX 12761)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -19884,8 +19898,8 @@
      "path": "src/codebase/mod.rs",
      "purpose": "Repository snapshot ingestion, storage and file access",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 5
+      "crate-vis": 8,
+      "re-export": 6
      }
     },
     {
@@ -36370,7 +36384,7 @@
      "purpose": "Escalation mode, failure scope, and per-scope consecutive-transient policy",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -39870,7 +39884,7 @@
      "path": "src/gate/retrieval_filter.rs",
      "purpose": "Retrieval authority projection and narrowing, independent of result filtering",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 1
      }
     },
@@ -54707,7 +54721,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 16,
       "re-export": 5
      }
@@ -55083,7 +55097,7 @@
      "purpose": "FIX 6870 phase 1 (G5, ARCH-0068 RA2): a repo's portable identity and its manifest",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 6,
       "struct": 3
      }
@@ -91558,7 +91572,7 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92869,7 +92883,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6544,
+   "source_files": 6545,
    "test_files": 895
   },
   "oneiron-android": {
@@ -121587,7 +121601,7 @@
      "path": "src/config/self_heal.rs",
      "purpose": "The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 2
