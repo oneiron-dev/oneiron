@@ -263,9 +263,16 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         let parent = self.agent_parent.ok_or_else(invalid)?;
-        let live = DreamerRunnerStore::new(vault)
-            .status(parent)?
-            .ok_or_else(invalid)?;
+        let mut host_parent_read = None;
+        let store = DreamerRunnerStore::new(vault);
+        let live = if selected.is_some() {
+            store.status_with_source(parent, |attempt, value| {
+                host_parent_read = Some(crate::team::run::TeamParentRead::observed(attempt, value));
+            })?
+        } else {
+            store.status(parent)?
+        }
+        .ok_or_else(invalid)?;
         let input = decode_agent_dispatch_input(&live.payload.input)?;
         if agent_dispatch_actor(&input)? != self.actor {
             return Err(invalid());
@@ -337,6 +344,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.write_envelope(SelfEffect::AgentsSpawn, None).ok()?,
                 self.host_turn_read_key(),
                 context.team.as_ref()?,
+                host_parent_read.as_ref()?,
             )
         });
         let dispatcher = AgentDispatcher::new(vault)

@@ -32,7 +32,7 @@ mod attempt_capture;
 mod input_capture;
 mod type_source;
 
-pub(crate) use attempt_capture::{TeamAttemptCapture, TeamAttemptSource, TeamDepthParentRead};
+pub(crate) use attempt_capture::{TeamAttemptCapture, TeamAttemptSource, TeamParentRead};
 pub(crate) use type_source::{SelectedTeamType, SelectedTeamTypeFile};
 
 pub(super) use input_capture::INPUT_PREDICATE;
