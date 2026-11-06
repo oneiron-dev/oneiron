@@ -24,7 +24,8 @@ impl RunHostDoor {
     /// that does not resolve leaves the credential ceiling unavailable,
     /// logged. The door binds no scratchpad session, so it holds no
     /// scratchpad. Its pins are the ones the run's own board admits now, on
-    /// the agent's own lane, as that board reads them
+    /// the agent's own lane, as that board reads them, or under the waking
+    /// slip's key for a turn program a slip woke
     /// ([`crate::api::run_brief_pins`]); nothing is recorded.
     pub(super) fn brief_host_facts(&self) -> BriefHostFacts {
         let run_ceiling = self
@@ -32,7 +33,11 @@ impl RunHostDoor {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        let credential_ceiling = self.proof.as_ref().and_then(|proof| {
+        // A turn program a verified slip woke reads under that slip's key:
+        // its credential ceiling and its pins both come from it, so the brief
+        // never names a row the slip excludes. A key that does not resolve
+        // leaves both unavailable.
+        let waking_key = self.proof.as_ref().map(|proof| {
             self.admitting_memory()
                 .read_key()
                 .inspect_err(|error| {
@@ -42,11 +47,21 @@ impl RunHostDoor {
                     );
                 })
                 .ok()
-                // A door's call arrives on no registered MCP connector.
-                .map(|read_key| {
-                    oneiron::context_board::brief_credential_ceiling(proof, &read_key, None)
-                })
+                .map(|read_key| (proof, read_key))
         });
+        let credential_ceiling = waking_key.as_ref().and_then(|key| {
+            // A door's call arrives on no registered MCP connector.
+            key.as_ref().map(|(proof, read_key)| {
+                oneiron::context_board::brief_credential_ceiling(proof, read_key, None)
+            })
+        });
+        let pins = match waking_key {
+            Some(Some((_, read_key))) => {
+                crate::api::run_brief_pins(&self.server, self.actor, Some(read_key))
+            }
+            Some(None) => None,
+            None => crate::api::run_brief_pins(&self.server, self.actor, None),
+        };
         BriefHostFacts {
             run_ceiling,
             credential_ceiling,
@@ -54,7 +69,7 @@ impl RunHostDoor {
             // The door binds no scratchpad session (FIX 2340), so its board
             // renders no SCRATCHPAD and its brief has no session to look in.
             scratchpad: None,
-            pins: crate::api::run_brief_pins(&self.server, self.actor),
+            pins,
         }
     }
 }
