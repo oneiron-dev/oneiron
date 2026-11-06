@@ -39,6 +39,8 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{self, Message};
 
 use super::bridge_auth::UpgradeHeaders;
+use super::reply_body::ReplyBody;
+use super::request_id::RequestId;
 use crate::cli::{McpSurface, McpTransport};
 use oneiron_vault_contract::BINDING_HEADER;
 
@@ -73,7 +75,7 @@ const RPC_ANSWER_ENVELOPE_BYTES: usize = 64;
 pub(super) struct Exchange {
     /// The HTTP status, when there was one.
     pub(super) status: Option<u16>,
-    pub(super) body: Vec<u8>,
+    pub(super) body: ReplyBody,
 }
 
 /// Why a request ended without a whole answer.
@@ -153,15 +155,16 @@ impl Link {
         &self,
         surface: McpSurface,
         credential: &Credential<'_>,
-        body: Vec<u8>,
+        mut body: Vec<u8>,
         bounds: &Bounds,
+        mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Cut> {
         if let Some(socket) = &self.socket {
-            match socket.exchange(surface, credential, &body, bounds) {
+            match socket.exchange(surface, credential, body, bounds, request_id.as_deref_mut()) {
                 Ok(exchange) => return Ok(exchange),
                 Err(Carried::Cut(cut)) => return Err(cut),
                 // Nothing reached the server: this request goes over HTTP.
-                Err(Carried::Unsent) => {}
+                Err(Carried::Unsent(unsent_body)) => body = unsent_body,
             }
         }
         // The owner's sign-in is attested for a socket upgrade alone: owner
@@ -172,8 +175,14 @@ impl Link {
             ));
         };
         let binding = sign().map_err(Cut::Failed)?;
-        self.http
-            .post(&self.endpoint(surface), bearer, &binding, body, bounds)
+        self.http.post(
+            &self.endpoint(surface),
+            bearer,
+            &binding,
+            body,
+            bounds,
+            request_id,
+        )
     }
 }
 
@@ -204,6 +213,7 @@ impl HttpLink {
         binding: &str,
         body: Vec<u8>,
         bounds: &Bounds,
+        mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Cut> {
         let request = self
             .client
@@ -213,9 +223,12 @@ impl HttpLink {
             .header(BINDING_HEADER, binding);
         // OF-604: a large body crosses zstd, as the remote SDK's does.
         let request = match oneiron::sync::transport::encode_http_body(&body) {
-            Some(encoded) => request
-                .header(reqwest::header::CONTENT_ENCODING, "zstd")
-                .body(encoded),
+            Some(encoded) => {
+                drop(body);
+                request
+                    .header(reqwest::header::CONTENT_ENCODING, "zstd")
+                    .body(encoded)
+            }
             None => request.body(body),
         };
         self.runtime.block_on(async move {
@@ -233,9 +246,13 @@ impl HttpLink {
             }) {
                 return Err(Cut::TooLarge);
             }
-            let mut body = Vec::new();
+            let mut chunks = Vec::new();
+            let mut received = 0usize;
             loop {
                 let stalls_at = tokio::time::Instant::now() + bounds.idle;
+                if let Some(request_id) = request_id.take() {
+                    request_id.release();
+                }
                 match timeout_at(stalls_at.min(deadline), response.chunk()).await {
                     Err(_) if stalls_at < deadline => return Err(Cut::Idle),
                     Err(_) => return Err(Cut::Deadline),
@@ -244,16 +261,19 @@ impl HttpLink {
                     }
                     Ok(Ok(None)) => break,
                     Ok(Ok(Some(chunk))) => {
-                        body.extend_from_slice(&chunk);
-                        if body.len() > bounds.max_reply_bytes {
+                        if received.saturating_add(chunk.len()) > bounds.max_reply_bytes {
                             return Err(Cut::TooLarge);
+                        }
+                        received += chunk.len();
+                        if !chunk.is_empty() {
+                            chunks.push(chunk);
                         }
                     }
                 }
             }
             Ok(Exchange {
                 status: Some(status),
-                body,
+                body: ReplyBody::HttpChunks(chunks),
             })
         })
     }
@@ -261,8 +281,8 @@ impl HttpLink {
 
 /// How a request the socket was asked to carry ended without an answer.
 enum Carried {
-    /// It never reached the socket, so another carrier may send it.
-    Unsent,
+    /// It never reached the socket, so another carrier may send the original body.
+    Unsent(Vec<u8>),
     /// It was handed to the socket, so it may have run: it is not sent again.
     Cut(Cut),
 }
@@ -327,6 +347,8 @@ struct Outbound {
 
 /// What the driver tells one waiting request.
 enum Inbound {
+    /// The driver wrote the frame; the original HTTP fallback body can go.
+    Sent,
     Chunk {
         bytes: Vec<u8>,
         last: bool,
@@ -380,22 +402,32 @@ impl SocketLink {
         &self,
         surface: McpSurface,
         credential: &Credential<'_>,
-        body: &[u8],
+        mut body: Vec<u8>,
         bounds: &Bounds,
+        mut request_id: Option<&mut RequestId>,
     ) -> Result<Exchange, Carried> {
         // The owner has no other carrier: what a slip sends over HTTP fails.
         let owner = matches!(credential, Credential::Owner { .. });
-        let unsent = move |cut: Cut| {
+        let unsent = move |cut: Cut, body| {
             if owner {
                 Carried::Cut(cut)
             } else {
-                Carried::Unsent
+                Carried::Unsent(body)
             }
         };
-        let Ok(body) = std::str::from_utf8(body) else {
-            return Err(unsent(Cut::Failed("the message is not UTF-8".to_owned())));
+        let body_text = match std::str::from_utf8(&body) {
+            Ok(body) => body,
+            Err(_) => {
+                return Err(unsent(
+                    Cut::Failed("the message is not UTF-8".to_owned()),
+                    body,
+                ));
+            }
         };
-        let session = self.session(credential, bounds.until).map_err(unsent)?;
+        let session = match self.session(credential, bounds.until) {
+            Ok(session) => session,
+            Err(cut) => return Err(unsent(cut, body)),
+        };
         let binding = match credential {
             Credential::Slip { sign, .. } => {
                 Some(sign().map_err(|error| Carried::Cut(Cut::Failed(error)))?)
@@ -403,7 +435,8 @@ impl SocketLink {
             Credential::Owner { .. } => None,
         };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(Carried::Cut)?;
+        let frame =
+            request_frame(id, surface, binding.as_deref(), body_text).map_err(Carried::Cut)?;
         let (chunks, mut answer) = mpsc::unbounded_channel();
         if session
             .outbound
@@ -415,12 +448,13 @@ impl SocketLink {
             })
             .is_err()
         {
-            return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
+            return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
         }
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
             let mut stalls_at: Option<tokio::time::Instant> = None;
-            let mut packed = Vec::new();
+            let mut chunks = Vec::new();
+            let mut received = 0usize;
             loop {
                 let until = stalls_at.map_or(deadline, |stalls_at| stalls_at.min(deadline));
                 match timeout_at(until, answer.recv()).await {
@@ -428,8 +462,14 @@ impl SocketLink {
                         return Err(Carried::Cut(Cut::Idle));
                     }
                     Err(_) => return Err(Carried::Cut(Cut::Deadline)),
+                    Ok(Some(Inbound::Sent)) => {
+                        drop(std::mem::take(&mut body));
+                        if let Some(request_id) = request_id.take() {
+                            request_id.release();
+                        }
+                    }
                     Ok(Some(Inbound::Unsent)) => {
-                        return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
+                        return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
                     }
                     Ok(Some(Inbound::Closed(why))) => return Err(Carried::Cut(Cut::Failed(why))),
                     Ok(Some(Inbound::Revoked(why))) => return Err(Carried::Cut(Cut::Revoked(why))),
@@ -439,15 +479,16 @@ impl SocketLink {
                         )));
                     }
                     Ok(Some(Inbound::Chunk { bytes, last })) => {
-                        packed.extend_from_slice(&bytes);
                         // The answer is packed with its status around it.
-                        if packed.len()
+                        if received.saturating_add(bytes.len())
                             > bounds
                                 .max_reply_bytes
                                 .saturating_add(RPC_ANSWER_ENVELOPE_BYTES)
                         {
                             return Err(Carried::Cut(Cut::TooLarge));
                         }
+                        received += bytes.len();
+                        chunks.push(bytes);
                         if last {
                             break;
                         }
@@ -455,17 +496,18 @@ impl SocketLink {
                     }
                 }
             }
-            let answer: SocketAnswer = rmp_serde::from_slice(&packed).map_err(|_| {
-                Carried::Cut(Cut::Failed(
-                    "the MCP socket's answer did not decode".to_owned(),
-                ))
-            })?;
+            let answer: SocketAnswer = rmp_serde::from_read(replies::ReplyChunks::new(chunks))
+                .map_err(|_| {
+                    Carried::Cut(Cut::Failed(
+                        "the MCP socket's answer did not decode".to_owned(),
+                    ))
+                })?;
             if answer.body.len() > bounds.max_reply_bytes {
                 return Err(Carried::Cut(Cut::TooLarge));
             }
             Ok(Exchange {
                 status: Some(answer.status),
-                body: answer.body.into_bytes(),
+                body: ReplyBody::Owned(answer.body.into_bytes()),
             })
         })
     }
@@ -653,6 +695,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                 if let Err(error) = socket.send(Message::Binary(request.frame.into())).await {
                     break format!("the MCP socket broke: {error}");
                 }
+                let _ = waiting[&request.id].chunks.send(Inbound::Sent);
             }
             frame = socket.next() => {
                 heard = tokio::time::Instant::now();
