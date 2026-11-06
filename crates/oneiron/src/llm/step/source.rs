@@ -4,13 +4,15 @@ use super::codec::{
     expect_key, expect_map, expect_string, expect_u64, invalid_step, pinned_key_index,
 };
 use super::types::DurableStepContext;
+use crate::dreamer_runner::AdmittedCallId;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::SideKey;
 use crate::write_envelope::WriteActor;
 use rmpv::Value;
 
-const SOURCE_KEYS: [&str; 7] = [
+const SOURCE_KEYS: [&str; 8] = [
     "actor",
     "class",
     "frontier",
@@ -18,6 +20,7 @@ const SOURCE_KEYS: [&str; 7] = [
     "run_id",
     "subject",
     "at",
+    "native_invocation",
 ];
 
 /// Source facts, not a grant, a receiver context or proof of payment.
@@ -27,6 +30,7 @@ pub(super) struct StepSource {
     pub(super) run_id: Option<String>,
     pub(super) subject: EntityId,
     pub(super) at: u64,
+    pub(super) native_invocation: Option<AdmittedCallId>,
 }
 
 impl StepSource {
@@ -36,6 +40,7 @@ impl StepSource {
             run_id: ctx.run_id.clone(),
             subject: ctx.subject,
             at: ctx.now_ms,
+            native_invocation: None,
         }
     }
 
@@ -70,6 +75,14 @@ impl StepSource {
                 Value::Binary(self.subject.as_bytes().to_vec()),
             ),
             (Value::from("at"), Value::from(self.at)),
+            (
+                Value::from("native_invocation"),
+                self.native_invocation.map_or(Value::Nil, |origin| {
+                    let mut bytes = Vec::new();
+                    origin.encode_into(&mut bytes);
+                    Value::Binary(bytes)
+                }),
+            ),
         ])
     }
 
@@ -86,7 +99,16 @@ impl StepSource {
         }
         let fields =
             fields.map(|value| value.ok_or(invalid_step("missing dreamer step source key")));
-        let [actor, class, frontier, run_attempt, run_id, subject, at] = fields;
+        let [
+            actor,
+            class,
+            frontier,
+            run_attempt,
+            run_id,
+            subject,
+            at,
+            native_invocation,
+        ] = fields;
         let actor = EntityId::from_bytes(fixed_bytes(actor?)?)?;
         let class = u8::try_from(expect_u64(
             class?,
@@ -113,11 +135,26 @@ impl StepSource {
                 "dreamer step source run_id must be a string or nil",
             )?)
         };
+        let native_invocation = native_invocation?;
+        let native_invocation = if native_invocation.is_nil() {
+            None
+        } else {
+            let Value::Binary(bytes) = native_invocation else {
+                return Err(invalid_step(
+                    "dreamer step native invocation must be binary or nil",
+                ));
+            };
+            let origin = AdmittedCallId::decode_key(bytes)
+                .filter(|origin| origin.ordinal == 0)
+                .ok_or(invalid_step("invalid dreamer step native invocation"))?;
+            Some(origin)
+        };
         Ok(Self {
             actor,
             run_id,
             subject: EntityId::from_bytes(fixed_bytes(subject?)?)?,
             at: expect_u64(at?, "dreamer step source at must be an integer")?,
+            native_invocation,
         })
     }
 }
