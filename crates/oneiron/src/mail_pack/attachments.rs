@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::pack::require_pack_active_in;
 use super::source::SOURCES;
-use super::state::OCCURRENCES;
+use super::state::{MailPresence, OCCURRENCES, occurrence_key};
 use super::wire::{MailAttachmentRef, MailProviderWire, MailSyncSource};
 use crate::entity_id::derived_domains::MAIL_ATTACHMENT;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -134,7 +134,10 @@ impl Memory<'_> {
             let mut found = None;
             for occurrence in OCCURRENCES.iter_from(&vault.store, &txn, source.as_bytes())? {
                 let (_, occurrence) = occurrence?;
-                if occurrence.turn == turn {
+                // A forgotten message's attachments are gone with it.
+                if occurrence.turn == turn
+                    && !matches!(occurrence.presence, MailPresence::Forgotten { .. })
+                {
                     found = Some(occurrence);
                     break;
                 }
@@ -160,24 +163,42 @@ impl Memory<'_> {
         };
         let key = attachment_key(source, &provider_id, &attachment.part_id);
         let at = crate::unix_seconds_now();
-        let row = vault.with_write_txn_grouped(|txn| {
-            if let Some(row) = ATTACHMENTS.get(&vault.store, txn, &key)? {
-                return Ok(row);
-            }
-            let row = MailAttachmentRow {
-                provider_id: provider_id.clone(),
-                attachment: attachment.clone(),
-                thread,
-                state: MailAttachmentState::Waiting,
-                artifact: None,
-                version: None,
-                reason: None,
-                opened_at: at,
-                updated_at: at,
-            };
-            ATTACHMENTS.put(&vault.store, txn, &key, &row)?;
-            Ok(row)
-        })?;
+        let held = occurrence_key(source, &provider_id);
+        let row = vault
+            .with_write_txn_grouped(|txn| {
+                if let Some(row) = ATTACHMENTS.get(&vault.store, txn, &key)? {
+                    return Ok(Some(row));
+                }
+                // A message erased since the read above keeps no attachment: its
+                // row is never made again, so no fetch brings its bytes back.
+                let still_held =
+                    OCCURRENCES
+                        .get(&vault.store, txn, &held)?
+                        .is_some_and(|current| {
+                            !matches!(current.presence, MailPresence::Forgotten { .. })
+                                && current
+                                    .attachments
+                                    .iter()
+                                    .any(|described| described.part_id == attachment.part_id)
+                        });
+                if !still_held {
+                    return Ok(None);
+                }
+                let row = MailAttachmentRow {
+                    provider_id: provider_id.clone(),
+                    attachment: attachment.clone(),
+                    thread,
+                    state: MailAttachmentState::Waiting,
+                    artifact: None,
+                    version: None,
+                    reason: None,
+                    opened_at: at,
+                    updated_at: at,
+                };
+                ATTACHMENTS.put(&vault.store, txn, &key, &row)?;
+                Ok(Some(row))
+            })?
+            .ok_or_else(unknown)?;
         Ok(view(&row))
     }
 }
