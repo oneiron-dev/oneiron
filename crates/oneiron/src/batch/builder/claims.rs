@@ -176,6 +176,7 @@ impl BatchBuilder<'_> {
             .ok_or(crate::error::Error::EntityNotFound)?;
         let mut hint_scope = head_body.scope.clone();
         if let Some(Value::Map(entries)) = hint_scope.as_mut() {
+            entries.retain(|(key, _)| key.as_str() != Some("evidence_taint"));
             for (key, value) in entries {
                 let stamp = match key.as_str() {
                     Some("facet" | "facet_ref" | "facetRef") => head_body.scope_facet,
