@@ -490,7 +490,20 @@ impl OffRecordSession<'_> {
         reference: &str,
         saver: WriteActor,
         owner: bool,
+        authority: impl FnMut(&heed::RoTxn<'_>) -> Result<(ScopedReadActorKey, PromoteInitiator)>,
+    ) -> Result<PromoteOutcome> {
+        self.with_imported_body_collection(|digests| {
+            self.save_artifact_with_imported_bodies(reference, saver, owner, authority, digests)
+        })
+    }
+
+    fn save_artifact_with_imported_bodies(
+        &self,
+        reference: &str,
+        saver: WriteActor,
+        owner: bool,
         mut authority: impl FnMut(&heed::RoTxn<'_>) -> Result<(ScopedReadActorKey, PromoteInitiator)>,
+        imported_digests: &mut Vec<[u8; 32]>,
     ) -> Result<PromoteOutcome> {
         let mut state = self.recording_state()?;
         let room = state.record.room.map(EntityId::from_bytes).transpose()?;
@@ -573,7 +586,12 @@ impl OffRecordSession<'_> {
             prepare(&txn, key, initiator)?.turns
         };
         #[cfg(unix)]
-        let bodies = floor.import_result_bodies(self.vault, self.session_ref(), &preview_turns)?;
+        let bodies = floor.import_result_bodies(
+            self.vault,
+            self.session_ref(),
+            &preview_turns,
+            imported_digests,
+        )?;
         let saved = self.vault.with_write_txn_grouped(|txn| {
             let (key, initiator) = authority(txn)?;
             let prepared = prepare(txn, key, initiator)?;

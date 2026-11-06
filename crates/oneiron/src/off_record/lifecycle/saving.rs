@@ -43,6 +43,27 @@ impl OffRecordSession<'_> {
         authority: impl FnOnce(&Vault, &heed::RoTxn<'_>) -> Result<()>,
         answering: bool,
     ) -> Result<Option<SavedTurns>> {
+        self.with_imported_body_collection(|digests| {
+            self.save_talk_with_imported_bodies(
+                initiator,
+                room,
+                saver_class,
+                authority,
+                answering,
+                digests,
+            )
+        })
+    }
+
+    fn save_talk_with_imported_bodies(
+        &self,
+        initiator: PromoteInitiator,
+        room: Option<EntityId>,
+        saver_class: crate::EdgeActorClass,
+        authority: impl FnOnce(&Vault, &heed::RoTxn<'_>) -> Result<()>,
+        answering: bool,
+        imported_digests: &mut Vec<[u8; 32]>,
+    ) -> Result<Option<SavedTurns>> {
         let by = initiator.actor();
         let windows = room.map(|room| self.vault.windows(room, by)).transpose()?;
         let saved = {
@@ -128,6 +149,7 @@ impl OffRecordSession<'_> {
                     &initiator,
                     saver_class,
                     &remake_turns,
+                    imported_digests,
                     |wtxn| check(wtxn),
                 )?
             };

@@ -66,6 +66,17 @@ impl OffRecordSession<'_> {
         owner: &crate::consent::AuthenticatedOwner,
         turn: &EntityId,
     ) -> Result<PromoteOutcome> {
+        self.with_imported_body_collection(|digests| {
+            self.promote_turn_with_imported_bodies(owner, turn, digests)
+        })
+    }
+
+    fn promote_turn_with_imported_bodies(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        turn: &EntityId,
+        imported_digests: &mut Vec<[u8; 32]>,
+    ) -> Result<PromoteOutcome> {
         // In a room, the owner must be on its roster before anything is
         // answered (read before the state lock, which the roster read takes).
         if self.room()?.is_some() {
@@ -154,6 +165,7 @@ impl OffRecordSession<'_> {
                 &initiator,
                 crate::EdgeActorClass::Human,
                 &remake_turns,
+                imported_digests,
                 |wtxn| {
                     // Alone or in a room, the turn lands in this vault, so
                     // the proof must show its owner.
@@ -252,11 +264,13 @@ impl OffRecordSession<'_> {
         initiator: &PromoteInitiator,
         saver_class: crate::EdgeActorClass,
         remake_turns: &BTreeSet<EntityId>,
+        imported_digests: &mut Vec<[u8; 32]>,
         check: impl FnOnce(&heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
         let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
         #[cfg(unix)]
-        let bodies = floor.import_result_bodies(self.vault, &self.session_ref, &plans)?;
+        let bodies =
+            floor.import_result_bodies(self.vault, &self.session_ref, &plans, imported_digests)?;
         let saved = self.vault.with_write_txn_grouped(|wtxn| {
             let checked = check(wtxn)?;
             let promoted_at = self.vault.store.clock.now_recorded_at();
