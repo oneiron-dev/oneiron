@@ -324,7 +324,16 @@ async fn invoke(
                 .ladder
                 .generate_exact(&run, request, None)
                 .await
-                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                .map_err(|error| match error {
+                    oneiron::LlmError::Fatal(oneiron::FatalLlmError::HostStore { .. }) => {
+                        MemoryError::new(
+                            oneiron::memory::MEMORY_CODE_INTERNAL,
+                            error.to_string(),
+                            &["Retry after the host store is available."],
+                        )
+                    }
+                    _ => MemoryError::bad_request(error.to_string()),
+                })?;
             if let Some(provider) = response.usage.served_provider() {
                 receipt.provider = provider.to_owned();
             }

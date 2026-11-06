@@ -75,7 +75,14 @@ pub(crate) fn call_listing(
     let charge = if key_source == WebKeySource::Backend && key.is_some() {
         match charge::admit(server, line, provider, tool) {
             Ok(permit) => Some(permit),
-            Err(reason) => return Ok((refused(reason), None)),
+            Err(charge::AdmissionError::Refused(reason)) => return Ok((refused(reason), None)),
+            Err(charge::AdmissionError::HostStore { operation }) => {
+                return Err(oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_INTERNAL,
+                    format!("allocation storage failed during {operation}"),
+                    &["Retry after the host store is available."],
+                ));
+            }
         }
     } else {
         None

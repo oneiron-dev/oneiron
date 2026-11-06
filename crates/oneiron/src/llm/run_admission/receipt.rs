@@ -190,7 +190,7 @@ pub enum RunOverageSource {
 }
 
 /// Everything one permit binds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct PermitFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector: Option<String>,
