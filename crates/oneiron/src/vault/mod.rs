@@ -263,8 +263,8 @@ pub struct Vault {
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.
     pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
-    /// The served host's transport an exact publish's mirror git goes
-    /// through, its credential broker installing the credential (FIX 19083),
+    /// The served host's transport an origin mirror's git goes through, its
+    /// credential broker installing the credential (FIX 19083),
     /// installed once per open vault
     /// ([`Vault::install_origin_git_transport`]). None on an embedded vault,
     /// which keeps the direct path. In memory only.
