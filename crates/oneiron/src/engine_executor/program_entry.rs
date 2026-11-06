@@ -550,10 +550,10 @@ impl<'a> EngineNativeExecutor<'a> {
             .keep_preparation(&mut record, ran)?
             .or(pinned_preparation);
         let script = format!("pinned:{}@{}", entry.skill.to_hex(), entry.content_hash);
-        // Where the entry's calls end, and the responses its guest read
-        // (FIX 6354, FIX 6351).
+        // Where the entry's calls end, and what its guest read (FIX 6354,
+        // FIX 6351, FIX 6352).
         let (end, context) =
-            self.step_context(config, &record, bridge_start, host.guest_responses)?;
+            self.step_context(config, &record, bridge_start, host.context_capture)?;
         let state_hash = prepared_step_state_hash(
             previous_state_hash(&record),
             seq,

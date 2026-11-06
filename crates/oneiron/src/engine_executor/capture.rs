@@ -2,13 +2,14 @@
 //! leased attempt's canonical run, captured as it is about to be sent, with
 //! the run's state before the step. Once the step ran, its checkpoint
 //! commits the step's replay context beside that capture (FIX 6351): the
-//! guest responses its host handed out, and where its calls end (FIX 6354).
+//! guest responses its host handed out, what its result reads saw of reader
+//! state (FIX 6352), and where its calls end (FIX 6354).
 
 use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
-    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, GuestResponseCapture, StepCapture,
+    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, StepCapture, StepContextCapture,
     StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
 };
 use crate::{EntityId, Error, LlmRequest};
@@ -119,9 +120,10 @@ impl EngineNativeExecutor<'_> {
     }
 
     /// The replay context of the step `record` is about to checkpoint, whose
-    /// calls are its bridge rows from `bridge_start` on, with
-    /// `guest_responses`, the responses its host handed out (FIX 6351), and
-    /// where its checkpoint says its calls end (FIX 6354): the end and the
+    /// calls are its bridge rows from `bridge_start` on, with what its host
+    /// kept in `capture`: the responses it handed out (FIX 6351) and what its
+    /// result reads saw of reader state (FIX 6352). Beside them, where its
+    /// checkpoint says its calls end (FIX 6354): the end and the
     /// context's digest, which the checkpoint binds, and the context as the
     /// checkpoint commits it. Only a leased attempt's own canonical run
     /// captures its steps ([`Self::capture_step_start`]), so only its
@@ -131,7 +133,7 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         bridge_start: usize,
-        guest_responses: GuestResponseCapture,
+        capture: StepContextCapture,
     ) -> EngineExecutorResult<(StepEnd, StepContextCommit)> {
         let position = |at: usize| {
             u64::try_from(at).map_err(|_| Error::ArithmeticOverflow("executor bridge position"))
@@ -147,7 +149,8 @@ impl EngineNativeExecutor<'_> {
             step: completed_step_count(record)?,
             bridge_start: position(bridge_start)?,
             bridge_end,
-            guest_responses,
+            guest_responses: capture.guest_responses,
+            reader_reads: capture.reader_reads,
         };
         let commit = StepContextCommit::new(capsule, context)?;
         let end = StepEnd {

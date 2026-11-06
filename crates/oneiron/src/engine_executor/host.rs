@@ -7,6 +7,7 @@ mod dispatch;
 mod prompt;
 mod readers;
 mod receipts;
+mod replay_context;
 mod results;
 mod type_feedback;
 
@@ -26,10 +27,10 @@ use super::types::{
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
     CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    GuestResponseCapture, ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead,
-    ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
-    SelfEffect, SelfFailedResult, SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall,
-    SelfSkillCallResult, SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot,
+    ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
+    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
+    SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
+    SelfSummarizeCall, StepContextCapture, SummarizeReply, agent_verb_rows_of, result_cannot,
     result_card, result_refusal, scoped_child_read_refusal, self_call_inputs,
 };
 use crate::code_run::{
@@ -93,9 +94,10 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// when one kept no set (DEC-0005).
     recorded_rows: Option<Vec<EntityId>>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
-    /// Each guest response this step handed out, at the position of the row
-    /// that answers it, for the step's replay context (FIX 6351).
-    pub(super) guest_responses: GuestResponseCapture,
+    /// What this step's guest read, for the step's replay context: each
+    /// response it handed out, at the position of the row that answers it
+    /// (FIX 6351), and what its result reads saw of reader state (FIX 6352).
+    pub(super) context_capture: StepContextCapture,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
     /// The guest received a typed `Denied`/`Failed` RESPONSE for it (budget
@@ -185,7 +187,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             receipts: Vec::new(),
             recorded_rows: Some(Vec::new()),
             bridge_calls: Vec::new(),
-            guest_responses: GuestResponseCapture::new(),
+            context_capture: StepContextCapture::new(replay_context::captured_reader_child(
+                gated_write,
+                run_id,
+            )),
             durable_wait: None,
             hard_failure: None,
             left_a_gap: false,
@@ -298,7 +303,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         // One read of the envelope: the runtime is handed it, and the
         // replay context keeps the same value, never a later read.
         let budget = self.budget();
-        self.guest_responses.keep(call, seq, view.as_ref(), budget);
+        self.context_capture
+            .guest_responses
+            .keep(call, seq, view.as_ref(), budget);
         SelfDispatchResponse {
             outcome,
             budget,

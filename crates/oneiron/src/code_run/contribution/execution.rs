@@ -92,8 +92,9 @@ pub struct ForkExecutionPin {
     /// Where the step's recorded calls are in its run's bridge log.
     pub bridge_start: u64,
     pub bridge_end: u64,
-    /// BLAKE3 of the step's replay context as stored (FIX 6351), the
-    /// responses its live guest read; `None` when none was read.
+    /// BLAKE3 of the step's replay context as stored: the responses its live
+    /// guest read (FIX 6351) and what its result reads saw of reader state
+    /// (FIX 6352); `None` when none was read.
     pub context: Option<[u8; 32]>,
     pub determinism: ShadowDeterminism,
     /// The SHA-256 the host pinned its runtime's component to.
