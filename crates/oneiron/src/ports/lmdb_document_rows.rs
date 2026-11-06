@@ -1,6 +1,7 @@
 //! LMDB/session adapter of the document-row port, over the declared `sync_state` families.
 use super::{
-    DocumentRow, DocumentRowStore, DocumentSlot, DocumentUpdateKey, PendingUpdate, UpdateSeq,
+    DocumentRead, DocumentReadObserver, DocumentRow, DocumentRowStore, DocumentSlot,
+    DocumentUpdateKey, PendingUpdate, UpdateSeq,
 };
 use crate::error::Result;
 use crate::side_table::{self, FixedSideKey, Raw, SideKey, SideTable};
@@ -208,7 +209,7 @@ impl<T: ManifestDbs> DocumentRowStore for T {
         slot: DocumentSlot,
         row: DocumentRow,
     ) -> Result<Option<Vec<u8>>> {
-        table(row).get_bytes(self, txn, &slot)
+        self.port_document_row_observed(txn, slot, row, None)
     }
 
     fn port_document_updates(
@@ -216,16 +217,64 @@ impl<T: ManifestDbs> DocumentRowStore for T {
         txn: &RoTxn<'_>,
         slot: DocumentSlot,
     ) -> Result<Vec<PendingUpdate>> {
-        UPDATES
-            .iter_raw_from(self, txn, &slot_updates(slot))?
+        self.port_document_updates_observed(txn, slot, None)
+    }
+
+    fn port_document_row_observed(
+        &self,
+        txn: &RoTxn<'_>,
+        slot: DocumentSlot,
+        row: DocumentRow,
+        observe: Option<&mut DocumentReadObserver<'_>>,
+    ) -> Result<Option<Vec<u8>>> {
+        let table = table(row);
+        let Some(observe) = observe else {
+            return table.get_bytes(self, txn, &slot);
+        };
+        let bytes = table.get_borrowed(self, txn, &slot)?;
+        let key = table.key_bytes(&slot);
+        observe(DocumentRead::Row {
+            table: table.decl(),
+            key: &key,
+            value: bytes.as_deref(),
+        });
+        Ok(bytes.map(std::borrow::Cow::into_owned))
+    }
+
+    fn port_document_updates_observed(
+        &self,
+        txn: &RoTxn<'_>,
+        slot: DocumentSlot,
+        mut observe: Option<&mut DocumentReadObserver<'_>>,
+    ) -> Result<Vec<PendingUpdate>> {
+        let prefix = slot_updates(slot);
+        let updates = UPDATES
+            .iter_raw_from(self, txn, &prefix)?
             .map(|row| {
                 let (key, bytes) = row?;
+                if let Some(observe) = observe.as_mut() {
+                    let mut full_key = UPDATES.decl().prefix.to_vec();
+                    full_key.extend_from_slice(&key);
+                    observe(DocumentRead::Row {
+                        table: UPDATES.decl(),
+                        key: &full_key,
+                        value: Some(&bytes),
+                    });
+                }
                 let seq = DocumentUpdateKey::decode_key(&key).map(|key| key.seq);
                 Ok(PendingUpdate { seq, bytes })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if let Some(observe) = observe {
+            let mut full_prefix = UPDATES.decl().prefix.to_vec();
+            full_prefix.extend_from_slice(&prefix);
+            observe(DocumentRead::ScanComplete {
+                table: UPDATES.decl(),
+                prefix: &full_prefix,
+            });
+        }
+        Ok(updates)
     }
-
     fn port_document_present(&self, txn: &RoTxn<'_>, slot: DocumentSlot) -> Result<bool> {
         if SNAPSHOT.contains(self, txn, &slot)? {
             return Ok(true);
