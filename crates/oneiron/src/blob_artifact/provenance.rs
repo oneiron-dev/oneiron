@@ -20,8 +20,11 @@ const PROVENANCE_USER_UPLOAD: &str = "user_upload";
 
 const PROVENANCE_AGENT_RUN: &str = "agent_run";
 
-/// Who produced one blob artifact version: a direct user upload or an agent
-/// run identified by its stable run reference.
+const PROVENANCE_QUEUE_CHECK: &str = "queue_check";
+
+/// Who produced one blob artifact version: a direct user upload, an agent
+/// run identified by its stable run reference, or a queue-check completion
+/// holding actual execution exhaust (FIX 7227).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BlobVersionProvenance {
@@ -36,6 +39,11 @@ pub enum BlobVersionProvenance {
     SealJob {
         job_ref: String,
     },
+    /// Actual queue-check exhaust bytes, completed in the finish writer.
+    /// `check_ref` reuses the existing `run_ref` record key (no new key).
+    QueueCheck {
+        check_ref: String,
+    },
 }
 
 impl BlobVersionProvenance {
@@ -46,6 +54,7 @@ impl BlobVersionProvenance {
             Self::CapabilityUpload => "capability_upload",
             Self::AgentRun { .. } => PROVENANCE_AGENT_RUN,
             Self::SealJob { .. } => "seal_job",
+            Self::QueueCheck { .. } => PROVENANCE_QUEUE_CHECK,
         }
     }
 
@@ -55,6 +64,7 @@ impl BlobVersionProvenance {
             Self::UserUpload | Self::CapabilityUpload => None,
             Self::AgentRun { run_ref } => Some(run_ref),
             Self::SealJob { job_ref } => Some(job_ref),
+            Self::QueueCheck { check_ref } => Some(check_ref),
         }
     }
 
@@ -64,8 +74,9 @@ impl BlobVersionProvenance {
             ("capability_upload", None) => Ok(Self::CapabilityUpload),
             (PROVENANCE_AGENT_RUN, Some(run_ref)) => Ok(Self::AgentRun { run_ref }),
             ("seal_job", Some(job_ref)) => Ok(Self::SealJob { job_ref }),
+            (PROVENANCE_QUEUE_CHECK, Some(check_ref)) => Ok(Self::QueueCheck { check_ref }),
             _ => Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "provenance must be user_upload/capability_upload without run_ref or agent_run/seal_job with run_ref",
+                "provenance must be user_upload/capability_upload without run_ref or agent_run/seal_job/queue_check with run_ref",
             ))),
         }
     }
@@ -73,36 +84,45 @@ impl BlobVersionProvenance {
     pub(super) fn claim_source(&self) -> ClaimSource {
         match self {
             Self::UserUpload | Self::CapabilityUpload => ClaimSource::UserStated,
-            Self::AgentRun { .. } | Self::SealJob { .. } => ClaimSource::Generated,
+            Self::AgentRun { .. } | Self::SealJob { .. } | Self::QueueCheck { .. } => {
+                ClaimSource::Generated
+            }
         }
     }
 
     /// Generated sources need an explicit Gate permit for `Auto`, so
     /// agent-run LEDGER events park as `Proposed` — the same stance as the
     /// OF-320 code-run dispatcher for first-party generated effects.
+    /// Queue-check exhaust parks the same way (no invented Auto).
     pub(super) fn approval_status(&self) -> ClaimApprovalStatus {
         match self {
             Self::UserUpload | Self::SealJob { .. } => ClaimApprovalStatus::Auto,
-            Self::CapabilityUpload | Self::AgentRun { .. } => ClaimApprovalStatus::Proposed,
+            Self::CapabilityUpload | Self::AgentRun { .. } | Self::QueueCheck { .. } => {
+                ClaimApprovalStatus::Proposed
+            }
         }
     }
 }
 
 pub(super) fn validate_provenance(provenance: &BlobVersionProvenance) -> Result<()> {
-    if let BlobVersionProvenance::AgentRun { run_ref }
-    | BlobVersionProvenance::SealJob { job_ref: run_ref } = provenance
-    {
+    let check_ref = match provenance {
+        BlobVersionProvenance::AgentRun { run_ref } => Some(run_ref),
+        BlobVersionProvenance::SealJob { job_ref } => Some(job_ref),
+        BlobVersionProvenance::QueueCheck { check_ref } => Some(check_ref),
+        _ => None,
+    };
+    if let Some(check_ref) = check_ref {
         validate_text_field(
-            run_ref,
+            check_ref,
             BLOB_ARTIFACT_RUN_REF_MAX_BYTES,
             "run_ref must be non-empty and at most 1024 bytes",
         )?;
-        if run_ref.trim().is_empty() {
+        if check_ref.trim().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "run_ref must be non-empty and at most 1024 bytes",
             )));
         }
-        secret_scan::scan_metadata_field(run_ref)?;
+        secret_scan::scan_metadata_field(check_ref)?;
     }
     Ok(())
 }

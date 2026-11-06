@@ -16,8 +16,9 @@
 //! read, and the principal's relationship grants are read live. A revocation
 //! after the save therefore never widens what the work reads. A lane that
 //! read under no narrowing freezes as its principal's own
-//! ([`FrozenReadLane::principal`]), which is how every saved read was built
-//! before: its principal's live authority alone, owner and Grants included.
+//! ([`FrozenReadLane::principal`]), unless a non-guest credential's native
+//! key lacks the owner's full floor. Even with a top read Scope, that lane
+//! keeps its credential rather than becoming its holder's principal lane.
 //!
 //! Sight is never frozen: a door that serves a secret derives it again from
 //! the rebuilt lane.
@@ -39,9 +40,9 @@ const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is n
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenReadLane {
-    /// The id of the credential that narrowed the saved lane. Every rebuild
+    /// The id of the credential that bounds the saved lane. Every rebuild
     /// reads nothing once it is no longer live. `None` on a lane no
-    /// credential narrowed.
+    /// credential bounded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential: Option<[u8; 32]>,
     /// The read Scope the saved lane was held to, as every read door checks
@@ -74,7 +75,7 @@ impl FrozenReadLane {
     /// The principal's own lane: no narrowing beyond the principal's live
     /// authority. An engine-built record that no caller's lane saved (an
     /// internal one-off ask, a review's dissent question) keeps it, and so
-    /// does a full lane.
+    /// does an un-narrowed native owner key or bare principal key.
     #[must_use]
     pub fn principal() -> Self {
         Self::default()
@@ -86,12 +87,13 @@ impl FrozenReadLane {
         *self == Self::default()
     }
 
-    /// `lane`, frozen. A lane under no narrowing (the owner's key, a full
-    /// credential, an un-narrowed principal key) freezes as the principal's
-    /// own. Otherwise the credential's id, read Scope and records caveat,
-    /// the asked worlds and the room facets are kept. A channel caveat the
-    /// lane did not meet freezes as a Scope that reads nothing, as the live
-    /// lane read nothing under it.
+    /// `lane`, frozen. A lane under no narrowing freezes as the principal's
+    /// own, except a non-guest credential whose native key lacks the owner's
+    /// full floor: its credential's id stays even with a top read Scope.
+    /// Otherwise the credential's id, read Scope and records caveat, the
+    /// asked worlds and the room facets are kept. A channel caveat the lane
+    /// did not meet freezes as a Scope that reads nothing, as the live lane
+    /// read nothing under it.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] for a lane whose bound has no frozen form,
@@ -133,7 +135,10 @@ impl FrozenReadLane {
             } != Scope::top()
         });
         let worlds = key.worlds.as_ref().map(WorldAuthoritySet::scope_axis);
-        if !scope_narrows
+        let keep_credential =
+            claims.is_some_and(|claims| claims.grant_ref.is_none()) && !key.reads_as_vault_owner();
+        if !keep_credential
+            && !scope_narrows
             && records.is_empty()
             && !channel_refused
             && worlds.is_none()

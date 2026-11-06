@@ -2,4 +2,6 @@
 
 pub mod keys;
 pub mod retention_policy;
+pub mod types;
+pub mod vet;
 pub mod write_mode;
