@@ -34,8 +34,7 @@ use super::super::highway_types::TaskLifecycleRecord;
 use super::super::lifecycle_receipt;
 use super::super::task_actor::TaskActor;
 
-/// The call a consult interruption's frozen case is kept under.
-pub(in crate::task_verb) const CASE_CALL: &str = "consult_case";
+const CASE_CALL: &str = "consult_case";
 const FINISH_CALL: &str = "consult_finish";
 const FIELD_CASE_REF: &str = "case_ref";
 const FIELD_KIND: &str = "interruption_kind";

@@ -199,11 +199,12 @@ pub(crate) fn erase_in_txn(
 
 /// The owner's discard of TASK `id`'s local copy (FIX 14534 rule 4): each
 /// entry journaled for it stays identifier-only history: its key, try,
-/// reporter, TASK, report key, digest and receipt, outcome, refs and times
-/// included, less the words its receipt's lifecycle record carries in its
-/// fields. Rewritten in place, in the discard's transaction, with no receipt
-/// of its own; an entry is read only after the reporter's read admits its
-/// TASK, which is gone here. A no-op for any other entity.
+/// reporter, TASK, report key, digest and receipt, outcome, refs, times and
+/// every lifecycle field but those that hold the call's words
+/// ([`super::lifecycle_receipt::lifecycle_field_holds_words`]); a Done's
+/// judge model stays for the runs that read it. Rewritten in place, in the
+/// discard's transaction, with no receipt of its own. A no-op for any other
+/// entity.
 ///
 /// # Errors
 ///
@@ -218,10 +219,14 @@ pub(crate) fn discard_payload_in_txn(
         if entry.identity.task_ref != *id {
             continue;
         }
-        if let Some(lifecycle) = entry.receipt.lifecycle.as_mut()
-            && !lifecycle.fields.is_empty()
-        {
-            lifecycle.fields.clear();
+        let Some(lifecycle) = entry.receipt.lifecycle.as_mut() else {
+            continue;
+        };
+        let before = lifecycle.fields.len();
+        lifecycle
+            .fields
+            .retain(|name, _| !super::lifecycle_receipt::lifecycle_field_holds_words(name));
+        if lifecycle.fields.len() != before {
             entries.push((key, entry));
         }
     }

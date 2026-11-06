@@ -39,7 +39,6 @@ use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 mod consent_ask;
 mod finish;
 pub(super) use self::consent_ask::case_ask_anchor;
-pub(super) use self::finish::CASE_CALL;
 
 impl Memory<'_> {
     /// Registers the DISPLAY handle for one peer actor. Board projections

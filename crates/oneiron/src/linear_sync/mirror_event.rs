@@ -436,10 +436,11 @@ pub(crate) fn discard_task_event_payload_in_txn(
 }
 
 /// The receipt JSON `json` with the words it holds taken out: the two
-/// values of each conflict it names, and the fields of each lifecycle
-/// record it carries. Ids, statuses, digests and times stay, so the receipt
-/// still reads as its own type and a replay still answers it. `None` for
-/// JSON that does not read.
+/// values of each conflict it names, and each lifecycle record's fields
+/// that hold a call's words ([`crate::task_verb::lifecycle_field_holds_words`]).
+/// Ids, statuses, digests and times stay, so the receipt still reads as its
+/// own type and a replay still answers it. `None` for JSON that does not
+/// read.
 fn discarded_receipt(json: &str) -> Option<String> {
     fn scrub(value: &mut serde_json::Value) {
         match value {
@@ -450,9 +451,9 @@ fn discarded_receipt(json: &str) -> Option<String> {
                     }
                 }
                 if let Some(serde_json::Value::Object(lifecycle)) = map.get_mut("lifecycle")
-                    && let Some(fields) = lifecycle.get_mut("fields")
+                    && let Some(serde_json::Value::Object(fields)) = lifecycle.get_mut("fields")
                 {
-                    *fields = serde_json::Value::Object(serde_json::Map::new());
+                    fields.retain(|name, _| !crate::task_verb::lifecycle_field_holds_words(name));
                 }
                 map.values_mut().for_each(scrub);
             }
