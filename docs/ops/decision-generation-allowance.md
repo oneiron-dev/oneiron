@@ -75,6 +75,16 @@ Settlement inventories also do not establish complete token measurement. Missing
 stays unknown; billed reservations and currency charges are not actual token counts.
 Reading a settlement never authorizes settling the model permit a second time.
 
+Native settlements also keep `native_quantity`, the pricing quantity in the call's
+own typed unit before host rate conversion. Its wide `units` value is a decimal
+string on the wire. A dispatched call with no reported usage carries its native
+reservation there; an unstarted or kept call carries its actual zero for this
+settlement. This does not turn the quantity into measured tokens or charge it again.
+The original run-line charge, allocation, errors and reported usage stay separate.
+The server log keeps the decimal quantity and the same sanitized unit-name format.
+This field supplies native accounting data; it does not connect a stronger Arc
+consumer or enable any provider.
+
 The Arc stronger-read path remains excluded by `generated_only`. The typed captured
 outcomes, native common path, and truthful stop vocabulary do not enable it by
 themselves. Provider coverage, memo-aware correction pacing, and the accounting join

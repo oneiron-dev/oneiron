@@ -9,7 +9,7 @@ use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
 use super::host::{UnitRate, Unpriced, convert};
 use super::permit::RunPermit;
-use super::receipt::{RunEvent, RunOverageSource, RunStreamUsage, RunTokenUsage, RunUsageOverage};
+use super::receipt::{RunEvent, RunOverageSource, RunNativeQuantity, RunStreamUsage, RunTokenUsage, RunUsageOverage};
 
 /// How a permitted call ended, for its settlement.
 #[derive(Debug, Clone, Copy)]
@@ -167,6 +167,14 @@ impl RunInner {
                 stream,
                 inference_calls,
                 overage,
+                native_quantity: RunNativeQuantity {
+                    units: match native {
+                        Some(units) => units,
+                        None if started => permit.reserve_native,
+                        None => 0,
+                    },
+                    unit: permit.native.clone(),
+                },
                 units: charged,
                 unit: line_unit.clone(),
                 allocation_units: allocation.as_ref().map(|(units, _)| *units),

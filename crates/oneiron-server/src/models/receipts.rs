@@ -114,12 +114,17 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             stream,
             inference_calls,
             overage,
+            native_quantity,
         } => json!({
             "event": "settled",
             "revision": revision,
             "lease_seq": lease_seq(lease),
             "units": units,
             "unit": unit_name(unit),
+            "native_quantity": {
+                "units": native_quantity.units.to_string(),
+                "unit": unit_name(&native_quantity.unit),
+            },
             "allocation_units": allocation_units,
             "dispatched": dispatched,
             "usage": usage,

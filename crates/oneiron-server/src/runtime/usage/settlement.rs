@@ -64,6 +64,7 @@ impl VaultUsage {
                 stream: _,
                 inference_calls: _,
                 overage: _,
+                native_quantity: _,
                 units,
                 unit,
                 allocation_units,
