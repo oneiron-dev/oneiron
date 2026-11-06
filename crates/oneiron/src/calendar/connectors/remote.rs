@@ -172,6 +172,15 @@ pub trait CalendarRemoteTransport {
         Ok(None)
     }
 
+    /// `cursor`, the next cursor of a pull one of whose omissions stays owed
+    /// (a write of it in flight, or its row moved since the listing): one
+    /// from which the next pull lists the calendar whole again, so the
+    /// omission is read again and never dropped (fix list row 19192). The
+    /// default, for a provider that reports no omissions, is `cursor` itself.
+    fn cursor_owing_full_listing(&self, cursor: &str) -> String {
+        cursor.to_owned()
+    }
+
     /// Conditionally stores one VEVENT resource.
     ///
     /// # Errors

@@ -2,7 +2,7 @@
 
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
-    CalendarRemoteObjectRow, ingest_error, require_omission_observed, write_remote_object,
+    CalendarRemoteObjectRow, ingest_error, omission_observed, write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -69,18 +69,28 @@ pub fn run_calendar_connector_sync(
         )?;
     }
 
+    // An omission a write in flight or a moved row holds back stays owed:
+    // every other change of this pull stands, and the next pull lists the
+    // calendar whole again, so the omission is read again, never dropped
+    // (fix list row 19192).
+    let next_cursor = match batch.next_cursor {
+        Some(cursor) if counters.owed_omissions > 0 => {
+            Some(transport.cursor_owing_full_listing(&cursor))
+        }
+        cursor => cursor,
+    };
     let next_not_before = seat.jittered_next_poll_at(now, jitter_seed)?;
     enqueue_next_sync(
         vault,
         seat,
         transport.provider_key(),
-        batch.next_cursor.clone(),
+        next_cursor.clone(),
         next_not_before,
         now,
     )?;
 
     Ok(CalendarSyncOutcome::Reenqueued {
-        next_cursor: batch.next_cursor,
+        next_cursor,
         next_not_before,
         applied: counters.applied,
         acknowledged: counters.acknowledged,
@@ -96,6 +106,9 @@ struct SyncCounters {
     acknowledged: u32,
     source_absences: u32,
     status_cancellations: u32,
+    /// Omissions a write in flight or a moved row held back (fix list row
+    /// 19192).
+    owed_omissions: u32,
 }
 
 /// Applies one pulled change under the echo law.
@@ -216,7 +229,10 @@ fn apply_remote_change(
             // prepared row is published in too, so the row and the outbox
             // are the ones the absence lands against.
             operation.revalidate(vault)?;
-            require_omission_observed(vault, operation, uid, *observation)?;
+            if !omission_observed(vault, operation, uid, *observation)? {
+                counters.owed_omissions += 1;
+                return Ok(());
+            }
             apply_remote_deletion(
                 vault,
                 seat,

@@ -59,6 +59,16 @@ fn recorded_cursor(cursor: &str) -> Option<(Option<&str>, &str)> {
     Some((Some(zone), token))
 }
 
+/// `cursor` with its DAV token dropped and its zone kept: the next pull lists
+/// the collection whole again (fix list row 19192). A cursor whose framing
+/// does not read is left as it is; it lists whole already.
+pub(super) fn owing_full_listing(cursor: &str) -> String {
+    match recorded_cursor(cursor) {
+        Some((zone, _)) => format!("{CURSOR_ZONE_PREFIX}{}\n", zone.unwrap_or_default()),
+        None => cursor.to_owned(),
+    }
+}
+
 /// `batch` as the adapter returns it while the collection names `zone`:
 /// each upserted resource's bytes take `zone` where they name no plain zone
 /// of their own (the bytes the seat archives and parses), and the next
