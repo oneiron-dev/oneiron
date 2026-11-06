@@ -20,7 +20,6 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::server::SyncServer;
@@ -34,8 +33,6 @@ const REPLY_GZIP_LEVEL: u32 = 1;
 
 /// `api/llm.rs`'s `/v1/llm/decision_read` ceiling.
 const LLM_DECISION_READ_BODY_BYTES: usize = 256 * 1024;
-/// `api/facade.rs`'s `FACADE_MAX_BODY_BYTES`.
-const FACADE_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 /// `api/blob_artifacts.rs`'s `ARTIFACT_BODY_LIMIT`.
 const ARTIFACT_BODY_BYTES: usize = 96 * 1024 * 1024;
 
@@ -55,9 +52,7 @@ fn decoded_body_cap(path: &str, floor: usize) -> Option<usize> {
         });
     }
     let rest = path.strip_prefix("/v1/core/")?;
-    Some(if rest.starts_with("facade/") {
-        FACADE_BODY_BYTES
-    } else if rest == "artifacts" || rest.starts_with("artifacts/") {
+    Some(if rest == "artifacts" || rest.starts_with("artifacts/") {
         ARTIFACT_BODY_BYTES
     } else {
         floor
