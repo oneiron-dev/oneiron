@@ -2,9 +2,9 @@
 //!
 //! At pin d81235049384534c167caea52b85a694f6103d14, env, argv and file
 //! handlers append accepted keys. Env keys and a key/file flag at the start
-//! of the operator args, or after only the known single-value launch options,
-//! stay valid with any later args. Other argv and preset-only authentication
-//! keep the existing unauthenticated GET.
+//! of the operator args, or after only the known single-value launch options
+//! and zero-value resource flags, stay valid with any later args. Other argv
+//! and preset-only authentication keep the existing unauthenticated GET.
 use std::path::Path;
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
@@ -39,9 +39,19 @@ impl MetricsRoute {
     }
 }
 
-// Skip only the pinned single-value launch options.
+// Skip only the pinned launch options with their original value arity.
 fn auth_args(mut args: &[String]) -> &[String] {
-    while let [flag, _, rest @ ..] = args {
+    while let [flag, rest @ ..] = args {
+        if matches!(
+            flag.as_str(),
+            "--no-host" | "-cmoe" | "--cpu-moe" | "--check-tensors"
+        ) {
+            args = rest;
+            continue;
+        }
+        let [_, rest @ ..] = rest else {
+            break;
+        };
         if !matches!(
             flag.as_str(),
             "--parallel"
