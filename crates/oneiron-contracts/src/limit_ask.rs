@@ -554,6 +554,18 @@ pub enum EngineLimit {
     /// Questions in one logical decision pack. The producer reports its actual
     /// policy's questions-per-call bound; larger packs are still served whole.
     DecisionQuestionsPerCall,
+    /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
+    /// Past it the row asks whether everything is okay and the pack is
+    /// still served whole; nothing is refused or clamped.
+    ContextEdgeHops,
+    /// Neighbors one context-pack edge walk hydrates (FIX 63). Past it
+    /// the row asks whether everything is okay and the pack is still
+    /// served whole; nothing is refused or clamped.
+    ContextNeighbors,
+    /// Edges one context-pack retrieval budget selects (FIX 64). Past it
+    /// the row asks whether everything is okay and the pack is still
+    /// served whole; nothing is refused or clamped.
+    ContextSelectedEdges,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

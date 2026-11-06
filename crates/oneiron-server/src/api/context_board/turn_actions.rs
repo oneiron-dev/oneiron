@@ -33,7 +33,9 @@ use crate::server::{SyncServer, blocking};
 /// prompt that goes back to the requester and as far as the chat role's live
 /// route from `seat`, on `ai`, may take the call (FIX 7257); the call that
 /// carries it is judged again once admitted ([`PromptBoard::rides`]). `None`
-/// when the action reads none.
+/// when the action reads none. The board renders under this same answering
+/// agent's board layout (BOARD-LAYOUT); only the actual answer that used the
+/// admitted board activates its pending batch, through the history writer.
 pub(crate) async fn action_board(
     server: &Arc<SyncServer>,
     ai: &AiHandle,
@@ -61,18 +63,26 @@ pub(crate) async fn action_board(
         },
         PeerMachine::Unknown,
     );
-    let board =
-        match super::chat_turn_board(server, auth, Some(action.conversation), agent, query).await {
-            Ok(board) if !board.block.trim().is_empty() => board,
-            Ok(_) => return None,
-            Err(status) => {
-                tracing::info!(
-                    %status,
-                    "a turn action's context board was refused; the action runs without it"
-                );
-                return None;
-            }
-        };
+    let board = match super::chat_turn_board(
+        server,
+        auth,
+        Some(action.conversation),
+        agent,
+        query,
+        Some(agent),
+    )
+    .await
+    {
+        Ok(board) if !board.block.trim().is_empty() => board,
+        Ok(_) => return None,
+        Err(status) => {
+            tracing::info!(
+                %status,
+                "a turn action's context board was refused; the action runs without it"
+            );
+            return None;
+        }
+    };
     let board = PromptBoard::new(board, caller);
     board.rides_route(ai, server.vault(), seat).then_some(board)
 }
@@ -83,7 +93,7 @@ pub(crate) async fn action_board(
 /// door. It must still name the requester at its class and grant a read.
 /// An attested owner's is the owner the vault records as live now. `None`,
 /// logged, for a native action or one whose credential no longer does.
-fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
+pub(crate) fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
     let binding = match &action.authority {
         TurnActionAuthority::Slip { binding } => binding,
         // The owner the vault records as live now, when he is the requester

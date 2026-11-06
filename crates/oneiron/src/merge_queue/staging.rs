@@ -1,6 +1,15 @@
 //! Bounded speculation, materialization and cleanup through the shared repo writer.
+//!
+//! Owner staging composes disjoint same-file proposals (FIX 4360): each mask
+//! adds a later proposal's changed lines to the bytes earlier ones staged,
+//! from their one verified base. CALL A keeps the automatic driver's
+//! same-path pairs out of staging, so it never reaches this composition.
+use super::composition::LineComposition;
 use super::types::QueueRecord;
-use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, RepoQueueOrder, SpeculativePath};
+use super::{
+    BatchState, MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue,
+    RepoQueueOrder, SpeculativePath,
+};
 use crate::{
     error::{CodeError, Error, Result},
     git_wire::{GitOid, GitWire, lock_repository, redact_bridged_failure, run_bridged_git_argv},
@@ -9,7 +18,7 @@ use crate::{
     store::repo_mutation_record::RepoMutationOperation,
     store::repo_mutation_record::RepoMutationStatus,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// How many proposals one speculation window spans: a batch stages every
@@ -203,7 +212,14 @@ impl MergeQueue<'_> {
         Ok(batch)
     }
 
+    /// One mask's speculative commit. Included proposals apply in batch
+    /// order. A path's first write checks its exact base; a repeated path
+    /// recomposes from that common verified base in this mask alone, so an
+    /// excluded proposal's lines are never in it (FIX 4360).
     fn materialize(&self, batch: &MergeBatch, mask: u64, root: &Path) -> Result<(String, String)> {
+        // Each written path's composition; `None` when only its exact whole
+        // file is supported, so a repeat keeps the stale-base refusal.
+        let mut written: BTreeMap<&str, Option<LineComposition>> = BTreeMap::new();
         for (index, proposal) in batch.proposals.iter().enumerate() {
             if mask & (1 << index) == 0 {
                 continue;
@@ -215,6 +231,9 @@ impl MergeQueue<'_> {
                 .any(|file| file.metadata_edit.is_some())
             {
                 super::file_metadata::materialize_received_merge_files(root, &proposal.files)?;
+                for file in &proposal.files {
+                    written.insert(file.path.as_str(), None);
+                }
                 continue;
             }
             for file in &proposal.files {
@@ -224,12 +243,30 @@ impl MergeQueue<'_> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error.into()),
                 };
-                if !file.expects(actual.as_deref()) {
-                    return Err(Error::ConcurrentWrite(
-                        "proposal bytes overlap or base is stale",
-                    ));
-                }
-                if let Some(content) = &file.content {
+                let composed = match written.get_mut(file.path.as_str()) {
+                    // A repeat whose whole preimage is the staged bytes (a
+                    // proposal made on an earlier one's result) writes whole,
+                    // as before; the path composes no further.
+                    Some(composition) if file.expects(actual.as_deref()) => {
+                        *composition = None;
+                        None
+                    }
+                    Some(composition) => Some(compose_staged(
+                        composition.as_mut(),
+                        file,
+                        actual.as_deref(),
+                    )?),
+                    None if file.expects(actual.as_deref()) => {
+                        written.insert(file.path.as_str(), first_composition(file));
+                        None
+                    }
+                    None => {
+                        return Err(Error::ConcurrentWrite(
+                            "proposal bytes overlap or base is stale",
+                        ));
+                    }
+                };
+                if let Some(content) = composed.as_ref().or(file.content.as_ref()) {
                     if let Some(parent) = path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
@@ -261,6 +298,8 @@ impl MergeQueue<'_> {
 
     /// Requeue only survivors of a diagnosed red batch. No changed base is silently
     /// accepted; the caller must submit a fresh reviewed proposal in that case.
+    /// Survivors keep their original proposals, so staging recomposes a shared
+    /// path from their retained originals, without a quarantined one (FIX 4360).
     /// A run's survivors keep its accepted order, its predecessors and its
     /// sequence, so they wait as before and its work still lists them (FIX
     /// 7066).
@@ -430,6 +469,42 @@ impl MergeQueue<'_> {
         }
         self.require_clean(&path.worktree)
     }
+}
+
+/// The composition a path's first ordinary write starts (FIX 4360): its
+/// verified base bytes and reviewed bytes, both UTF-8 text. `None` for a new
+/// file, a hash-only base or other bytes: a repeat there refuses as before.
+fn first_composition(file: &MergeFile) -> Option<LineComposition> {
+    match (&file.expected, &file.content) {
+        (Some(MergeFileExpected::Bytes(base)), Some(content)) => {
+            LineComposition::new(base, content)
+        }
+        _ => None,
+    }
+}
+
+/// A repeated path's staged bytes (FIX 4360): `file`'s changed lines added
+/// to the `actual` bytes earlier proposals staged, when it names the same
+/// verified base and no change overlaps. Anything else keeps the exact
+/// whole-file refusal.
+fn compose_staged(
+    composition: Option<&mut LineComposition>,
+    file: &MergeFile,
+    actual: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let stale = || Error::ConcurrentWrite("proposal bytes overlap or base is stale");
+    let (Some(composition), Some(MergeFileExpected::Bytes(base)), Some(content), Some(actual)) =
+        (composition, &file.expected, &file.content, actual)
+    else {
+        return Err(stale());
+    };
+    if base.as_slice() != composition.base() {
+        return Err(stale());
+    }
+    composition
+        .compose(actual, content)
+        .map(|composed| composed.bytes)
+        .ok_or_else(stale)
 }
 
 /// A run's accepted order narrowed to its `survivors`: the same work,
