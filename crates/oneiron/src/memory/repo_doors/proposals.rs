@@ -662,8 +662,10 @@ impl Memory<'_> {
 
 /// Whether `row` is a one-file change no batch has taken yet.
 fn unqueued_candidate(row: &RepoProposal) -> bool {
-    row.operation == RepoProposalOperation::CommitFile
-        && row.merge_stack.is_none()
+    matches!(
+        row.operation,
+        RepoProposalOperation::CommitFile | RepoProposalOperation::ResolveConflictFile { .. }
+    ) && row.merge_stack.is_none()
         && row.operation_seq.is_none()
         && matches!(
             row.status,
