@@ -18,9 +18,13 @@
 //! - it stages through the run's captured route, never a fresh one, in one
 //!   segment that compares the receipt, stages the rows and keeps the
 //!   answer, so a room row never stands without its receipt;
-//! - a write the room or the door refuses stages nothing and keeps no
-//!   receipt, as a write refused before its door ran keeps none.
-//!
+//! - a write the room or the door refuses stages nothing, and keeps its
+//!   refusal on its receipt, as the canonical path keeps a door's refusal
+//!   (FIX 5299). Once the write's segment rolled back, a second segment of
+//!   the same captured route keeps the exact refusal the guest read. A
+//!   resumed step gets that refusal back and asks nothing again. A refusal
+//!   whose receipt cannot be kept is the run's error, never the guest's
+//!   refusal. A room on record keeps no such write and no receipt;
 //! - it runs inside its row's verb hooks, in the room (FIX 5426), as a
 //!   forwarded read does: the pre chain on the call's own input before it is
 //!   prepared, the write prepared on the args every rewrite left, and the
@@ -57,7 +61,8 @@ impl HostSelfDispatcher<'_> {
     /// `call`, a `vault.notes.create` or `vault.claims.upsert` call of a run
     /// bound to an off-record session, staged in its room: its kept answer
     /// when the step already made it, else admitted, prepared and staged
-    /// with its receipt in one segment of the run's captured route.
+    /// with its receipt in one segment of the run's captured route. A
+    /// refusal is kept on the same receipt (FIX 5299).
     pub(super) fn dispatch_session_write(
         &self,
         call: SelfAgentVerbCall,
@@ -88,9 +93,18 @@ impl HostSelfDispatcher<'_> {
             },
             None => None,
         };
+        // FIX 5299: a refused write keeps its refusal on its receipt, in a
+        // second segment of the captured route once its own rolled back. A
+        // refusal whose receipt is not kept so is the run's error.
+        let refuse = |refused: SelfDispatchOutcome| -> Result<SelfDispatchOutcome> {
+            if let Some((receipt, stopped)) = &receipt {
+                binding.keep_session_write_refusal(&call, (receipt, *stopped), &refused)?;
+            }
+            Ok(refused)
+        };
         let admission = match self.session_write_admission(call.verb) {
             Ok(admission) => admission,
-            Err(refused) => return Ok(answered(Err(refused))),
+            Err(refused) => return refuse(answered(Err(refused))),
         };
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
@@ -118,11 +132,11 @@ impl HostSelfDispatcher<'_> {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
-                return Ok(answered(Err(AgentVerbRefusal { code: refused.code })));
+                return refuse(answered(Err(AgentVerbRefusal { code: refused.code })));
             }
             None => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
-                return Ok(session_bound());
+                return refuse(session_bound());
             }
         };
         // The door's ceiling, checked again in the transaction that lands
@@ -152,10 +166,11 @@ impl HostSelfDispatcher<'_> {
         let outcome = match written {
             Ok(outcome) => outcome,
             // Nothing staged: the refusal reaches the guest as its code, the
-            // room's as its Memory code, and the pre chain's records are kept.
+            // room's as its Memory code, the pre chain's records are kept,
+            // and the receipt keeps the refusal.
             Err(refused) => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
-                return Ok(answered(Err(ceiling.take().unwrap_or_else(|| {
+                return refuse(answered(Err(ceiling.take().unwrap_or_else(|| {
                     AgentVerbRefusal {
                         code: MemoryError::from(refused).code,
                     }
@@ -198,7 +213,8 @@ impl HostSelfDispatcher<'_> {
     /// the door rules, with the caller's view and hook dispositions its
     /// receipt keeps. The write is never made again and no hook runs again.
     /// A view whose post chain never settled answers the output withheld:
-    /// a post hook may have hidden part of it.
+    /// a post hook may have hidden part of it. A kept refusal (FIX 5299)
+    /// answers as it was kept: no post chain runs over a refusal.
     fn kept_session_write_answer(
         &self,
         kept: CodeRunReplayRecord,
