@@ -95,6 +95,10 @@ impl<S: EditSession> EditSession for BatchedSheetSession<'_, S> {
         self.session.recalc(doc)
     }
 
+    fn document_resources(&self) -> Option<Resources> {
+        Some((*self.resources).clone())
+    }
+
     fn recalc_engine(&self) -> Option<CalcEngineStamp> {
         self.session.recalc_engine()
     }

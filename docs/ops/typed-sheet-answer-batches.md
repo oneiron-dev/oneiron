@@ -14,6 +14,16 @@ report, recalculates once, verifies the resulting workbook and creates one
 proposal with the original run reference and answer bundle. The unit decider
 is not called during writing or Keep.
 
+The native recalculation wrapper also reuses an operation exposed by the edit
+session. Typed-answer sessions and their batch wrapper expose the original
+ask's resource operation, including its existing deadline. A generic session
+that exposes none keeps the previous per-call host-resource resolution.
+Resource errors returned by native recalculation or external-link preservation
+keep their typed cause; they do not start precision fallback or become an
+unreadable-package message. Unsupported workbook features and engine failures
+still use the existing host precision fallback. The external-link comparisons
+and their non-resource failure messages are unchanged.
+
 The temporary chunk-plan vector and its validated cell text copies use the
 host's existing document-resource reservation and wait. The native writer
 reserves its returned operation vector and validated text copies before

@@ -104,6 +104,13 @@ pub trait EditSession {
     /// preserve unknown parts; the corruption gate re-checks regardless.
     fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>>;
 
+    /// The caller's existing document operation, when this session has one.
+    /// Native checks and recalculation reuse its memory port and caller
+    /// deadline. `None` keeps their ordinary host-resolved operation.
+    fn document_resources(&self) -> Option<oneiron_docedit::resource::Resources> {
+        None
+    }
+
     /// Actual calculator and version for the bytes returned by `recalc`.
     /// No default: an unknown calculator cannot be silently attributed.
     fn recalc_engine(&self) -> Option<CalcEngineStamp> {
