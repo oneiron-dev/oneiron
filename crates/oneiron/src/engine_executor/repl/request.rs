@@ -137,8 +137,10 @@ impl EngineNativeExecutor<'_> {
         let views = {
             let share = &self.result_share;
             let watch = self.storage.limit_watch();
-            self.output_context
-                .assemble_with(completed_steps, self.output_decay, |source| {
+            self.output_context.assemble_with(
+                completed_steps,
+                self.output_decay,
+                |source| {
                     let seq = steps
                         .get(&source)
                         .ok_or(Error::CorruptedIndex("missing executor observation"))?;
@@ -161,7 +163,27 @@ impl EngineNativeExecutor<'_> {
                     }
                     holds.push((source, hold));
                     Ok(Some(text.into_bytes()))
-                })?
+                },
+                |source| {
+                    // An aged observation's overview is its body's own
+                    // preview: it enters context only while the body may
+                    // (FIX 9735).
+                    let seq = steps
+                        .get(&source)
+                        .ok_or(Error::CorruptedIndex("missing executor observation"))?;
+                    let path = observation_output_path(*seq);
+                    let output = record
+                        .outputs
+                        .iter()
+                        .find(|output| output.path == path)
+                        .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+                    crate::engine_executor::clean_for_context(
+                        &self.storage,
+                        Some(record.run_id),
+                        output,
+                    )
+                },
+            )?
         };
         let memory_note = result_memory_note(
             &self.result_share,
