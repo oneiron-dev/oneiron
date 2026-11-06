@@ -65,3 +65,33 @@ This codec is not wired into window capture/restore or the root registry yet. Hi
 Each carried head keeps its real shallow-root or retained-operation site. The native record's `row_digest` selects the exact historical entities-map bytes, rather than the current winner or callback order. The normal paired codec then validates that row, the document history and immutable FIRST. Each snapshot/FIRST descriptor position keeps every observed write of its part. Repeated positions, shared parts and multiple historical heads are not collapsed into one source or one digest-to-position map. Callback atom ids are checked against the completed temporary capture and are not final projected slot ids.
 
 This implements historical pair capture, not its window projection. The source catalog is not connected to `operations::prepare`, emitted frames, seal/open/restore, changed piece-count reconstruction, or authenticated source-metadata rebinding yet. The emitted root registry is unchanged, so SKILL windows still use their existing unclassified route. Native permission and the other outstanding producers are unchanged.
+
+
+## Independent native window source copies
+
+The window source owner in `sync/checkpoint_payload/record_documents.rs` prepares
+all historical SKILL pairs from the same opened document. It uses each exact
+historical entities row's existing placement, not a root-wide holder. Binding
+uses native `Site::Op`/shallow-root identity against the final capture, so added
+withheld-key slots do not turn temporary callback ordinals into final slot ids.
+Each original descriptor position retains all of its writes, including shared
+writes in other heads or the other leg. Only final slot references, opaque entity
+keys, copy locators and actor field names leave that ephemeral preparation;
+original heads and actor-bearing part digests do not become outer structure.
+
+The owner emits one actor-free native content copy per rightful holder and seals
+its native history actors beside that exact copy. Opening checks the copy's
+actual authenticated home, actor-part locator, field and id bytes, then uses the
+paired native codec independently for each source. A missing source remains
+absent at its own position; it is not replaced by another source sharing a write.
+The paired codec also returns the exact entities row. Its rebuilt snapshot and
+FIRST retain all new pieces without a bound from the old descriptor count.
+
+This source-copy module is not yet connected to window prepare, the carrier's
+wire frame or outer reconstruction. A variable number of rebuilt part writes
+still needs a real expansion/placement representation and the authenticated
+opened-checkpoint source writer. One fixed native map operation cannot silently
+stand for extra operations, and divergent shared uses cannot be erased or
+first-selected to make a join pass. SKILL remains absent from the emitted window
+root registry. No source data here grants native permission, and no complete
+window round-trip or root activation is claimed.
