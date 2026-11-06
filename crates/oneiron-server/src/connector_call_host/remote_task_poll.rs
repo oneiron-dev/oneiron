@@ -554,7 +554,12 @@ fn serve_request(live: &LiveSession, input: &TaskInput<'_>, request: Value) -> S
     let (vault, intent) = (input.vault, &input.task.intent);
     let digest = question.digest();
     let turned = vault.try_with_write_txn(|txn| -> IntentLedgerResult<Turned> {
-        if let Some(answer) = vault.claim_remote_task_answer_in_txn(txn, intent, &digest)? {
+        if let Some(answer) = vault.claim_remote_task_answer_in_txn(
+            txn,
+            intent,
+            &digest,
+            question.session.as_deref(),
+        )? {
             return Ok(Turned::Claimed(answer));
         }
         vault.park_remote_task_input_in_txn(txn, intent, &question)?;
