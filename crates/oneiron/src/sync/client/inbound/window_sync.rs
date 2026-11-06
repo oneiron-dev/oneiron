@@ -240,7 +240,7 @@ impl SyncClient {
                 }
                 // The home this connection proved, if it proved one, sent these bytes.
                 let mut answers = Vec::new();
-                match self.import_own_device_window_update_with_delivery(
+                match self.import_own_device_window_update_with_retained_copies(
                     window_key,
                     payload,
                     self.home_peer,
