@@ -14,6 +14,7 @@ pub(super) async fn execute_mcp_agent_verb(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -89,6 +90,12 @@ pub(crate) fn mcp_agent_verb_input(
         "self.focus.scratchpad.recall" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.append" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.seal" => a.spec.clone().ok_or_else(invalid),
+        "self.board.layout" => a.spec.clone().ok_or_else(invalid),
+        "self.board.fold" => a.spec.clone().ok_or_else(invalid),
+        "self.board.unfold" => a.spec.clone().ok_or_else(invalid),
+        "self.board.size" => a.spec.clone().ok_or_else(invalid),
+        "self.board.filter" => a.spec.clone().ok_or_else(invalid),
+        "self.board.replace" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
@@ -1601,6 +1608,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.focus.scratchpad.seal" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.layout" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.fold" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.unfold" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.size" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.filter" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.board.replace" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary" => {
@@ -5378,6 +5403,7 @@ pub(crate) async fn execute_agent_verb_input(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5429,6 +5455,7 @@ async fn execute_agent_verb_listing(
         crate::mcp::McpPageSource,
         McpCarrierPolicy,
         Option<u64>,
+        Option<String>,
     ),
     McpGatewayError,
 > {
@@ -5541,12 +5568,13 @@ async fn execute_agent_verb_listing(
             return Err(error);
         }
     };
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
-        .map_err(mcp_facade_error)?;
+        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
-    Ok((output, source, carrier, epoch))
+    Ok((output, source, carrier, epoch, hook_notice))
 }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
@@ -6023,6 +6051,54 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::ScratchpadSealRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_focus_scratchpad_seal(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.layout" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_layout(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.fold" => {
+            let input: oneiron::task_verb::sdk::BoardFoldRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_fold(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.unfold" => {
+            let input: oneiron::task_verb::sdk::BoardSectionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_unfold(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.size" => {
+            let input: oneiron::task_verb::sdk::BoardSizeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_size(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.filter" => {
+            let input: oneiron::task_verb::sdk::BoardFilterRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_filter(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.board.replace" => {
+            let input: oneiron::task_verb::sdk::BoardReplaceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_board_replace(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
