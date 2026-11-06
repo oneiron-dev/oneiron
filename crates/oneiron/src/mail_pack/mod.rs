@@ -60,6 +60,7 @@ mod mime;
 mod pack;
 mod provider_delete;
 mod reply;
+mod reply_ask;
 mod reply_mime;
 mod reply_send;
 mod rest;
@@ -110,6 +111,7 @@ pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
+pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
