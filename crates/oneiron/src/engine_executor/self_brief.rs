@@ -42,6 +42,13 @@ pub trait SelfBriefPort: Send + Sync {
     /// The backend answered a request that carried the prefix `token` names.
     /// Called once per prepared prefix, at the first such answer.
     fn delivered(&self, token: BriefCandidateToken);
+
+    /// The run just committed the fold batch `boundary`, before any request
+    /// carries it. Called as the batch lands, so a host can move its own
+    /// brief boundary at once and keep it across an entry that ends before
+    /// its next request (a full window, a parked hook); the executor still
+    /// asks [`Self::prepare`] for the fold before its next request.
+    fn folded(&self, _boundary: &FoldBoundary) {}
 }
 
 /// Why the executor asks its host for a prefix.
@@ -182,6 +189,9 @@ impl EngineNativeExecutor<'_> {
     /// past it. With no port bound, nothing is kept.
     pub(super) fn brief_fold_committed(&mut self, boundary: FoldBoundary) {
         if let Some(brief) = self.self_brief.as_mut() {
+            // The host hears of the batch as it lands, so the boundary
+            // outlives this executor if the entry ends before a request.
+            brief.port.folded(&boundary);
             brief.pending.push_back(boundary);
         }
     }
