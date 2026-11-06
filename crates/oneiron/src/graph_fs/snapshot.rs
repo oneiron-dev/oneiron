@@ -134,7 +134,7 @@ impl GraphFsResolver<'_, '_> {
         };
         if path == "/" {
             return self
-                .snapshot_entries(path)
+                .snapshot_entries(path, reader)
                 .map(|entries| !entries.is_empty());
         }
         if self
@@ -144,7 +144,7 @@ impl GraphFsResolver<'_, '_> {
         {
             return Ok(true);
         }
-        self.snapshot_entries(path)
+        self.snapshot_entries(path, reader)
             .map(|entries| !entries.is_empty())
     }
 
@@ -154,7 +154,7 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
-        let entries = self.snapshot_entries(path)?;
+        let entries = self.snapshot_entries(path, reader)?;
         let listing = copy_text_parts(
             &["snapshot readdir ", path],
             reader,
@@ -193,7 +193,11 @@ impl GraphFsResolver<'_, '_> {
         Ok(page.finish(next))
     }
 
-    fn snapshot_entries(&self, path: &str) -> Result<Vec<GraphFsEntry>> {
+    fn snapshot_entries(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Vec<GraphFsEntry>> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
         self.scoped_read
             .read_projected_opaque(
@@ -221,10 +225,15 @@ impl GraphFsResolver<'_, '_> {
                     let prefix = if path == "/" {
                         String::new()
                     } else {
-                        format!("{}/", path.trim_start_matches('/'))
+                        copy_text_parts(
+                            &[path.trim_start_matches('/'), "/"],
+                            reader,
+                            self.options.page_byte_cap,
+                        )?
                     };
                     let mut entries = BTreeMap::new();
                     for file in &snapshot.files {
+                        checkpoint(reader)?;
                         if withheld.contains(&file.path) {
                             continue;
                         }
@@ -239,12 +248,15 @@ impl GraphFsResolver<'_, '_> {
                             Some((name, _)) => (name, true),
                             None => (rest, false),
                         };
+                        let entry_name =
+                            copy_text_parts(&[name], reader, self.options.page_byte_cap)?;
                         let entry = if directory {
-                            GraphFsEntry::directory(name)
+                            GraphFsEntry::directory(entry_name)
                         } else {
-                            GraphFsEntry::file(name, usize::try_from(file.size_bytes).ok())
+                            GraphFsEntry::file(entry_name, usize::try_from(file.size_bytes).ok())
                         };
-                        entries.insert(name.to_owned(), entry);
+                        let key = copy_text_parts(&[name], reader, self.options.page_byte_cap)?;
+                        entries.insert(key, entry);
                     }
                     Ok(entries.into_values().collect())
                 },
