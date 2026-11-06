@@ -721,7 +721,7 @@ fn transition_record_with_outcome_and(
 /// Writes `record`, which a read door may have opened, back over its row in the stored form the
 /// row already keeps: a row's payload is written once, at admission, and only an erase
 /// rewrites it.
-fn put_ledger_record(
+pub(super) fn put_ledger_record(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &IntentLedgerRecord,
