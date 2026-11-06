@@ -235,3 +235,32 @@ does not allocate another vector slot. Native capacity or allocation failures
 use the same first typed error channel; ordinary no-reservation paths retain
 their original vector growth and flush behavior. Boxed guard metadata and
 allocator-private overhead remain outside the reported capacity.
+
+Native parser element construction also preflights its final attribute-vector
+storage. The checked tree-sink operation carries the actual attribute count;
+a native prepared vector owns full capacity admission and moves into the same
+immediate element creation. The lower constructor passes the same attributes
+without filtering or growth. Each attribute is converted directly into the
+prepared final destination; incoming token-vector storage is not retroactively
+admitted. Ordinary calls without preparation retain their original constructor
+and wrapping paths.
+
+Both parser HTML/body attribute-merge sites preflight the actual mutable final
+element before calling the sink. Incoming names are compared with the original
+destination names, so incoming duplicates absent from that original set remain
+accepted as before. Growth admits a full replacement while the old allocation
+and guard are live, settles actual capacity, publishes both replacement fields,
+frees old storage and then returns old admission. Failure stops the native
+operation through the same first typed error without an attribute push or a
+dummy node handle. Existing node-arena preflight remains first; retained arena
+capacity after a later refusal is freed with the partial DOM, not rolled back.
+
+The final vector's reservation is stored on its element after the attribute
+field, and pending prepared storage frees before its guard. Tree cloning does
+not duplicate an in-flight prepared destination. Existing allocating clones
+may retain the original reservation through an Arc; that does not admit their
+new allocations. This slice covers the original parser/render element-owned
+vectors, not arbitrary public attribute extraction or later mutations. Input
+Tag/formatting vectors, atomic value copies, merge wrapping/name temporaries,
+allocating clones, guard metadata and allocator-private overhead remain
+separate gaps. Full FIX 9615 stays PART; no cap, timer or default is added.

@@ -2,13 +2,15 @@
 
 use super::{pending_table_text::PendingTableText, TreeBuilder};
 use crate::tendril::StrTendril;
-use crate::{tree_builder::NodeOrText, QualName};
+use crate::{tree_builder::NodeOrText, Attribute, QualName};
 
 /// A pending sink operation. No handle has been created by this operation yet.
 /// Text may coalesce with an existing node; the sink decides whether a slot is needed.
 pub enum TreeSinkOperation<'a, Handle> {
     /// Create an element, including its template fragment when applicable.
-    CreateElement(&'a QualName),
+    CreateElement(&'a QualName, usize),
+    /// Merge attributes into an existing element.
+    AddAttributes(&'a Handle, &'a [Attribute]),
     /// Create a comment node.
     CreateComment,
     /// Append a node or text to a parent.

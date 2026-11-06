@@ -1,4 +1,5 @@
 mod arena;
+pub(crate) mod attributes;
 mod helpers;
 mod ops;
 mod text;

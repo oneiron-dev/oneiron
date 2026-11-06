@@ -2,6 +2,7 @@ use std::cell::{Ref, RefCell};
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
+use super::attributes::PreparedAttributes;
 use super::text::ParserTextReservation;
 
 #[allow(unused_imports)]
@@ -22,6 +23,7 @@ use super::traversal::Traversal;
 /// An implementation of arena-tree.
 pub struct Tree {
     pub(crate) nodes: RefCell<Vec<TreeNode>>,
+    pub(super) prepared_attributes: RefCell<Option<PreparedAttributes>>,
     pub(super) parser_text: Option<Arc<ParserTextReservation>>,
 }
 
@@ -36,6 +38,7 @@ impl Clone for Tree {
         let nodes = self.nodes.borrow();
         Self {
             nodes: RefCell::new(nodes.clone()),
+            prepared_attributes: RefCell::new(None),
             parser_text: self.parser_text.clone(),
         }
     }
@@ -137,6 +140,7 @@ impl Tree {
         let root_id = NodeId::new(0);
         Self {
             nodes: RefCell::new(vec![TreeNode::new(root_id, root)]),
+            prepared_attributes: RefCell::new(None),
             parser_text: None,
         }
     }
@@ -503,5 +507,3 @@ impl Tree {
         }
     }
 }
-
-#[rustfmt::skip]

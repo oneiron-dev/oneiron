@@ -44,13 +44,15 @@ mod str_wrap {
         v.into_send().into()
     }
 
+    pub fn wrap_attr(a: Attribute) -> Attr {
+        Attr {
+            name: a.name,
+            value: wrap_tendril(a.value),
+        }
+    }
+
     pub fn wrap_attrs(v: Vec<Attribute>) -> Vec<Attr> {
-        v.into_iter()
-            .map(|a| Attr {
-                name: a.name,
-                value: wrap_tendril(a.value),
-            })
-            .collect()
+        v.into_iter().map(wrap_attr).collect()
     }
 
     pub fn copy_attrs(v: &[Attr]) -> Vec<Attribute> {
@@ -84,6 +86,11 @@ mod str_wrap {
     }
 
     #[inline]
+    pub fn wrap_attr(v: Attribute) -> Attr {
+        v
+    }
+
+    #[inline]
     pub fn wrap_attrs(v: Vec<Attribute>) -> Vec<Attr> {
         v
     }
@@ -96,4 +103,4 @@ mod str_wrap {
 
 pub use str_wrap::Attr;
 pub(crate) use str_wrap::StrWrap;
-pub(crate) use str_wrap::{copy_attrs, into_tendril, wrap_attrs, wrap_tendril};
+pub(crate) use str_wrap::{copy_attrs, into_tendril, wrap_attr, wrap_attrs, wrap_tendril};
