@@ -283,7 +283,7 @@ fn home_holds_window_in_txn(
     let Some(home) = vault.store.sync_state.get(txn, &key)? else {
         return Ok(false);
     };
-    let Ok(home) = VersionVector::decode(home) else {
+    let Ok(home) = VersionVector::decode(&home) else {
         return Ok(false);
     };
     let held = super::prune::persisted_window_vv(&vault.store, txn, window)?;
