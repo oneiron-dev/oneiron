@@ -230,6 +230,8 @@ pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
+// The drafter's owner and agent doors (FIX 12569), likewise.
+pub(crate) use super::drafter_doors::*;
 pub(crate) use super::eval_doors::*;
 pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
