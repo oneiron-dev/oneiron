@@ -313,11 +313,22 @@ financial ordinal or proof that bytes reached a model. A tokenizer failure befor
 any completion request creates no response observation.
 
 The optional write occurs after the original read returns, including its unchanged
-error, and freezes this source list without changing the terminal invoice. The
+error, and freezes this source list separately from the terminal invoice. The
 existing complete/stopped-prefix invoice, logical validation, retry order and
-single permit settlement remain unchanged. A partial or malformed response does
-not become a complete invoice, paid fact, exact NET/GROSS coverage or payment
-activation. These source observations do not yet close error-prefix accounting.
+single permit settlement remain unchanged.
+
+For an unchanged logical error, a terminal invoice is recorded only when every
+actual completion request has a parsed successful response, exactly its distinct
+native prompt-index population, and both native counters. The quantity uses the
+same existing forward-pass output floor as ordinary House usage; raw zero counters
+remain unchanged in the source list. Overflow or any unresolved, unsuccessful,
+missing or ambiguous response leaves the error invoice unknown. The full source
+list and this invoice are confirmed in the same writer, so a conflicting source
+cannot freeze a different invoice. No error prefix is promoted to a full invoice.
+
+An incomplete response is not a complete invoice, paid fact, exact NET/GROSS
+coverage or payment activation. Unreported expenses and unresolved requests remain
+unknown; these sources do not close full error-prefix accounting.
 
 ### Captured House post-settlement meter intervals
 

@@ -246,6 +246,12 @@ impl oneiron::llm::decision::PreparedDecisionRead for PreparedHouseRead<'_> {
         {
             tracing::warn!(%error, "native decision observations were not retained");
         }
+        if read.is_err()
+            && let Some(invoice) = &invoice
+            && let Err(error) = invoice.record_failed_completions(&observations)
+        {
+            tracing::warn!(%error, "native failed decision quantity was not retained");
+        }
         if let (Some(invoice), Ok(outcome)) = (invoice, &read) {
             let usage = match outcome {
                 LabelReadGenerationOutcome::Complete(read) => &read.usage,
