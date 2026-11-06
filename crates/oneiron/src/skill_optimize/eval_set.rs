@@ -84,6 +84,7 @@ pub use measurement::{
     MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
     eval_seat_canary,
 };
+pub(crate) use measurement::{PairedScores, estimate_paired};
 pub use replay_input::EvalTaskInput;
 pub use sufficiency::{
     EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
