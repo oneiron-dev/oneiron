@@ -338,6 +338,7 @@ pub fn record_team_receipt_sourced(
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
         input_source: None,
         team_start_source: None,
+        attempt_sources: Vec::new(),
     };
     vault.with_write_txn_grouped(|wtxn| put_team_receipt_in_txn(vault, wtxn, &stored))
 }
