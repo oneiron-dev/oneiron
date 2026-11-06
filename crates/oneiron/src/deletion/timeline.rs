@@ -24,8 +24,27 @@ pub(in crate::deletion) fn deletion_window_label(
     id: &EntityId,
     learned_at: u64,
 ) -> Result<String> {
+    deletion_window_label_observed(dbs, txn, id, learned_at, &mut None)
+}
+
+fn deletion_window_label_observed(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    learned_at: u64,
+    sources: &mut Option<&mut crate::ports::DeletionSourceObserver<'_>>,
+) -> Result<String> {
     let key = format!("m:dw:{}", id.to_hex());
-    if let Some(raw) = dbs.sync_state().get(txn, &key)? {
+    let raw = dbs.sync_state().get(txn, &key)?;
+    crate::ports::observe_deletion_source(
+        sources,
+        crate::ports::DeletionSource::Row {
+            table: crate::ports::DeletionSourceTable::SyncState,
+            key: key.as_bytes(),
+            value: raw.as_deref(),
+        },
+    );
+    if let Some(raw) = raw {
         let label = std::str::from_utf8(&raw).map_err(|_| Error::InvalidKey)?;
         if label.len() != 40
             || label.as_bytes()[7] != b'@'
@@ -57,7 +76,17 @@ pub(crate) fn deletion_window_for_row(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<String> {
-    row_window(dbs, txn, id, raw, false)
+    deletion_window_for_row_observed(dbs, txn, id, raw, &mut None)
+}
+
+pub(crate) fn deletion_window_for_row_observed(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    sources: &mut Option<&mut crate::ports::DeletionSourceObserver<'_>>,
+) -> Result<String> {
+    row_window(dbs, txn, id, raw, false, sources)
 }
 
 /// [`deletion_window_for_row`] that always decodes a CLAIM or key pad body
@@ -69,7 +98,7 @@ pub(in crate::deletion) fn residence_window_for_row(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<String> {
-    row_window(dbs, txn, id, raw, true)
+    row_window(dbs, txn, id, raw, true, &mut None)
 }
 
 fn row_window(
@@ -78,6 +107,7 @@ fn row_window(
     id: &EntityId,
     raw: &[u8],
     always_decode: bool,
+    sources: &mut Option<&mut crate::ports::DeletionSourceObserver<'_>>,
 ) -> Result<String> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let mut label = window_label_from_timestamp(header.learned_at);
@@ -86,9 +116,9 @@ fn row_window(
         return Ok(label);
     }
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
-        return deletion_window_label(dbs, txn, id, header.learned_at);
+        return deletion_window_label_observed(dbs, txn, id, header.learned_at, sources);
     }
-    if !always_decode && !world_pending_tombstone_exists(dbs, txn, &label)? {
+    if !always_decode && !world_pending_tombstone_exists(dbs, txn, &label, sources)? {
         return Ok(label);
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
@@ -121,9 +151,29 @@ pub(crate) fn row_deletion_marked(
     id: &EntityId,
     raw: Option<&[u8]>,
 ) -> Result<bool> {
-    if !super::tombstone::HARD_DELETE_MARKER.contains(dbs, txn, &HexId(*id))?
-        && !super::tombstone::ROW_DELETION_FENCE.contains(dbs, txn, &HexId(*id))?
-    {
+    row_deletion_marked_observed(dbs, txn, id, raw, &mut None)
+}
+
+pub(crate) fn row_deletion_marked_observed(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+    sources: &mut Option<&mut crate::ports::DeletionSourceObserver<'_>>,
+) -> Result<bool> {
+    if !crate::ports::deletion_source_contains(
+        super::tombstone::HARD_DELETE_MARKER,
+        dbs,
+        txn,
+        &HexId(*id),
+        sources,
+    )? && !crate::ports::deletion_source_contains(
+        super::tombstone::ROW_DELETION_FENCE,
+        dbs,
+        txn,
+        &HexId(*id),
+        sources,
+    )? {
         return Ok(false);
     }
     let Some(raw) = raw else {
@@ -139,8 +189,9 @@ fn world_pending_tombstone_exists(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     month: &str,
+    sources: &mut Option<&mut crate::ports::DeletionSourceObserver<'_>>,
 ) -> Result<bool> {
-    dbs.port_has_world_pending_tombstone(txn, WindowAddress::new(month))
+    crate::ports::world_pending_tombstone_observed(dbs, txn, month, sources)
 }
 
 /// Stable deletion reason surfaced by short-id hydrate.
