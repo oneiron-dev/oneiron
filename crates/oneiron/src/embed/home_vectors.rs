@@ -6,6 +6,7 @@ pub(crate) mod copy_scope;
 mod pending;
 pub(crate) mod retained;
 pub(crate) mod retained_copy;
+mod retained_pending;
 mod sealed;
 pub(crate) mod source;
 
