@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use super::{
-    AllocationCallKey, AllocationCommit, AllocationStoreError, AllocationTerminal,
-    DurableAllocationHold, VaultAllocationLedger,
+    AllocationCallContext, AllocationCallKey, AllocationCommit, AllocationStoreError,
+    AllocationTerminal, DurableAllocationHold, VaultAllocationLedger,
 };
 use crate::llm::run_admission::admission::RunInner;
 use crate::llm::run_admission::permit::RunPermit;
@@ -19,6 +19,7 @@ pub trait AllocationProducer: Send + Sync {
         &self,
         txn: &mut heed::RwTxn<'_>,
         admitted: &RunReceipt,
+        context: &AllocationCallContext,
     ) -> Result<(), AllocationStoreError>;
 
     /// Called only by the durable hold's once-selected terminal transition.
@@ -120,7 +121,19 @@ impl RunInner {
                 facts.allocation_unit = Some(hold.unit.clone());
                 facts.allocation_reserved_units = Some(hold.reserved_units);
                 let receipt = self.receipt(permit.revision, RunEvent::Admitted(Box::new(facts)));
-                account.producer.freeze_in_write_txn(txn, &receipt)?;
+                let context = AllocationCallContext {
+                    run: receipt.run.clone(),
+                    revision: receipt.revision,
+                    admitted_occurred_at: receipt.occurred_at,
+                    native: permit.native.clone(),
+                    unit_cost: permit.unit_cost,
+                    reserve_native: permit.reserve_native,
+                    rates: permit.rates.clone(),
+                    metered: permit.metered,
+                };
+                account
+                    .producer
+                    .freeze_in_write_txn(txn, &receipt, &context)?;
                 if let Some(intent) = intent {
                     intent.freeze_in_write_txn(txn, hold, &receipt)?;
                 }

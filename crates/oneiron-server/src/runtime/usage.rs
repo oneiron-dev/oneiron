@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use oneiron::EntityId;
 use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
-use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, RunReceipt};
+use oneiron::llm::run_admission::{
+    AllocationCallContext, Payer, PayerAccount, PermitFacts, RunEvent, RunReceipt,
+};
 
 use self::pricing::CatalogPrices;
 use self::redelivery::PendingSettlements;
@@ -28,7 +30,7 @@ mod native;
 mod pricing;
 mod redelivery;
 mod settlement;
-pub(crate) use native::NativeUsageProducer;
+pub(crate) use native::{NativeUsageContinuation, NativeUsageProducer};
 
 /// One host-resolved owner and authority-log vault id. Runs cannot supply or
 /// replace either. Settlements go straight to the durable idempotent ledger,
@@ -63,6 +65,9 @@ struct AdmittedCall {
     /// The billing owner the call's usage lands on, fixed at admission.
     owner: String,
     service_cost: Option<UsageServiceCost>,
+    /// Only the persistent producer has an original continuation context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<AllocationCallContext>,
 }
 
 impl VaultUsage {
