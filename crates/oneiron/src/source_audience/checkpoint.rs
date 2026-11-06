@@ -1,11 +1,17 @@
 //! The checkpoint getter of source-audience bindings (fix list row 17455):
-//! each row's binding, the policies it carries and its hold go exactly
-//! under the entity tree of the row their key names, so an erase of that
-//! row reaches them with it. None of the three names an actor: a binding
-//! and a carried set name policies, which are side-table ids and not entity
-//! rows, and a hold names only why it holds. So nothing is split, and no
-//! part depends on a policy: a policy is never an owner that opens or does
-//! not open, so a dependency on one would protect nothing.
+//! each row's binding and its hold go exactly under the entity tree of the
+//! row their key names, so an erase of that row reaches them with it.
+//! Neither names an actor: a binding names a policy, which is a side-table
+//! id and not an entity row, and a hold names only why it holds. So nothing
+//! is split, and no part depends on a policy: a policy is never an owner
+//! that opens or does not open, so a dependency on one would protect
+//! nothing.
+//!
+//! The policies a row carries (SOURCE_AUDIENCE_DERIVED) stay in the image
+//! as they were: their monotone floor (Refuse(ImageEntities)) is compared
+//! with the live vault before any compartment opens, so a sealed set would
+//! read as absent there and refuse an unchanged restore. They join this
+//! getter once that comparison reads the opened parts (fix list row 20941).
 //!
 //! A restore writes each row back exactly as it was sealed, once its own
 //! table's codec reads it and its key names the compartment's own row. It
@@ -22,7 +28,7 @@
 
 use heed::{RoTxn, RwTxn};
 
-use super::{DERIVED, HELD, RECORDS};
+use super::{HELD, RECORDS};
 use crate::EntityId;
 use crate::error::Result;
 use crate::side_table::{SideKey, SideTableDecl};
@@ -31,14 +37,10 @@ use crate::store::checkpoint_payload::rows::{
     self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
 };
 
-/// Every binding, carried set and hold in `txn`, each under the row its
-/// key names.
+/// Every binding and hold in `txn`, each under the row its key names.
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
     let mut out = Captured::default();
     for row in rows::typed_rows(dbs, txn, RECORDS, &mut out)? {
-        out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
-    }
-    for row in rows::typed_rows(dbs, txn, DERIVED, &mut out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
     for row in rows::typed_rows(dbs, txn, HELD, &mut out)? {
@@ -48,8 +50,8 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
 }
 
 /// The tables this getter places.
-fn tables() -> [&'static SideTableDecl; 3] {
-    [RECORDS.decl(), DERIVED.decl(), HELD.decl()]
+fn tables() -> [&'static SideTableDecl; 2] {
+    [RECORDS.decl(), HELD.decl()]
 }
 
 fn owns(at: &RowLocator) -> bool {
@@ -64,8 +66,6 @@ pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(RECORDS.decl()) {
         rows::check_row(RECORDS, at, value)
-    } else if at.in_table(DERIVED.decl()) {
-        rows::check_row(DERIVED, at, value)
     } else if at.in_table(HELD.decl()) {
         rows::check_row(HELD, at, value)
     } else {

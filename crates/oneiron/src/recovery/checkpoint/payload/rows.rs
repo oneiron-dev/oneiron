@@ -597,10 +597,10 @@ families! {
     Class::Other(Client::Dispatch(OtherClient::Response)) => SELF_HEAL_CENTROID_EVIDENCE;
     // A saved query's verdict memo (FIX 10089), carried whole (FIX 10533).
     Class::Other(Client::Dispatch(OtherClient::Response)) => SAVED_QUERY_MEMO;
-    // A row's source-audience binding, carried policies and hold, each under
-    // the row its key names (fix list row 17455).
-    Class::Owner(Getter::SourceAudience) => SOURCE_AUDIENCE_RECORD SOURCE_AUDIENCE_DERIVED
-        SOURCE_AUDIENCE_HELD;
+    // A row's source-audience binding and hold, each under the row its key
+    // names (fix list row 17455). SOURCE_AUDIENCE_DERIVED stays in the image
+    // until its floor check reads opened parts (fix list row 20941).
+    Class::Owner(Getter::SourceAudience) => SOURCE_AUDIENCE_RECORD SOURCE_AUDIENCE_HELD;
     // The source-audience policies, their events and the thread index stay
     // under the vault-wide seal until a per-owner compartment (row 17208).
     Class::Unclassified => SOURCE_AUDIENCE_POLICY SOURCE_AUDIENCE_EVENT SOURCE_AUDIENCE_THREAD;
