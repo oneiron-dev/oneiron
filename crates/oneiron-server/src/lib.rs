@@ -90,6 +90,7 @@ mod residence_machines;
 pub mod runtime;
 mod saved_query_sweep;
 pub mod server;
+mod shared_envs;
 mod skills_pack;
 mod slide_render;
 pub mod usage;
