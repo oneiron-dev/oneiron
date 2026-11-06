@@ -115,3 +115,13 @@
     targets into the map instead of cloning them. Grammar, entry points, error
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
+  - `src/parser/mod.rs` and `src/parser_aux.rs` (FIX 12777 content slice):
+    one optional-admission content grammar reserves operand/operation vectors,
+    operator strings, inline-image bytes and the stream's `Length` key/map
+    before allocation. Nested objects reuse the iterative parser. Refusals
+    return `Error::DecodeAdmission`, never a truncated parse or skipped image.
+    `parser::content_admitted`/`content_strict_admitted` and
+    `Content::decode_admitted`/`decode_strict_admitted` keep the ordinary
+    lenient/strict outcomes. Callers retain admission until the content drops.
+    The esign preflight's leading dictionaries use their existing section
+    stage; the object-stream parser keeps its separate pre-admitted bound.
