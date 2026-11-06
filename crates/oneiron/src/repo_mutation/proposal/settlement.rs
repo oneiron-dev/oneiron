@@ -1,6 +1,10 @@
 //! Review decisions are retained separately from execution. Approval never
 //! fabricates a checker result or advances head: the tested merge queue lands it.
-use super::{PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid, store};
+use super::actor_erase::ProposalActor;
+use super::{
+    ContractReviewSettlement, PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus,
+    invalid, store,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -55,9 +59,9 @@ impl Vault {
             let verdicts = row.undecided_contract_verdicts();
             let (receipt, now) =
                 self.put_settlement_receipt_in_txn(&mut txn, id, actor, decision, &verdicts)?;
-            row.decide_contract_reviews(&RepoProposalSettlement {
+            row.decide_contract_reviews(&ContractReviewSettlement {
                 receipt,
-                actor,
+                actor: ProposalActor::Actor(actor),
                 decision,
                 settled_at: now,
             });

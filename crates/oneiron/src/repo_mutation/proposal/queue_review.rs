@@ -19,7 +19,8 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::settlement::{RepoProposalDecision, RepoProposalSettlement};
+use super::actor_erase::ProposalActor;
+use super::settlement::RepoProposalDecision;
 use super::{PROPOSAL, RepoProposal, RepoProposalStatus, invalid, store};
 use crate::critic::{CriticLens, CritiqueArtifact, CritiqueVerdict, LensCatalog, triage_critiques};
 use crate::error::{Error, Result};
@@ -112,7 +113,20 @@ pub struct ContractReviewEvidence {
 pub struct ContractReviewRequest {
     pub evidence: ContractReviewEvidence,
     /// The person's decision and its receipt, once a person decided.
-    pub decision: Option<RepoProposalSettlement>,
+    pub decision: Option<ContractReviewSettlement>,
+}
+
+/// A person's decision on a removed-name review, with its receipt claim
+/// (FIX 4365). An actor erase names no one in its place. The decision and
+/// its time stay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractReviewSettlement {
+    pub receipt: EntityId,
+    /// The owner who decided; [`ProposalActor::Erased`] once that actor
+    /// was erased.
+    pub actor: ProposalActor,
+    pub decision: RepoProposalDecision,
+    pub settled_at: u64,
 }
 
 /// What a queue decision waits for.
@@ -391,7 +405,7 @@ impl RepoProposal {
     /// no person decided yet (FIX 4365). A Reject closes an open proposal:
     /// a repair comes as a fresh proposal. Approve changes no status, and
     /// the verdict stays red.
-    pub(super) fn decide_contract_reviews(&mut self, settled: &RepoProposalSettlement) {
+    pub(super) fn decide_contract_reviews(&mut self, settled: &ContractReviewSettlement) {
         for request in &mut self.contract_reviews {
             if request.decision.is_none() {
                 request.decision = Some(settled.clone());
