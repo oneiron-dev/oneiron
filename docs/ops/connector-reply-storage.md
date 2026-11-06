@@ -72,4 +72,8 @@ hold whole Values. SSE events, control replies and later retry responses
 still use their native in-memory readers. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
 JSON clearing, and spool-aware stored replay admission remain separate
-work. The existing 512 KiB result representation threshold is unchanged.
+work. Body publication and final receipt settlement still use separate
+transactions. Recovery and erasure of a normal body whose final receipt
+did not commit need a native transaction-level repair before this slice
+is ready for activation. The existing 512 KiB result representation
+threshold is unchanged.
