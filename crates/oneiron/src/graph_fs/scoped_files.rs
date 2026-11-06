@@ -70,13 +70,13 @@ impl GraphFsResolver<'_, '_> {
                                 .filter(|_| cursor.position() == body.len() as u64);
                             if let Some(mut value) = value {
                                 let mut texts = Vec::new();
-                                strings(&value, &mut texts);
+                                strings(&value, &mut texts, reader)?;
                                 let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
                                     &self.scoped_read.vault().store,
                                     txn,
                                     texts,
                                 )?;
-                                if mask(&mut value, &keys) {
+                                if mask(&mut value, &keys, reader)? {
                                     let mut bytes = Vec::new();
                                     rmpv::encode::write_value(&mut bytes, &value).map_err(
                                         |_| {
@@ -162,7 +162,12 @@ impl GraphFsResolver<'_, '_> {
     }
 }
 
-fn strings<'a>(value: &'a rmpv::Value, out: &mut Vec<&'a str>) {
+fn strings<'a>(
+    value: &'a rmpv::Value,
+    out: &mut Vec<&'a str>,
+    reader: &ContainerReader,
+) -> Result<()> {
+    checkpoint(reader)?;
     match value {
         rmpv::Value::String(text) => {
             if let Some(text) = text.as_str() {
@@ -171,34 +176,40 @@ fn strings<'a>(value: &'a rmpv::Value, out: &mut Vec<&'a str>) {
         }
         rmpv::Value::Array(items) => {
             for item in items {
-                strings(item, out);
+                strings(item, out, reader)?;
             }
         }
         rmpv::Value::Map(items) => {
             for (key, value) in items {
-                strings(key, out);
-                strings(value, out);
+                strings(key, out, reader)?;
+                strings(value, out, reader)?;
             }
         }
         _ => {}
     }
+    Ok(())
 }
 
-fn mask(value: &mut rmpv::Value, keys: &crate::batch::secret_scan::LiftedKeys) -> bool {
+fn mask(
+    value: &mut rmpv::Value,
+    keys: &crate::batch::secret_scan::LiftedKeys,
+    reader: &ContainerReader,
+) -> Result<bool> {
+    checkpoint(reader)?;
     match value {
         rmpv::Value::String(text) => {
             let Some(masked) = text.as_str().and_then(|text| keys.masked(text)) else {
-                return false;
+                return Ok(false);
             };
             *text = masked.into();
-            true
+            Ok(true)
         }
-        rmpv::Value::Array(items) => items
-            .iter_mut()
-            .fold(false, |changed, item| mask(item, keys) | changed),
-        rmpv::Value::Map(items) => items.iter_mut().fold(false, |changed, (key, value)| {
-            mask(key, keys) | mask(value, keys) | changed
+        rmpv::Value::Array(items) => items.iter_mut().try_fold(false, |changed, item| {
+            Ok(mask(item, keys, reader)? | changed)
         }),
-        _ => false,
+        rmpv::Value::Map(items) => items.iter_mut().try_fold(false, |changed, (key, value)| {
+            Ok(mask(key, keys, reader)? | mask(value, keys, reader)? | changed)
+        }),
+        _ => Ok(false),
     }
 }
