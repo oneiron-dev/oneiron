@@ -23,6 +23,7 @@ pub(super) struct HistoryValidation {
 enum Stage {
     #[default]
     Header,
+    HeaderFields,
     HeaderMetadata,
     HeaderSummary,
     HistoryHeader,
@@ -56,15 +57,28 @@ impl HistoryValidation {
         loop {
             match self.stage {
                 Stage::Header => {
-                    strict(row.record_fields.iter())?;
-                    if row.record_fields.iter().any(|field| {
-                        !crate::ports::is_metadata_field(field)
+                    if self.next == row.record_fields.len() {
+                        self.start(Stage::HeaderFields);
+                        continue;
+                    }
+                    strict(row.record_fields[self.next.saturating_sub(1)..=self.next].iter())?;
+                    self.next += 1;
+                    return Ok(false);
+                }
+                Stage::HeaderFields => {
+                    if let Some(field) = row.record_fields.get(self.next) {
+                        if !crate::ports::is_metadata_field(field)
                             || row.field.as_deref() == Some(field.as_str())
-                    }) || (row.field.is_none() && !row.record_fields.is_empty())
-                    {
+                        {
+                            return Err(invalid("document native record fields"));
+                        }
+                        self.next += 1;
+                        return Ok(false);
+                    }
+                    if row.field.is_none() && !row.record_fields.is_empty() {
                         return Err(invalid("document native record fields"));
                     }
-                    self.stage = Stage::HeaderMetadata;
+                    self.start(Stage::HeaderMetadata);
                     continue;
                 }
                 Stage::HeaderMetadata => {
