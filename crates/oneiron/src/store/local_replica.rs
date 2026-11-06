@@ -401,6 +401,18 @@ fn persisted_window_doc(store: &Store, txn: &RoTxn<'_>, window: &WindowKey) -> R
     Ok(doc)
 }
 
+/// Whether a hold stands on BLOB_ARTIFACT `id`, stored as `raw`, or on a
+/// claim or the bytes of any of its versions.
+fn artifact_payload_held(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let hashes = crate::blob_artifact::held_content_hashes_in_txn(store, txn, id, raw)?;
+    crate::blob_artifact::artifact_payload_held_in_txn(store, txn, id, &hashes)
+}
+
 /// One pass's keep rules over the window's members.
 struct Census<'a> {
     store: &'a Store,
@@ -542,7 +554,13 @@ impl<'a> Census<'a> {
             KeepReason::LegalHold
         } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
             || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+            || (self.keep.release_local_members
+                && kind == registry::ENTITY_TYPE_BLOB_ARTIFACT
+                && artifact_payload_held(self.store, txn, id, raw)?)
         {
+            // The owner's discard takes an artifact's version chain with it:
+            // a hold on any of its versions' claims or bytes keeps the
+            // artifact, and so its byte carriers (FIX 14534).
             KeepReason::Guarded
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
