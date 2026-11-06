@@ -92,7 +92,7 @@ use self::bodies::{
     PadsBody, decode_bundle_body, decode_pads_body, decode_section_body, encode_pads_body,
     section_digest, section_digest_into, section_kek,
 };
-pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
+pub use self::carrier::{SealedVaultUpload, UnmergedSection, UnmergedStage, WorldCapsuleImport};
 use self::codec::{
     AEAD, BODY_RECIPIENT, BUNDLE, BUNDLE_LABEL, CHUNK, Cursor, DeletedWorldPads, FRAME_VERSION,
     Frame, HYBRID, KEM, KEY_ID_LEN, Kind, OpenedOuter, PADS, PADS_LABEL, PART_HEADER_LEN,

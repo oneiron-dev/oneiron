@@ -545,6 +545,19 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
+    persisted_window_snapshot(vault, key, doc)
+}
+
+/// The snapshot a scrubbed window state is stored as: a window pinned history-free keeps only the
+/// history [`super::history_free::HistoryCheck`] ships where a root allows it, else the strict cut
+/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]); every
+/// other window all it holds. Window persist stores it, and so does the sealed mirror of a private
+/// world's window once the erased-actor scrubs ran over it (FIX 19525).
+pub(crate) fn persisted_window_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<Vec<u8>> {
     if history_free_window_required(vault, key)? {
         let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
         super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
