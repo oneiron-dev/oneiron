@@ -478,8 +478,7 @@ impl SyncServer {
         // SCAN C030: the read counts among its caller's deadline jobs until
         // it ends, past the door's answer too; past the row it runs on.
         let job = self.vault.admit_deadline_job(actor);
-        std::thread::Builder::new()
-            .name("oneiron-recall".to_owned())
+        crate::engine_thread("oneiron-recall".to_owned())
             .spawn(move || {
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
@@ -629,8 +628,9 @@ pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
         Ok(_) => std::thread::scope(|scope| {
-            scope
-                .spawn(work)
+            crate::engine_thread("recall-current-thread".into())
+                .spawn_scoped(scope, work)
+                .expect("failed to spawn thread")
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
         }),
