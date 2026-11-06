@@ -4674,6 +4674,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/membership_execution.rs",
+     "purpose": "The signed record of a shared-vault membership change no host issuer could sign (FIX 12335, Engine 13:13…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -4936,7 +4946,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/past_grant_standing.rs",
@@ -32492,7 +32502,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -37327,13 +37337,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 6,
       "re-export": 2
      }
@@ -37367,6 +37377,16 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/membership/pending_execution.rs",
+     "purpose": "A membership change no host issuer could sign (FIX 12335, Engine 13:13 call A)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -60633,7 +60653,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityAuditEventKind",
@@ -60641,7 +60661,8 @@
       "AuthorityAuditPage",
       "AuthorityAuditQuery",
       "AuthorityAuditRow",
-      "ColdAuthorityAuditRow"
+      "ColdAuthorityAuditRow",
+      "PendingMembershipExecutionRow"
      ],
      "path": "src/receipt/authority_audit.rs",
      "purpose": "OF-224: the dated consent/authority audit, a renderer-neutral projection of the stored AUTHORITY_LOG",
@@ -60649,7 +60670,7 @@
       "const": 4,
       "enum": 2,
       "fn": 2,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -62097,7 +62118,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/handover.rs",
-     "purpose": "A checkpoint restore across a shared-vault owner handover (FIX 5765): the exact rows a valid `OwnerHandover`…",
+     "purpose": "A checkpoint restore across a shared-vault owner handover (FIX 5765): the exact rows a valid…",
      "surface": {
       "crate-vis": 10
      }
@@ -76100,9 +76121,9 @@
      "purpose": "One socket's by-reference body transfers (FIX 5489), both directions",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -76609,7 +76630,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/inbound/window_sync.rs",
@@ -78027,7 +78048,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 12,
       "struct": 1
      }
@@ -78244,7 +78265,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OwnDevicePositionImport"
@@ -78252,7 +78273,7 @@
      "path": "src/sync/origin_positions/import.rs",
      "purpose": "Exact optional position operations of one successful own-device import",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 12,
       "fn": 2,
       "struct": 1
      }
@@ -91228,7 +91249,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 256,
+     "files": 257,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91788,7 +91809,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92252,7 +92273,7 @@
     "receipt": {
      "files": 42,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
@@ -92754,9 +92775,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 165,
+   "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6534,
+   "source_files": 6536,
    "test_files": 895
   },
   "oneiron-android": {
@@ -92918,7 +92939,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 103,
+      "const": 105,
       "re-export": 1,
       "type": 1
      }
@@ -93149,13 +93170,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MembershipExecution",
+      "MembershipExecutionCause",
+      "MembershipHandover"
+     ],
+     "path": "src/authority/membership_execution.rs",
+     "purpose": "A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 36
+      "re-export": 37
      }
     },
     {
@@ -93815,7 +93854,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93880,7 +93919,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 62,
+   "source_files": 63,
    "test_files": 1
   },
   "oneiron-base": {
@@ -111743,7 +111782,7 @@
      "path": "src/ai_host/status.rs",
      "purpose": "Live state of the server's background AI work, shared between the workers that change it and the routes that…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 4,
       "struct": 5
      }
@@ -112064,6 +112103,16 @@
      "purpose": "What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/turn_wake.rs",
+     "purpose": "One turn-wake worker per vault (FIX 14873)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -122998,7 +123047,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/handler/window_sync.rs",
@@ -130046,7 +130095,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 122,
+     "files": 123,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130571,9 +130620,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 54,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1646,
+   "source_files": 1647,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134087,7 +134136,7 @@
      "surface": {
       "const": 11,
       "enum": 4,
-      "fn": 32,
+      "fn": 33,
       "struct": 4
      }
     },
@@ -144118,6 +144167,7 @@
       "PendingActStarted",
       "PendingAuthorityAct",
       "PendingEmbedderBinding",
+      "PendingMembershipExecutionRow",
       "PendingProposalKind",
       "PendingProposalView",
       "PendingRootRequestView",
@@ -145871,7 +145921,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1137,
-      "struct": 3442
+      "struct": 3443
      }
     },
     {

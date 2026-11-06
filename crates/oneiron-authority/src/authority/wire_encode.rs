@@ -65,6 +65,18 @@ pub fn op_value(op: &AuthorityOp) -> Value {
                 Value::from(grant_ref.to_hex()),
             ),
         ]),
+        // `member` rides as 32-hex, as a slip's `holder_ref` names it.
+        AuthorityOp::RemovalArchiveConsume { slip_id, member } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OP_KIND_REMOVAL_ARCHIVE_CONSUME),
+            ),
+            (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
+            (
+                Value::from(REMOVAL_ARCHIVE_CONSUME_KEY_MEMBER),
+                Value::from(member.to_hex()),
+            ),
+        ]),
         AuthorityOp::Genesis {
             device,
             genesis_nonce,
@@ -290,6 +302,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::OriginCut(cut) => super::origin_cut::origin_cut_value(cut),
         AuthorityOp::DeviceSuccession(succession) => {
             super::device_succession::device_succession_value(succession)
+        }
+        AuthorityOp::MembershipExecution(record) => {
+            super::membership_execution::membership_execution_value(record)
         }
     }
 }
