@@ -163,36 +163,80 @@ pub(super) fn generic_revision_raw(
     Ok(bytes)
 }
 
-/// Retained generic row bytes and lightweight common-document row aliases.
-/// A mixed ledger's non-generic states are document commitments, not row aliases.
+/// Retained generic row bytes, lightweight common-document row aliases, and
+/// the frontiers of the common document's own retained states. A mixed
+/// ledger's non-generic states are document commitments, not row aliases.
+/// The common states let a search find one the history walk does not follow,
+/// such as an indexed state beside a concurrent head (FIX 10203).
 pub(in crate::vault::entity_revision) fn retained_row_sources_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
-) -> Result<(Vec<Vec<u8>>, Vec<(RevisionRef, Vec<u8>)>)> {
+) -> Result<RetainedRowSources> {
     let generic = DOC
         .get(store, txn, id)?
         .map(|bytes| {
             LoroDoc::from_snapshot(&bytes).map_err(|_| Error::CorruptedIndex("entity document"))
         })
         .transpose()?;
-    let mut rows = Vec::new();
-    let mut aliases = Vec::new();
+    let mut sources = RetainedRowSources::default();
     for row in FRONTIER.iter_from(store, txn, id.as_bytes())? {
         let ((_, revision), frontier) = row?;
         let revision = RevisionRef(revision);
         if let Some(doc) = generic.as_ref() {
             if generic_binding(id, doc, revision, &frontier)? {
-                rows.push(generic_revision_raw(id, revision, &frontier, doc)?);
+                sources
+                    .rows
+                    .push(generic_revision_raw(id, revision, &frontier, doc)?);
             } else if reference(id, &frontier) != revision {
                 // A mixed common binding uses its frontier-derived reference.
                 return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
+            } else {
+                sources.common.push(frontier);
             }
         } else if reference(id, &frontier) != revision {
-            aliases.push((revision, frontier));
+            sources.aliases.push((revision, frontier));
+        } else {
+            sources.common.push(frontier);
         }
     }
-    Ok((rows, aliases))
+    Ok(sources)
+}
+
+/// What [`retained_row_sources_in_txn`] finds for one entity.
+#[derive(Default)]
+pub(in crate::vault::entity_revision) struct RetainedRowSources {
+    /// Retained generic rows, as stored.
+    pub(in crate::vault::entity_revision) rows: Vec<Vec<u8>>,
+    /// Lightweight common aliases: each row revision and the frontier it names.
+    pub(in crate::vault::entity_revision) aliases: Vec<(RevisionRef, Vec<u8>)>,
+    /// The common document's retained states, by frontier.
+    pub(in crate::vault::entity_revision) common: Vec<Vec<u8>>,
+}
+
+/// How a retained revision of `id` binds the text it reads (FIX 10203):
+/// `None` for a revision whose bytes are a row (no document, or the generic
+/// history), else the common document's frontier and whether the revision is
+/// a lightweight alias that frontier was born under.
+pub(in crate::vault::entity_revision) fn common_binding_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    revision: RevisionRef,
+) -> Result<Option<(Vec<u8>, bool)>> {
+    if !crate::entity_doc::has_record_head(store, txn, id)? {
+        return Ok(None);
+    }
+    let encoded = FRONTIER
+        .get(store, txn, &(*id, revision.0))?
+        .ok_or(Error::EntityNotFound)?;
+    match revision_document(store, txn, id, revision, &encoded)? {
+        RevisionDocument::Generic(_) => Ok(None),
+        RevisionDocument::Common(_) => {
+            let alias = reference(id, &encoded) != revision;
+            Ok(Some((encoded, alias)))
+        }
+    }
 }
 
 fn generic_raw_at(doc: &LoroDoc, frontier: &Frontiers) -> Result<Vec<u8>> {

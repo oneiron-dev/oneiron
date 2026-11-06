@@ -50,6 +50,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod binder;
+mod judge;
+pub(crate) use judge::workflow_done_judge_in_txn;
 mod recorded_right;
 mod settle;
 

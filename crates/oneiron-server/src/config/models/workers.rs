@@ -200,6 +200,10 @@ pub enum ArtifactSource {
     Catalog(String),
     /// An operator's manifest file, an absolute path.
     Manifest(PathBuf),
+    /// A vault's own drafter version, materialised in the vault's private
+    /// directory and verified there (FIX 14976). Only the drafter serving
+    /// seam sets it, on a draft; no config file names one.
+    VaultLoadSet(std::sync::Arc<crate::models::VaultLoadSet>),
 }
 
 /// A native server binary and the SHA-256 it must hash to.

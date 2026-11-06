@@ -275,6 +275,12 @@ impl Memory<'_> {
         if let Some(receipt) = decision.receipt_field() {
             rt.note_decision("done_decision_receipt", receipt);
         }
+        if let Some(judge) = decision.answered_by() {
+            rt.note_decision(
+                "done_judge_model",
+                crate::skill_attribution::pinned_judge_model(&judge),
+            );
+        }
         match decision.answer {
             PortAnswer::Yes => Ok(DoneVerdict::Met),
             PortAnswer::No => Ok(DoneVerdict::Unmet),
