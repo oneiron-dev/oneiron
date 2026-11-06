@@ -36,7 +36,9 @@ use crate::{EntityId, Vault};
 
 // An agent's `allow`, put to the owner as a decision ask.
 mod allow_ask;
+mod google_code;
 mod grants;
+pub use google_code::{GoogleAuthorizationCode, GoogleAuthorizationGrant};
 // A built-in channel's isolated probe replies (FIX 710).
 mod probe;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
