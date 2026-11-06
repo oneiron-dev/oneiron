@@ -148,8 +148,16 @@ text into a local owner and borrows it for the prefix. The standing option and
 its object fields remain present until the original JSON key removal, with an
 empty compiled-text field. This avoids copying that discarded text while
 preserving the original key positions and removal order, including an
-insertion-ordered JSON map. Pack serialization and L2 extraction are unchanged;
-the discarded pack value and the remaining standing metadata still allocate.
+insertion-ordered JSON map. The pack option, L2 extraction and removal order
+are unchanged; the discarded pack value and standing metadata still allocate.
+
+For that same internal reply response only, the discarded pack's result and
+neighbor rows release their hydrated JSON field maps and stored vectors before
+serialization. Row ids, counts, order, edges, other pack metadata and the L2 base
+stay intact. The pack option and original key-removal sequence remain unchanged.
+Normal HTTP and typed Board responses do not use this internal reply step.
+The other discarded pack fields and the independent MEMORIES value still copy;
+this does not admit or account for their allocations.
 
 This is output custody, not pre-allocation admission. Serialization may still
 allocate before its capacity is recorded, and reallocation may temporarily
