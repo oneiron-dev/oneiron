@@ -233,9 +233,9 @@ pub(super) fn current<'a>(
     worker_id: &str,
     place: &Place,
 ) -> Option<&'a mut Worker> {
-    workers
-        .get_mut(worker_id)
-        .filter(|worker| worker.place.epoch == place.epoch && worker.place.launch.socket() == place.launch.socket())
+    workers.get_mut(worker_id).filter(|worker| {
+        worker.place.epoch == place.epoch && worker.place.launch.socket() == place.launch.socket()
+    })
 }
 
 /// Mints the ledger fact guard for a session of `vault` at `target` on

@@ -5,7 +5,7 @@
 //! deleted; an erase retires it at once. Between the two, an instance no
 //! row names may still be needed: by a writer that minted it and has yet to
 //! name it, by a kept checkpoint image or parked archive that carries it, or
-//! by a standing hold. [`body_retention_policy`] is the one hook that says
+//! by a standing customer hold. [`body_retention_policy`] is the one hook that says
 //! when none does: only then is a Retention retirement staged for it, and
 //! only then do its historical obligations (each owner's
 //! response-to-instance row, each digest's remembered instance) expire with
@@ -47,7 +47,8 @@ pub(crate) enum KeepReason {
     Leased,
     /// A kept image or a parked archive carries it.
     KeptCopy,
-    /// A standing legal hold keeps every kept copy.
+    /// A standing customer hold keeps every kept copy. A host order keeps
+    /// none: its clone holds its own keys in the host's legal-hold store.
     Hold,
     /// Another host minted it: who holds its copies is not known here.
     NotMintedHere,
@@ -142,7 +143,7 @@ impl RetentionContext {
                 .collect(),
             hold: crate::store::legal_hold::holds_in_txn(store, txn)?
                 .iter()
-                .any(|hold| hold.stands()),
+                .any(crate::deletion::LegalHold::keeps_vault_data),
         }))
     }
 }
@@ -181,7 +182,7 @@ pub(super) fn retention_ready_in_txn(
     if store.core.key_custody.body_leased(instance)
         || crate::store::legal_hold::holds_in_txn(store, txn)?
             .iter()
-            .any(|hold| hold.stands())
+            .any(crate::deletion::LegalHold::keeps_vault_data)
     {
         return Ok(false);
     }

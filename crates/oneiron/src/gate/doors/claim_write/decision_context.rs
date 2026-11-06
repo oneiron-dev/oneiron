@@ -54,6 +54,7 @@ pub(super) fn claim_decision_context_store_in(
     id: &EntityId,
     body: &ClaimBody,
     run: Option<&str>,
+    attempt: Option<[u8; 16]>,
     pending_prompt: Option<&[EntityId]>,
 ) -> GateDecisionContext {
     GateDecisionContext {
@@ -75,7 +76,7 @@ pub(super) fn claim_decision_context_store_in(
                 GateLoopLink::action(
                     GateLoopSource::Runner,
                     Some(run.to_owned()),
-                    None,
+                    attempt,
                     GateLoopOrigin::Unresolved,
                 )
             })
