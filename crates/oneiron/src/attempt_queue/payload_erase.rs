@@ -237,11 +237,12 @@ fn names_no_agent(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result
 ///
 /// Storage errors, and a matching payload that cannot be rewritten.
 pub(crate) fn erase_attempt_payload_actor_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    erase_attempt_payload_actors_in_txn(store, txn, &BTreeSet::from([*actor]))
+    let store = write.store;
+    erase_attempt_payload_actors_in_txn(write, txn, &BTreeSet::from([*actor]))
 }
 
 /// Leaves every attempt payload whose dispatch target is among `actors`
@@ -262,11 +263,11 @@ pub(crate) fn erase_attempt_payload_actor_in_txn(
 ///
 /// Storage errors, and a matching payload that cannot be rewritten.
 pub(crate) fn erase_attempt_payload_actors_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    erase_attempt_payload_actors_owned_in_txn(store, txn, actors).map(|_| ())
+    erase_attempt_payload_actors_owned_in_txn(write, txn, actors).map(|_| ())
 }
 
 /// Original accepted source subsets from the one native payload pass.
@@ -282,10 +283,11 @@ impl ErasedByoaPayloads {
 /// The same payload pass, retaining every task-owned BYOA row for the sealed
 /// erase/restore continuation. Incidental staged-job pinners are not owners.
 pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
 ) -> Result<ErasedByoaPayloads> {
+    let store = write.store;
     if actors.is_empty() {
         return Ok(ErasedByoaPayloads(BTreeMap::new()));
     }
@@ -380,10 +382,10 @@ pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
     let (jobs, owned) = byoa.erase_copies(store, txn, &mut rewrites)?;
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
-    crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
-    crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
+    crate::dispatch_byoa::erase_staged_input_in_txn(write, txn, &jobs, actors)?;
+    crate::outbound::erase_connector_reply_results_in_txn(write, txn, &reply_jobs)?;
     crate::outbound::erase_connector_reply_bodies_for_events_in_txn(
-        store,
+        write,
         txn,
         &reply_body_events,
     )?;
