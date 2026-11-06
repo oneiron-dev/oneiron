@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6469 | 895 | 165 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6470 | 895 | 165 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 62 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -295,7 +295,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_connector` | dir | 4 | s | yes | The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and… |
 | `window_key` | file | 1 | s | — | Monthly CRDT window keys and their timestamp conversion |
-| `workspace_roster` | dir | 126 | L | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
+| `workspace_roster` | dir | 127 | L | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `world_keys` | dir | 70 | m | yes | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 
 ## oneiron-android
