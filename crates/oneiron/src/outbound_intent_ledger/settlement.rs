@@ -65,12 +65,13 @@ impl RemoteTaskSettlement {
     #[must_use]
     pub fn steering_messages(&self) -> Vec<String> {
         let mut messages = Vec::new();
-        crate::connector_key::append_effector_steering_messages(
-            &mut messages,
-            self.budget_events
-                .iter()
-                .flat_map(|events| &events.ladder_events),
-        );
+        for event in self
+            .budget_events
+            .iter()
+            .flat_map(|events| &events.ladder_events)
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
         messages
     }
 }
