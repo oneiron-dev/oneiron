@@ -50,6 +50,13 @@ pub struct OrganService {
     cancel: MeshCancel,
 }
 
+/// Keeps the decoded body and report charged until their last encoding use.
+struct CallReply {
+    result: PeerResult,
+    // Fields drop in declaration order: the result's values before their lease.
+    _frame: Option<crate::budget::Lease>,
+}
+
 impl std::fmt::Debug for OrganService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OrganService")
@@ -182,14 +189,17 @@ impl OrganService {
             Request::Call { call } => {
                 let result = match self.call(conn, &staging, &call).await {
                     Ok(result) => result,
-                    Err(detail) => PeerResult::Failed(PeerFailure {
-                        kind: FailureKind::Failed,
-                        detail,
-                        organ: None,
-                        asks: Vec::new(),
-                    }),
+                    Err(detail) => CallReply {
+                        result: PeerResult::Failed(PeerFailure {
+                            kind: FailureKind::Failed,
+                            detail,
+                            organ: None,
+                            asks: Vec::new(),
+                        }),
+                        _frame: None,
+                    },
                 };
-                match encode(&result) {
+                match encode(&result.result) {
                     Ok(bytes) => match staging.offer(&bytes) {
                         Ok(carried) => {
                             self.measure_staged(&staging);
@@ -209,7 +219,7 @@ impl OrganService {
         conn: Arc<dyn MeshConnection>,
         staging: &Arc<Staging>,
         carried: &Carried,
-    ) -> Result<PeerResult, String> {
+    ) -> Result<CallReply, String> {
         // The call envelope itself is staged input: it leases this
         // machine's floor before it is read back, under a provisional
         // deadline — its own deadline rides inside it, still encoded —
@@ -318,8 +328,11 @@ impl OrganService {
         .map_err(|err| format!("the call's thread: {err}"))?;
         drop(held);
         Ok(match outcome {
-            Ok(outcome) => PeerResult::Done(offered(outcome, staging)?),
-            Err(err) => PeerResult::Failed(failure(err, asked)),
+            Ok(outcome) => offered(outcome, staging)?,
+            Err(err) => CallReply {
+                result: PeerResult::Failed(failure(err, asked)),
+                _frame: None,
+            },
         })
     }
 
@@ -369,7 +382,7 @@ impl MeshService for OrganService {
 }
 
 /// The outcome as it crosses back: each output's bytes offered by hash.
-fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<PeerOutcome, String> {
+fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String> {
     let outputs = outcome
         .outputs
         .iter()
@@ -382,11 +395,14 @@ fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<PeerOutcome, Stri
             })
         })
         .collect::<Result<_, String>>()?;
-    Ok(PeerOutcome {
-        body: outcome.body,
-        report: outcome.report,
-        receipt: outcome.receipt,
-        outputs,
+    Ok(CallReply {
+        result: PeerResult::Done(PeerOutcome {
+            body: outcome.body,
+            report: outcome.report,
+            receipt: outcome.receipt,
+            outputs,
+        }),
+        _frame: outcome._frame,
     })
 }
 
