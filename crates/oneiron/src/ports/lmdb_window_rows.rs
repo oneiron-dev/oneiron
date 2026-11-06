@@ -193,3 +193,67 @@ impl<T: ManifestDbs> WindowDeletionRows for T {
         )))
     }
 }
+
+/// Original pending-marker presence read, with an optional borrowed input.
+pub(super) fn pending_tombstone_present_observed(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    window: WindowAddress<'_>,
+    id: &EntityId,
+    sources: &mut Option<&mut super::DeletionSourceObserver<'_>>,
+) -> Result<bool> {
+    super::deletion_source_contains(
+        PENDING_TOMBSTONE,
+        dbs,
+        txn,
+        &pending_key(window, id),
+        sources,
+    )
+}
+
+/// Observe only the original first-row seek, preserving typed-key/value errors.
+pub(crate) fn world_pending_tombstone_observed(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    month: &str,
+    sources: &mut Option<&mut super::DeletionSourceObserver<'_>>,
+) -> Result<bool> {
+    if sources.is_none() {
+        return dbs.port_has_world_pending_tombstone(txn, WindowAddress::new(month));
+    }
+    use crate::side_table::SideKey;
+    let worlds = format!("{month}@");
+    let mut full = PENDING_TOMBSTONE.decl().prefix.to_vec();
+    full.extend_from_slice(worlds.as_bytes());
+    let row = PENDING_TOMBSTONE
+        .iter_raw_from(dbs, txn, worlds.as_bytes())?
+        .next()
+        .transpose()?;
+    let Some((key, value)) = row else {
+        super::deletion_sources::observe(
+            sources,
+            super::DeletionSource::ScanComplete {
+                table: super::DeletionSourceTable::SyncState,
+                prefix: &full,
+            },
+        );
+        return Ok(false);
+    };
+    full.truncate(PENDING_TOMBSTONE.decl().prefix.len());
+    full.extend_from_slice(&key);
+    super::deletion_sources::observe(
+        sources,
+        super::DeletionSource::Row {
+            table: super::DeletionSourceTable::SyncState,
+            key: &full,
+            value: Some(&value),
+        },
+    );
+    PendingTombstoneKey::decode_key(&key).ok_or_else(|| {
+        PENDING_TOMBSTONE
+            .decl()
+            .row_error(crate::error::SideTableRowProblem::KeyShape)
+    })?;
+    PENDING_TOMBSTONE.decode_value(&value)?;
+    Ok(true)
+}
