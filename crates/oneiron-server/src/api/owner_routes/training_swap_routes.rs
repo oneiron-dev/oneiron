@@ -355,13 +355,16 @@ async fn bind_question_head(
     let binding = blocking(move || -> OwnerResult<QuestionHeadBinding> {
         let id = entity_id("run", &request.run)?;
         let question = entity_id("question", &request.question)?;
-        Ok(server.vault().approve_training_question_head(
+        let binding = server.vault().approve_training_question_head(
             &owner,
             &id,
             question,
             request.question_version,
             request.choice,
-        )?)
+        )?;
+        // The head this binding replaced frees its encoder now.
+        server.decision_host().forget_unbound_question_heads();
+        Ok(binding)
     })
     .await?;
     Ok(Json(binding))
@@ -379,11 +382,14 @@ async fn unbind_question_head(
     let request = payload.read(&server).await?;
     let removed = blocking(move || -> OwnerResult<Option<QuestionHeadBinding>> {
         let question = entity_id("question", &request.question)?;
-        Ok(server.vault().unbind_training_question_head(
+        let removed = server.vault().unbind_training_question_head(
             &owner,
             question,
             request.question_version,
-        )?)
+        )?;
+        // The unbound head frees its encoder now.
+        server.decision_host().forget_unbound_question_heads();
+        Ok(removed)
     })
     .await?;
     Ok(Json(removed))

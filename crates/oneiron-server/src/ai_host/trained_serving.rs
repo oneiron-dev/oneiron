@@ -23,8 +23,10 @@ use crate::server::SyncServer;
 /// Why no role checkpoint serves on this host.
 const NO_LOADER: &str = "no trained-weight loader on this host";
 /// Why a question head serves.
-const HEAD_SERVES: &str = "the bound head answers its question on this host's Local rung; a head \
-                           that cannot load or read steps to the next rung";
+const HEAD_SERVES: &str = "the bound head answers its question on this host's Local rung, for calls \
+                           whose state carries its input (a target and a context list); every other \
+                           call of the question, and a head that cannot load or read, keeps its model \
+                           call";
 /// Why an unbound question head does not serve.
 const HEAD_UNBOUND: &str =
     "no typed question is bound to this head; its question keeps its model call";

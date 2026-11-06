@@ -26,6 +26,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::ProviderPin;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 
 const QUESTION_HEADS: SideTable<String, QuestionHeadBinding, Named> =
     SideTable::new(&side_table::TRAINING_PACK_QUESTION_HEAD);
@@ -130,9 +131,10 @@ impl TrainingRun {
     }
 }
 
-/// The question head table's declared scrub: an erased approver is named
-/// no more (FIX 3520), and an erased typed question loses its head, whose
-/// run goes back to scored.
+/// The question head table's declared scrub. An erased approver is named
+/// no more, and the head stays bound, as a role keeps its swap (FIX 3520).
+/// An erased id that is a typed question loses its heads, whose runs go back
+/// to scored.
 ///
 /// # Errors
 ///
@@ -142,32 +144,56 @@ pub(crate) fn erase_question_head_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    drop_question_heads_in_txn(&vault.store, wtxn, *id, None)?;
     let mut scrubbed = Vec::new();
-    let mut dropped = Vec::new();
     for (key, mut binding) in QUESTION_HEADS.scan(&vault.store, wtxn)? {
-        if binding.question == *id {
-            dropped.push((key, binding.run));
-        } else if binding.owner.forget(*id) {
+        if binding.owner.forget(*id) {
             scrubbed.push((key, binding));
         }
     }
     for (key, binding) in scrubbed {
         QUESTION_HEADS.put(&vault.store, wtxn, &key, &binding)?;
     }
+    Ok(())
+}
+
+/// Drops the heads bound to typed question `question` at `version`, or at
+/// every version when `None`, in the transaction that erases that question
+/// version: each head's run goes back to scored. Every door that erases a
+/// question version calls it (FIX 3864).
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(crate) fn drop_question_heads_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    version: Option<u32>,
+) -> Result<()> {
+    let dropped: Vec<(String, EntityId)> = QUESTION_HEADS
+        .scan(store, wtxn)?
+        .into_iter()
+        .filter(|(_, binding)| {
+            binding.question == question
+                && version.is_none_or(|version| version == binding.question_version)
+        })
+        .map(|(key, binding)| (key, binding.run))
+        .collect();
     for (key, run) in dropped {
-        QUESTION_HEADS.delete(&vault.store, wtxn, &key)?;
-        unbound_run_in_txn(vault, wtxn, &run)?;
+        QUESTION_HEADS.delete(store, wtxn, &key)?;
+        unbound_run_in_txn(store, wtxn, &run)?;
     }
     Ok(())
 }
 
 /// Puts a run whose head no longer answers its question back to scored.
-fn unbound_run_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    if let Some(mut run) = RUNS.get(&vault.store, txn, id)?
+fn unbound_run_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if let Some(mut run) = RUNS.get(store, txn, id)?
         && run.state == TrainingState::Bound
     {
         run.state = TrainingState::Scored;
-        RUNS.put(&vault.store, txn, id, &run)?;
+        RUNS.put(store, txn, id, &run)?;
     }
     Ok(())
 }
@@ -277,7 +303,7 @@ impl Vault {
                 previous_run: previous.as_ref().map(|previous| previous.run),
             };
             if let Some(previous) = &previous {
-                unbound_run_in_txn(self, txn, &previous.run)?;
+                unbound_run_in_txn(&self.store, txn, &previous.run)?;
             }
             QUESTION_HEADS.put(&self.store, txn, &key, &binding)?;
             run.state = TrainingState::Bound;
@@ -308,7 +334,7 @@ impl Vault {
                 return Ok(None);
             };
             QUESTION_HEADS.delete(&self.store, txn, &key)?;
-            unbound_run_in_txn(self, txn, &binding.run)?;
+            unbound_run_in_txn(&self.store, txn, &binding.run)?;
             Ok(Some(binding))
         })
     }
@@ -331,6 +357,20 @@ impl Vault {
             &txn,
             &question_head_key(question, question_version),
         )
+    }
+
+    /// Every bound question head: what a host keeps loaded.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn training_question_heads(&self) -> Result<Vec<QuestionHeadBinding>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(QUESTION_HEADS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, binding)| binding)
+            .collect())
     }
 
     /// The binding of question run `run`'s head, if it answers a question.
