@@ -167,6 +167,18 @@ Actor erase removes the stored resident attribution without releasing money or
 pending work; a later terminal cannot recreate that resident row. The existing
 resident-share family and its whole-row erase remain unchanged in ownership.
 
+
+Before opening the native reserve writer, the issuing guard captures the open
+lease's `BudgetReservationSource` under its own lock. The canonical admission
+context retains that source: the opaque issuing guard ID, lease ID, reserve and
+metered flag, exact matched row ordinals, and original floor/shared reservation
+split. A foreign, unknown or closed token yields no source; that observation
+does not refuse the ordinary admission. No actor, policy table or later row
+lookup is copied into it. Row ordinals refer only to the original resolved
+table: they are not a durable policy-table reference and cannot reconstruct
+one. This source neither restores the program meter nor books the scoped or
+unscoped job line, retains a terminal receipt, or proves payment.
+
 ### Original-key terminal preparation
 
 `CallOutcome::charge` uses the original native unit, cost and reservation without

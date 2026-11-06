@@ -40,7 +40,8 @@ use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, OfferBinding, PaidConnector, Payer, RunAdmission, RunCall, RunDenied,
-    RunOverageSource, RunPermit, WorkPhysical, offer_id, offer_is_free_work, offer_place,
+    RunOverageSource, RunPermit, WorkPhysical, connector_is_free_work, offer_id,
+    offer_is_free_work, offer_place,
 };
 use oneiron::llm::{HostInferenceBinding, Segment, SegmentClock, SegmentKind, SegmentManifest};
 use oneiron::{
@@ -224,13 +225,7 @@ fn physical_for(binding: &OfferBinding) -> WorkPhysical {
 }
 
 pub(crate) fn physical_for_paid(binding: &PaidConnector) -> WorkPhysical {
-    let free_route = match binding.locality {
-        ModelLocality::OnDevice | ModelLocality::OwnServer => {
-            binding.custody == KeyCustody::Keyless
-        }
-        ModelLocality::ThirdParty => false,
-    };
-    if binding.payer == Payer::Local && free_route {
+    if connector_is_free_work(binding) {
         WorkPhysical::KeylessOwnServer
     } else {
         WorkPhysical::Paid
