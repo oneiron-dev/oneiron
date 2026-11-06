@@ -40,9 +40,11 @@ A reply goes to the message's `Reply-To`, else its sender. Set `reply_all` to
 send it to the message's own To and Cc too, in their roles, and name more
 people in `cc` (bare addresses). The mailbox's own address is left out, and
 each address goes once. At most 50 recipients in all; more is refused, never
-cut. A list's address is one recipient: it is not expanded. Reply-all to a
-message the mailbox has not synced since its recipients were kept is refused;
-sync it again. Every recipient goes in the one message the owner approves:
+cut. A list's address is one recipient: it is not expanded. A message whose
+To or Cc names a group with members (`Friends: a@x, b@y;`) is refused for
+reply-all; reply without it and name the people you mean in `cc`. Reply-all
+to a message the mailbox has not synced since its recipients were kept is
+refused; sync it again. Every recipient goes in the one message the owner approves:
 the drafts door shows each To and Cc, and if the vault holds any one of them
 back (a STOP, a blocked contact), the whole reply is held, never sent to the
 rest. No attachment yet. It leaves from the person's own mailbox: a Google

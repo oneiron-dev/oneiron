@@ -681,7 +681,8 @@ fn append_contract_receipt(
 /// Receipt field listing every recipient of one message to several, in its
 /// role and place, as JSON `[{"role":"to","address":...}, ...]` (fix list
 /// row 17645). The receipt's outcome is the one message's: no recipient is
-/// claimed apart from it.
+/// claimed apart from it. Each recipient's counterparty projection lists
+/// the message and counts its one debit.
 pub(crate) const RECIPIENTS_FIELD: &str = "recipients";
 
 /// Stamps the request's optional content, idempotency, dedupe, identity,
