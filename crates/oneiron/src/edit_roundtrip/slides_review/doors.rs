@@ -15,6 +15,19 @@ impl Vault {
         artifact: &EntityId,
         request: &SlideReviewRequest<'_>,
     ) -> std::result::Result<SlideReviewRun, SlideReviewError> {
+        let snapshot = self.slide_review_snapshot(artifact)?;
+        self.review_blob_artifact_slides_pinned(artifact, snapshot, request)
+    }
+
+    /// The head a slide review reads, read once (FIX 9624): its version, that
+    /// version's bytes and the rows they were read from, and a live body's
+    /// deck at its head with the pin read before it. A host that renders the
+    /// units' images draws them from this snapshot and reviews the same one,
+    /// so pixels, text and the judgment's version never come from two heads.
+    pub(crate) fn slide_review_snapshot(
+        &self,
+        artifact: &EntityId,
+    ) -> std::result::Result<SlideReviewSnapshot, SlideReviewError> {
         let head = self
             .blob_artifact_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
@@ -28,9 +41,31 @@ impl Vault {
             .read_blob_artifact_version_listing(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
         let live = self.live_head_deck(artifact)?;
+        Ok(SlideReviewSnapshot {
+            version: head.version,
+            bytes,
+            read_rows,
+            live,
+        })
+    }
+
+    /// [`Self::review_blob_artifact_slides`] over the head `snapshot` read
+    /// (FIX 9624).
+    pub(crate) fn review_blob_artifact_slides_pinned(
+        &self,
+        artifact: &EntityId,
+        snapshot: SlideReviewSnapshot,
+        request: &SlideReviewRequest<'_>,
+    ) -> std::result::Result<SlideReviewRun, SlideReviewError> {
+        let SlideReviewSnapshot {
+            version,
+            bytes,
+            read_rows,
+            live,
+        } = snapshot;
         let run = self.review_blob_artifact_slides_at(
             artifact,
-            head.version,
+            version,
             &bytes,
             live.as_ref().map(|(pin, deck)| (pin, deck.as_slice())),
             request,
