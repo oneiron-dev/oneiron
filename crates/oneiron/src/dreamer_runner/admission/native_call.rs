@@ -12,9 +12,12 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use oneiron_model::llm::BudgetMeterRange;
 
 mod net;
+mod observations;
 use net::NativeNetCoverage;
 pub(in crate::dreamer_runner) use net::record_native_net_settlement_in_txn;
 pub(crate) use net::{NativeNetSnapshot, NativeNetTally};
+use observations::NativeAggregateObservation;
+pub(super) use observations::record_native_aggregate_observations_in_txn;
 
 const CALLS: SideTable<AdmittedCallId, NativeCallObligation, Named> =
     SideTable::new(&side_table::DREAMER_BUDGET_NATIVE_CALL);
@@ -35,6 +38,7 @@ struct NativeCallObligation {
     net_response: NativeNetResponse,
     net_coverage: NativeNetCoverage,
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
+    aggregate_observations: Vec<NativeAggregateObservation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,6 +143,7 @@ pub(crate) fn retain_native_call_in_txn(
         net_response: NativeNetResponse::Unknown,
         net_coverage: NativeNetCoverage::Unknown,
         house_completions: None,
+        aggregate_observations: Vec::new(),
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
@@ -149,6 +154,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.net_response = NativeNetResponse::Unknown;
         original.net_coverage = NativeNetCoverage::Unknown;
         original.house_completions = None;
+        original.aggregate_observations.clear();
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
