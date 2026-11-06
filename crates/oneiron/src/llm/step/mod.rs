@@ -45,7 +45,7 @@ use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
-pub(crate) use self::execute::ExecutedModelWitness;
+pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
     verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,

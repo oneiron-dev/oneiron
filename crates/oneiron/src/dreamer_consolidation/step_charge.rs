@@ -263,6 +263,7 @@ pub(super) enum SliceFate {
 pub(super) fn tally_slice_outcome(
     vault: &Vault,
     outcome: DurableStepResult<StepOutcome>,
+    unsaved_usage: Option<LlmUsage>,
     charges: &mut StepChargeTally,
 ) -> Result<SliceFate> {
     Ok(match outcome {
@@ -296,7 +297,12 @@ pub(super) fn tally_slice_outcome(
         Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
             SliceFate::Checkpoint
         }
-        Err(error) => SliceFate::Refused(error.to_string()),
+        Err(error) => {
+            if let Some(usage) = unsaved_usage {
+                charges.record_usage(&usage);
+            }
+            SliceFate::Refused(error.to_string())
+        }
     })
 }
 
@@ -314,9 +320,14 @@ pub(super) fn tally_extracted_outcomes(
     charges: &mut StepChargeTally,
 ) -> Result<bool> {
     let mut trapped = false;
-    for SliceStep { outcome, .. } in extracted.steps {
+    for SliceStep {
+        outcome,
+        unsaved_usage,
+        ..
+    } in extracted.steps
+    {
         if matches!(
-            tally_slice_outcome(vault, outcome, charges)?,
+            tally_slice_outcome(vault, outcome, unsaved_usage, charges)?,
             SliceFate::Trapped
         ) {
             trapped = true;

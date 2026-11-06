@@ -31,3 +31,14 @@ the flag preserves the existing fresh-spend fallback when a checkpoint lookup fa
 A raw or admitted generation has no durable binding and is not memoized. Neither field
 is an exactly-once paid-generation fact. Durable budget-line settlement remains a
 separate responsibility; source recovery must not be treated as its payment proof.
+
+A default neighbourhood extraction slice also keeps the known usage of a fresh
+response when response serialization or its first private checkpoint transaction
+fails. That usage travels with the slice's original error and enters its existing
+unmetered tally once, including extracted-prefix drains and thing-child extraction.
+The shared guard's before/after total is not used to attribute parallel slices.
+
+This additional usage is absent for a saved-response recovery, a memo hit, a
+successful checkpoint, and failures after the checkpoint commits. It does not
+change error types, messages or recovery, and it is not a payment receipt. Original
+financial obligations and atomic exactly-once settlement remain separate work.

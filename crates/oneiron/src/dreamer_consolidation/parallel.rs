@@ -289,8 +289,16 @@ impl ConsolidationExecutor<'_> {
         let mut refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
-        for (slice, SliceStep { outcome, .. }) in slices.iter().zip(steps) {
-            match tally_slice_outcome(ctx.vault, outcome, charges)? {
+        for (
+            slice,
+            SliceStep {
+                outcome,
+                unsaved_usage,
+                ..
+            },
+        ) in slices.iter().zip(steps)
+        {
+            match tally_slice_outcome(ctx.vault, outcome, unsaved_usage, charges)? {
                 SliceFate::Finished {
                     binding,
                     response,

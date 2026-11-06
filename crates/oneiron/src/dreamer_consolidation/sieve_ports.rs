@@ -26,7 +26,7 @@ use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::call_as_step_checked;
+use crate::llm::call_as_step_checked_with_unsaved_usage;
 use crate::llm::decision::AskTo;
 use crate::model_binding::ModelRole;
 use crate::model_decision::{DecisionQuestion, EvidenceVersion};
@@ -241,6 +241,8 @@ pub(in crate::dreamer_consolidation) struct SliceCall<'a> {
 pub struct SliceStep {
     pub step_hash: [u8; 32],
     pub outcome: DurableStepResult<StepOutcome>,
+    /// A fresh response's usage when serialization or its checkpoint write failed.
+    pub unsaved_usage: Option<LlmUsage>,
 }
 
 /// The sieve's rungs on the executor's own roles: one generated pack per
@@ -454,7 +456,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         .zip(&checks)
         .zip(&backends)
         .map(|(((_, request), check), backend)| {
-            call_as_step_checked(
+            call_as_step_checked_with_unsaved_usage(
                 child.step,
                 backend.get(),
                 child.guard,
@@ -467,7 +469,11 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
     Ok(requests
         .into_iter()
         .zip(outcomes)
-        .map(|((step_hash, _), outcome)| SliceStep { step_hash, outcome })
+        .map(|((step_hash, _), (outcome, unsaved_usage))| SliceStep {
+            step_hash,
+            outcome,
+            unsaved_usage,
+        })
         .collect())
 }
 
