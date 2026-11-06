@@ -2,7 +2,7 @@
 
 use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
-    LlmResponse,
+    LlmResponse, LlmUsage,
 };
 use super::source::StepSource;
 use super::step_claim::{
@@ -136,8 +136,33 @@ pub async fn call_as_step_checked(
         &super::super::FallbackRegistry::standard(),
         Some(check),
         DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        None,
     )
     .await
+}
+
+/// A checked step with the actual usage of a fresh response that could not
+/// be saved. Errors and saved-response recovery keep their ordinary meaning.
+pub(crate) async fn call_as_step_checked_with_unsaved_usage(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+    let mut unsaved_usage = None;
+    let outcome = durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        &super::super::FallbackRegistry::standard(),
+        Some(check),
+        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        Some(&mut unsaved_usage),
+    )
+    .await;
+    (outcome, unsaved_usage)
 }
 
 /// Durable step with an explicitly owned deterministic runner registry.
@@ -169,7 +194,17 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     fallbacks: &super::super::FallbackRegistry,
     max_retries: usize,
 ) -> DurableStepResult<StepOutcome> {
-    durable_step(ctx, backend, guard, request, fallbacks, None, max_retries).await
+    durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        fallbacks,
+        None,
+        max_retries,
+        None,
+    )
+    .await
 }
 
 /// A saved response captured before any new execution. Owning the payload
@@ -300,6 +335,7 @@ async fn durable_step(
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
     max_retries: usize,
+    mut unsaved_usage: Option<&mut Option<LlmUsage>>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
@@ -543,7 +579,11 @@ async fn durable_step(
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
-    let payload = serde_json::to_vec(&response)?;
+    let payload = serde_json::to_vec(&response).inspect_err(|_| {
+        if let Some(usage) = unsaved_usage.as_deref_mut() {
+            *usage = Some(response.usage.clone());
+        }
+    })?;
     // A late answer for an owner its erase took is never kept (FIX 6226):
     // the row keeps its erased skeleton, nothing is filed, and the spend
     // settles as `lease_settle` drops; the call closes after it.
@@ -556,7 +596,12 @@ async fn durable_step(
         Some(&payload),
         Some(&source),
         ctx.now_ms,
-    )? == StepStateDisposition::Erased
+    )
+    .inspect_err(|_| {
+        if let Some(usage) = unsaved_usage.as_deref_mut() {
+            *usage = Some(response.usage.clone());
+        }
+    })? == StepStateDisposition::Erased
     {
         return Err(erased_step());
     }

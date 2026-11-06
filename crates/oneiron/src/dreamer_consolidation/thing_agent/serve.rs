@@ -330,7 +330,12 @@ impl ConsolidationExecutor<'_> {
                 width: 1,
             })
             .await?;
-        let Some(SliceStep { step_hash, outcome }) = steps.into_iter().next() else {
+        let Some(SliceStep {
+            step_hash,
+            outcome,
+            unsaved_usage,
+        }) = steps.into_iter().next()
+        else {
             return Err(Error::InvariantViolation(
                 "a child extraction port answered another number of slices",
             )
@@ -359,6 +364,9 @@ impl ConsolidationExecutor<'_> {
                 return Ok(PortServed::End(PartitionRun::Checkpoint));
             }
             Err(error) => {
+                if let Some(usage) = unsaved_usage {
+                    charges.record_usage(&usage);
+                }
                 table.refused.get_or_insert_with(|| error.to_string());
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));
             }
