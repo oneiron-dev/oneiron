@@ -312,7 +312,11 @@ impl Vault {
             // facet's put lands first and the masked initial put below finds
             // a stored FACET. A facet the archive does not carry blocks
             // nothing (it is never Waiting); the put then fails fail-closed.
-            if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+            // FIX 8741: so does an ASSET_TEXT the archive carries with no
+            // `DerivedFrom` edge, born source-free under its archived facet.
+            if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN)
+                || archived_source_free_text(&archive, &id, row.entity_type)?
+            {
                 if let Some(facet) = archived_birth_facet(&archive, &id)?
                     && !waits_on.contains(&facet)
                 {
@@ -643,16 +647,42 @@ fn insert_ready_row<R: Read + Seek>(
             // minting a destination-default stamp the archived FacetOf edge
             // then breaks (FacetStampImmutable). Other rows keep today's
             // unmasked put.
-            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+            // FIX 8741: a source-free ASSET_TEXT is masked the same way, so
+            // its put births it source-free under its archived facet. One the
+            // archive carries with sources lands beside its archived
+            // `DerivedFrom` edges in that put, so it is no source-free birth
+            // and reads only beside them (facet rule C); the edge pass then
+            // restores each carried edge's archived value.
+            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN)
+                || archived_source_free_text(&archive, &id, row.entity_type)?
+            {
                 archived_birth_facet(&archive, &id)?
             } else {
                 None
             };
-            vault
-                .batch_in()
-                .mask(mask)
-                .put(&id, row.entity_type, occurred, row.learned_at, &body)
-                .apply(wtxn)
+            let mut batch = vault.batch_in().mask(mask).put(
+                &id,
+                row.entity_type,
+                occurred,
+                row.learned_at,
+                &body,
+            );
+            if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+                let weight =
+                    EdgeKind::DerivedFrom
+                        .default_weight()
+                        .ok_or(Error::InvariantViolation(
+                            "derived_from has no weight prior",
+                        ))?;
+                for source in super::evidence_import::archived_targets(
+                    &archive.index,
+                    &id,
+                    EdgeKind::DerivedFrom,
+                )? {
+                    batch = batch.edge(&id, EdgeKind::DerivedFrom, &source, weight);
+                }
+            }
+            batch.apply(wtxn)
         }
     };
     landed?;
@@ -1568,10 +1598,23 @@ fn imported_body(
     }
 }
 
+/// Whether `id`, archived as `entity_type`, is an ASSET_TEXT the archive
+/// carries with no `DerivedFrom` edge: one born source-free (FIX 8741).
+fn archived_source_free_text<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<bool> {
+    Ok(entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+        && super::evidence_import::archived_targets(&archive.index, id, EdgeKind::DerivedFrom)?
+            .is_empty())
+}
+
 /// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive
-/// carries the stamp (blind-review P1b, REVIEW-4389). The dependency queue
-/// waits on it and the initial put is masked with it, so the row is born
-/// under its original facet; `None` keeps today's destination default.
+/// carries the stamp (blind-review P1b, REVIEW-4389), or of a source-free
+/// ASSET_TEXT (FIX 8741). The dependency queue waits on it and the initial
+/// put is masked with it, so the row is born under its original facet;
+/// `None` keeps today's destination default.
 fn archived_birth_facet<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     id: &EntityId,
@@ -1691,6 +1734,13 @@ pub(super) fn import_edge(
                 // the archived metadata is safe; anything else stays a
                 // collision.
                 EdgeKind::FacetOf => true,
+                // FIX 8741: an inserted ASSET_TEXT's put lands its archived
+                // `DerivedFrom` edges with it; their archived values are
+                // restored here.
+                EdgeKind::DerivedFrom => {
+                    crate::batch::stored_entity_type(&vault.store, wtxn, &source)?
+                        == Some(crate::registry::ENTITY_TYPE_ASSET_TEXT)
+                }
                 _ => false,
             };
         if !door_minted {
