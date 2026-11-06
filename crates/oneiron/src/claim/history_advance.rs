@@ -104,15 +104,13 @@ impl ControlRows for CarriedHistory {
     fn row<'a>(
         &'a self,
         store: &Store,
-        txn: &heed::RoTxn<'_>,
+        txn: &'a heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Cow<'a, [u8]>>> {
         match self.rows.get(id) {
             Some(row) => Ok(row.as_deref().map(Cow::Borrowed)),
             // A row the index does not name is read from the store, as ever.
-            None => {
-                Ok(crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.map(Cow::Owned))
-            }
+            None => store.entities.get(txn, id.as_bytes()),
         }
     }
 
