@@ -12,6 +12,7 @@ mod command;
 mod error;
 mod evaluation;
 mod metrics;
+mod note_import;
 mod packing;
 mod persistence;
 mod producer;
@@ -34,6 +35,7 @@ pub use evaluation::{CohortFile, CohortManifest, E1Arm, E1SelectionReceipt, WerC
 pub use metrics::{
     E3Assignment, E3Score, WerAlignment, WerCounts, aggregate_wer, e3_score, wer_counts,
 };
+pub use note_import::{MEETING_TRANSCRIPT_NOTE_KIND, MeetingTranscriptNoteOutcome};
 pub use packing::pack_speech;
 pub use persistence::{MeetingTranscriptVersionPin, StoredMeetingTranscript};
 pub use producer::produce_meeting_transcript;
