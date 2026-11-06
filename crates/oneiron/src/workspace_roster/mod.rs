@@ -210,6 +210,13 @@ pub use rooms::{
     RoomPrivateThreadsRequest, ThreadJoinDecisionRequest, ThreadJoinRequest,
     ThreadJoinRequestState, ThreadJoinRequestView, ThreadJoinRequestsRequest,
 };
+pub use rooms::{
+    ROOM_SPEAKING_TURNS, RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomMessagesRequest,
+    RoomPage, RoomSpeakingClaim, RoomSpeakingRole, RoomStanding, RoomThread,
+    RoomThreadAudienceEvent, RoomThreadAudienceOp, RoomThreadList, RoomThreadPage,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem,
+    RoomTurn, RoomWaitKind,
+};
 pub(crate) use rooms::{
     ROOM_THREAD_AUDIENCE_KEY, ROOM_THREAD_KEY, ThreadBinding, ThreadPlace,
     audience_edit_erased_from, audience_edit_is_erased, audience_event_put_refusal,
@@ -219,12 +226,7 @@ pub(crate) use rooms::{
     thread_binding, thread_members_in, thread_root_readable_with_read_in,
     thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
-pub use rooms::{
-    RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomMessagesRequest, RoomPage,
-    RoomSpeakingRole, RoomStanding, RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp,
-    RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk,
-    RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
-};
+pub use rooms::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
 pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{

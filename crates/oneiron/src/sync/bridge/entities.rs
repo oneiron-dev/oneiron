@@ -55,31 +55,36 @@ fn carrier_superseded(carriers: &loro::LoroMap, key: &str, blob: &[u8]) -> bool 
     )
 }
 
-/// Revision receipts are retained only after the nested savepoint and outer
-/// materialization transaction have both committed.
-pub(super) fn materialize_entities_with_changes(
-    doc: &LoroDoc,
-    delta: &loro::event::MapDelta<'_>,
-    vault: &Vault,
-    window_key: &str,
-    lease_vault_id: u64,
-) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
-    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
-        .with_residence(Residence::Quarantine(doc));
-    // ONE-1147: ids + op bytes applied into the batch txn, retained outside
-    // it — on whole-txn failure there is no surviving per-entity failure
-    // point (unlike the tombstone path), so the swallow site below needs
-    // the full list to flag retry markers.
-    let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
-    let mut revision_changes = Vec::new();
-    // Rows a federated import watches that this batch wrote where none was
-    // stored: their births, noted only once the batch commits.
-    let mut born = Vec::new();
-    // Whether this batch wrote a POLICY_MANIFEST (FIX 5338).
-    let mut floor_written = false;
-    let mut claims_written = false;
-    let result = vault.with_write_txn_grouped(|wtxn| {
+/// Staged entity writes and effects owned by the committing transaction.
+#[derive(Default)]
+pub(super) struct EntityMaterialization {
+    // Retained outside the writer so its failure can flag each lost op for rematerialization.
+    applied_ops: Vec<(EntityId, Vec<u8>)>,
+    revision_changes: Vec<crate::vault::EntityRevisionChange>,
+    // Watched rows written where none existed, announced only after commit.
+    born: Vec<(EntityId, Vec<u8>)>,
+    floor_written: bool,
+    claims_written: bool,
+}
+
+impl EntityMaterialization {
+    /// Runs the entity ingest ladder in the caller's writer without committing it.
+    pub(super) fn stage_in_txn(
+        &mut self,
+        doc: &LoroDoc,
+        delta: &loro::event::MapDelta<'_>,
+        vault: &Vault,
+        window_key: &str,
+        ingest: &IngestCtx<'_>,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> crate::Result<()> {
+        let Self {
+            applied_ops,
+            revision_changes,
+            born,
+            floor_written,
+            claims_written,
+        } = self;
         // One delta has no row order. AUTHORITY_LOG rows go first, parents
         // before children, so a signer's enrollment lands before the rows it
         // signs; an ask word, receipt or project home room must not reach its
@@ -177,7 +182,7 @@ pub(super) fn materialize_entities_with_changes(
                 };
                 before.push((previous_revision, unborn));
             }
-            let steps = ingest_rows_in_savepoint(&ingest, wtxn, &rows)?;
+            let steps = ingest_rows_in_savepoint(ingest, wtxn, &rows)?;
             for ((&(_, value), step), (previous_revision, unborn)) in
                 rows.iter().zip(&steps).zip(before)
             {
@@ -188,14 +193,14 @@ pub(super) fn materialize_entities_with_changes(
                     born.push((id, blob.to_vec()));
                 }
                 note_delivered_in_txn(vault, wtxn, id, blob)?;
-                floor_written |= crate::secret_custody::moves_custody_floor(blob);
+                *floor_written |= crate::secret_custody::moves_custody_floor(blob);
                 applied_ops.push((id, blob.to_vec()));
                 // The savepoint has no postcommit owner. Carry its
                 // claim change to the outer transaction's watch,
                 // which fires only after THAT commit.
                 match EntityMetadataHeader::parse(blob).map(|h| h.entity_type) {
                     Some(ENTITY_TYPE_CLAIM) => {
-                        claims_written = true;
+                        *claims_written = true;
                         crate::batch::queue_proactivity_change(vault, wtxn);
                     }
                     // A peer's consult or settlement reaches this
@@ -227,6 +232,93 @@ pub(super) fn materialize_entities_with_changes(
             .map(|(id, _)| crate::conversation_dag::topology::Dependency::Entity(*id))
             .collect();
         super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
+        Ok(())
+    }
+}
+
+fn publish_entity_effects(
+    vault: &Vault,
+    applied_ops: &[(EntityId, Vec<u8>)],
+    born: &[(EntityId, Vec<u8>)],
+    floor_written: bool,
+    claims_written: bool,
+) {
+    if claims_written {
+        vault.verb_hook_bindings_changed();
+    }
+    for (id, blob) in born {
+        note_born(vault, *id, blob);
+    }
+    if floor_written {
+        vault.apply_pending_rebinds_after_commit();
+    }
+    // The savepoint has no postcommit owner: an authority row this batch
+    // landed, an owner's origin cut among them, reaches the live mirror
+    // here, so a repo manifest waiting in any loaded window for a proven
+    // writer is judged again against the new fold (FIX 15740).
+    vault.note_committed_rows(
+        applied_ops
+            .iter()
+            .filter(|(_, blob)| is_authority_row(blob))
+            .map(|(id, _)| *id)
+            .collect(),
+    );
+}
+
+/// An isolated candidate's entity effects, retained until its root commits.
+pub(in crate::sync) struct EntityImportEffects {
+    staged: EntityMaterialization,
+}
+
+impl EntityImportEffects {
+    pub(in crate::sync) fn publish_after_commit(
+        self,
+        vault: &Vault,
+    ) -> Vec<crate::vault::EntityRevisionChange> {
+        let EntityMaterialization {
+            applied_ops,
+            revision_changes,
+            born,
+            floor_written,
+            claims_written,
+        } = self.staged;
+        publish_entity_effects(vault, &applied_ops, &born, floor_written, claims_written);
+        revision_changes
+    }
+}
+
+/// Runs the native entity ladder on an isolated candidate, never opening a writer.
+pub(in crate::sync) fn stage_isolated_entities_in_txn(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> crate::Result<EntityImportEffects> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
+        .with_residence(Residence::Quarantine(doc));
+    let mut staged = EntityMaterialization::default();
+    staged.stage_in_txn(doc, delta, vault, window_key, &ingest, wtxn)?;
+    Ok(EntityImportEffects { staged })
+}
+
+/// Revision receipts are retained only after the nested savepoint and outer
+/// materialization transaction have both committed.
+pub(super) fn materialize_entities_with_changes(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
+        .with_residence(Residence::Quarantine(doc));
+    let mut staged = EntityMaterialization::default();
+    let result = vault.with_write_txn_grouped(|wtxn| {
+        staged.stage_in_txn(doc, delta, vault, window_key, &ingest, wtxn)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(crate::Error::Io(std::io::Error::other(
@@ -235,17 +327,16 @@ pub(super) fn materialize_entities_with_changes(
         }
         Ok(())
     });
+    let EntityMaterialization {
+        applied_ops,
+        revision_changes,
+        born,
+        floor_written,
+        claims_written,
+    } = staged;
 
     if result.is_ok() {
-        if claims_written {
-            vault.verb_hook_bindings_changed();
-        }
-        for (id, blob) in &born {
-            note_born(vault, *id, blob);
-        }
-        if floor_written {
-            vault.apply_pending_rebinds_after_commit();
-        }
+        publish_entity_effects(vault, &applied_ops, &born, floor_written, claims_written);
     }
     // An earlier ChildOf or SpawnedBy can have arrived before this body's
     // endpoint and been deferred by the edge observer. Re-present only the

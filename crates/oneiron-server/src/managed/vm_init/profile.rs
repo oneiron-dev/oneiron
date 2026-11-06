@@ -1,5 +1,5 @@
 //! The vault's managed profile as the config drive carries it into a VM
-//! (FIX 6809): five typed files, one value each, which the root bootstrap
+//! (FIX 6809; FIX 13706-13708): seven typed files, one value each, which the root bootstrap
 //! reads with the drive's other typed files ([`super::config_drive`]) and
 //! turns into the engine's own managed-profile flags, the ones a supervisor
 //! passes a node's child. An open and a cold restore get the same flags.
@@ -10,12 +10,14 @@
 //! `false` is kept: a member-vault `false` is the engine's own false, no
 //! flag, and a failure-signal `false` is passed as `false`. What the values
 //! mean (the tenancy they select, the width's bound against the vault's
-//! dimensions) stays the engine's to check, as on a node.
+//! dimensions, the hosting posture) stays the engine's to check, as on a
+//! node.
 
 use super::config_drive::{VmConfigFileError, read_known};
 use oneiron_vault_contract::vm::{
-    VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE, VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE,
-    VM_GUEST_FAST_DIMS_FILE, VM_GUEST_MEMBER_VAULT_FILE, VM_GUEST_ORGANIZATION_OWNER_FILE,
+    VM_GUEST_CHECKPOINT_HOST_OPT_OUT_FILE, VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE,
+    VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE, VM_GUEST_FAST_DIMS_FILE, VM_GUEST_MEMBER_VAULT_FILE,
+    VM_GUEST_ORGANIZATION_OWNER_FILE, VM_GUEST_PRIVACY_POSTURE_FILE,
 };
 use std::ffi::OsString;
 
@@ -25,6 +27,8 @@ const ORGANIZATION_FORM: &str = "not 64 hex digits";
 const CHOICE_FORM: &str = "not true or false";
 /// What the guest's form says a width file is, for a refusal.
 const WIDTH_FORM: &str = "not a nonzero width in decimal digits that a u16 holds";
+/// What the guest's form says a posture file is, for a refusal.
+const POSTURE_FORM: &str = "not managed, relay or self-host";
 
 /// The managed profile the config drive's files carry, each `None` when its
 /// file is not there.
@@ -43,10 +47,16 @@ pub(super) struct VmManagedProfile {
     failure_signal_training: Option<bool>,
     /// [`VM_GUEST_FAST_DIMS_FILE`]: the measured MRL prefix width.
     fast_dims: Option<u16>,
+    /// [`VM_GUEST_PRIVACY_POSTURE_FILE`]: the supervisor's hosting
+    /// declaration, as the engine's `--privacy-posture` spells it.
+    privacy_posture: Option<&'static str>,
+    /// [`VM_GUEST_CHECKPOINT_HOST_OPT_OUT_FILE`]: the operator's
+    /// enterprise/advanced checkpoint opt-out capability.
+    checkpoint_host_opt_out: Option<bool>,
 }
 
 impl VmManagedProfile {
-    /// Reads each of the five files once, each strictly in its form.
+    /// Reads each of the seven files once, each strictly in its form.
     pub(super) fn load() -> Result<Self, VmConfigFileError> {
         Ok(Self {
             organization_owner: scalar(
@@ -66,12 +76,18 @@ impl VmManagedProfile {
                 choice,
             )?,
             fast_dims: scalar(VM_GUEST_FAST_DIMS_FILE, WIDTH_FORM, width)?,
+            privacy_posture: scalar(VM_GUEST_PRIVACY_POSTURE_FILE, POSTURE_FORM, posture)?,
+            checkpoint_host_opt_out: scalar(
+                VM_GUEST_CHECKPOINT_HOST_OPT_OUT_FILE,
+                CHOICE_FORM,
+                choice,
+            )?,
         })
     }
 
     /// The engine's flags for the profile, each flag and each value its own
     /// argument: none for a file that is not there, and none for a
-    /// member-vault `false`.
+    /// member-vault or checkpoint opt-out `false`.
     pub(super) fn engine_flags(&self) -> Vec<OsString> {
         let mut flags: Vec<OsString> = Vec::new();
         if let Some(organization) = &self.organization_owner {
@@ -93,6 +109,13 @@ impl VmManagedProfile {
         if let Some(width) = self.fast_dims {
             flags.push("--fast-dims".into());
             flags.push(width.to_string().into());
+        }
+        if let Some(posture) = self.privacy_posture {
+            flags.push("--privacy-posture".into());
+            flags.push(posture.into());
+        }
+        if self.checkpoint_host_opt_out == Some(true) {
+            flags.push("--managed-checkpoint-host-opt-out".into());
         }
         flags
     }
@@ -131,6 +154,17 @@ fn choice(value: &str) -> Option<bool> {
     match value {
         "true" => Some(true),
         "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// One of the engine's three `--privacy-posture` wire values, and nothing
+/// else.
+fn posture(value: &str) -> Option<&'static str> {
+    match value {
+        "managed" => Some("managed"),
+        "relay" => Some("relay"),
+        "self-host" => Some("self-host"),
         _ => None,
     }
 }

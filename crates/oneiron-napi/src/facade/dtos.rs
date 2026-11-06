@@ -582,6 +582,8 @@ pub struct NapiMemoryItem {
     pub world: Option<String>,
     /// Facet hex, when faceted.
     pub facet: Option<String>,
+    /// The claim's explicit project audience, not a topic or a WORLD.
+    pub project_ref: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
     /// A conversation record's current reactions, one grouped line per glyph;

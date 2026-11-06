@@ -11,7 +11,7 @@
 //! in that same transaction.
 use std::collections::BTreeSet;
 
-use super::check_inputs::QueueCheckReceipt;
+use super::check_inputs::StoredQueueCheckReceipt;
 use super::check_store::{CHECK_WORK, QueueCheckWork};
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -67,7 +67,7 @@ pub(super) fn indexed_receipts_in_txn(
     repo_hex: &str,
     digest: &str,
     verdict: Option<Option<&str>>,
-) -> Result<Vec<QueueCheckReceipt>> {
+) -> Result<Vec<StoredQueueCheckReceipt>> {
     let prefix = index_prefix(repo_hex, digest, verdict);
     let works: BTreeSet<String> = RECEIPT_INDEX
         .scan_keys(store, txn, prefix.as_bytes())?
