@@ -416,7 +416,7 @@ pub fn artifact_hex(bytes: &[u8]) -> String {
 }
 
 mod access;
-pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};
+pub use self::access::{ArtifactBackendSource, ArtifactLinkCapability, ArtifactServeTier};
 
 mod publish;
 #[cfg(any(test, feature = "test-hooks"))]

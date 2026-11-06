@@ -21,15 +21,24 @@ use tokio::task::AbortHandle;
 
 use crate::config::ArtifactBackendConfig;
 use crate::error::{ApiError, EnvelopedApiError};
+use crate::server::SyncServer;
+
+#[path = "backend_actions.rs"]
+mod actions;
 
 pub(super) struct StagedBackend {
+    pub identity: oneiron::artifact_hosting::ArtifactBackendSource,
     pub directory: tempfile::TempDir,
     pub source: std::path::PathBuf,
     pub command: Vec<std::ffi::OsString>,
     pub permit: tokio::sync::OwnedSemaphorePermit,
 }
 
-struct NoEngineEgress;
+struct AppActionEgress {
+    server: Arc<SyncServer>,
+    identity: oneiron::artifact_hosting::ArtifactBackendSource,
+    runtime: tokio::runtime::Handle,
+}
 
 fn no_engine_egress() -> io::Error {
     io::Error::new(
@@ -38,7 +47,7 @@ fn no_engine_egress() -> io::Error {
     )
 }
 
-impl EgressRelay for NoEngineEgress {
+impl EgressRelay for AppActionEgress {
     fn connect(&self, _: SocketAddr) -> io::Result<TcpStream> {
         Err(no_engine_egress())
     }
@@ -54,8 +63,12 @@ impl EgressRelay for NoEngineEgress {
     fn datagram(&self, _: SocketAddr, _: &[u8]) -> io::Result<Vec<u8>> {
         Err(no_engine_egress())
     }
-    fn fetch(&self, _: HttpRequest) -> io::Result<HttpResponse> {
-        Err(no_engine_egress())
+    fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse> {
+        self.runtime.block_on(actions::fetch(
+            Arc::clone(&self.server),
+            self.identity.clone(),
+            request,
+        ))
     }
     fn transferred(&self, _: SocketAddr, _: [u8; 32], _: u64) {}
     fn host_net_floor(&self) -> &dyn HostNetFloor {
@@ -136,8 +149,11 @@ pub(super) async fn forward(
     profile: ArtifactBackendConfig,
     staged: StagedBackend,
     request: Request,
+    server: Arc<SyncServer>,
 ) -> Result<Response, EnvelopedApiError> {
     let capacity = profile.bridge_buffer_bytes;
+    let runtime = tokio::runtime::Handle::current();
+    let relay_runtime = runtime.clone();
     let (transport, directory, permit) = tokio::task::spawn_blocking(move || {
         profile.validate().map_err(io::Error::other)?;
         let spec = profile.spec(staged.source).map_err(io::Error::other)?;
@@ -147,7 +163,11 @@ pub(super) async fn forward(
             &profile.image,
         )
         .map_err(io::Error::other)?;
-        let relay: Arc<dyn EgressRelay> = Arc::new(NoEngineEgress);
+        let relay: Arc<dyn EgressRelay> = Arc::new(AppActionEgress {
+            server,
+            identity: staged.identity,
+            runtime: relay_runtime,
+        });
         let transport = backend
             .start_session(&spec, &staged.command, relay.clone())
             .map_err(io::Error::other)?;
@@ -163,7 +183,6 @@ pub(super) async fn forward(
         manifest: _,
         lease,
     } = transport;
-    let runtime = tokio::runtime::Handle::current();
     let mut session = SessionGuard {
         lease: Some(lease),
         directory: Some(directory),

@@ -7,9 +7,9 @@ Host and guest must be deployed together with the matching native protocol.
 The contract below describes the source, not a completed deployment.
 
 A host can run a published code artifact on its artifact-only listener. This
-initial runtime is one isolated guest per HTTP request. It holds no engine
-credential and has no engine-action grants. Ordinary computation and HTTP
-serving do not require such a grant.
+initial runtime is one isolated guest per HTTP request. The host supplies no
+engine credential or engine-action grant. Ordinary computation and HTTP serving
+do not require such a grant.
 
 ## Host execution profile
 
@@ -163,18 +163,47 @@ half is closed after draining. Guest PID 1 keeps the existing fence and control
 heartbeats alive until the host lease stops the VM; a command exit does not kill
 pending response bytes. No new timeout substitutes for that custody.
 
+## The app's own engine actions
+
+A native app uses `ONEIRON_NATIVE_EGRESS_SOCKET` with the Fetch framing in
+[native-session-fetch.md](native-session-fetch.md). For this artifact runtime,
+only relative `POST /v1/core/actions/{verb}` calls reach the engine. The request
+body is the existing action request (`args`, `idempotencyKey`, optional
+`liveRun`), encoded as the Fetch body's byte values. Authorization and holder
+proof headers must be the app's own. Other URLs and ordinary network socket or
+datagram operations remain unavailable. Redirect following opens no second URL.
+
+The host retains the exact pointer, fork hash and physical code-artifact record
+id from the same read transaction that projected the staged files. No later
+head lookup or guest-supplied source label selects this identity. The native
+binding middleware admits the caller's proof once. The normal CoreAuth path
+then checks a verified Agent credential whose full native app principal matches
+that staged artifact, fork and code-artifact record. This identity match grants
+nothing: the ordinary current-grant, action scope, gate, invocation, read-key,
+Memory, room, off-record session and receipt paths still judge the call.
+
+The adapter runs the original action router and returns its HTTP status, raw
+headers, body and call-receipt stamp. Inner facade calls reuse the admitted
+headers and extensions, not another proof-consuming admission. No owner
+attestation, browser credential, host-root identity, fake connection address or
+new Memory is supplied. A native request with no proven connection retains the
+ordinary off-device/unknown destination; it does not become local merely
+because the relay runs in the host process. A zero-action credential still has
+no action scope. Ordinary zero-grant computation and HTTP serving continue.
+
 ## Remaining work and evidence limits
 
 The separate artifact-backend pairing API creates an app's own principal and
-one-use holder pairing with empty action scope. This zero-action runtime does
-not inject or redeem that credential. Later owner Ask grants need a real
-scoped capability issuance and dispatcher join; an app label, snapshot hash,
-reader federation grant or owner credential is not that authority. There is
-no permissive egress proxy in this runtime.
+one-use holder pairing with empty action scope. The runtime does not inject or
+redeem that credential. The explicit owner grant and backend-slip APIs can issue
+its own scoped capability, bound to the app's public holder key. The app must
+hold its own key and present its own credential and proof. An app label,
+snapshot hash, reader federation grant or owner credential is not that authority.
+There is no permissive network egress proxy in this runtime.
 
 Persistent/declared-port applications, direct browser cookie and DOM-storage
-isolation, automatic cloud app-host dispatch and grant-bearing engine calls
-remain work under OF-356.
+isolation, automatic cloud app-host dispatch and an end-to-end runtime proof of
+grant-bearing engine calls remain work under OF-356.
 This implementation does not claim that the whole published-backend row is
 complete. Static source inspection and formatting are not runtime, isolation
 or compiler evidence. Publication still needs the Engine's passing production
