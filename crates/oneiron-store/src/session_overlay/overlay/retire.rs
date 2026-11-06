@@ -35,9 +35,9 @@ impl SessionOverlay {
     /// both sides, so the composed read returns one row either way, and the
     /// accumulator halves (`total_docs`, per-field lengths) are room-scoped
     /// counts that must keep answering for the room until it evaporates. A
-    /// later delete or erase of the record takes those copies and its share
-    /// of the counts out ([`SessionOverlay::invalidate_retrieval_copies`],
-    /// FIX 17382).
+    /// later delete or erase of the record takes its own text index rows and
+    /// vector out ([`SessionOverlay::invalidate_retrieval_copies`], FIX
+    /// 17382); the counts and graph rows stay.
     ///
     /// The journal entries go with them, so a later close counts the promoted
     /// turn as published rather than as transcript that stopped existing.
