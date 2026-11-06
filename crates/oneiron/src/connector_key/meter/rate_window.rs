@@ -118,7 +118,7 @@ fn key_block(
         if !exhausted {
             continue;
         }
-        let paces = row_paces(state.budget.dimension, state.budget.on_exhaust);
+        let paces = row_paces(state.budget.dimension, state.budget.exhaust_policy());
         block = block.and(
             paces
                 .then(|| next_eligible(state, now))
@@ -133,7 +133,8 @@ fn key_block(
 
 /// Whether an exhausted row of `dimension` that does `on_exhaust` waits for
 /// its window rather than denying (FIX 8686): a count-bound row that
-/// refuses. Money and an owner's suspend stay hard.
+/// refuses, which every count row does under its
+/// `EffectorBudget::exhaust_policy` (FIX 8753). Money stays hard.
 pub(crate) const fn row_paces(
     dimension: EffectorBudgetDimension,
     on_exhaust: EffectorBudgetOnExhaust,

@@ -57,6 +57,9 @@ pub(crate) enum Operation {
         family: i32,
         kind: i32,
         protocol: i32,
+        /// The guest kernel's default for IPV6_V6ONLY, which an AF_INET6
+        /// socket starts with (FIX 6787).
+        ipv6_only: bool,
     },
     Connect {
         socket: u64,
@@ -89,9 +92,8 @@ pub(crate) enum Operation {
         socket: u64,
         address: SocketAddr,
     },
-    /// A listen. Its frame is followed by the listener's guest end, which
-    /// the supervisor keeps for the listener's readiness
-    /// ([`Operation::carries_fd`]).
+    /// A listen. The supervisor keeps the copy of the socket's guest end it
+    /// took at `socket()` for the listener's readiness (FIX 6788).
     Listen {
         socket: u64,
         backlog: i32,
@@ -110,14 +112,33 @@ pub(crate) enum Operation {
         commit: bool,
         flags: i32,
     },
+    /// Reads a socket option the supervisor keeps (getsockopt): the reply's
+    /// value is the option's value.
+    GetOption {
+        socket: u64,
+        option: SocketOption,
+    },
+    /// Sets a socket option the supervisor keeps (setsockopt).
+    SetOption {
+        socket: u64,
+        option: SocketOption,
+        value: i32,
+    },
+}
+
+/// A socket option the supervisor keeps itself, since the socket's Unix
+/// stand-in cannot answer it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum SocketOption {
+    /// SO_ACCEPTCONN: 1 for a virtual listener, 0 for any other socket.
+    /// Read-only (FIX 6784).
+    AcceptConnection,
+    /// IPV6_V6ONLY: an AF_INET6 socket that takes no IPv4-mapped address
+    /// (FIX 6787).
+    Ipv6Only,
 }
 
 impl Operation {
-    /// Whether one descriptor follows this request's frame (SCM_RIGHTS).
-    pub(crate) fn carries_fd(&self) -> bool {
-        matches!(self, Self::Listen { .. })
-    }
-
     /// Whether this request settles what an earlier one reserved, so it
     /// runs even after its call ended: the reserved connection goes back to
     /// its queue rather than stay reserved until its listener ends (FIX 6789).
