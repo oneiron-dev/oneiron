@@ -159,6 +159,20 @@ pub struct LimitsConfig {
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
     pub feedback_inbox_bytes: u64,
+    /// Failed pairing redemptions one client address may make before it
+    /// waits (FIX 12477): each attempt past these waits twice as long as the
+    /// one before, from one second, up to `pairing_redeem_wait_ceiling_ms`.
+    /// Zero makes the first failure wait. A success, or no attempt for
+    /// `pairing_redeem_quiet_ms`, starts the address over. Every address
+    /// counts alike, loopback and mesh peers too; no address ever blocks
+    /// another's pairing.
+    pub pairing_redeem_free_failures: u32,
+    /// The longest wait between one address's pairing redemptions, in
+    /// milliseconds.
+    pub pairing_redeem_wait_ceiling_ms: u64,
+    /// How long, in milliseconds, an address must make no pairing
+    /// redemption before its failures are forgotten.
+    pub pairing_redeem_quiet_ms: u64,
     /// The engine's rows (`oneiron::limit_ask`), which the vault opens with:
     /// work past one is served whole, and the row asks.
     pub engine: EngineLimits,
@@ -200,6 +214,11 @@ impl Default for LimitsConfig {
             media_reply_bytes: memory_floor(),
             chat_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
+            // Room for an owner's typos; past them, a 40-bit code guessed at
+            // one try an hour per address (FIX 12477, CALLS row).
+            pairing_redeem_free_failures: 5,
+            pairing_redeem_wait_ceiling_ms: 3_600_000,
+            pairing_redeem_quiet_ms: 3_600_000,
             engine: EngineLimits::default(),
         }
     }
@@ -270,6 +289,9 @@ impl LimitsConfig {
             media_reply_bytes,
             chat_reply_bytes,
             feedback_inbox_bytes,
+            pairing_redeem_free_failures,
+            pairing_redeem_wait_ceiling_ms,
+            pairing_redeem_quiet_ms,
             keyed_filter_json_bytes,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
@@ -447,6 +469,15 @@ impl LimitsConfig {
         set(&mut self.media_reply_bytes, media_reply_bytes);
         set(&mut self.chat_reply_bytes, chat_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        set(
+            &mut self.pairing_redeem_free_failures,
+            pairing_redeem_free_failures,
+        );
+        set(
+            &mut self.pairing_redeem_wait_ceiling_ms,
+            pairing_redeem_wait_ceiling_ms,
+        );
+        set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
@@ -716,6 +747,11 @@ impl LimitsConfig {
             ("media_reply_bytes", self.media_reply_bytes),
             ("chat_reply_bytes", self.chat_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
+            (
+                "pairing_redeem_wait_ceiling_ms",
+                self.pairing_redeem_wait_ceiling_ms,
+            ),
+            ("pairing_redeem_quiet_ms", self.pairing_redeem_quiet_ms),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
