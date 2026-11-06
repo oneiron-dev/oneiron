@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
+use super::author_token::index::{note_author_put, note_export_put, unref_author, unref_export};
 use super::consent::{
     AnsweringAuthority, MEMBERSHIP, MemberAnswer, MemberVerdict, OfficeBodyProposal, PROPOSALS,
     close_if_done,
@@ -36,6 +37,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::SideKey;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, RowPart,
@@ -427,15 +429,87 @@ fn join(
     Err(rows::bad_part())
 }
 
+/// The export-row keys one restore touches, decoded from the opened rows'
+/// locators: each locator's full key minus its table prefix, through that
+/// table's key codec. Locators outside both tables, and keys that do not
+/// decode, name no export row.
+struct TouchedExportKeys {
+    exports: Vec<Vec<u8>>,
+    authors: Vec<(EntityId, u64, u64)>,
+}
+
+fn touched_export_keys(opened: &OpenedOwnerRows) -> TouchedExportKeys {
+    let mut touched = TouchedExportKeys {
+        exports: Vec::new(),
+        authors: Vec::new(),
+    };
+    for part in &opened.rows {
+        let at = part.at();
+        if at.in_table(EXPORTS.decl()) {
+            if let Some(raw) = at.key.strip_prefix(EXPORTS.decl().prefix) {
+                if let Some(key) = Vec::<u8>::decode_key(raw) {
+                    touched.exports.push(key);
+                }
+            }
+        } else if at.in_table(EXPORT_AUTHORS.decl()) {
+            if let Some(raw) = at.key.strip_prefix(EXPORT_AUTHORS.decl().prefix) {
+                if let Some(key) = <(EntityId, u64, u64)>::decode_key(raw) {
+                    touched.authors.push(key);
+                }
+            }
+        }
+    }
+    touched
+}
+
 /// Puts `opened`'s office rows back: exact rows as they are, each fork,
 /// export and proposal with the actors that opened, and each membership row
-/// whose waiting member's opener opened.
+/// whose waiting member's opener opened. The token lookup follows the
+/// export rows at those exact keys in the same writer (FIX 12403): their
+/// old refs go before the raw sink overwrites without index work, and the
+/// restored rows' refs land after, through the same helpers the live
+/// writers use. A part the restore leaves out keeps its live row, whose
+/// ref is dropped and noted back unchanged.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, |_, at, value, parts| {
+    let touched = touched_export_keys(&opened);
+    let mut old_exports = Vec::new();
+    for key in &touched.exports {
+        if let Some(record) = EXPORTS.get(dbs, txn, key)? {
+            if let Some(token) = record.token {
+                old_exports.push((token, key.clone()));
+            }
+        }
+    }
+    let mut old_authors = Vec::new();
+    for key in &touched.authors {
+        if let Some(record) = EXPORT_AUTHORS.get(dbs, txn, key)? {
+            old_authors.push((record.token, *key));
+        }
+    }
+    for (token, key) in &old_exports {
+        unref_export(dbs, txn, token, key)?;
+    }
+    for (token, key) in &old_authors {
+        unref_author(dbs, txn, token, key)?;
+    }
+    let restored = rows::restore_parts(dbs, txn, &opened, check, |_, at, value, parts| {
         join(dbs, at, value, parts)
-    })
+    })?;
+    for key in &touched.exports {
+        if let Some(record) = EXPORTS.get(dbs, txn, key)? {
+            if let Some(token) = record.token {
+                note_export_put(dbs, txn, key, &token)?;
+            }
+        }
+    }
+    for key in &touched.authors {
+        if let Some(record) = EXPORT_AUTHORS.get(dbs, txn, key)? {
+            note_author_put(dbs, txn, key, &record.token)?;
+        }
+    }
+    Ok(restored)
 }

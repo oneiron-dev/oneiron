@@ -31,6 +31,7 @@ use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
+mod gmail_exchange;
 pub(crate) mod hook_proposals;
 mod line_chats;
 mod native_mail_identities;

@@ -371,6 +371,31 @@ impl Assets for VaultAssets<'_, '_> {
     }
 }
 
+/// Lists the image artifact, exact version CLAIM and ASSET read for each
+/// successfully resolved picture, under the resolver's transaction.
+struct ListingAssets<'v, 't> {
+    held: VaultAssets<'v, 't>,
+    rows: std::cell::RefCell<Vec<EntityId>>,
+}
+
+impl Assets for ListingAssets<'_, '_> {
+    fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
+        let resolved = self.held.resolve(asset)?;
+        let artifact = EntityId::from_hex(&resolved.0.artifact).ok()?;
+        let version = self
+            .held
+            .vault
+            .blob_artifact_version_metadata_in_txn(self.held.txn, &artifact, resolved.0.version)
+            .ok()??;
+        let asset_row =
+            crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash).ok()?;
+        self.rows
+            .borrow_mut()
+            .extend([artifact, version.claim_id, asset_row]);
+        Some(resolved)
+    }
+}
+
 impl crate::Vault {
     /// The deck's managed native-id history; empty before its first settle.
     pub(crate) fn deck_id_marks_in_txn(
@@ -399,6 +424,9 @@ impl crate::Vault {
     /// head. The result is uncommitted: it is kept or discarded through the
     /// ordinary consent-gated, consume-once settlement door. A named thread
     /// must be open on this artifact.
+    ///
+    /// Outcome-only wrapper over
+    /// [`Self::propose_blob_artifact_deck_edit_with_reads`].
     pub fn propose_blob_artifact_deck_edit(
         &self,
         artifact_id: &EntityId,
@@ -406,6 +434,28 @@ impl crate::Vault {
         run_ref: &str,
         context: DeckEditContext,
     ) -> Result<DeckEditOutcome> {
+        let (outcome, _) = self.propose_blob_artifact_deck_edit_with_reads(
+            artifact_id,
+            transaction_json,
+            run_ref,
+            context,
+        )?;
+        Ok(outcome)
+    }
+
+    /// Same as [`Self::propose_blob_artifact_deck_edit`], also returning the
+    /// rows each `set_picture` asset resolved from: per picture, the image
+    /// artifact, the exact version CLAIM and the ASSET
+    /// (`blob_artifact_asset_entity_id` over the version's content hash),
+    /// read in the same transaction (FIX 12261(a), FIX 9312 sidecar). Empty
+    /// when the transaction resolved no held picture.
+    pub fn propose_blob_artifact_deck_edit_with_reads(
+        &self,
+        artifact_id: &EntityId,
+        transaction_json: &str,
+        run_ref: &str,
+        context: DeckEditContext,
+    ) -> Result<(DeckEditOutcome, Vec<EntityId>)> {
         let limits = self.docedit_package_limits()?;
         if let Some(thread) = context.thread {
             let open = self
@@ -430,9 +480,12 @@ impl crate::Vault {
             .read_blob_artifact_version_in_txn(&rtxn, artifact_id, head.version)?
             .ok_or(Error::EntityNotFound)?;
         let history = self.deck_id_marks_in_txn(&rtxn, artifact_id)?;
-        let assets = VaultAssets {
-            vault: self,
-            txn: &rtxn,
+        let listing = ListingAssets {
+            held: VaultAssets {
+                vault: self,
+                txn: &rtxn,
+            },
+            rows: std::cell::RefCell::new(Vec::new()),
         };
         let mut outcome = run_deck_transaction(
             &bytes,
@@ -440,13 +493,14 @@ impl crate::Vault {
             run_ref,
             limits,
             &history,
-            &assets,
+            &listing,
             context,
         )?;
         if let DeckEditOutcome::Proposed(proposal) = &mut outcome {
             proposal.base_version = Some(head.version);
         }
-        Ok(outcome)
+        let reads = listing.rows.into_inner();
+        Ok((outcome, reads))
     }
 }
 

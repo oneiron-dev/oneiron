@@ -283,6 +283,16 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    if let Some(bands) = resolution.entity_resolution_bands {
+        hash_str(hasher, crate::gate::entity_resolution_bands::KEY);
+        for boundary in [
+            bands.provisional_below,
+            bands.soft_link_low_below,
+            bands.soft_link_below,
+        ] {
+            hash_bytes(hasher, &boundary.to_bits().to_be_bytes());
+        }
+    }
     // A row resolving to shipped defaults has the historical frontier bytes.
     // Only a behavior-changing override contributes new hash material.
     if resolution.carry_forward_authored
@@ -437,7 +447,6 @@ pub(super) fn hash_policy_frontier_v0(
     let nondefault: Vec<_> = resolution
         .sheet_answer_limits
         .iter()
-        .chain(resolution.untrusted_sheet_answer_limits.iter())
         .filter(|row| {
             row.artifact_ref.is_some()
                 || row.sheet.is_some()

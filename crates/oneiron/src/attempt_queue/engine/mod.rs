@@ -61,6 +61,7 @@ impl<'a> AttemptQueue<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         record: &mut super::AttemptRecord,
     ) -> crate::Result<Vec<u8>> {
+        super::payload_erase::feedback_triage::scrub_in_txn(self.store, wtxn, record)?;
         super::payload_erase::scrub_hard_erased_payload_in_txn(self.store, wtxn, record);
         // FIX 9578: a settled row carries what it left behind, written with
         // the write that settles it, whichever door settles it.

@@ -2,6 +2,7 @@
 
 pub(crate) mod admission;
 pub mod codec;
+mod fork_pin;
 pub mod identity;
 pub mod lifecycle;
 pub mod record;
@@ -12,6 +13,7 @@ pub mod validate;
 pub use admission::skill_loadable;
 pub use codec::{decode_skill_record, encode_skill_record};
 pub use codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
+pub use fork_pin::{fork_parent_pin, retain_fork_parent_pin};
 pub use identity::{
     SKILL_CONTENT_HASH_HEX_LEN, SKILL_TREE_HASH_DOMAIN, SKILL_TREE_PATH_MAX_BYTES,
     SkillContentHash, canonical_skill_tree_hash, cross_check_declared_content_hash,

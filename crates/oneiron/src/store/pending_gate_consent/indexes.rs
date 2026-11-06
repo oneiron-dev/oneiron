@@ -230,8 +230,12 @@ impl Store {
             let Some(state) = self.pending_gate_consent_index_state_in_txn(&*wtxn, &record)? else {
                 return Err(Error::CorruptedIndex("pending gate consent run index"));
             };
-            if state.run_id != run_id {
-                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            if !super::keys::hashed_string_index_matches(
+                Some(&state.run_id),
+                run_id,
+                "pending gate consent run index",
+            )? {
+                continue;
             }
             records.push(record);
         }
@@ -320,7 +324,13 @@ impl Store {
             RUN_INDEX,
             &scan_prefix,
             "pending gate consent run index",
-            |state| state.run_id == run_id,
+            |state| {
+                super::keys::hashed_string_index_matches(
+                    Some(&state.run_id),
+                    run_id,
+                    "pending gate consent run index",
+                )
+            },
         )
     }
 
@@ -341,7 +351,13 @@ impl Store {
             GROUP_INDEX,
             &scan_prefix,
             "pending gate consent group index",
-            |state| state.group_key == group_key,
+            |state| {
+                super::keys::hashed_string_index_matches(
+                    Some(&state.group_key),
+                    group_key,
+                    "pending gate consent group index",
+                )
+            },
         )
     }
 
@@ -382,7 +398,7 @@ impl Store {
         state_matches: F,
     ) -> Result<Vec<PendingGateConsentRecord>>
     where
-        F: Fn(&PendingGateConsentIndexState) -> bool,
+        F: Fn(&PendingGateConsentIndexState) -> Result<bool>,
     {
         let mut records = Vec::new();
         for key in table.scan_keys(self, txn, scan_prefix)? {
@@ -395,8 +411,8 @@ impl Store {
             let Some(state) = state else {
                 return Err(Error::CorruptedIndex(index_name));
             };
-            if !state_matches(&state) {
-                return Err(Error::CorruptedIndex(index_name));
+            if !state_matches(&state)? {
+                continue;
             }
             records.push(record);
         }

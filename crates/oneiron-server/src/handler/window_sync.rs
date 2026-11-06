@@ -90,7 +90,7 @@ pub(super) async fn handle_window_sync(
             return Ok(ControlFlow::Continue(()));
         }
         if !protocol::is_residence_version(conn_state.protocol_version)
-            || payload.len() > 4096
+            || payload.len() > server.config.max_update_payload
             || !read_window_list(&server.root_doc).contains(&key)
         {
             return Err(ProtocolError::InvalidPayload(
@@ -186,6 +186,7 @@ pub(super) async fn handle_window_sync(
     if matches!(
         sub_tag,
         window_sub_tags::RESIDENCE_ACK
+            | window_sub_tags::RESIDENCE_HELD
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
             | window_sub_tags::WINDOW_INVALIDATE
@@ -392,7 +393,7 @@ pub(super) async fn handle_window_sync(
             // 7107). Pads that did not install leave nothing persisted,
             // imported or relayed: the device is told, and sends the same
             // bytes again as the carrier (KEEP TODAY).
-            let receipt = super::window_pads::admit(server, &key, envelope);
+            let receipt = super::window_pads::admit(server, &key, envelope, &doc);
             if receipt.readiness == oneiron::sync::transport::WindowPadReadiness::NotReady {
                 direct_tx
                     .send(super::window_pads::receipt_frame(
@@ -406,7 +407,7 @@ pub(super) async fn handle_window_sync(
             // FIX 7608 slice 4: a copy edit lands on its source before anything
             // persists, and is admitted again as the source edit it is. A ruled
             // hold persists, imports and relays nothing: its held record is
-            // kept and acknowledged, and it is never applied (FIX 10598).
+            // kept and answered, and it is never applied (FIX 10598).
             let admitted = oneiron::sync::selector::admit_repo_sync_frame(
                 server.vault.as_ref(),
                 window_key,
@@ -461,6 +462,13 @@ pub(super) async fn handle_window_sync(
             // The machine this own-device socket proved sent them: their MESSAGE rows
             // take the own-device lane as they land (FIX 12112).
             let origin = format!("conn:{conn_id}");
+            let positions = oneiron::sync::prepare_own_device_push_positions(
+                server.vault(),
+                conn_state.peer_machine(server.vault()),
+                &key,
+                &doc,
+                update,
+            );
             let imported = match oneiron::sync::with_own_device_push(
                 server.vault(),
                 conn_state.peer_machine(server.vault()),
@@ -476,6 +484,12 @@ pub(super) async fn handle_window_sync(
                     return Err(ProtocolError::LoroImport(format!("{e}")));
                 }
             };
+            if imported.pending.is_none()
+                && let Some(positions) = positions.as_ref()
+                && let Err(error) = positions.finish(server.vault(), &doc)
+            {
+                tracing::warn!(%error, "optional own-device position import did not settle");
+            }
 
             // Each socket's delivery judges the update for the machine it
             // serves, so a private world's window reaches only the machines
@@ -503,6 +517,15 @@ pub(super) async fn handle_window_sync(
                 direct_tx.send(frame).map_err(|_| {
                     ProtocolError::Persistence("residence acknowledgment channel closed".into())
                 })?;
+            }
+            if imported.pending.is_none()
+                && let Some(positions) = positions
+            {
+                conn_state
+                    .asset_bodies
+                    .get_mut()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .retain_own_device_positions(&server.reassert_manager, &window, positions);
             }
         }
         window_sub_tags::VV_RESPONSE => {

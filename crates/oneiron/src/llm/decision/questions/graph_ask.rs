@@ -831,8 +831,8 @@ pub(super) fn source_versions(context: &GraphUnitContext) -> Vec<EvidenceVersion
 /// The images the context's ASSET sources hold, read through `lane` (the
 /// asker's own read) for an answerer that reads them: PNG or JPEG only,
 /// each inside one image's byte bound, named `image_<n>` and pinned at its
-/// pixels' hash. Every such image goes on: their count and total size drop
-/// none (FIX 9903). The pull is recorded as an ask-image served form before
+/// canonical stored blob's hash. Every such image goes on: their count and
+/// total size drop none (FIX 9903). The pull is recorded as an ask-image served form before
 /// any model reads it. An asset the lane withholds, or one no decision
 /// image can be, is read as text alone.
 pub(super) fn unit_images(
@@ -844,17 +844,14 @@ pub(super) fn unit_images(
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
-        let Some(pixels) = crate::memory::asset_image_in_lane(lane, source.id)
+        let Some((pixels, evidence)) = crate::memory::asset_image_in_lane(lane, source.id)
             .map_err(|_| Error::CorruptedIndex("graph ask image"))?
         else {
             continue;
         };
         let image = DecisionImage {
             name: format!("image_{}", images.len()),
-            evidence: EvidenceVersion {
-                id: source.id,
-                body_hash: *blake3::hash(&pixels.bytes).as_bytes(),
-            },
+            evidence,
             image: pixels,
             frame: None,
         };

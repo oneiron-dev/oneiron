@@ -29,7 +29,7 @@ use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde_json::Value;
 
 use super::SyncServer;
-use super::run_host_door::{agent_memory, answer_as_agent};
+use super::run_host_door::{RunMediaStep, agent_memory, answer_as_agent_in_step};
 
 /// Whether `verb` is a row the run host door refuses an agent as the
 /// owner's: a hook replay, or an `ai.*` media call other than speech; or
@@ -66,7 +66,7 @@ fn program_owner(server: &SyncServer, actor: WriteActor) -> Option<Authenticated
 /// media on `line`, the run's own, else answered exactly as the agent's door
 /// answers it. Beside it, the rows its surface and its door listed, `None`
 /// when those are not known. Blocking: call it on a blocking thread of the
-/// server's runtime.
+/// server's runtime. A non-owner keeps the entry's optional durable media binding.
 pub(super) fn answer(
     server: &Arc<SyncServer>,
     actor: WriteActor,
@@ -76,10 +76,11 @@ pub(super) fn answer(
     input: Value,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     let Some(owner) = program_owner(server, actor) else {
-        return answer_as_agent(
-            server, actor, origin, invocation, verb, input, None, line, attempt,
+        return answer_as_agent_in_step(
+            server, actor, origin, invocation, verb, input, None, line, attempt, media_step,
         );
     };
     let producers = ProducerRows::default();

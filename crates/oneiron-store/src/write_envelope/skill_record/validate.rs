@@ -193,6 +193,11 @@ fn validate_skill_update_for_door(
             "forkedFrom lineage cannot change on update",
         )));
     }
+    if super::fork_parent_pin(prior)? != super::fork_parent_pin(updated)? {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "fork parent document and frontier cannot change on update",
+        )));
+    }
     if super::resident_of(prior)? != super::resident_of(updated)? {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "resident ownership cannot change on update",

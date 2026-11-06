@@ -136,8 +136,9 @@ impl NoteDocument {
 
     /// The deterministic birth of a stored NOTE core whose author is
     /// `author`: a live one, or no one once erased (FIX 6072, Engine R2). The
-    /// record names that author and nothing more; no authenticated class or
-    /// writer is made from it, and an erased author stamps and records no one.
+    /// record stores no author literal in the document's history. Readers
+    /// bind that author from the same NOTE core; no authenticated class or
+    /// writer is made from it.
     /// No body length refuses a birth (rule 5): the store-aware entrances
     /// measure it (`EngineScan::NoteDocumentBytes`, `note::scan`).
     pub(super) fn birth_by(id: EntityId, body: &str, author: super::NoteActor) -> Result<Self> {
@@ -499,8 +500,8 @@ fn commit_stamped(doc: &LoroDoc, stamp: ActorStamp) {
 /// The engine stamp of a birth: it names no one (FIX 10930). A birth is
 /// derived alike on every replica from the stored core, so it can name no
 /// device's stamp token, and its message is then the same on every replica
-/// whether or not the author was erased there. The author stays in the
-/// birth's authorship record.
+/// whether or not the author was erased there. The birth's authorship
+/// record also names no one; its displayed author comes from the NOTE core.
 fn stamp_birth(doc: &LoroDoc) {
     commit_naming(doc, &super::NoteActor::Erased.to_wire());
 }

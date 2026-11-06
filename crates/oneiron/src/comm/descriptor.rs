@@ -213,6 +213,7 @@ fn stage_claim_class_descriptor_in_txn(
             entity_type: ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -224,6 +225,38 @@ fn stage_claim_class_descriptor_in_txn(
         false,
         true,
     )
+}
+
+/// The archive's vocabulary without a foreign owner approval. Validation uses
+/// the original body; only the recipient build's compiled equivalence can
+/// retain enforcement after the foreign stamp is removed.
+pub(crate) fn imported_claim_class_descriptor(
+    id: &EntityId,
+    data: &[u8],
+) -> Result<ClaimClassDescriptor> {
+    let mut row = decode_claim_class_descriptor(data)?;
+    if *id != claim_class_descriptor_id(&row.predicate)? {
+        return Err(invalid(
+            "claim-class descriptor id is not its predicate's derived id",
+        ));
+    }
+    row.enforcement_stamp = None;
+    row.enforcement = row.enforced();
+    Ok(row)
+}
+
+/// Stages missing archive vocabulary through the native setting door, in the
+/// import's transaction. The caller keeps existing rows and collision checks.
+pub(crate) fn import_claim_class_descriptor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    let row = imported_claim_class_descriptor(id, data)?;
+    stage_claim_class_descriptor_in_txn(vault, wtxn, id, &row, occurred, learned_at)
 }
 
 /// Seeds the compiled `comm.*` rows as descriptor entities. Each id, body and

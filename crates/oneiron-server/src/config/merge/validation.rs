@@ -44,6 +44,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
         "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
+        "apns" => struct_fields::<crate::config::ApnsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
@@ -146,6 +147,7 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     }
     config.line.validate()?;
     config.channel_endpoints.validate()?;
+    config.apns.validate()?;
     if let Some(linear) = &config.linear {
         linear.validate()?;
     }
@@ -155,6 +157,21 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     crate::conversation_training::validate_intake_origin(&config.publisher_training_intake_origin)?;
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
+        if let Some(models) = &config.models {
+            for space in &embedding.spaces {
+                if let Some((_, provider)) = space.id.rsplit_once('@')
+                    && !models.providers.contains_key(provider)
+                {
+                    // A replica or retired space may not use this declaration.
+                    // Diagnose its configured binding without refusing startup.
+                    tracing::warn!(
+                        space = %space.id,
+                        provider,
+                        "embedding space provider is absent from configured models.providers"
+                    );
+                }
+            }
+        }
     }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing

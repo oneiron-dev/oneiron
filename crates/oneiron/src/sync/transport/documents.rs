@@ -2,6 +2,7 @@
 
 use super::{EncodedFrame, TransportError, checked_encoded_frame_len};
 use crate::EntityId;
+use crate::store::framing::validate_document_kind as validate_kind;
 
 pub use crate::store::document_frame_tags::{TAG_BATCH, TAG_DOCUMENT};
 
@@ -60,17 +61,9 @@ pub fn decode_document_waited_out(payload: &[u8]) -> Result<DocumentWaitedOut, T
 }
 
 pub fn encode_document(entity: EntityId, kind: u8, payload: &[u8]) -> EncodedFrame {
-    let result = (|| {
-        checked_encoded_frame_len(18, payload.len())?;
-        validate_kind(kind)?;
-        let mut frame = Vec::with_capacity(18 + payload.len());
-        frame.push(TAG_DOCUMENT);
-        frame.extend_from_slice(entity.as_bytes());
-        frame.push(kind);
-        frame.extend_from_slice(payload);
-        Ok(frame)
-    })();
-    EncodedFrame(result)
+    EncodedFrame(crate::store::framing::encode_document(
+        entity, kind, payload,
+    ))
 }
 
 /// Decodes bytes after the document tag, including size and kind checks.
@@ -86,21 +79,6 @@ pub fn decode_document(data: &[u8]) -> Result<DocumentFrame<'_>, TransportError>
         kind: data[16],
         payload: &data[17..],
     })
-}
-
-fn validate_kind(kind: u8) -> Result<(), TransportError> {
-    match kind {
-        document_sub_tags::UPDATE
-        | document_sub_tags::STATE
-        | document_sub_tags::REQUEST
-        | document_sub_tags::ACK
-        | document_sub_tags::NOTE_OPS
-        | document_sub_tags::NOTE_RECEIPT
-        | document_sub_tags::ARTIFACT_PUBLICATION
-        | document_sub_tags::ARTIFACT_RECEIPT
-        | document_sub_tags::WAITED_OUT => Ok(()),
-        _ => Err(TransportError::InvalidPayload("unknown document kind")),
-    }
 }
 
 pub fn encode_document_batch(frames: &[Vec<u8>]) -> EncodedFrame {

@@ -53,6 +53,7 @@ mod in_process;
 mod invocation;
 mod lens_frames;
 pub mod llm;
+mod native_limit_questions;
 mod remote;
 
 use std::fmt;
@@ -63,10 +64,9 @@ use oneiron::memory::{MemoryError, RecallEffort};
 
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
-    MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES,
-    MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number,
-    check_dimensions, check_payload_bytes, check_query, check_token_budget_number,
-    check_unix_seconds,
+    MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES,
+    MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number, check_dimensions,
+    check_payload_bytes, check_query, check_token_budget_number, check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::{HostOpenCheck, store_open_count, verify_read_credential};
@@ -76,13 +76,14 @@ pub use crate::in_process::{
 };
 pub use crate::invocation::pending_invocation;
 pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
+pub use crate::native_limit_questions::NativeLimitQuestion;
 use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
-/// `PartialEq` is not decoration: I9 compares a reopen's options against the
-/// registered ones and refuses a divergent pair, so equality IS the
-/// same-vault test.
+/// I9 compares normalized options and refuses a divergent pair. The registry
+/// resolves an omitted device class to `Computer` before comparing every
+/// option with `PartialEq`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpenOptions {
     /// Embedding vector dimensions; `None` takes the engine default.
@@ -355,7 +356,8 @@ impl OneironClient {
     /// ([`verify_read_credential`]) as the server's door verifies a served
     /// request's. Its reads then run under that slip's key, never a broader
     /// one; a read refuses when the slip's holder is not this handle's actor.
-    /// A handle without one reads as before; a rebind drops it.
+    /// A handle without one reads as before. Rebindings keep the same proof,
+    /// so every read still checks it against the bound actor.
     ///
     /// Connected handles fail typed `FORBIDDEN`: the credential they
     /// connected with binds their reads server-side already.
@@ -463,6 +465,25 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => Some(embedded.actor_hex()),
             Backend::Remote(_) => None,
+        }
+    }
+
+    /// Latest engine-limit crossings retained by this handle's native host.
+    ///
+    /// A successful embedded `open` or `open_with_host_root` exposes the
+    /// internally opened vault's collector, shared by same-vault reopens.
+    /// `Some` with an empty vector means no crossing has been retained.
+    /// Reading a snapshot does not clear it. Each row holds only its key,
+    /// configured boundary and latest measured value, never call content or
+    /// actor identity.
+    ///
+    /// Returns `None` for remote or attached vaults and for handles rebound
+    /// to an actor, delegated read credential, room or off-record session.
+    /// This is Rust host metadata, not a facade verb or a remote request.
+    pub fn native_limit_questions(&self) -> Result<Option<Vec<NativeLimitQuestion>>, MemoryError> {
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.native_limit_questions(),
+            Backend::Remote(_) => Ok(None),
         }
     }
 

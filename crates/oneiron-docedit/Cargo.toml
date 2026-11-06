@@ -26,6 +26,12 @@ serde_json = { workspace = true }
 sha2 = "0.10" # the deck gate runner pins candidates by SHA-256, as the Office oracle does
 # The engine's own diff: a body's mark changes align to the text it keeps.
 similar = "2.6"
+harfrust = "0.15"
+unicode-bidi = "0.3"
+unicode-script = "0.5"
+# Held SVG fallbacks share the existing geometry compiler, not host fonts or file I/O.
+tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd"] }
+png = "=0.18.1"
 
 [features]
 # OpcPackage::upsert and opc_package::write, for the engine's own tests: `oneiron`

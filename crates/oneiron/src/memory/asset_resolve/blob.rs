@@ -67,14 +67,14 @@ impl AssetBlobRef {
 /// effect of the row, never a write of its own. The reference is the ASSET's
 /// id. A fence an earlier release left on the same bytes is lifted, as a new
 /// artifact holding them lifts it.
-pub(super) fn land_asset_blob_in_txn(
+pub(crate) fn land_asset_blob_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     asset: &EntityId,
     bytes: &[u8],
     occurred: TimeRange,
     learned_at: u64,
-) -> MemoryResult<[u8; 32]> {
+) -> crate::error::Result<[u8; 32]> {
     let hash = vault.port_blob_put(txn, asset, bytes, occurred, learned_at)?;
     crate::blob_artifact::hold_asset_reference_in_txn(&vault.store, txn, &hash)?;
     Ok(hash)
@@ -126,19 +126,61 @@ pub(crate) fn release_asset_blob_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> crate::error::Result<()> {
-    let Some(raw) = store.port_entity_raw(wtxn, id)? else {
+    let Some(hash) = held_blob_hash_in_txn(store, wtxn, id)? else {
         return Ok(());
+    };
+    crate::blob_artifact::release_asset_reference_in_txn(store, wtxn, id, &hash, deindex)
+}
+
+/// The owner's discard of a world copy takes the hold the ASSET `id` has on
+/// the blob its body names (FIX 14534, Engine 11-06 08:34 call 4 = A), before
+/// its row goes: its `asset_ref` row only, with no fence or deindex of the
+/// bytes' carrier, a member of its own.
+pub(crate) fn discard_asset_blob_reference_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<()> {
+    let Some(hash) = held_blob_hash_in_txn(store, wtxn, id)? else {
+        return Ok(());
+    };
+    crate::blob_artifact::discard_asset_reference_in_txn(store, wtxn, id, &hash)
+}
+
+/// The hash of the blob the stored ASSET `id`'s body names, read while its
+/// body descriptor still stands. None for another kind of row, or a body that
+/// names no blob.
+fn held_blob_hash_in_txn(
+    store: &Store,
+    wtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<Option<[u8; 32]>> {
+    let Some(raw) = store.port_entity_raw(wtxn, id)? else {
+        return Ok(None);
     };
     if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_ASSET)
     {
-        return Ok(());
+        return Ok(None);
     }
-    let Some(blob) = raw
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(AssetBlobRef::of_body)
-    else {
-        return Ok(());
+    // The writer still holds the prior descriptor: collection cannot
+    // retire or unlink its file before this read and reference release.
+    let logical;
+    let body = match crate::store::asset_file_of_raw_in_txn(store, wtxn, id, &raw)? {
+        Some(manifest) => {
+            let key = crate::store::body_key_row_in_txn(store, wtxn, &manifest.facts.blake3)?;
+            logical = crate::store::CheckedAssetBody::read_all(
+                &store.body_dir()?,
+                &manifest.facts,
+                key.as_ref(),
+            )?;
+            logical.as_slice()
+        }
+        None => &raw[ENTITY_METADATA_HEADER_LEN..],
     };
-    crate::blob_artifact::release_asset_reference_in_txn(store, wtxn, id, &blob.hash)
+    Ok(AssetBlobRef::of_body(body).map(|blob| blob.hash))
 }

@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::claim::ScopedReadReceipt;
 use crate::graph_fs::GraphFsReference;
 
 /// The file face's content selector and page bounds. Neither grants access.
@@ -126,6 +127,8 @@ pub struct GraphFsDirectoryView {
     pub path: String,
     pub entries: Vec<GraphFsEntryView>,
     pub next_cursor: Option<String>,
+    /// The scoped point-read receipt already attached to this page.
+    pub read_receipt: Option<ScopedReadReceipt>,
 }
 
 /// Joining pages after decoding each by its encoding yields the file bytes.
@@ -137,6 +140,8 @@ pub struct GraphFsOutput {
     pub encoding: GraphFsEncoding,
     pub next_cursor: Option<String>,
     pub plan: GraphFsPlan,
+    /// The command's existing folded scoped-read receipt.
+    pub read_receipt: Option<ScopedReadReceipt>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,10 +1,7 @@
 //! Descriptor-relative workspace access. No path resolution follows symlinks.
 
-use crate::{
-    Error, Result,
-    protocol::{MAX_FILE, Snapshot},
-};
-use oneiron_sandbox_contract::{MAX_WORKSPACE_DIRECTORIES, WorkspacePath, WorkspaceShape};
+use crate::{Error, Result, protocol::Snapshot};
+use oneiron_sandbox_contract::{WorkspacePath, WorkspaceShape};
 use std::{
     ffi::{CStr, CString},
     fs::File,
@@ -136,7 +133,6 @@ impl Workspace {
         // Keep bounded path names, not one open fd per directory. A wide tree
         // must work under the child's small RLIMIT_NOFILE as well as a deep one.
         let mut stack = vec![String::from("/mnt/workspace")];
-        let mut directories = 0;
         while let Some(prefix) = stack.pop() {
             let mut directory = self.root.try_clone()?;
             if prefix != "/mnt/workspace" {
@@ -153,10 +149,6 @@ impl Workspace {
                 virtual_relative(&path)?;
                 let kind = entry_kind(&directory, &name)?;
                 if kind == libc::S_IFDIR {
-                    directories += 1;
-                    if directories > MAX_WORKSPACE_DIRECTORIES {
-                        return Err(Error::Filesystem("snapshot directory count"));
-                    }
                     stack.push(path);
                 } else if kind == libc::S_IFREG {
                     visit(open_regular(&directory, &name, false, false)?, path, false)?;
@@ -243,15 +235,9 @@ fn open_regular(parent: &File, name: &CStr, write: bool, exclusive: bool) -> Res
     Ok(file)
 }
 
-fn read_regular(file: File) -> Result<Vec<u8>> {
-    if file.metadata()?.len() > MAX_FILE as u64 {
-        return Err(Error::Filesystem("read file size"));
-    }
+fn read_regular(mut file: File) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    file.take(MAX_FILE as u64 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_FILE {
-        return Err(Error::Filesystem("read byte budget"));
-    }
+    file.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
