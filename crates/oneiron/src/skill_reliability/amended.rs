@@ -259,7 +259,7 @@ pub(crate) fn reconcile_amended_outcomes_positioned_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     verdicts: &[AmendedOutcome],
-    read_position: Option<&OutcomeReadPosition>,
+    output_positions: Option<&BTreeMap<(EntityId, Option<String>, String), OutcomeReadPosition>>,
 ) -> Result<Vec<EntityId>> {
     let desired = grounded_rows_in_txn(vault, wtxn, &later_verdicts(verdicts))?;
     let mut moved: Vec<(Arm, u64)> = Vec::new();
@@ -287,7 +287,10 @@ pub(crate) fn reconcile_amended_outcomes_positioned_in_txn(
     for (key, (arm, outcome, row)) in &desired {
         if !stored.contains(key) {
             let mut row = row.clone();
-            row.placement = OutcomePlacement::birth(vault, read_position);
+            let position = output_positions.and_then(|positions| {
+                positions.get(&(arm.0, arm.1.clone(), outcome.receipt().to_owned()))
+            });
+            row.placement = OutcomePlacement::birth(vault, position);
             AMENDED.put(&vault.store, wtxn, outcome, &row)?;
             note(arm.clone(), row.at);
         }
