@@ -44,7 +44,6 @@ mod arc_claims;
 mod arc_compose;
 mod arc_evidence;
 mod arc_open_apply;
-mod arc_open_backend;
 mod arc_open_questions;
 mod arc_open_runtime;
 mod arc_output;
