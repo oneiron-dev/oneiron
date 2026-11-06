@@ -43,6 +43,7 @@ use super::types::{
 
 mod export_roots;
 mod message_result;
+mod secret_lifts;
 mod stretches;
 
 /// The most notices a room's timeline holds, and the most save suggestions
