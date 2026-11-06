@@ -281,10 +281,17 @@ impl Memory<'_> {
         {
             return Ok(Err("NOTE fork identity reused"));
         }
-        // The parent: a head of this NOTE whose document is kept here.
+        // The parent: a head of this NOTE whose document is kept here, the
+        // live one, its original one, or one a switch made its head. A
+        // pending proposal never was its head.
         let parent = if upload.parent == head {
             live_doc(vault, txn, note)?.doc
         } else {
+            if upload.parent != note
+                && !NOTE_HEAD_DOC.contains(&vault.store, txn, &(note, upload.parent))?
+            {
+                return Ok(Err("NOTE fork parent is not a head kept here"));
+            }
             match load_retained_head(vault, txn, note, upload.parent)? {
                 Some(doc) => doc,
                 None => return Ok(Err("NOTE fork parent is not a head kept here")),
@@ -311,15 +318,28 @@ impl Memory<'_> {
         }
         // Its author is the uploader: the fork's authorship entry names a
         // stamp token that resolves here to the authenticated actor.
-        let Ok(records) = super::operations::authorship(&basis) else {
+        // Every authorship entry the parent held at the frontier stands
+        // unchanged, and the fork adds its own entry alone: a later merge
+        // carries the fork's authorship map into the NOTE.
+        let (Ok(inherited), Ok(records)) = (
+            super::operations::authorship(&opening),
+            super::operations::authorship(&basis),
+        ) else {
             return Ok(Err("NOTE fork authorship does not read"));
         };
-        let Some(record) = records
+        if inherited.iter().any(|kept| !records.contains(kept)) {
+            return Ok(Err("NOTE fork changes its parent's authorship"));
+        }
+        let added: Vec<_> = records
             .iter()
-            .find(|record| record.operation == upload.fork)
-        else {
-            return Ok(Err("NOTE fork names no author"));
+            .filter(|record| !inherited.contains(record))
+            .collect();
+        let [record] = added.as_slice() else {
+            return Ok(Err("NOTE fork must add its own authorship entry alone"));
         };
+        if record.operation != upload.fork {
+            return Ok(Err("NOTE fork names no author"));
+        }
         let NoteActor::Actor(token) = record.actor else {
             return Ok(Err("NOTE fork author was erased"));
         };
