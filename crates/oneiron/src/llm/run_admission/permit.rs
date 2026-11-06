@@ -415,6 +415,28 @@ impl RunInner {
         })
     }
 
+    /// Whether the allocation a host-paid call is about to hold on, whose
+    /// host-delivered wallet is `wallet`, may fund this run (FIX 7766): any
+    /// allocation when no owner's agent Grant funds the run; else only one
+    /// the host named that Grant's wallet for. Judged on the exact
+    /// allocation the hold then takes, before anything is reserved: the
+    /// live one here, and the one a persistent allocation ledger's reserve
+    /// writer selected, inside that writer, before it freezes the hold.
+    pub(in crate::llm::run_admission) fn funding_admits(
+        &self,
+        wallet: Option<&crate::federation::WalletRef>,
+    ) -> Result<(), RunDenied> {
+        match &self.funding {
+            Some(funding) if wallet != Some(&funding.wallet_ref) => {
+                Err(RunDenied::AllocationWalletMismatch {
+                    expected: funding.wallet_ref.clone(),
+                    live: wallet.cloned(),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The unmetered lease of a call that is [`free_work`], taken before any
     /// price, policy row or exhaustion check (FIX 9482): it reserves nothing
     /// and is charged nothing, and still starts only for `binding`, once.
@@ -474,14 +496,7 @@ impl RunInner {
                 None => RunDenied::NoAllocation,
             });
         };
-        if let Some(funding) = &self.funding
-            && wallet.as_ref() != Some(&funding.wallet_ref)
-        {
-            return Err(RunDenied::AllocationWalletMismatch {
-                expected: funding.wallet_ref.clone(),
-                live: wallet,
-            });
-        }
+        self.funding_admits(wallet.as_ref())?;
         let units = priced(native_units, native, &unit, rates)?;
         let lease = meter
             .admit_reserve(units)

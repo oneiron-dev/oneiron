@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::agent_def::AgentDefinition;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::consent::AuthenticatedOwner;
 use crate::context_projection::normalize_context_spec;
 use crate::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
@@ -27,7 +28,11 @@ pub(super) use self::depth::stored_depth;
 /// `RunTreeAdapter::new`, `DreamerRunnerStore::new`). The OF-334 verb home is
 /// [`AgentDispatcher::dispatch`]; there is deliberately no `Vault` alias.
 /// Identity of the caller's normalized request, not of the mutable project row.
-fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Result<String> {
+fn spawn_intent_digest(
+    input: &DispatchAgent,
+    spawn: &AgentSpawnContext,
+    funding: Option<EntityId>,
+) -> Result<String> {
     let target = input.target.agent_definition_ref()?.to_hex();
     let bytes = serde_json::to_vec(&(
         target,
@@ -52,9 +57,9 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         ))
     })?;
     let digest = blake3::hash(&bytes);
-    // FIX 7766: a root's funding Grant joins its intent only when it names
-    // one, so every spawn that names none keeps its digest.
-    Ok(match spawn.funding_grant_ref {
+    // FIX 7766: a root's selected funding Grant joins its intent only when
+    // it has one, so every spawn without one keeps its digest.
+    Ok(match funding {
         Some(grant) => blake3::Hasher::new()
             .update(FUNDING_INTENT_DOMAIN)
             .update(digest.as_bytes())
@@ -69,39 +74,12 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
 /// Domain of a funded spawn's intent digest (FIX 7766).
 const FUNDING_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.funding_intent.v1";
 
-/// The owner's agent Grant a dispatch is funded by (FIX 7766, Engine 19:59
-/// W-B): the one an unmetered root names, validated in the dispatch writer
-/// (it grants the launched agent `target`), or the one its parent's input
-/// carries, inherited. A metered root and a child never name one: a metered
-/// root's funding is its spend root's, and a child's is its root's.
-fn dispatch_funding_in_txn(
-    dispatcher: &AgentDispatcher<'_>,
-    txn: &heed::RoTxn<'_>,
-    spawn: &AgentSpawnContext,
-    parent: Option<AttemptId>,
-    target: EntityId,
-) -> Result<Option<super::GrantSpendBinding>> {
-    match (spawn.funding_grant_ref, parent) {
-        (Some(_), Some(_)) => Err(super::widen_record::invalid(
-            "a child is funded by its root's grant and never names one",
-        )),
-        (Some(_), None) if spawn.spend.is_some() => Err(super::widen_record::invalid(
-            "a metered root is funded by its spend root's grant, named when that root opens",
-        )),
-        (Some(grant), None) => {
-            let funding = dispatcher.grant_funding_in_txn(txn, grant)?;
-            if funding.standing.grant.member_ref != target {
-                return Err(super::widen_record::invalid(
-                    "the funding grant cannot fund this launch: it grants another agent",
-                ));
-            }
-            Ok(Some(super::GrantSpendBinding::from_funding(&funding)))
-        }
-        (None, Some(parent)) => Ok(dispatcher
-            .parent_dispatch_input_in_txn(txn, parent)?
-            .and_then(|input| input.funding)),
-        (None, None) => Ok(None),
-    }
+/// The owner's selection of a root launch's funding Grant (FIX 7766): who
+/// selected it, proved in the dispatch writer, and the Grant.
+#[derive(Clone, Copy)]
+struct FundingSelection<'a> {
+    owner: &'a AuthenticatedOwner,
+    grant: EntityId,
 }
 
 pub struct AgentDispatcher<'a> {
@@ -110,6 +88,9 @@ pub struct AgentDispatcher<'a> {
     /// The host's observer of each AGENT_DEF a dispatch resolves (FIX 9180),
     /// when a code run's spawn binds one: told, never asked.
     seats: Option<&'a (dyn Fn(EntityId) + Sync)>,
+    /// The owner's selected funding Grant for a root launch (FIX 7766),
+    /// proved in the dispatch writer: [`Self::funded_by`].
+    funding: Option<FundingSelection<'a>>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -120,6 +101,68 @@ impl<'a> AgentDispatcher<'a> {
             vault,
             runner: DreamerRunnerStore::new(vault),
             seats: None,
+            funding: None,
+        }
+    }
+
+    /// This dispatcher, for ROOT agent launches the owner's agent Grant
+    /// `grant` funds (FIX 7766, Engine 19:59 W-B), as the authenticated
+    /// `owner` selected it at the launch's door. In each launch's own
+    /// writer, before anything is enqueued, the selection proves itself
+    /// (`federation::SelectedOwnerAgentFundingGrant`), must grant
+    /// the launched agent, and freezes its binding on the durable dispatch
+    /// input; a pinned `budget` scope keeps it as its root's. A metered
+    /// root's funding is its spend root's, named when the owner opens it, so
+    /// a launch naming a spend scope refuses; so does a child, which
+    /// inherits its parent's, and a workflow. A retry compares the Grant it
+    /// was first launched with.
+    #[must_use]
+    pub fn funded_by(mut self, owner: &'a AuthenticatedOwner, grant: EntityId) -> Self {
+        self.funding = Some(FundingSelection { owner, grant });
+        self
+    }
+
+    /// The Grant a root launch through this dispatcher was selected under.
+    pub(super) fn selected_funding_grant(&self) -> Option<EntityId> {
+        self.funding.map(|selection| selection.grant)
+    }
+
+    /// The owner's agent Grant a dispatch is funded by (FIX 7766, Engine
+    /// 19:59 W-B), resolved in the dispatch writer `txn`: a root's the owner
+    /// selected ([`Self::funded_by`]), proved here and granting the launched
+    /// agent `target`; else the one its parent's input carries, inherited.
+    /// Neither a child nor a metered root takes a selection.
+    fn dispatch_funding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        spawn: &AgentSpawnContext,
+        parent: Option<AttemptId>,
+        target: EntityId,
+    ) -> Result<Option<super::GrantSpendBinding>> {
+        match (self.funding, parent) {
+            (Some(_), Some(_)) => Err(super::widen_record::invalid(
+                "a child is funded by its root's grant and never names one",
+            )),
+            (Some(_), None) if spawn.spend.is_some() => Err(super::widen_record::invalid(
+                "a metered root is funded by its spend root's grant, named when that root opens",
+            )),
+            (Some(selection), None) => {
+                let proof = self.vault.selected_owner_agent_funding_grant_in_txn(
+                    txn,
+                    selection.owner,
+                    selection.grant,
+                )?;
+                if proof.principal() != target {
+                    return Err(super::widen_record::invalid(
+                        "the selected funding grant cannot fund this launch: it grants another agent",
+                    ));
+                }
+                Ok(Some(super::GrantSpendBinding::from_proof(&proof)))
+            }
+            (None, Some(parent)) => Ok(self
+                .parent_dispatch_input_in_txn(txn, parent)?
+                .and_then(|input| input.funding)),
+            (None, None) => Ok(None),
         }
     }
 
@@ -276,7 +319,8 @@ impl<'a> AgentDispatcher<'a> {
                 "existing dedupe row belongs to a different parent",
             )));
         }
-        if status.input.spawn_intent.as_deref() != Some(spawn_intent_digest(input, spawn)?.as_str())
+        let intent = spawn_intent_digest(input, spawn, self.selected_funding_grant())?;
+        if status.input.spawn_intent.as_deref() != Some(intent.as_str())
             || status.attempt.run_id != input.run_id
         {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -461,14 +505,14 @@ impl<'a> AgentDispatcher<'a> {
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
-        let spawn_intent = spawn_intent_digest(&input, &spawn)?;
+        let spawn_intent = spawn_intent_digest(&input, &spawn, self.selected_funding_grant())?;
         // FIX 11592: the requester the host's door named, or the parent's.
         let requester =
             self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
         let funding =
-            dispatch_funding_in_txn(self, wtxn, &spawn, requested_parent, requested_target)?;
+            self.dispatch_funding_in_txn(wtxn, &spawn, requested_parent, requested_target)?;
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted

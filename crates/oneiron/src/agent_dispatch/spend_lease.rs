@@ -111,27 +111,23 @@ impl AgentDispatcher<'_> {
 
     /// Opens a root as [`Self::open_root_spend_scope_in_txn`] does, or for
     /// `payer` as [`Self::open_root_spend_scope_for_payer_in_txn`] does,
-    /// funded by the owner's agent Grant `funding_grant_ref` (FIX 7766).
-    /// In this writer the Grant must be a live owner's Access agent Grant
-    /// that names a wallet, unexpired and not withdrawn, granted by
-    /// `principal` (the authenticated owner who opens the root), with one
-    /// counted signed mint that names the same agent, owner and wallet; the
-    /// root then freezes that binding. Re-opening the same root with the
-    /// same cap, payer and Grant returns it. Nothing falls back to an
+    /// funded by the owner's agent Grant `funding` proved in this same writer
+    /// (FIX 7766, [`crate::federation::SelectedOwnerAgentFundingGrant`]): the
+    /// root freezes the binding it yields. Re-opening the same root with the
+    /// same cap, payer and binding returns it; nothing falls back to an
     /// unbound root or a default wallet.
     #[expect(
         clippy::too_many_arguments,
-        reason = "a funded root states its launch, cap, showing, payer, Grant, principal and time"
+        reason = "a funded root states its launch, cap, showing, payer, funding proof and time"
     )]
-    pub fn open_root_spend_scope_funded_in_txn(
+    pub(crate) fn open_root_spend_scope_funded_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         launch: SpendScopeId,
         maximum: DeclaredMaximum,
         shown: Option<MaximumShown>,
         payer: Option<SpendPayer>,
-        funding_grant_ref: EntityId,
-        principal: EntityId,
+        funding: &crate::federation::SelectedOwnerAgentFundingGrant,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
         if let Some(payer) = &payer
@@ -139,33 +135,15 @@ impl AgentDispatcher<'_> {
         {
             return Err(invalid("the payer's consent is not bound to the payer").into());
         }
-        let funding = self.grant_funding_in_txn(txn, funding_grant_ref)?;
-        if funding.standing.delegated_by != principal {
-            return Err(invalid(
-                "the funding grant cannot fund this launch: another owner granted it",
-            )
-            .into());
-        }
         self.open_root_in_txn(
             txn,
             launch,
             maximum,
             shown,
             payer,
-            Some(GrantSpendBinding::from_funding(&funding)),
+            Some(GrantSpendBinding::from_proof(funding)),
             now,
         )
-    }
-
-    /// The owner's agent Grant `grant_ref` as a launch's funding names it,
-    /// judged in the caller's writer at the grant clock's time.
-    pub(super) fn grant_funding_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        grant_ref: EntityId,
-    ) -> Result<crate::federation::FundingAgentGrant> {
-        let now = self.vault.instant_in_txn(txn)?.secs();
-        self.vault.funding_agent_grant_in_txn(txn, grant_ref, now)
     }
 
     #[expect(

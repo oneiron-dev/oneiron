@@ -55,12 +55,13 @@ pub struct GrantSpendBinding {
 }
 
 impl GrantSpendBinding {
-    /// The binding a validated funding Grant freezes.
-    pub(crate) fn from_funding(funding: &crate::federation::FundingAgentGrant) -> Self {
+    /// The binding the owner's selected funding Grant, proved in the root's
+    /// writer, freezes.
+    pub(crate) fn from_proof(proof: &crate::federation::SelectedOwnerAgentFundingGrant) -> Self {
         Self {
-            grant_ref: funding.standing.id,
-            mint_act: crate::entity_id::bytes_to_hex_lower(&funding.mint_act),
-            wallet_ref: funding.wallet_ref.clone(),
+            grant_ref: proof.grant_ref(),
+            mint_act: crate::entity_id::bytes_to_hex_lower(proof.mint_act()),
+            wallet_ref: proof.wallet_ref().clone(),
         }
     }
 }
