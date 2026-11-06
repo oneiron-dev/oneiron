@@ -377,6 +377,9 @@ impl ForwardRun {
             doc,
             window_key.as_str(),
         )?;
+        // Already-standing custody must be visible to secret scanning before an
+        // imported entity can mint a duplicate. Retry after edges as before.
+        crate::sync::custody::apply_custody_map(vault, doc, window_key);
         let plan = entity_pass::plan(&remat_ctx(
             vault,
             doc,

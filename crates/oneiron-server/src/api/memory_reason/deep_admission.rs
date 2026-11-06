@@ -23,7 +23,6 @@ pub(crate) struct DeepRetrievalHost {
 
 impl DeepRetrievalHost {
     /// Binds a backend to the budget guard that leases its spend.
-    #[allow(dead_code)] // No in-tree production host yet; the tests are its only caller.
     pub(crate) fn new(backend: Arc<dyn MemoryReasonBackend>, guard: BudgetGuard) -> Self {
         Self { backend, guard }
     }
@@ -109,6 +108,39 @@ pub(crate) fn admit_deep_retrieval(
         .deep_retrieval
         .clone()
         .ok_or_else(ApiError::deep_retrieval_unavailable)?;
+    admit_host(server, host).map(Some)
+}
+
+/// A production reasoning host belongs to this caller and this request's line.
+/// An explicitly attached host remains the host for every existing injected door.
+pub(crate) fn admit_memory_reason(
+    server: &Arc<SyncServer>,
+    auth: &crate::auth::CoreAuth,
+    effort: Effort,
+    token_budget: u64,
+    scope: &oneiron::retrieval_depth::SessionScope,
+    anonymous_at_arrival: bool,
+) -> Result<Option<DeepAdmission>, ApiError> {
+    if !effort.requires_rerank() {
+        return Ok(None);
+    }
+    let host = match server.deep_retrieval.clone() {
+        Some(host) => host,
+        None => Arc::new(super::host::production_host(
+            server,
+            auth,
+            token_budget,
+            scope,
+            anonymous_at_arrival,
+        )?),
+    };
+    admit_host(server, host).map(Some)
+}
+
+fn admit_host(
+    server: &SyncServer,
+    host: Arc<DeepRetrievalHost>,
+) -> Result<DeepAdmission, ApiError> {
     // A guard that refuses admission mints no lease, and the engine's own
     // preflight refuses a leaseless deep read. Reported as the same
     // capability-absent 503 rather than as a budget code, because from the
@@ -123,10 +155,10 @@ pub(crate) fn admit_deep_retrieval(
             .budget_denied_hooks(&error, &host.guard, &line, None, None);
         ApiError::deep_retrieval_unavailable()
     })?;
-    Ok(Some(DeepAdmission {
+    Ok(DeepAdmission {
         host,
         admission,
         finalized: Cell::new(false),
         tokens_used: Cell::new(0),
-    }))
+    })
 }

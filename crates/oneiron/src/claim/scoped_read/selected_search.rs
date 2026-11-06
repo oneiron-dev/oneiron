@@ -117,7 +117,7 @@ impl ScopedRead<'_> {
             None,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            excluded.count()?,
             &results.revisions,
         )
     }

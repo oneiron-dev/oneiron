@@ -208,6 +208,7 @@ impl Vault {
             delegation: None,
             comm: pending.principal.comm,
             trusted_contact: None,
+            seat_claim: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         if let Some(facet) = write_facet {

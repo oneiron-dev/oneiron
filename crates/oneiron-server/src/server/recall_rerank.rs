@@ -365,7 +365,7 @@ fn sent_rows(documents: &[RerankDocument<'_>]) -> Option<Vec<EntityId>> {
 pub(crate) struct CallRuntime(Mutex<Option<tokio::runtime::Runtime>>);
 
 impl CallRuntime {
-    pub(super) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
+    pub(crate) fn handle(&self) -> MemoryResult<tokio::runtime::Handle> {
         let not_started =
             || unavailable("the server could not start a runtime to call the reranker on");
         let mut slot = self.0.lock().map_err(|_| not_started())?;
@@ -406,4 +406,23 @@ fn spent(denied: BudgetDenied) -> MemoryError {
         format!("the recall's budget line refused its rerank call: {denied}"),
         &["Recall at medium, or raise [models.recall] rerank_budget_units."],
     )
+}
+
+impl SyncServer {
+    /// A new rerank caller's batches use the same native payload price and line.
+    pub(crate) fn rerank_line_for_payload(
+        meter: &BudgetGuard,
+        query: &str,
+        documents: &[&str],
+    ) -> Result<Arc<dyn RerankLine>, BudgetDenied> {
+        let price = payload_units(query, documents);
+        let line = meter.read();
+        if price > line.remaining_units {
+            return Err(BudgetDenied::Exhausted);
+        }
+        meter.revise_line(line.limit_units, price.max(meter.reserve_units()));
+        Ok(Arc::new(BatchLine {
+            meter: meter.clone(),
+        }))
+    }
 }

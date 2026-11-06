@@ -392,6 +392,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         restore.verified(&vault)?;
     }
 
+    // Dedicated environments open before ready and the opening wake push, so
+    // the first supervisor schedule already includes their earliest deadlines.
+    let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+        config.shared_env.clone(),
+        &config,
+        config.lease_vault_id,
+        state.background_admission(WriteKind::DeviceSync),
+        Some(state.device_sync_freeze()),
+    )
+    .await;
+    sync_server.install_shared_envs(shared);
+
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -403,7 +415,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // traffic to. A facility it serves without is named first, and the ready
     // signal is the same either way.
     super::vault_gates::warn_degraded(&readiness);
-    host.ready()?;
+    if let Err(error) = host.ready() {
+        sync_server.stop_shared_envs().await;
+        return Err(error);
+    }
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
     #[cfg(target_os = "linux")]
     if let Some(link) = host.vm_link() {
@@ -569,6 +584,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Tagging stays outside this scope: an error in it returns only once
     // tagging has stopped and every call it made has settled (FIX 7304).
     let mut tagging = tagging;
+    let mut shared_live = true;
     let outcome = async {
         // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
         ladder_workers.push(crate::ai_host::coach_heal::spawn(
@@ -764,11 +780,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         ledger_report.abort();
         let _ = ledger_report.await;
         final_ledger_push(&state, &sync_server).await;
+        // Keep every env in the final full-replacement wake snapshot, then stop.
+        sync_server.stop_shared_envs().await;
+        shared_live = false;
         result?;
         telemetry_drained?;
         anyhow::Ok(())
     }
     .await;
+    // An error before the normal stop still stops every env opened above.
+    if shared_live {
+        sync_server.stop_shared_envs().await;
+    }
     // Still running only when an error left the scope before its join.
     if let Some(background) = background {
         background.stop().await;
