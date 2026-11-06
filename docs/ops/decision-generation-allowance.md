@@ -110,8 +110,18 @@ not the host's extraction predicate. The captured context also borrows the origi
 request's complete scope; evidence identifiers do not recreate that scope.
 Preparing native bytes or naming a catalog model does not itself authorize egress.
 These remain scoped request adapters, not new egress policies or
-ordinary-call refusals. Neither provider's capture support enables the excluded
-stronger Arc path. Local vision remains unsupported through the captured interface.
+ordinary-call refusals. None of these providers' capture support enables the excluded
+stronger Arc path.
+
+Configured local vision also supports captured decisions. Its actual fitted images,
+question, state and answer schema pass through the existing role admission once,
+with the original complete scope, purpose and host extraction predicate. That
+admission precedes the generation allowance and the original paid send. A call
+without images still abstains unspent. Each question that does send uses one
+logical generation slot; a denied allowance returns `NotStarted` without a model
+call. The same sourced run, role route, work deadline and credential guard send the
+admitted request. Capture collects the original settlements without settling them
+again. Ordinary requests and private terminal-record behavior remain unchanged.
 
 Settlement inventories also do not establish complete token measurement. Missing usage
 stays unknown; billed reservations and currency charges are not actual token counts.
