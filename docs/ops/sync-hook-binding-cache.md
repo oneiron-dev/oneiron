@@ -4,8 +4,9 @@ Sync entity imports and tombstone replay invalidate the verb-hook binding cache
 after their durable store commit. Tombstone replay carries the original CLAIM
 kind and its actual-change result from the same writer that applies the delete.
 
-Observer B carries that flag through successful item savepoints to the parent
-commit. Forward rematerialization publishes it after its chunk commit. Its
+Observer B carries that flag through successful item savepoints to the parent's
+durable-commit callback. Later post-commit errors cannot skip the invalidation.
+Forward rematerialization publishes it after its chunk commit. Its
 single-item fallback uses the native replay wrapper's own commit. Each committing
 door invalidates once, before post-commit garbage collection can fail.
 

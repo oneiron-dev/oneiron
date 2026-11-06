@@ -407,8 +407,19 @@ fn apply_tombstone_batch(
 
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
-    let batch = vault
-        .with_write_txn_grouped(|parent| state.stage_in_txn(vault, window_key, staged, parent));
+    let batch = vault.with_write_txn_grouped_after_commit(
+        |parent| {
+            let (affected, cancelled) = state.stage_in_txn(vault, window_key, staged, parent)?;
+            let claims_changed = std::mem::take(&mut state.claims_changed);
+            Ok((affected, cancelled, claims_changed))
+        },
+        |(affected, cancelled, claims_changed)| {
+            if claims_changed {
+                vault.verb_hook_bindings_changed();
+            }
+            Ok((affected, cancelled))
+        },
+    );
     if let Err(e) = &batch {
         tracing::error!(
             window = %window_key,
