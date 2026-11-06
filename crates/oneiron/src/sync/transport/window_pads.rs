@@ -29,6 +29,7 @@
 //! are installed there.
 
 mod parts;
+mod send;
 
 pub use parts::{ReceivedWindowPadEnvelope, WindowPadArrival, WindowPadAssembly, WindowPadPayload};
 

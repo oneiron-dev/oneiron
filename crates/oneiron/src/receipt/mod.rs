@@ -171,8 +171,9 @@ pub(crate) fn validate_put(
     txn: &heed::RoTxn<'_>,
     target: (&crate::entity_id::EntityId, u8, &[u8]),
     stamps: (crate::temporal::TimeRange, u64),
+    asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> crate::Result<()> {
-    validate_receipt_archive_put(store, txn, target.0, target.1, target.2)?;
+    validate_receipt_archive_put(store, txn, target.0, target.1, target.2, asset_file)?;
     validate_receipt_record_put(store, txn, target.0, target.1, target.2, stamps.0, stamps.1)
 }
 
@@ -229,8 +230,11 @@ pub(crate) use archive_source::{
     retire_receipt_archives_for_erased_id, stage_receipt_archive_put, validate_receipt_archive_put,
 };
 
+pub(crate) use archive_source::receipt_archive_mirror_row_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_id};
+pub(crate) use archive_source::{
+    receipt_archive_holder, receipt_archive_matches_id, receipt_archive_mirror_row_from_staged,
+};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.

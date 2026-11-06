@@ -12,10 +12,11 @@ updates cannot pass the unfinished head. The reconnect-only queue is no longer
 its normal delivery path.
 
 The BATCH decoder accepts a complete, valid window-pad header with an initial
-payload fragment. This does not admit an update. The home assembles all parts
-on the same connection and checks the complete envelope before it runs the
+payload fragment. This does not admit an update. The home assembles the payload,
+references and required capsule on the same connection before it runs the
 existing window, grant, Write credential, pad, copy-admission and persistence
-checks. A partial envelope produces no import or successful receipt.
+checks. An incomplete required prefix produces no import or successful receipt.
+An optional derived-copy tail never delays that required ready point.
 
 Before each draw, the sender checks the current window withholding verdict
 and home grant again. Batch frames keep their receipt registration, but do not
@@ -33,6 +34,31 @@ connection ends mid-transfer. Opened mode reserves one real queue sequence
 when the live transfer starts; partial ticks do not reserve more. Existing
 at-least-once exit recovery can record a retry copy after a disconnect. No
 exactly-once queue, runtime latency or whole-transfer memory bound is claimed.
+
+## Optional default CLAIM copies
+
+For a non-federated live node batch, the client prepares copies from the actual
+carried CLAIM occurrences and the envelope's exact payload. It uses only a
+settled default cloud-route vector whose complete source matches that occurrence.
+The signed, recipient-sealed bytes remain separate from the raw window's authority.
+
+Non-serializable source tokens stay with the selected members, including a
+buffered multipart head. Before the batch write, the client rechecks the complete
+current vector, every original release row, the actual home peer and its current
+keys. A miss abandons only the optional copies. It does not disconnect, requeue
+or delay the required window bytes.
+
+The original copy-free frames determine raw selection, batch order, multipart
+mode and queue sequencing. Copies use only byte and member room left after that
+selection, under the existing limits. If there is no room, or the final source
+check fails, the sender omits the optional suffix without changing its header,
+envelope id or any required part offset. An incomplete optional tail cannot
+produce a copy; the receiver still imports and receipts the required prefix
+exactly once. Native tokens drop with the selected batch or its buffered head,
+never become a durable queued grant, and do not survive the connection.
+
+This producer covers live node batches. It does not add copies to handshake,
+receipt-resend, bulk, promotion or server-generated sends.
 
 The standalone window encoder, protocol tags, header fields, receipt bindings,
 limits and retry settings are unchanged. There is no migration or old-format

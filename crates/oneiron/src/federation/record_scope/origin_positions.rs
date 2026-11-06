@@ -31,6 +31,42 @@ pub(crate) struct OriginRow {
     pub(crate) file_reference: Option<Vec<u8>>,
 }
 
+impl OriginRow {
+    /// The exact logical receipt row can be inline while its original file
+    /// reference still describes the received representation. Reconstruct
+    /// that ORIGINAL carrier and check every measured body fact, not only id.
+    pub(crate) fn binds_inline_receipt_carrier(&self, carrier: &[u8]) -> bool {
+        if self.kind != ENTITY_TYPE_ASSET
+            || EntityMetadataHeader::parse(carrier)
+                .is_none_or(|header| header.entity_type != self.kind)
+            || *blake3::hash(carrier).as_bytes() != self.logical_digest
+        {
+            return false;
+        }
+        let Some(body) = carrier.get(ENTITY_METADATA_HEADER_LEN..) else {
+            return false;
+        };
+        if !crate::receipt::receipt_archive_matches_id(body, &self.id) {
+            return false;
+        }
+        let Some(encoded) = self.file_reference.as_deref() else {
+            return true;
+        };
+        let Some(reference) = AssetBodyRef::decode(&self.id.to_hex(), encoded) else {
+            return false;
+        };
+        if reference.facts() != crate::store::AssetBodyFacts::of(body) {
+            return false;
+        }
+        let Ok(manifest) = reference.manifest().encode() else {
+            return false;
+        };
+        let mut original = carrier[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        original.extend_from_slice(&manifest);
+        reference.binds(&original)
+    }
+}
+
 /// A source's actual stored BASE position, not a position inferred from a
 /// replicated FacetOf edge. Sources are the complete sorted, distinct native
 /// DerivedFrom set of an ASSET_TEXT, and empty for an ASSET.
@@ -82,10 +118,18 @@ pub(crate) fn capture_for_carrier(
 ) -> Result<Option<OriginPosition>> {
     let _bodies = vault.pin_all_result_bodies();
     let txn = vault.store.env.read_txn()?;
-    if vault.store.port_entity_raw(&txn, id)?.as_deref() != Some(carrier) {
+    let raw = vault.store.port_entity_raw(&txn, id)?;
+    if raw.as_deref() == Some(carrier) {
+        return capture_in_txn(vault, &txn, id);
+    }
+    let Some(mut position) = capture_in_txn(vault, &txn, id)? else {
+        return Ok(None);
+    };
+    if !position.row.binds_inline_receipt_carrier(carrier) {
         return Ok(None);
     }
-    capture_in_txn(vault, &txn, id)
+    position.row.file_reference = None;
+    Ok(Some(position))
 }
 
 /// The transaction-composable source capture. The caller pins result bodies
@@ -133,10 +177,58 @@ pub(crate) fn matches_in_txn(
     let Some(row) = row_in_txn(vault, txn, &position.row.id)? else {
         return Ok(false);
     };
-    if row != position.row {
+    if !rows_match_in_txn(vault, txn, &row, &position.row)? {
         return Ok(false);
     }
-    Ok(sources_in_txn(vault, txn, &row)?.as_ref() == Some(&position.sources))
+    let Some(sources) = sources_in_txn(vault, txn, &row)? else {
+        return Ok(false);
+    };
+    if sources.len() != position.sources.len() {
+        return Ok(false);
+    }
+    for (actual, expected) in sources.iter().zip(&position.sources) {
+        if !rows_match_in_txn(vault, txn, actual, expected)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// As the original stale scrub, require the current immutable stamp as well
+/// as every native fact. Only a verified receipt representation may differ.
+pub(crate) fn stored_position_matches_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    position: &OriginPosition,
+) -> Result<bool> {
+    let Some(actual) = capture_in_txn(vault, txn, &position.row.id)? else {
+        return Ok(false);
+    };
+    Ok(actual.scope == position.scope && matches_in_txn(vault, txn, position)?)
+}
+
+fn rows_match_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actual: &OriginRow,
+    expected: &OriginRow,
+) -> Result<bool> {
+    if actual == expected {
+        return Ok(true);
+    }
+    if actual.id != expected.id
+        || actual.kind != expected.kind
+        || actual.facet != expected.facet
+        || actual.logical_digest != expected.logical_digest
+        || actual.birth_digest != expected.birth_digest
+    {
+        return Ok(false);
+    }
+    let Some(raw) = vault.store.port_entity_raw(txn, &actual.id)? else {
+        return Ok(false);
+    };
+    let raw = crate::receipt::receipt_archive_mirror_row_in_txn(vault, txn, &actual.id, raw)?;
+    Ok(actual.binds_inline_receipt_carrier(&raw) && expected.binds_inline_receipt_carrier(&raw))
 }
 
 fn sources_in_txn(

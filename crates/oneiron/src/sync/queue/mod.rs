@@ -96,6 +96,7 @@ pub(crate) use self::embed_page::EmbedQueueRow;
 pub(crate) use self::home_claim_copy::{
     capture_home_claim_copy, home_claim_copy_skeleton, restore_home_claim_copy,
 };
+pub(in crate::sync) use self::seq::push_update_in_txn;
 
 pub(in crate::sync) use self::scrub::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 pub(crate) use self::scrub::{
