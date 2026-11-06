@@ -204,9 +204,11 @@ fn start_arm_check(
     ProgramCheck::start(feedback.service, admission, program, source)
 }
 
-/// The arm's store, holding each body frozen clean for the step.
+/// The arm's store, holding each body frozen clean for the step: its run's,
+/// and each of another run its read context names (FIX 6352).
 fn seed_store(prepared: &PreparedShadowStep, store: &ShadowBodyStore) -> Result<()> {
-    for frozen in &prepared.frozen {
+    let foreign = prepared.foreign.iter().map(|held| &held.body);
+    for frozen in prepared.frozen.iter().chain(foreign) {
         if let Some(bytes) = &frozen.bytes {
             store.import(frozen.output.output_ref(), bytes)?;
         }
