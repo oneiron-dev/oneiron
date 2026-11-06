@@ -91,12 +91,51 @@ impl MaskedFile {
         places
     }
 
+    /// [`Self::places`] with the caller's reader checked while collecting spans.
+    fn places_with_reader(
+        &self,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<KeyPlaces> {
+        let spans = |keys: &[KeySpan]| -> Result<Vec<(u64, u64)>> {
+            keys.iter()
+                .map(|key| {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
+                    Ok((key.start, key.end))
+                })
+                .collect()
+        };
+        let mut places = Vec::with_capacity(self.members.len() + 1);
+        if !self.keys.is_empty() {
+            places.push((Vec::new(), spans(&self.keys)?));
+        }
+        for member in &self.members {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)?;
+            places.push((member.path.clone(), spans(&member.keys)?));
+        }
+        Ok(places)
+    }
+
     /// Each place's handle texts, in [`Self::places`]' order (FIX 7944): a
     /// key's custody record's handle, `[secret sc12]`.
-    fn place_handles(&self, store: &Store, txn: &RoTxn<'_>) -> Result<PlaceHandles> {
+    fn place_handles(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<PlaceHandles> {
         let texts = |keys: &[KeySpan]| -> Result<Vec<Option<String>>> {
             keys.iter()
                 .map(|key| {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
                     Ok(store
                         .port_short_id_reference(txn, &key.custody)?
                         .map(|(handle, _)| super::known_value_index::handle_text(&handle)))
@@ -108,6 +147,10 @@ impl MaskedFile {
             handles.push(texts(&self.keys)?);
         }
         for member in &self.members {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)?;
             handles.push(texts(&member.keys)?);
         }
         Ok(handles)
@@ -290,8 +333,9 @@ pub(crate) fn sighted_bytes_in_txn_with_reader(
         }
         return Ok(copy);
     };
-    let handles = file.place_handles(store, txn)?;
-    let copy = reader.served_masked_copy(&bytes, &file.places(), &handles, digest)?;
+    let handles = file.place_handles(store, txn, reader)?;
+    let copy =
+        reader.served_masked_copy(&bytes, &file.places_with_reader(reader)?, &handles, digest)?;
     if let Some(reason) = reader.write_tree_hit(&copy, None) {
         return Err(masked_copy_withheld(reason));
     }
