@@ -458,6 +458,8 @@ both bindings and their export-census tests in one change.
 - `vault.research.archive.repropose`
 - `vault.research.archive.coverage`
 - `vault.evals.inventory`
+- `vault.evals.repair.prepare`
+- `vault.evals.repair.record`
 - `vault.evals.measurements.request`
 - `vault.evals.cohorts.setup`
 - `vault.evals.author_now`

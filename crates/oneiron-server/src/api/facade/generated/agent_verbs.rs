@@ -502,6 +502,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.research.archive.repropose", post(facade_route))
         .route("/vault.research.archive.coverage", post(facade_route))
         .route("/vault.evals.inventory", post(facade_route))
+        .route("/vault.evals.repair.prepare", post(facade_route))
+        .route("/vault.evals.repair.record", post(facade_route))
         .route("/vault.evals.measurements.request", post(facade_route))
         .route("/vault.evals.cohorts.setup", post(facade_route))
         .route("/vault.evals.author_now", post(facade_route))

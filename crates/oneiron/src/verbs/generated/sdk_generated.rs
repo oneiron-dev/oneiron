@@ -2412,6 +2412,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.evals.repair.prepare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::EvalRepairTaskSource,
+                >(),
+            ),
+            (
+                "vault.evals.repair.record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::EvalRepairCaseRequest,
+                >(),
+            ),
+            (
                 "vault.evals.measurements.request",
                 crate::code_run::vault_read::request_schema::<
                     crate::skill_optimize::EvalMeasurementRequest,
@@ -7587,6 +7599,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.archive.repropose",
     "vault.research.archive.coverage",
     "vault.evals.inventory",
+    "vault.evals.repair.prepare",
+    "vault.evals.repair.record",
     "vault.evals.measurements.request",
     "vault.evals.cohorts.setup",
     "vault.evals.author_now",
@@ -9129,6 +9143,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.evals.inventory" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringInventory,
+        >(),
+        "vault.evals.repair.prepare" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalRepairCasePreparation,
+        >(),
+        "vault.evals.repair.record" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalRepairCaseReference,
         >(),
         "vault.evals.measurements.request" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalMeasurementRef,
@@ -14042,6 +14062,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.evals.inventory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.repair.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.repair.record" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21187,6 +21221,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.evals.inventory" => {
             let _input: crate::task_verb::sdk::EvalInventoryWire = decode(value.clone())?;
         }
+        "vault.evals.repair.prepare" => {
+            let _input: crate::skill_optimize::EvalRepairTaskSource = decode(value.clone())?;
+        }
+        "vault.evals.repair.record" => {
+            let _input: crate::skill_optimize::EvalRepairCaseRequest = decode(value.clone())?;
+        }
         "vault.evals.measurements.request" => {
             let _input: crate::skill_optimize::EvalMeasurementRequest = decode(value.clone())?;
         }
@@ -25004,6 +25044,8 @@ pub fn invoke(
             encode(vault_research_archive_coverage(memory, decode(value)?)?)
         }
         "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
+        "vault.evals.repair.prepare" => encode(vault_evals_repair_prepare(memory, decode(value)?)?),
+        "vault.evals.repair.record" => encode(vault_evals_repair_record(memory, decode(value)?)?),
         "vault.evals.measurements.request" => {
             encode(vault_evals_measurements_request(memory, decode(value)?)?)
         }
@@ -30498,6 +30540,22 @@ pub fn vault_evals_inventory(
         &memory.embedded_owner("vault.evals.inventory")?,
         input,
     )
+}
+pub fn vault_evals_repair_prepare(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalRepairTaskSource,
+) -> MemoryResult<crate::skill_optimize::EvalRepairCasePreparation> {
+    memory
+        .read_eval_repair_task(&input)
+        .map(crate::skill_optimize::EvalRepairCasePreparation::from)
+}
+pub fn vault_evals_repair_record(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalRepairCaseRequest,
+) -> MemoryResult<crate::skill_optimize::EvalRepairCaseReference> {
+    memory
+        .record_eval_repair_case(&memory.embedded_owner("vault.evals.repair.record")?, &input)
+        .map(crate::skill_optimize::EvalRepairCaseReference::from)
 }
 pub fn vault_evals_measurements_request(
     memory: &Memory<'_>,

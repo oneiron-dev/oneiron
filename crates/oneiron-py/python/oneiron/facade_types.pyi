@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4585 declarations.
-Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1265 facade rows, 4588 declarations.
+Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -8887,6 +8887,24 @@ class SeatInventory(TypedDict):
     cohorts: list[CohortSummary]
     uncut: list[UncutFamily]
 EvalAuthoringInventory = TypedDict("EvalAuthoringInventory", {"inventory_digest": str, "built_at": int, "from": int, "groups": list[EvalSourceGroup], "candidates": list[EvalCandidate], "seats": list[SeatInventory]})
+class EvalRepairTaskSource(TypedDict):
+    claim_ref: str
+    source_hash: str
+    outcome_ordinal: int
+    task_pointer: str
+    seat: EvalSeat
+class EvalRepairCaseRecipe(TypedDict):
+    source: EvalRepairTaskSource
+    task_hash: list[int]
+class EvalRepairCasePreparation(TypedDict):
+    recipe: NotRequired[EvalRepairCaseRecipe | None]
+    receipt: ScopedReadReceipt
+class EvalRepairCaseRequest(TypedDict):
+    recipe: EvalRepairCaseRecipe
+    purpose: FamilyPurpose
+class EvalRepairCaseReference(TypedDict):
+    case_ref: NotRequired[EntityId | None]
+    receipt: ScopedReadReceipt
 class EvalArmPin(TypedDict):
     model: str
     revision: str
@@ -9002,15 +9020,6 @@ class EvalLabel(TypedDict):
     weight: float
     at: int
     source_rows: NotRequired[list[EntityId] | None]
-class EvalRepairTaskSource(TypedDict):
-    claim_ref: str
-    source_hash: str
-    outcome_ordinal: int
-    task_pointer: str
-    seat: EvalSeat
-class EvalRepairCaseRecipe(TypedDict):
-    source: EvalRepairTaskSource
-    task_hash: list[int]
 class EvalCase(TypedDict):
     id: EntityId
     family: EntityId

@@ -89,7 +89,10 @@ pub use measurement::{
     eval_seat_canary,
 };
 pub use released_task::{EvalReleasedTask, EvalTaskRead};
-pub use repair_case::{EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseRequest};
+pub use repair_case::{
+    EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseReference,
+    EvalRepairCaseRequest,
+};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,

@@ -4452,6 +4452,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_evals_repair_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.evals.repair.prepare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.evals.repair.prepare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_evals_repair_record(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.evals.repair.record")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.evals.repair.record", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_evals_measurements_request(
         &self,
         py: Python<'_>,

@@ -39,6 +39,44 @@ pub struct EvalRepairCaseRead {
     pub receipt: ScopedReadReceipt,
 }
 
+/// Metadata-only preparation from the caller's admitted task source.
+/// The task input and expected response stay in the scoped source.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCasePreparation {
+    pub recipe: Option<EvalRepairCaseRecipe>,
+    pub receipt: ScopedReadReceipt,
+}
+
+impl From<super::EvalRepairTaskRead> for EvalRepairCasePreparation {
+    fn from(read: super::EvalRepairTaskRead) -> Self {
+        Self {
+            recipe: read.task.map(|task| EvalRepairCaseRecipe {
+                source: task.source,
+                task_hash: task.task_hash,
+            }),
+            receipt: read.receipt,
+        }
+    }
+}
+
+/// The recorded or reused case's ref, without its sealed ledger contents.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCaseReference {
+    pub case_ref: Option<EntityId>,
+    pub receipt: ScopedReadReceipt,
+}
+
+impl From<EvalRepairCaseRead> for EvalRepairCaseReference {
+    fn from(read: EvalRepairCaseRead) -> Self {
+        Self {
+            case_ref: read.case.map(|case| case.id),
+            receipt: read.receipt,
+        }
+    }
+}
+
 /// Rebuild a stored recipe only through the caller's already prepared lane.
 /// The caller checks the case/family on `txn` and holds result bodies before it.
 pub(super) fn read_repair_task_in_txn(
