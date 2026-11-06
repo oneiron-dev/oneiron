@@ -6,6 +6,7 @@ use super::Projected;
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::comm::ScopedTouchRecord;
+use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::rows::{RowDb, RowPart};
 
 impl Projected {
@@ -17,16 +18,26 @@ impl Projected {
                     let RowPart::Exact { at, value } = part else {
                         continue;
                     };
-                    if at.db != RowDb::Entities || !at.path.is_empty() {
+                    if !at.path.is_empty() {
                         continue;
                     }
+                    let id_bytes = match at.db {
+                        RowDb::Entities => at.key.as_slice(),
+                        RowDb::SyncState
+                            if at.in_table(&crate::side_table::SYNC_RESIDENCE_ITEM_BLOB)
+                                && rows.subtype == Subtype::EntityTree =>
+                        {
+                            &rows.owner32[..16]
+                        }
+                        _ => continue,
+                    };
                     let Some(header) = EntityMetadataHeader::parse(value) else {
                         continue;
                     };
                     if header.entity_type != crate::registry::ENTITY_TYPE_COMM_RECORD {
                         continue;
                     }
-                    let Ok(bytes) = <[u8; 16]>::try_from(at.key.as_slice()) else {
+                    let Ok(bytes) = <[u8; 16]>::try_from(id_bytes) else {
                         continue;
                     };
                     let Ok(id) = EntityId::from_bytes(bytes) else {
