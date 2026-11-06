@@ -90,6 +90,11 @@ pub const COACH_TRAINING_RUN_FACET: &str = "coach.training_run";
 /// The nightly offer pass: each pending offer reaches every owner's inbox
 /// once, and each offer whose check date came queues its promise check.
 pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
+/// The nightly drafter retrain (FIX 12569, I5-DRAFTER = A): the vault's own
+/// draft model retrained on its own traffic. The host runs
+/// [`Vault::run_coach_drafter_retrain`], which pins the policy revision and
+/// the night's cutoff and records how the night ended.
+pub const COACH_DRAFTER_RETRAIN_FACET: &str = "coach.drafter_retrain";
 /// Autoresearch (OF-351): one selection round for each bound campaign whose
 /// measured evidence moved, under the campaign's lease. It runs on the host
 /// (FIX 1331), whose judge tells each round whether the campaign's goal is
@@ -176,7 +181,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 19] = [
+const HOST_FACETS: [&str; 20] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -198,6 +203,8 @@ const HOST_FACETS: [&str; 19] = [
     // under the fixed dedupe key the owner's run-now door shares.
     crate::feedback::COACH_FEEDBACK_SWEEP_FACET,
     COACH_FEEDBACK_DELIVERY_FACET,
+    // FIX 12569: one pending retrain per vault, under the fixed facet key.
+    COACH_DRAFTER_RETRAIN_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 11] = [

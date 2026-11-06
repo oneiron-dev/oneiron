@@ -39,6 +39,8 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.drafters.list_as`
+//! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
@@ -502,6 +504,10 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultDraftersList,
+    VaultDraftersStatus,
+    VaultDraftersPolicySet,
+    VaultDraftersRevert,
     VaultResearchEvaluateSplit,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -1239,6 +1245,10 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.drafters.list" => Self::VaultDraftersList,
+            "vault.drafters.status" => Self::VaultDraftersStatus,
+            "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
+            "vault.drafters.revert" => Self::VaultDraftersRevert,
             "vault.research.evaluate_split" => Self::VaultResearchEvaluateSplit,
             "vault.authority.handoff_alarms" => Self::VaultAuthorityHandoffAlarms,
             "vault.authority.handoff_alarms.acknowledge" => {

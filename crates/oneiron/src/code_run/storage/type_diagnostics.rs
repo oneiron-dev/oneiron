@@ -298,10 +298,24 @@ impl Vault {
     /// result of it is. A row that cannot be read keeps none back; no read
     /// that answers today is refused for it.
     pub(crate) fn type_diagnostics_bodies(&self, run: EntityId) -> Vec<CodeRunRawOutput> {
+        self.type_diagnostics_stored(run)
+            .into_iter()
+            .map(|(_, _, body)| body)
+            .collect()
+    }
+
+    /// [`Self::type_diagnostics_bodies`], each body beside the row that
+    /// keeps it and that row's key, in step order (FIX 10614): a read of one
+    /// of them knows whose step feedback it read. A row that cannot be read
+    /// keeps none back, as there.
+    pub(crate) fn type_diagnostics_stored(
+        &self,
+        run: EntityId,
+    ) -> Vec<(StepKey, StoredStepFeedback, CodeRunRawOutput)> {
         self.type_diagnostics_rows(run)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(_, row)| row.body())
+            .filter_map(|(key, row)| row.body().map(|body| (key, row, body)))
             .collect()
     }
 
