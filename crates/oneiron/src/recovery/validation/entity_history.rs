@@ -30,6 +30,7 @@ enum Stage {
     HistoryHeader,
     Texts,
     Head,
+    HeadSkillState,
     Versions,
     VersionSummary,
     VersionParents,
@@ -145,28 +146,36 @@ impl HistoryValidation {
                         .len()
                         .checked_sub(1)
                         .ok_or(invalid("entity document history has no head"))?;
-                    let text = self.texts[head].as_bytes();
-                    let expected = row.text.as_bytes();
-                    if text.len() != expected.len() {
-                        return Err(invalid("entity document head version"));
-                    }
-                    let end = self
-                        .head_byte
-                        .saturating_add(blake3::CHUNK_LEN)
-                        .min(text.len());
-                    if text[self.head_byte..end] != expected[self.head_byte..end] {
-                        return Err(invalid("entity document head version"));
-                    }
-                    self.head_byte = end;
-                    if end != text.len() {
+                    if !advance_head_bytes(
+                        self.texts[head].as_bytes(),
+                        row.text.as_bytes(),
+                        &mut self.head_byte,
+                    )? {
                         return Ok(false);
                     }
                     self.head_byte = 0;
-                    if history.versions[head].metadata != row.metadata
-                        || history.versions[head].native_skill_state != row.native_skill_state
-                    {
+                    if history.versions[head].metadata != row.metadata {
                         return Err(invalid("entity document head version"));
                     }
+                    self.stage = Stage::HeadSkillState;
+                    return Ok(false);
+                }
+                Stage::HeadSkillState => {
+                    let history = history();
+                    let head = self.texts.len() - 1;
+                    match (
+                        history.versions[head].native_skill_state.as_deref(),
+                        row.native_skill_state.as_deref(),
+                    ) {
+                        (Some(actual), Some(expected)) => {
+                            if !advance_head_bytes(actual, expected, &mut self.head_byte)? {
+                                return Ok(false);
+                            }
+                        }
+                        (None, None) => {}
+                        _ => return Err(invalid("entity document head version")),
+                    }
+                    self.head_byte = 0;
                     self.reached = vec![false; self.texts.len()];
                     self.reached[head] = true;
 
@@ -414,6 +423,18 @@ impl HistoryValidation {
         self.stage = stage;
         self.next = 0;
     }
+}
+
+fn advance_head_bytes(actual: &[u8], expected: &[u8], next: &mut usize) -> Result<bool> {
+    if actual.len() != expected.len() {
+        return Err(invalid("entity document head version"));
+    }
+    let end = next.saturating_add(blake3::CHUNK_LEN).min(actual.len());
+    if actual[*next..end] != expected[*next..end] {
+        return Err(invalid("entity document head version"));
+    }
+    *next = end;
+    Ok(end == actual.len())
 }
 
 /// A single sorted resume key; values stay in the frozen source map.
