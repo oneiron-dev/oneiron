@@ -263,8 +263,9 @@ impl Memory<'_> {
 
 /// Whether `lane` may read, in `txn`, every record `claim` names beside its
 /// edge: its actor, and the document its `source_revision_ref` cites, at that
-/// revision. A cited revision no record retains proves no read and fails, as
-/// an unreadable one does, so the claim is withheld whole.
+/// revision; an unreadable one withholds the claim whole. A cited revision no
+/// record retains (an opaque legacy value, such as a Dreamer evidence hash)
+/// names no record, so it reveals none and is shown as stored.
 fn cited_refs_readable_in(
     vault: &crate::Vault,
     lane: &ScopedRead<'_>,
@@ -283,7 +284,7 @@ fn cited_refs_readable_in(
     };
     let revision = RevisionRef(revision);
     let Some(document) = vault.revision_record_in(txn, revision)? else {
-        return Ok(false);
+        return Ok(true);
     };
     Ok(lane
         .get_entities_parts_with_mode_in_txn(txn, &[document], ReadMode::Pinned(revision))?
