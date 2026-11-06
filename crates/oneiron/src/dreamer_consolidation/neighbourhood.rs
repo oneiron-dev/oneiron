@@ -160,6 +160,8 @@ struct KnownClaim {
     /// The relationships the head holds within, when it names a set (FIX
     /// 7575).
     rel: crate::claim::RelationshipScope,
+    /// The stored question key as JSON, when the claim carries one.
+    topic_key: Option<String>,
 }
 
 impl Neighbourhood {
@@ -688,6 +690,13 @@ fn listable(
         predicate: prior.body.predicate.clone(),
         value: rmpv_to_json(&prior.body.value).to_string(),
         rel: prior.body.rel.clone(),
+        topic_key: prior.body.scope.as_ref().and_then(|scope| {
+            scope
+                .as_map()?
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("topic_key"))
+                .map(|(_, topic)| rmpv_to_json(topic).to_string())
+        }),
     })
 }
 
