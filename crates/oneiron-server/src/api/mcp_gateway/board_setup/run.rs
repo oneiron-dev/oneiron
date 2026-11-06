@@ -263,6 +263,7 @@ pub(super) fn run_board_sections(
     };
     let resident = std::collections::BTreeSet::new();
     rows.attach_people(
+        &server.vault,
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &children,
     );
