@@ -185,6 +185,14 @@ impl Memory<'_> {
         Ok(self)
     }
 
+    /// Rechecks a bound host action in the caller's writing snapshot.
+    pub(crate) fn recheck_host_action_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if let Some(action) = &self.host_action {
+            action.guard().holds_in(self.vault, txn)?;
+        }
+        Ok(())
+    }
+
     /// The bound actor's read key by identity alone.
     fn identity_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self
