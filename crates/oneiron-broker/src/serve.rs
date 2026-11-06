@@ -22,7 +22,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
-use crate::frame::{read_call, skip_call, write_reply};
+use crate::frame::{ReadFrame, read_frame, skip_call, write_reply};
 use crate::send::{SendPolicy, Sender, answer};
 use crate::{Failure, Outcome, PROTOCOL_VERSION, ReplyHeader};
 
@@ -266,11 +266,20 @@ async fn daemon_closed(reading: &mut tokio::net::unix::ReadHalf<'_>) {
 }
 
 /// Serves one call within its `deadline`. A frame that cannot be read gets
-/// no reply: the daemon counts the call as lost.
+/// no reply: the daemon counts the call as lost. A git exchange runs on its
+/// own terms from its header on: no call deadline, an idle bound and the
+/// daemon's hang-up (`git_http`).
 async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline) {
-    let Ok(Ok(call)) = tokio::time::timeout_at(deadline.frame_by(), read_call(&mut stream)).await
+    let Ok(Ok(frame)) = tokio::time::timeout_at(deadline.frame_by(), read_frame(&mut stream)).await
     else {
         return;
+    };
+    let call = match frame {
+        ReadFrame::Model(call) => call,
+        ReadFrame::Git(header) => {
+            crate::git_http::serve_git(stream, header, sender).await;
+            return;
+        }
     };
     // A daemon that hung up while the call waited has stopped waiting for
     // it, so it is never sent (FIX 8559).
