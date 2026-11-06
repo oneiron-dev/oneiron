@@ -2,6 +2,17 @@
 
 use super::*;
 
+pub(super) fn observe_sources<T, S: IntoIterator<Item = EntityId>>(
+    sources: &mut Option<Vec<EntityId>>,
+    (value, rows): (T, Option<S>),
+) -> T {
+    *sources = crate::attempt_queue::source_rows::union_source_rows([
+        sources.take(),
+        rows.map(|rows| rows.into_iter().collect()),
+    ]);
+    value
+}
+
 /// The same count beside every native verdict body consulted, including
 /// nonmatching and displaced rulings. Sources never alter the cap comparison.
 pub(super) fn accepted_in_cycle_sourced_in_txn(

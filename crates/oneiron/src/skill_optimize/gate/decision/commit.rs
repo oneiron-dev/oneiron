@@ -2,6 +2,7 @@
 //! Entry function: `decide_in_txn`.
 //! The gate root owns the verdict and score vocabulary imported through `super`.
 
+use super::sources::observe_sources;
 use super::*;
 
 /// The decision itself, over the committing snapshot. `primary_unknown`: a
@@ -234,17 +235,6 @@ pub(super) fn decide_sourced_in_txn(
         return Ok((SkillEditDisposition::DeferredCycleCap, sources));
     }
     Ok((SkillEditDisposition::Accepted, sources))
-}
-
-fn observe_sources<T, S: IntoIterator<Item = EntityId>>(
-    sources: &mut Option<Vec<EntityId>>,
-    (value, rows): (T, Option<S>),
-) -> T {
-    *sources = crate::attempt_queue::source_rows::union_source_rows([
-        sources.take(),
-        rows.map(|rows| rows.into_iter().collect()),
-    ]);
-    value
 }
 
 /// Moves an ANSWERED proposal out of the open question set.
