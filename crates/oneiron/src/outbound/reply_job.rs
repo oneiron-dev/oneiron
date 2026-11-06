@@ -17,6 +17,9 @@
 //! event without its payload and takes the job's result with it.
 
 mod repair;
+mod witness_rows;
+
+pub(crate) use witness_rows::connector_witness_rows_in_txn;
 
 use std::collections::BTreeSet;
 
@@ -38,6 +41,9 @@ use crate::{EntityId, TimeRange, Vault, WriteActor};
 
 /// The attempt kind a connector reply job is queued under.
 pub const CONNECTOR_REPLY_JOB_KIND: &str = "connector.reply";
+/// The reply ref an agent's one reply to one event is kept and witnessed
+/// under: every run of the job names the same logical send.
+pub const CONNECTOR_REPLY_REF: &str = "reply";
 /// Every job result ref starts with this: `connector-reply-result:<artifact hex>`.
 pub const CONNECTOR_REPLY_RESULT_PREFIX: &str = "connector-reply-result:";
 /// Domain of a job's dedupe and run key: one job per (agent, event).

@@ -295,6 +295,34 @@ pub struct ConnectorWitness {
     pub read_grant_repair: Option<MemoryError>,
 }
 
+/// The MESSAGE and TURN ids `agent`'s witness of the exchange `origin`
+/// brought lands at (FIX 10897): the inbound side, then the reply kept as
+/// `reply_ref`, each as (message, turn). They derive from the exchange
+/// alone, as the witness derives them, so they name its rows whether or
+/// not a side landed.
+///
+/// # Errors
+/// An id does not derive.
+pub(crate) fn connector_witness_row_ids(
+    origin: &SurfaceConnectorPayload,
+    agent: EntityId,
+    reply_ref: &str,
+) -> MemoryResult<[(EntityId, EntityId); 2]> {
+    let conversation_hex = connector_conversation_id(origin)?.to_hex();
+    let inbound = inbound_side(origin);
+    let reply = reply_side(origin, agent, reply_ref);
+    Ok([
+        (
+            derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, &inbound)?,
+            derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, &inbound)?,
+        ),
+        (
+            derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, &reply)?,
+            derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, &reply)?,
+        ),
+    ])
+}
+
 /// The conversation an event belongs to: one per channel, receiving
 /// identity, provider thread and audience, so a LINE group's members share
 /// one and a direct message has its own.
