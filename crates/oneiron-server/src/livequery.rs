@@ -328,6 +328,30 @@ impl RpcReply {
     }
 }
 
+impl RpcReply {
+    pub(crate) fn queued_for_machine(self, conn: u32, own_machine_only: bool) -> Vec<Vec<u8>> {
+        if !own_machine_only {
+            return self.queued(conn);
+        }
+        let Some(rows) = self.rows else {
+            return self.frames;
+        };
+        self.frames
+            .into_iter()
+            .map(|frame| {
+                // Request incarnations are otherwise zero. Subscriptions use TAG_SUB.
+                routing::wrap(
+                    conn,
+                    self.request_id,
+                    routing::OWN_MACHINE_RPC_INCARNATION,
+                    rows.as_deref(),
+                    frame,
+                )
+            })
+            .collect()
+    }
+}
+
 /// Both identity claims come from the credential, exactly as on the HTTP
 /// facade. Its reads go where the connection's rows go: its locality, with
 /// the machine it proved (FIX 4937).
@@ -503,9 +527,9 @@ fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppEr
     Ok(limit)
 }
 
-/// A count a receipt or pending-consent subscription asks for, or `default`
-/// (FIX 8859): read in scoped pages ([`scoped_pages`]), so no count past the
-/// list page is refused.
+/// A positive subscription count, or `default`, without the facade's list-page
+/// ceiling. Receipts and pending-consent read in scoped pages ([`scoped_pages`])
+/// (FIX 8859).
 fn facade_count(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
     let limit = requested.unwrap_or(default);
     if limit == 0 {

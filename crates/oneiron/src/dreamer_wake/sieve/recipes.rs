@@ -22,6 +22,10 @@ mod audit_erase;
 pub(crate) use audit_erase::forget_audit_candidate_in_txn;
 mod consumption;
 pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};
+mod typing_batch;
+pub(crate) use typing_batch::{
+    TYPING_BATCH_ATTEMPT, TypingMember, typing_batch_turn, typing_member_key, typing_members,
+};
 
 pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
@@ -287,6 +291,11 @@ pub(crate) fn enqueue_rungs_in_txn(
         && crate::dreamer_wake::follower::route_in_txn(store, txn, Some(parent), span, now)?
     {
         return Ok(());
+    }
+    // A span that owes only its typing rung is read with its TURN's other
+    // such spans, several to a call (FIX 14711).
+    if !audit && typing_batch::typing_only(span) {
+        return typing_batch::route_typing_in_txn(store, txn, parent, span, now);
     }
     per_span_in_txn(store, txn, parent, span, audit, policy, now)
 }

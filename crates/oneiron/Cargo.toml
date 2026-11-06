@@ -181,6 +181,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "deflate",
     "gzip",
     "json",
+    "http2",
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
@@ -222,7 +223,7 @@ libc = "0.2"
 rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [features]
 default = ["sync"]

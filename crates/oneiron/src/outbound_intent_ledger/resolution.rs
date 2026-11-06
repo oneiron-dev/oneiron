@@ -1,7 +1,7 @@
 //! One delivery-knowledge reducer for a logical outbound send.
 use super::{
-    IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
-    RecordedOutboundOutcome,
+    CallAccounting, IntentEscalationReason, IntentLedgerError, IntentLedgerRecord,
+    IntentLedgerResult, IntentState, RecordedOutboundOutcome,
 };
 
 /// What is known about delivery, independent of the latest attempt or stop.
@@ -37,19 +37,44 @@ pub(crate) enum IntentResolution {
 
 impl IntentResolution {
     pub(crate) fn from_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Self> {
-        match (record.state, record.recorded_outcome) {
+        Self::reduce(
+            record.state,
+            record.recorded_outcome,
+            record.delivery_uncertain,
+            record.idempotency_supported,
+        )
+    }
+
+    /// The resolution of a call a restore kept only the accounting of
+    /// (KS7-5, FIX 12117). Its idempotency is not kept, so none is assumed.
+    pub(crate) fn from_accounting(accounting: &CallAccounting) -> IntentLedgerResult<Self> {
+        Self::reduce(
+            accounting.state,
+            accounting.recorded_outcome,
+            accounting.delivery_uncertain,
+            false,
+        )
+    }
+
+    fn reduce(
+        state: IntentState,
+        recorded_outcome: Option<RecordedOutboundOutcome>,
+        delivery_uncertain: bool,
+        idempotency_supported: bool,
+    ) -> IntentLedgerResult<Self> {
+        match (state, recorded_outcome) {
             (IntentState::Done, Some(RecordedOutboundOutcome::Acked)) => Ok(Self::Delivered),
             (IntentState::Deferred, Some(RecordedOutboundOutcome::Deferred)) => Ok(Self::Deferred),
             (
                 IntentState::Pending,
                 latest @ (None | Some(RecordedOutboundOutcome::DefiniteNonDelivery)),
             ) => {
-                let delivery = if record.delivery_uncertain || latest.is_none() {
+                let delivery = if delivery_uncertain || latest.is_none() {
                     UnconfirmedDelivery::Unresolved
                 } else {
                     UnconfirmedDelivery::DefiniteNonDelivery
                 };
-                let retry = if record.idempotency_supported {
+                let retry = if idempotency_supported {
                     RetryDisposition::Idempotent
                 } else if latest.is_some() {
                     RetryDisposition::DefiniteOnly
@@ -59,7 +84,7 @@ impl IntentResolution {
                 Ok(Self::Pending { delivery, retry })
             }
             (IntentState::Abandoned, Some(RecordedOutboundOutcome::Abandoned(reason))) => {
-                let delivery = if record.delivery_uncertain {
+                let delivery = if delivery_uncertain {
                     UnconfirmedDelivery::Unresolved
                 } else {
                     UnconfirmedDelivery::DefiniteNonDelivery

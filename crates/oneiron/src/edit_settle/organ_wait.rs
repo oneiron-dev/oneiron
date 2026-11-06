@@ -197,6 +197,11 @@ impl Vault {
                     "a proposal or a held organ call already waits under this ref",
                 )));
             }
+            self.get_blob_artifact_in_txn(wtxn, &wait.artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            if super::artifact_retention_deleted_in_txn(&self.store, wtxn, &wait.artifact_id)? {
+                return Err(Error::EntityNotFound);
+            }
             WAITS.put(&self.store, wtxn, &key, &row)
         })?;
         Ok(row.view(wait.artifact_id))
@@ -255,6 +260,41 @@ impl Vault {
         })
     }
 
+    /// Whether this exact held call still waits beside a live artifact.
+    /// Checks the retained call and the artifact's durable delete markers
+    /// in one snapshot; it does not claim or lock a running call.
+    pub fn organ_wait_is_current(&self, wait: &OrganWait) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
+        let Some(row) = WAITS.get(&self.store, &txn, &key)? else {
+            return Ok(false);
+        };
+        if row.failed.is_some()
+            || row.run_ref != wait.run_ref
+            || row.organ != wait.organ
+            || row.verb != wait.verb
+            || row.call != wait.call
+            || row.trigger != wait.trigger
+            || row.submitter != wait.submitter
+            || row.held_by != wait.held_by.entity_ref()
+            || row.held_by_class != wait.held_by.actor_class() as u8
+            || row.held_at != wait.held_at
+        {
+            return Ok(false);
+        }
+        if self
+            .get_blob_artifact_in_txn(&txn, &wait.artifact_id)?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        Ok(!super::artifact_retention_deleted_in_txn(
+            &self.store,
+            &txn,
+            &wait.artifact_id,
+        )?)
+    }
+
     /// Drops a held call: it ran and landed, or a person let it go.
     /// `true` when one was held under the ref.
     pub fn release_organ_wait(&self, artifact_id: &EntityId, run_ref: &str) -> Result<bool> {
@@ -280,4 +320,15 @@ impl Vault {
             WAITS.put(&self.store, wtxn, &key, &row)
         })
     }
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in WAITS.scan_keys(store, txn, artifact_id.as_bytes())? {
+        WAITS.delete(store, txn, &key)?;
+    }
+    Ok(())
 }

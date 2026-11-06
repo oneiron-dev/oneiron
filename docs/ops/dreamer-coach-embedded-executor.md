@@ -24,6 +24,19 @@ and started milestone. Dispatch, cancellation, panic containment and settlement
 use the existing wake-pass path. No work is marked completed merely because
 a host advertises support.
 
+## Landed outcomes settle with their budget
+
+For an executor's `Landed` outcome, the wake driver commits landing acceptance,
+reserve spend, the resume point, the terminal landing or handoff, and budget
+settlement in one transaction. The charge is the executor's actual
+`completed_units` plus the reserve units the queue actually spent. An exhausted
+reserve still spends nothing. Retained owed units use the normal settlement.
+
+A failure before that commit leaves the previous queue and budget state intact;
+it cannot commit a terminal landing alone and strand its reservation. Attempt
+and job notifications follow the commit. Standalone queue landing APIs remain
+available and keep their own transaction boundaries.
+
 ## What is unchanged
 
 A host that does not opt in leaves Coach queues to their existing consumers.

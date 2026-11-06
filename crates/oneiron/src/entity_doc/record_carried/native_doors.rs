@@ -57,6 +57,7 @@ pub(super) fn check_original_in_txn(
     field: &crate::entity_doc::TextField,
     source: &EntityDoc,
     before: &EntityDoc,
+    old_id: &EntityId,
 ) -> Result<NativeDoorReview> {
     let source_version = source
         .doc
@@ -109,7 +110,7 @@ pub(super) fn check_original_in_txn(
             else {
                 return Ok(NativeDoorReview::SuccessorUnavailable);
             };
-            source.validate_replay_in_txn(&vault.store, txn, &prior)?;
+            source.validate_replay_in_txn(&vault.store, txn, old_id, &prior)?;
             Some(source)
         }
     };

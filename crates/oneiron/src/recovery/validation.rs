@@ -7,6 +7,9 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod window_rows;
+pub(super) use window_rows::WindowRows;
+
 /// Recovery-only proof for an AddressedTo edge retained by a soft-erased
 /// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
 /// are gone, so only a validated local canonical snapshot of the retained
@@ -78,15 +81,7 @@ pub(crate) fn trusted_soft_addressing_edge(
     Ok(true)
 }
 
-pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    validate_manifest_and_order(snapshot)?;
-    validate_window_rows(snapshot)?;
-    snapshot.validate_asset_body_refs()?;
-    validate_documents(snapshot)?;
-    validate_entity_documents(snapshot)
-}
-
-fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
+pub(super) fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
     if crate::deletion::parse_window_label(&snapshot.window).is_none() {
         return Err(invalid("window key"));
     }
@@ -167,172 +162,6 @@ fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
     )?;
     if snapshot.container_manifests != snapshot.expected_containers() {
         return Err(invalid("container manifest coverage"));
-    }
-    Ok(())
-}
-
-fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
-    let world = snapshot
-        .window
-        .split_once('@')
-        .map(|(_, hex)| crate::EntityId::from_hex(hex))
-        .transpose()
-        .map_err(|_| invalid("window world"))?;
-    if world.is_some()
-        && (!snapshot.doc_snapshots.is_empty()
-            || !snapshot.document_heads.is_empty()
-            || !snapshot.head_move_receipts.is_empty()
-            || !snapshot.note_forks.is_empty()
-            || !snapshot.note_proposals.is_empty())
-    {
-        return Err(invalid("world window NOTE carrier"));
-    }
-    let deleted: BTreeMap<_, _> = snapshot
-        .tombstones
-        .iter()
-        .map(|row| (row.id, crate::deletion::decode_tombstone_value(&row.value)))
-        .collect();
-    let shell_worlds: BTreeMap<_, _> = snapshot
-        .retained_claim_worlds
-        .iter()
-        .map(|row| (row.id, row.world))
-        .collect();
-    for row in &snapshot.retained_claim_worlds {
-        id(row.id)?;
-        let Some(world) = world else {
-            return Err(invalid("base shell world proof"));
-        };
-        if row.world != *world.as_bytes()
-            || !snapshot.entity_blobs.iter().any(|entity| {
-                entity.id == row.id
-                    && entity.blob.len() == ENTITY_METADATA_HEADER_LEN
-                    && EntityMetadataHeader::parse(&entity.blob).is_some_and(|header| {
-                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                            && crate::deletion::window_label_from_timestamp(header.learned_at)
-                                == snapshot.window[..7]
-                    })
-            })
-            || !deleted.get(&row.id).is_some_and(|value| {
-                value.reason == Some(crate::deletion::TombstoneReason::UserDelete)
-            })
-        {
-            return Err(invalid("retained claim world proof"));
-        }
-    }
-    for entity in &snapshot.entity_blobs {
-        id(entity.id)?;
-        if let Some(tombstone) = deleted.get(&entity.id)
-            && (tombstone.is_hard() || entity.blob.len() != ENTITY_METADATA_HEADER_LEN)
-        {
-            return Err(invalid("tombstoned entity payload"));
-        }
-        let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
-        crate::registry::validate_entity_type(header.entity_type)?;
-        if header.occurred_start > header.occurred_end {
-            return Err(invalid("entity time range"));
-        }
-        let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
-        // A pad row rides by reference, never at rest with its pad (KS-5).
-        if !crate::world_keys::image_pad_form_ok(&entity.blob) {
-            return Err(invalid("world key pad at rest"));
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM && !body.is_empty() {
-            let claim = crate::claim::validate_claim_body_and_decode(body, true)?;
-            if claim.world != world
-                || (world.is_some()
-                    && crate::deletion::window_label_from_timestamp(header.learned_at)
-                        != snapshot.window[..7])
-            {
-                return Err(invalid("claim outside window residence"));
-            }
-        } else if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
-            && world.is_some()
-        {
-            // A live key pad rides its world's window of the month it was
-            // learned (`ITEM11_LIVE_PAD_CARRIER`).
-            if crate::world_keys::pad_world_in_body(body).ok() != world
-                || crate::deletion::window_label_from_timestamp(header.learned_at)
-                    != snapshot.window[..7]
-            {
-                return Err(invalid("pad outside window residence"));
-            }
-        } else if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-            && let Ok(entry) = crate::authority::decode_authority_log_entry_body(body)
-            && let Some(side) = crate::authority::side_world(&entry.op)
-        {
-            // A world's side rows, its key wraps and the joins of their
-            // leaves (FIX 11868), ride its window of the month they were
-            // learned (`sync::types::entity_world`); its settings stay base.
-            if Some(side) != world
-                || crate::deletion::window_label_from_timestamp(header.learned_at)
-                    != snapshot.window[..7]
-            {
-                return Err(invalid("key wrap outside window residence"));
-            }
-        } else if world.is_some()
-            && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-                || !body.is_empty()
-                || !deleted.contains_key(&entity.id)
-                || world.as_ref().is_some_and(|world_id| {
-                    shell_worlds.get(&entity.id) != Some(world_id.as_bytes())
-                }))
-        {
-            // A bodiless CLAIM is admissible only as a soft-deletion shell,
-            // bound by its tombstone and the canonical window address.
-            return Err(invalid("entity outside world window"));
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && !body.is_empty() {
-            crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)?;
-        }
-        if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
-            crate::authority::validate_authority_log_entry_body_bytes(body)?;
-        }
-    }
-    for edge in &snapshot.base_edges {
-        id(edge.source)?;
-        id(edge.target)?;
-        if deleted
-            .get(&edge.source)
-            .is_some_and(crate::deletion::DecodedTombstoneValue::is_hard)
-            || deleted
-                .get(&edge.target)
-                .is_some_and(crate::deletion::DecodedTombstoneValue::is_hard)
-        {
-            return Err(invalid("hard-deleted edge endpoint"));
-        }
-        let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(invalid("edge kind"))?;
-        crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
-        if kind == crate::EdgeKind::AddressedTo
-            && snapshot.tombstones.iter().any(|row| row.id == edge.source)
-        {
-            trusted_soft_addressing_edge(
-                snapshot,
-                &id(edge.source)?,
-                &id(edge.target)?,
-                &edge.value,
-            )?;
-        }
-    }
-    for tombstone in &snapshot.tombstones {
-        id(tombstone.id)?;
-        let decoded = crate::deletion::decode_tombstone_value(&tombstone.value);
-        if decoded.reason == Some(crate::deletion::TombstoneReason::ArchivedByCleanup) {
-            return Err(invalid("local-only archive in window snapshot"));
-        }
-        if !decoded.is_hard()
-            && !snapshot
-                .entity_blobs
-                .iter()
-                .any(|row| row.id == tombstone.id)
-        {
-            return Err(invalid("soft tombstone missing retained shell"));
-        }
-        if !matches!(tombstone.value.len(), 8 | 25)
-            || tombstone.deleted_at
-                != crate::deletion::decode_tombstone_value(&tombstone.value).deleted_at
-        {
-            return Err(invalid("tombstone timestamp or encoding"));
-        }
     }
     Ok(())
 }

@@ -61,6 +61,20 @@ pub(crate) fn validate_claim_body_and_decode(
     data: &[u8],
     allow_reserved_predicate: bool,
 ) -> Result<ClaimBody> {
+    validate_claim_body_and_decode_with_descriptor(
+        data,
+        allow_reserved_predicate,
+        |predicate| Ok(crate::comm::is_compiled_generic_claim_predicate(predicate)),
+        crate::comm::check_claim_against_compiled_descriptor,
+    )
+}
+
+fn validate_claim_body_and_decode_with_descriptor(
+    data: &[u8],
+    allow_reserved_predicate: bool,
+    is_generic: impl FnOnce(&str) -> Result<bool>,
+    check_descriptor: impl FnOnce(&ClaimBody) -> Result<()>,
+) -> Result<ClaimBody> {
     let body = decode_claim_body(data, allow_reserved_predicate)?;
     // Lineage before predicate shape (ONE-1710): the forgery guard is
     // predicate-agnostic, so it must not sit behind a predicate-specific
@@ -134,11 +148,11 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::commitment::validate_commitment_claim_structure(&body)?;
     } else if crate::calendar::claims::is_calendar_claim_predicate(&body.predicate) {
         crate::calendar::claims::validate_calendar_claim_structure(&body)?;
-    } else if crate::comm::is_compiled_generic_claim_predicate(&body.predicate) {
-        // A class the build compiles as `generic` is checked against its own
-        // descriptor (ARCH-0057's one registry arm), ahead of the family
-        // arms below.
-        crate::comm::check_claim_against_compiled_descriptor(&body)?;
+    } else if is_generic(&body.predicate)? {
+        // Generic classes use the caller's descriptor. A synchronized builtin
+        // descriptor instead keeps the native family validation below.
+        check_descriptor(&body)?;
+        return Ok(body);
     } else if crate::write_envelope::cohort_claims::is_campaign_pack_claim_predicate(
         &body.predicate,
     ) {
@@ -164,24 +178,37 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::claim::reaction_record::is_reaction_claim_predicate(&body.predicate) {
         crate::claim::reaction_record::validate_reaction_claim_structure(&body)?;
     }
+    check_descriptor(&body)?;
     Ok(body)
 }
 
-/// [`validate_claim_body_and_decode`], then the claim's class descriptor
-/// where it declares a subject kind or a schema (ARCH-0057: descriptor
-/// validation on local writes and sync replay). Every family check above runs
-/// as it did.
+/// The same structural and family validation as
+/// [`validate_claim_body_and_decode`], using the synchronized class descriptor
+/// when readable and the compiled fallback otherwise (ARCH-0057). The compiled
+/// generic seed does not prefilter a synchronized descriptor's value.
 pub(crate) fn validate_claim_body_and_decode_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     data: &[u8],
     allow_reserved_predicate: bool,
 ) -> Result<ClaimBody> {
-    let body = validate_claim_body_and_decode(data, allow_reserved_predicate)?;
-    store
-        .record_hooks
-        .check_claim_against_descriptor_in_txn(store, txn, &body)?;
-    Ok(body)
+    validate_claim_body_and_decode_with_descriptor(
+        data,
+        allow_reserved_predicate,
+        |predicate| {
+            Ok(crate::comm::is_compiled_generic_claim_predicate(predicate)
+                && crate::comm::claim_class_descriptor_in_txn(store, txn, predicate)?.is_some_and(
+                    |descriptor| {
+                        descriptor.validator_kind == crate::comm::ClaimValidatorKind::Generic
+                    },
+                ))
+        },
+        |body| {
+            store
+                .record_hooks
+                .check_claim_against_descriptor_in_txn(store, txn, body)
+        },
+    )
 }
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {

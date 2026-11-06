@@ -554,6 +554,43 @@ pub(crate) trait OutboundSender {
 
 pub(crate) use crate::consent::approval_proof::AdmittedApproval;
 
+/// What a call's ledger row keeps outside the call's checkpoint compartment
+/// (KS7-5, FIX 12117): its budget marker, recorded outcome, sticky delivery
+/// uncertainty, state and clocks, the record's own entries for them. A
+/// restore that cannot open the call keeps this, never its request, server,
+/// tool, binding or proof, so the call is known as admitted and is never
+/// asked or paid for again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallAccounting {
+    pub(crate) budget_accounting: BudgetChargeMarker,
+    pub(crate) recorded_outcome: Option<RecordedOutboundOutcome>,
+    pub(crate) delivery_uncertain: bool,
+    pub(crate) state: IntentState,
+    pub(crate) created_ms: u64,
+    pub(crate) updated_ms: u64,
+}
+
+impl CallAccounting {
+    /// This accounting as the owner's erase of the call's request leaves
+    /// a row (`erase_call_request_in_txn`, KS7-4b): a restore that cannot
+    /// open the call's compartment holds it after that erase. A send still
+    /// Pending or Deferred stops for [`IntentEscalationReason::OwnerErased`],
+    /// keeping that it may have crossed the wire; a settled send stays as it
+    /// settled.
+    #[must_use]
+    pub(crate) fn erased(mut self) -> Self {
+        if matches!(self.state, IntentState::Pending | IntentState::Deferred) {
+            self.delivery_uncertain |=
+                self.recorded_outcome.is_none() || self.state == IntentState::Deferred;
+            self.state = IntentState::Abandoned;
+            self.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+                IntentEscalationReason::OwnerErased,
+            ));
+        }
+        self
+    }
+}
+
 /// Device-local durable record and audit receipt for one effectful call.
 #[derive(Clone, PartialEq, Eq)]
 pub struct IntentLedgerRecord {

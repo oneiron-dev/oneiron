@@ -47,6 +47,32 @@ impl VerifiedDiaryReviewEvent {
     }
 }
 
+/// One staged room wake, minted only from its staged row (FIX 15647): the
+/// agent it wakes, the room and the turn, and the occurrence id. It carries
+/// no speaker and none of the turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedRoomWakeEvent {
+    pub(super) agent_ref: String,
+    pub(super) room_ref: String,
+    pub(super) turn_ref: String,
+    pub(super) event_ref: String,
+}
+
+impl VerifiedRoomWakeEvent {
+    pub(crate) fn agent_ref(&self) -> &str {
+        &self.agent_ref
+    }
+    pub(crate) fn room_ref(&self) -> &str {
+        &self.room_ref
+    }
+    pub(crate) fn turn_ref(&self) -> &str {
+        &self.turn_ref
+    }
+    pub(crate) fn event_ref(&self) -> &str {
+        &self.event_ref
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum WakeMintError {

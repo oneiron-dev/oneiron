@@ -178,6 +178,9 @@ impl SyncServer {
         // V2-R3: a lock of this vault waits for this process's snapshot
         // release before its key drops; an erase drops its sessions.
         crate::models::install_snapshot_runtime(&vault);
+        // FIX 14976: this vault's drafter bindings are served on this
+        // process's own managed worker, where it launches one for this vault.
+        crate::models::install_drafter_serving(&vault);
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(
@@ -268,10 +271,12 @@ impl SyncServer {
             asr_sessions: Default::default(),
             model_streams: Default::default(),
             export_transfers: Default::default(),
+            pairing_backoff: Default::default(),
             lens_frames,
             retained,
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
+            shared_envs: std::sync::OnceLock::new(),
             leaf_keys: crate::handler::LeafKeyRelay::default(),
             usage_ledger: UsageLedger::new(vault.clone()),
             retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
@@ -320,6 +325,7 @@ impl SyncServer {
             reader_runner,
             live_runs,
             secret_destinations: Default::default(),
+            seat_helpers: Default::default(),
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),
@@ -365,6 +371,7 @@ impl SyncServer {
             feedback_triage: crate::config::FeedbackTriageConfig::default(),
             feedback_flood,
             artifact_port: None,
+            api_addr: None,
             artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,

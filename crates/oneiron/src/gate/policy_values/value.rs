@@ -43,7 +43,7 @@ pub(in crate::gate) enum PolicyValue {
     WorkflowStepMaxTries(u64),
 }
 impl PolicyValue {
-    pub(super) fn restrict(self, other: Self) -> Self {
+    pub(in crate::gate) fn restrict(self, other: Self) -> Self {
         match (self, other) {
             // A longer quiet never wakes a proposer sooner than any trusted
             // row asks.

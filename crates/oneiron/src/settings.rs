@@ -10,6 +10,7 @@ use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 pub mod backup;
+pub(crate) mod board_layout;
 mod destination;
 mod device_local;
 mod device_only;
@@ -34,6 +35,9 @@ pub(crate) use device_only::{
     minted_worlds_in,
 };
 
+pub use board_layout::{
+    AgentBoardLayoutOverride, BOARD_LAYOUT_AGENT_OVERRIDES_MAX, BoardLayoutSettings,
+};
 pub use model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,

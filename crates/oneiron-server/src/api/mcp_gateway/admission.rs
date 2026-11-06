@@ -438,6 +438,25 @@ pub(super) fn mcp_scoped_tasks_section(
     served: &mut Vec<oneiron::EntityId>,
     bare_children: &std::collections::BTreeSet<String>,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
+    let (rows, omitted) = mcp_scoped_task_rows(server, actor, rows, served, bare_children)?;
+    let mut section = rows.render();
+    // A hook-pinned TASK the scope admitted but the render cap left off is
+    // shown, as on the HTTP board (OF-579).
+    section.pin_hook_tasks(&rows.intents, pins);
+    Ok((section, omitted))
+}
+
+/// The rows [`mcp_scoped_tasks_section`] renders: `rows` narrowed by the
+/// credential's scope, with the scope omission count, before any render
+/// cap. A board that lays its TASKS out (BOARD-LAYOUT) renders these
+/// itself. Each row it admits is listed in `served`.
+pub(super) fn mcp_scoped_task_rows(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+    rows: oneiron::context_board::TasksSectionRows,
+    served: &mut Vec<oneiron::EntityId>,
+    bare_children: &std::collections::BTreeSet<String>,
+) -> Result<(oneiron::context_board::TasksSectionRows, usize), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     let mut omitted = 0_usize;
     let mut admits = |row_id: &str| -> Result<bool, McpGatewayError> {
@@ -474,11 +493,7 @@ pub(super) fn mcp_scoped_tasks_section(
         bare_jobs,
         source_exhausted: rows.source_exhausted,
     };
-    let mut section = rows.render();
-    // A hook-pinned TASK the scope admitted but the render cap left off is
-    // shown, as on the HTTP board (OF-579).
-    section.pin_hook_tasks(&rows.intents, pins);
-    Ok((section, omitted))
+    Ok((rows, omitted))
 }
 
 /// Whether the TASK this board id names sits, by its birth stamp, inside both

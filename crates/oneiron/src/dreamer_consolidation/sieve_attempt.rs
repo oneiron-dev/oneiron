@@ -5,6 +5,7 @@
 //! use the same durable step layer as consolidation.
 
 mod audit;
+mod typing_batch;
 
 use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
@@ -169,8 +170,13 @@ impl ConsolidationExecutor<'_> {
             // Every generation that finished is spent, whatever the rung's
             // outcome. A tally the record cannot take settles with that
             // error instead of leaving the attempt uncharged (FIX 11554).
-            for (hash, usage) in &read.steps {
+            for (index, (hash, usage, _)) in read.steps.iter().enumerate() {
                 if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
+                    for (_, usage, memoized) in &read.steps[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
                     return super::residency::spent_or_deferred(error, ctx, &charges);
                 }
             }
@@ -235,7 +241,7 @@ impl ConsolidationExecutor<'_> {
                 None => {
                     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
                     if let Err(error) = ctx.vault.with_write_txn_grouped(|wtxn| {
-                        for (hash, _) in &read.steps {
+                        for (hash, _, _) in &read.steps {
                             store.forget_step_charge_in_txn(wtxn, attempt_id, hash)?;
                             crate::llm::forget_step_memo_in_txn(ctx.vault, wtxn, attempt_id, hash)?;
                         }
@@ -243,7 +249,7 @@ impl ConsolidationExecutor<'_> {
                     }) {
                         return super::residency::spent_or_deferred(error, ctx, &charges);
                     }
-                    for (hash, _) in &read.steps {
+                    for (hash, _, _) in &read.steps {
                         charges.step_hashes.retain(|kept| *kept != *hash);
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));

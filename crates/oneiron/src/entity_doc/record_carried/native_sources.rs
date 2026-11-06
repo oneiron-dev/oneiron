@@ -425,6 +425,7 @@ impl Review<'_, '_, '_> {
                     self.field,
                     &original,
                     before,
+                    &EntityId::from_bytes(*operation.entity)?,
                 )? {
                     super::native_doors::NativeDoorReview::Checked(checked) => {
                         self.native_doors.push(checked);

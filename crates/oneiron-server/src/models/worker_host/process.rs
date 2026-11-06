@@ -42,6 +42,40 @@ struct Custody {
     stop: Option<std::os::unix::net::UnixStream>,
 }
 
+/// A native peer checked against this launch's actual child custody.
+/// A weak reference cannot keep an ended launch alive for a later connection.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone)]
+pub(in crate::models) struct ProcessPeer {
+    state: std::sync::Weak<Mutex<Custody>>,
+    exit: watch::Receiver<Option<WorkerExit>>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl std::fmt::Debug for ProcessPeer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProcessPeer")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ProcessPeer {
+    pub(in crate::models) fn matches(&self, peer: Option<u32>) -> bool {
+        let Some(state) = self.state.upgrade() else {
+            return false;
+        };
+        let custody = state.lock().unwrap_or_else(|poison| poison.into_inner());
+        // Reaping and terminal publication share this lock. Until reaped,
+        // the owned child's PID cannot be reused by another process.
+        self.exit.borrow().is_none()
+            && self.exit.has_changed().is_ok()
+            && peer.is_some()
+            && custody.child.id() == peer
+    }
+}
+
 /// A worker process the supervisor started.
 pub(super) struct ProcessWorker {
     state: Arc<Mutex<Custody>>,
@@ -57,6 +91,14 @@ pub(super) struct ProcessWorker {
 }
 
 impl ProcessWorker {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn native_peer(&self) -> ProcessPeer {
+        ProcessPeer {
+            state: Arc::downgrade(&self.state),
+            exit: self.exit.clone(),
+        }
+    }
+
     /// Starts `command` as the leader of a new process group and takes
     /// custody of it: one task waits on and reaps it. On Linux it arms the
     /// existing parent-death terminate signal before exec and checks that

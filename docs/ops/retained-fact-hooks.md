@@ -44,5 +44,17 @@ A completion wakes the background loop. Its existing change notices and tick
 remain. Shutdown starts no new evaluation and keeps the original admissions and
 continuations until pending jobs and completion tails finish. An admitted
 callback that never answers can therefore keep shutdown pending; it is not
-silently cancelled. This change does not provide crash/restart durability for
-an unfinished callback, nor retained-async verb or replay callers.
+silently cancelled.
+
+The returned task handle coordinates a separate completion task. Aborting that
+handle closes its admission signal, including when it is aborted before its
+first poll. The completion task observes closure before its next pass admission
+and in its existing wait loop. It retains already admitted work and drives the
+same completion retries without starting another pass. An in-flight admitted
+pass keeps its existing behavior. Plain-server teardown can abort and join the
+coordinator without waiting for a slow callback; the retained completion task
+continues while the Tokio runtime remains alive. Normal watch shutdown and a
+managed caller's full join still wait for the actual completion task.
+
+This change does not provide process-crash, runtime-destruction or restart
+durability for an unfinished callback, nor retained-async verb or replay callers.

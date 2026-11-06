@@ -319,7 +319,15 @@ pub(crate) fn run_core_query(
                 &[oneiron::embed::InputKind],
             )>() as u64),
         );
-        return scoped_read.search_seeded(query, vector, &media, limit, None, query_affect);
+        return scoped_read.search_seeded(
+            query,
+            vector,
+            &media,
+            limit,
+            None,
+            query_affect,
+            Some(machine_memory),
+        );
     }
     match (query, vector) {
         (Some(query), Some(vector)) => scoped_read.search(query, vector, limit, None),

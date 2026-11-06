@@ -27,9 +27,7 @@ use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{
-    HostInferenceBinding, HostInferenceContext, WorkCancel, WorkClass, WorkContext,
-};
+use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -155,6 +153,18 @@ pub(super) fn pause(admission: &PassAdmission) -> Option<tokio::sync::watch::Rec
 /// Whether `epoch` holds the host's pause: no next unit starts.
 pub(super) fn paused(epoch: Option<&tokio::sync::watch::Receiver<bool>>) -> bool {
     epoch.is_some_and(|epoch| *epoch.borrow())
+}
+
+/// Resolves once the pause `epoch` held lifts: the epoch closed at a thaw,
+/// or cleared. Pends while it holds none. The one wait every host loop that
+/// parks on the pause selects on (FIX 8956).
+pub(super) async fn pause_lifted(epoch: Option<tokio::sync::watch::Receiver<bool>>) {
+    match epoch {
+        Some(mut epoch) if paused(Some(&epoch)) => {
+            let _ = epoch.wait_for(|held| !*held).await;
+        }
+        _ => std::future::pending::<()>().await,
+    }
 }
 
 pub(super) struct DreamerStart {
@@ -630,11 +640,11 @@ impl ObservedFactory {
                 RoleBackend {
                     backend: Arc::clone(&backend) as Arc<dyn LlmBackend>,
                     model: route.model.clone(),
-                    binding: HostInferenceBinding::Advertised {
-                        model: route.model.clone(),
-                        locality: route.locality,
-                        keyless: route.ladder.all_keyless_own_server(),
-                    },
+                    binding: route.ladder.host_binding(
+                        route.model.clone(),
+                        route.locality,
+                        route.ladder.all_keyless_own_server(),
+                    ),
                     sourced: Some(backend),
                 },
             );
@@ -797,6 +807,11 @@ impl PassExecutorFactory for ObservedFactory {
                 .get()
                 .and_then(std::sync::Weak::upgrade)
                 .and_then(super::coach_heal::WakeExecutor::for_server),
+            coach_host: self
+                .question_timer
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .and_then(super::coach_host::WakeExecutor::for_server),
         })
     }
 
@@ -813,6 +828,11 @@ impl PassExecutorFactory for ObservedFactory {
             .get()
             .and_then(std::sync::Weak::upgrade)
             .and_then(super::coach_heal::WakeExecutor::for_server);
+        let coach_host = self
+            .question_timer
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .and_then(super::coach_host::WakeExecutor::for_server);
         let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
             (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
@@ -863,6 +883,7 @@ impl PassExecutorFactory for ObservedFactory {
                         check,
                         decisions,
                         coach_heal: coach_heal.clone(),
+                        coach_host: coach_host.clone(),
                     })
                     .collect()
             })
@@ -1086,6 +1107,7 @@ struct ObservedExecutor<'p, E> {
     /// The server's decision host, which judges a completed TASK try's Done.
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
     coach_heal: Option<super::coach_heal::WakeExecutor>,
+    coach_host: Option<super::coach_host::WakeExecutor>,
 }
 
 /// The host's loan to a Dreamer-lane TASK's realization: the pass's route
@@ -1256,6 +1278,9 @@ impl ResidentLend<'_> {
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
             let keyless = ladder.all_keyless_own_server();
+            // The host's binding for this ladder, before the run's backend
+            // takes it (I2-LOCAL: supervised native when it is on device).
+            let binding = ladder.host_binding(model.clone(), locality, keyless);
             let deadline =
                 Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
             let run = self
@@ -1293,13 +1318,9 @@ impl ResidentLend<'_> {
                 ResidentDreamModel {
                     backend: &backend,
                     guard: &step,
-                    model: model.clone(),
+                    model,
                     inference: HostInferenceContext {
-                        binding: HostInferenceBinding::Advertised {
-                            model,
-                            locality,
-                            keyless,
-                        },
+                        binding,
                         extraction_egress: egress.as_deref(),
                     },
                     role: None,
@@ -1378,9 +1399,9 @@ pub(super) fn own_dreaming_slot(
 
 /// The model a resident's slot names, as this server serves it: a model id
 /// as it stands, a role on its live route, else a tier the vault's manifest
-/// binds a chat-wire role to,
-/// on the vault's live route for that slot (the first such role this server
-/// serves). None when the slot names nothing served here.
+/// binds a chat-wire role to, served at the vault's live route for that
+/// slot and only there (the first such role this server serves). None when
+/// the slot names nothing served here.
 pub(super) fn served_slot_model(
     vault: &Vault,
     runtime: &ModelRuntime,
@@ -1415,6 +1436,16 @@ pub(super) fn served_slot_model(
         return Ok(None);
     };
     let route = vault.model_route(slot_kind)?.unwrap_or(widest);
+    // A tier the manifest binds is served at that slot's live route, as a
+    // role's own work is (I2-LOCAL): on device, the model's on-device view,
+    // and nothing whose served place is not that route; a direct model id
+    // above keeps its default ladder.
+    let served_at_route = |model: ModelId| {
+        router
+            .served_at(&model, route)
+            .filter(|(locality, _)| *locality == route)
+            .map(|(locality, ladder)| (model, locality, ladder))
+    };
     Ok(manifest
         .roles
         .values()
@@ -1426,12 +1457,12 @@ pub(super) fn served_slot_model(
                 binding.route_models.get(&route).cloned()
             }
         })
-        .find_map(served))
+        .find_map(served_at_route))
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
     fn runs_coach_host_jobs(&self) -> bool {
-        self.inner.runs_coach_host_jobs()
+        self.coach_host.is_some() || self.inner.runs_coach_host_jobs()
     }
 
     fn runs_coach_heals(&self) -> bool {
@@ -1455,6 +1486,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         let outcome = if attempt.status.attempt.kind
             == oneiron::dreamer_runner::COACH_HEAL_ATTEMPT_KIND
             && let Some(coach) = &self.coach_heal
+        {
+            coach.execute(attempt, ctx.now_ms / 1_000).await
+        } else if attempt.status.attempt.kind
+            == oneiron::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND
+            && let Some(coach) = &self.coach_host
         {
             coach.execute(attempt, ctx.now_ms / 1_000).await
         } else if attempt.status.payload.attempt_type
