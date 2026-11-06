@@ -7,7 +7,7 @@
 mod retained;
 mod root;
 
-pub(in crate::sync) use root::IsolatedRootResult;
+pub(in crate::sync) use root::{IsolatedBatchRootResult, IsolatedRootResult};
 
 use std::borrow::Cow;
 
