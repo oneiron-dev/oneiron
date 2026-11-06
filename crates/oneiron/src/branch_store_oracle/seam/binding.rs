@@ -362,6 +362,7 @@ fn binding_oracle_config() -> crate::engine_executor::EngineExecutorConfig {
         global_tier: crate::ModelTierRef("binding-tier".to_owned()),
         determinism: crate::code_run::CodeRunDeterminism::new(1_719_000_005_000, [0xB7; 32]),
         limits: crate::engine_executor::EngineExecutorLimits::default(),
+        wake: None,
     }
 }
 

@@ -230,28 +230,37 @@ pub(crate) enum DoorClaim {
     StoreFailed,
 }
 
-/// The live claim plus its durable intent. A normal drop without `finish`
-/// releases the intent, matching the old live-only retry behavior. A process
-/// crash runs no drop, so the intent stands and a duplicate cannot rerun.
+/// A live claim, with a durable intent for ordinary calls. Session-owned
+/// claims have no durable twin. A normal durable drop releases its intent;
+/// a process crash leaves it standing so a duplicate cannot rerun.
 pub(crate) struct DoorInvocationClaim {
     live: Option<InvocationClaim>,
+    durable: Option<DurableDoorInvocation>,
+}
+
+struct DurableDoorInvocation {
     store: InvocationClaimStore,
-    store_key: String,
+    key: String,
 }
 
 impl DoorInvocationClaim {
-    /// Runs a route future with its durable intent open on every poll, so
-    /// grouped writes count on it (FIX 10379). Detached workers carry it too.
+    /// Runs an ordinary route with its durable intent open on every poll,
+    /// so grouped writes count on it (FIX 10379). A session claim runs with
+    /// no durable invocation state.
     pub(crate) async fn run<F: std::future::Future>(&self, run: F) -> F::Output {
-        crate::idempotency::run_under_intent(&self.store_key, run).await
+        match &self.durable {
+            Some(durable) => crate::idempotency::run_under_intent(&durable.key, run).await,
+            None => run.await,
+        }
     }
 
-    /// Saves a successful JSON outcome, releases a failed or hook-pending
-    /// one, and wakes the live waiters in either case. A pending ask is not
-    /// an accepted asynchronous job: the next same-id retry must reach the
-    /// hook again. A storage error leaves the durable intent standing.
+    /// Saves a successful JSON outcome, releases a failed or held one, and
+    /// wakes the live waiters in either case. A pending ask or a paced hold
+    /// is not an accepted asynchronous job: the next same-id retry must
+    /// reach the held call again. A storage error leaves the durable intent
+    /// standing.
     pub(crate) fn finish(self, outcome: InvocationOutcome) {
-        if FacadeApiError::is_pending_ask(outcome.status, &outcome.body) {
+        if FacadeApiError::is_held_call(outcome.status, &outcome.body) {
             self.finish_failed(outcome);
             return;
         }
@@ -266,20 +275,26 @@ impl DoorInvocationClaim {
     }
 
     fn finish_with(mut self, outcome: InvocationOutcome, keep: bool) {
-        let kept = if keep {
-            self.store.settle(&self.store_key, &outcome).map(|_| ())
-        } else {
-            self.store.release_intent(&self.store_key)
-        };
-        if let Err(error) = kept {
-            tracing::error!(
-                reason = "invocation_claim_finish_failed",
-                error = %error,
-                "failed to finish the durable invocation claim; its intent stands"
-            );
+        if let Some(durable) = &self.durable {
+            let kept = if keep {
+                durable.store.settle(&durable.key, &outcome).map(|_| ())
+            } else {
+                durable.store.release_intent(&durable.key)
+            };
+            if let Err(error) = kept {
+                tracing::error!(
+                    reason = "invocation_claim_finish_failed",
+                    error = %error,
+                    "failed to finish the durable invocation claim; its intent stands"
+                );
+            }
         }
         if let Some(live) = self.live.take() {
-            live.finish(outcome);
+            if self.durable.is_none() && !keep {
+                live.finish_unkept(outcome);
+            } else {
+                live.finish(outcome);
+            }
         }
     }
 }
@@ -287,7 +302,8 @@ impl DoorInvocationClaim {
 impl Drop for DoorInvocationClaim {
     fn drop(&mut self) {
         if self.live.is_some()
-            && let Err(error) = self.store.release_intent(&self.store_key)
+            && let Some(durable) = &self.durable
+            && let Err(error) = durable.store.release_intent(&durable.key)
         {
             tracing::error!(
                 reason = "invocation_claim_release_failed",
@@ -340,8 +356,10 @@ pub(crate) async fn claim_door_invocation(
                         }
                         return DoorClaim::Run(DoorInvocationClaim {
                             live: live.take(),
-                            store,
-                            store_key,
+                            durable: Some(DurableDoorInvocation {
+                                store,
+                                key: store_key,
+                            }),
                         });
                     }
                     crate::invocation_claims::InvocationClaimLookup::Replay(outcome) => {
@@ -530,4 +548,26 @@ fn rereleased_refusal(
         error.remove("legal_hold");
     }
     body
+}
+
+impl DoorClaim {
+    /// Adapts an actual native session-owned claim without opening a durable
+    /// intent. The native owner retains successful outcomes until close.
+    pub(crate) async fn from_session(entry: InvocationEntry) -> Self {
+        match entry {
+            InvocationEntry::Claimed(live) => Self::Run(DoorInvocationClaim {
+                live: Some(live),
+                durable: None,
+            }),
+            InvocationEntry::Conflict => Self::Conflict,
+            InvocationEntry::Busy(wait) => {
+                match super::clock_ingress::run_blocking(move || wait.outcome(INVOCATION_WAIT))
+                    .await
+                {
+                    Ok(Some(outcome)) => Self::Answered(outcome),
+                    _ => Self::InFlight,
+                }
+            }
+        }
+    }
 }

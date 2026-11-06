@@ -228,6 +228,7 @@ pub(super) async fn upload_geometry(
                 .get::<Arc<OwnedSemaphorePermit>>()
                 .cloned();
             let (parts, body) = request.into_parts();
+            let inspection_server = Arc::clone(&server);
             return super::ingress::anonymous_editor_spooled(
                 &server,
                 &parts.headers,
@@ -244,7 +245,13 @@ pub(super) async fn upload_geometry(
                         Err(refusal) => return super::ingress::whole_body_refused(refusal),
                     };
                     lease.materialized(bytes, pdf.capacity() as u64);
-                    match parse_lease::inspected(lease, deadline, &pdf, stream_decode_bytes) {
+                    match parse_lease::inspected_with_worker(
+                        &inspection_server,
+                        lease,
+                        deadline,
+                        &pdf,
+                        stream_decode_bytes,
+                    ) {
                         Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
                         Err(response) => response,
                     }
@@ -256,6 +263,7 @@ pub(super) async fn upload_geometry(
         EditorIngress::Admitted(slot) => slot,
     };
     let (parts, body) = request.into_parts();
+    let inspection_server = Arc::clone(&server);
     super::ingress::editor_spooled(
         &server,
         EngineLimit::EsignGeometryBodyBytes,
@@ -276,7 +284,13 @@ pub(super) async fn upload_geometry(
             // The read bytes are held now, so the live reading is not
             // charged them twice while the lease lives (FIX 9345).
             lease.materialized(bytes, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
-            match parse_lease::inspected(lease, deadline, &pdf, stream_decode_bytes) {
+            match parse_lease::inspected_with_worker(
+                &inspection_server,
+                lease,
+                deadline,
+                &pdf,
+                stream_decode_bytes,
+            ) {
                 Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
                 Err(response) => response,
             }

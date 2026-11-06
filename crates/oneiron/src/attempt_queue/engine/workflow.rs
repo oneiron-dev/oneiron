@@ -217,7 +217,7 @@ impl AttemptQueue<'_> {
         id: AttemptId,
         now: u64,
     ) -> Result<bool> {
-        let Some(mut record) = self.get_in_write_txn(txn, id)? else {
+        let Some(record) = self.get_in_write_txn(txn, id)? else {
             return Ok(false);
         };
         if record.state != AttemptState::Scheduled
@@ -226,6 +226,35 @@ impl AttemptQueue<'_> {
         {
             return Ok(false);
         }
+        self.advance_waiting_retry_in_txn(txn, record, now)
+    }
+
+    /// A retained workflow has validated its checkpoint in this writer.
+    /// Its failed try requeued the same leaf, so it may have no retry_of.
+    pub(crate) fn advance_requeued_retry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(record) = self.get_in_write_txn(txn, id)? else {
+            return Ok(false);
+        };
+        if record.state != AttemptState::Scheduled
+            || record.history.is_empty()
+            || ready_at(&record) <= now
+        {
+            return Ok(false);
+        }
+        self.advance_waiting_retry_in_txn(txn, record, now)
+    }
+
+    fn advance_waiting_retry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        mut record: AttemptRecord,
+        now: u64,
+    ) -> Result<bool> {
         self.delete_ready_entry_for_record(txn, &record)?;
         record.scheduled_at = Some(now);
         record.backoff_until = None;

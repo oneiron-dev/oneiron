@@ -21,6 +21,7 @@ mod scoped_channels;
 pub(crate) use types::{CandidateFilter, CandidateGate, SnapshotCandidateFilter, TurnFold};
 mod l2_evidence;
 mod media_channel;
+mod media_query_memory;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;

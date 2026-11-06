@@ -409,8 +409,12 @@ impl Vault {
             }
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
-            self.store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            self.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(self),
+                txn,
+                entity,
+                &pointer,
+            )?;
             self.store.scope_stamps.restamp_document_pointer(
                 &self.store,
                 txn,
@@ -605,11 +609,12 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
 }
 
 pub(super) fn move_pointer(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
     document: &str,
 ) -> Result<()> {
+    let store = write.store;
     let raw = store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
@@ -637,7 +642,7 @@ pub(super) fn move_pointer(
         &raw[ENTITY_METADATA_HEADER_LEN..],
         &body,
     )?;
-    store.port_entity_document_pointer_put(txn, entity, &body)
+    store.port_entity_document_pointer_put(write, txn, entity, &body)
 }
 
 /// Removes a document's snapshot, state vectors and pending updates.

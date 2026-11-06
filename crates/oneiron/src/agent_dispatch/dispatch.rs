@@ -264,9 +264,21 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let planned = spawn.plan.is_some();
         let origin =
             self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
         let mut dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
+        let budget = if budget.is_none() && !planned {
+            crate::learning_setting_choice::owner_spawn_budget_in_txn(
+                self.vault,
+                wtxn,
+                dispatch_input.project_ref,
+                &dispatch_input.type_ref,
+            )?
+        } else {
+            budget
+        };
+        dispatch_input.budget = budget;
         // OF-532: state the launch (count, expected spend, cap) in this
         // transaction and freeze it into the payload; the scope is reserved
         // below, once the attempt id exists, in the same transaction.
@@ -476,58 +488,7 @@ impl<'a> AgentDispatcher<'a> {
         // planned spawn takes the stamp its plan read and is never placed
         // again; a supplied stamp the current tree accepts is kept; anything
         // else is placed, and unsure is the root — never an untyped spawn.
-        let tree =
-            super::task_type_tree::load_team_type_tree_in_txn(self.vault, wtxn, Some(project_ref))?;
-        if spawn
-            .type_ref
-            .as_ref()
-            .is_some_and(|type_ref| type_ref.node_id.is_empty())
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                "task_type_ref node_id must not be empty",
-            )));
-        }
-        let type_ref = match &spawn.plan {
-            Some(plan) => {
-                plan.validate()?;
-                if spawn
-                    .type_ref
-                    .as_ref()
-                    .is_some_and(|type_ref| *type_ref != plan.asked.type_ref)
-                {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "spawn type stamp differs from the one its plan read",
-                    )));
-                }
-                if requested_target != plan.plan.agent_def {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "dispatch target is not the seat its plan resolved",
-                    )));
-                }
-                tree.validate_current_ref(&plan.asked.type_ref)
-                    .map_err(|_| {
-                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                            "the plan's type stamp is not in the tree in force; plan again",
-                        ))
-                    })?;
-                plan.asked.type_ref.clone()
-            }
-            // Inside the write transaction no model call may run: the
-            // placement skill's rule rung reads alone, on a direct spawn's
-            // need text (FIX 2107). A host that wants its rungs to place
-            // does so before dispatch (`place_spawn_type`).
-            None => super::task_type_tree::place_in_tree(
-                &tree,
-                spawn.type_ref.as_ref(),
-                None,
-                spawn
-                    .direct_spawn
-                    .as_ref()
-                    .map(|receipt| receipt.ask.need.clone()),
-                Some(project_ref),
-                None,
-            ),
-        };
+        let type_ref = self.spawn_type_in_txn(wtxn, project_ref, requested_target, &spawn)?;
 
         // OF-540: the team run, frozen once here. An explicit stamp wins (a
         // nested team names its own); otherwise a child keeps its parent's
@@ -589,6 +550,68 @@ impl<'a> AgentDispatcher<'a> {
             // OF-541: carried as asked; `spawn_intent` above never reads it.
             direct_spawn,
             requester,
+        })
+    }
+
+    /// The task-type stamp shared by preparation and a direct launch preview.
+    pub(super) fn spawn_type_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project_ref: EntityId,
+        requested_target: EntityId,
+        spawn: &AgentSpawnContext,
+    ) -> Result<crate::task_type::TaskTypeRef> {
+        let tree =
+            super::task_type_tree::load_team_type_tree_in_txn(self.vault, txn, Some(project_ref))?;
+        if spawn
+            .type_ref
+            .as_ref()
+            .is_some_and(|type_ref| type_ref.node_id.is_empty())
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "task_type_ref node_id must not be empty",
+            )));
+        }
+        Ok(match &spawn.plan {
+            Some(plan) => {
+                plan.validate()?;
+                if spawn
+                    .type_ref
+                    .as_ref()
+                    .is_some_and(|type_ref| *type_ref != plan.asked.type_ref)
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "spawn type stamp differs from the one its plan read",
+                    )));
+                }
+                if requested_target != plan.plan.agent_def {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "dispatch target is not the seat its plan resolved",
+                    )));
+                }
+                tree.validate_current_ref(&plan.asked.type_ref)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "the plan's type stamp is not in the tree in force; plan again",
+                        ))
+                    })?;
+                plan.asked.type_ref.clone()
+            }
+            // Inside the write transaction no model call may run: the
+            // placement skill's rule rung reads alone, on a direct spawn's
+            // need text (FIX 2107). A host that wants its rungs to place
+            // does so before dispatch (`place_spawn_type`).
+            None => super::task_type_tree::place_in_tree(
+                &tree,
+                spawn.type_ref.as_ref(),
+                None,
+                spawn
+                    .direct_spawn
+                    .as_ref()
+                    .map(|receipt| receipt.ask.need.clone()),
+                Some(project_ref),
+                None,
+            ),
         })
     }
 
