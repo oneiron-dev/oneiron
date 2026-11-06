@@ -182,7 +182,8 @@ impl SessionBinding<'_> {
     /// so the same transaction fences it and stamps its owner there, as the
     /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
     /// by its owner row, and a write after that erase stays erased. An
-    /// overlay row stamps none.
+    /// overlay row stamps its owner in the overlay, in the same writer, so
+    /// the room's waits know whose run it is (FIX 6586).
     pub(super) fn put_owned_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -205,6 +206,7 @@ impl SessionBinding<'_> {
                             REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
                         }
                         RoutedDbs::Session(_) => {
+                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
                             REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
                         }
                     }
@@ -893,6 +895,14 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.limit_watch(),
             Self::Session(binding) => binding.session.limit_watch(),
+        }
+    }
+
+    /// Wall milliseconds from the owning vault's injected clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        match self {
+            Self::Canonical(vault) => vault.now_recorded_ms(),
+            Self::Session(binding) => binding.session.now_recorded_ms(),
         }
     }
 

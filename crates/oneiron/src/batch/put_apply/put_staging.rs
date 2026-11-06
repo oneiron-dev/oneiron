@@ -432,17 +432,18 @@ pub(super) fn validate_domain_carriers(
 /// A local write also pins the typed citations it adds (FIX 904); a
 /// replicated row carries its citations as written.
 pub(super) fn stage_claim_projection(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
+    let store = write.store;
     if let Some(body) = body {
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::store::claim_projection::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(write, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())

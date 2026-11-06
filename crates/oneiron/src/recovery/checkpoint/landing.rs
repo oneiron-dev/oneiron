@@ -86,10 +86,11 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let mut opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
+            .transpose()?
             .unwrap_or_default();
         for (_, blob) in &opened_entities {
             validate_checkpoint_entity_row(blob)?;
@@ -106,6 +107,9 @@ impl Vault {
         // takes its rows out (KS-2A).
         let (retired, retired_digests) =
             carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        if let Some(opened) = &mut opened {
+            opened.retire_message_results(&retired_digests)?;
+        }
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked
@@ -173,19 +177,21 @@ impl Vault {
         // result body with its line index, an ASSET's file raw (FIX 3677),
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
+        let mut unlanded_bodies = Vec::new();
         carried_bodies::restore(
             &vault,
             &mut image,
             bodies,
             &mut room,
             (body_custody.as_ref(), &retired),
+            &mut unlanded_bodies,
         )
         .map_err(Rejected::landing)?;
         // A queue row landed from its carried bytes goes unleased, as the
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
-        vault.with_write_txn_grouped(|txn| {
+        let cancelled = vault.with_write_txn_grouped(|txn| {
             let destination_floor = crate::ports::claim_order::floor_in_txn(&vault.store, txn)?;
             for entry in DB_MANIFEST {
                 let db = vault
@@ -281,27 +287,38 @@ impl Vault {
             let since = response_rows::removals::erased_since_in_txn(&vault.store, &*txn, &erased)?;
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
-            crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
+            let cancelled = crate::deletion::rerun_actor_scrubs_in_txn(RestoreActorScrubWriter {
                 vault: &vault,
                 wtxn: txn,
                 erased: &erased,
             })?;
             // And what those erases took that no obligation retired (FIX
             // 10461, 10533, 10631, 10436).
-            response_rows::removals::scrub_in_txn(&vault.store, txn, &since)?;
+            response_rows::removals::scrub_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                txn,
+                &since,
+            )?;
             // A step claim's response pins go with what the rows no longer
             // hold, now the type index is back: an erased shell's release,
             // an omitted claim's or version's pin goes alone (FIX 6225).
             crate::llm::prune_step_response_pins_in_txn(
-                &vault.store,
+                &crate::secret_custody::CustodyWrite::of(&vault),
                 txn,
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
+            // A NOTE that cites a record this restore did not open, or one
+            // the source erased since the cut, loses that citation and its
+            // quote, history included, as the live erase scrubs it (FIX
+            // 18270). Every row it reads is back by now.
+            crate::note::erase_restored_citations_in_txn(&vault, txn, &erased)?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
-            Ok(())
+            Ok(cancelled)
         })?;
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .erased_payload_cancellations_committed(&cancelled);
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         room.admit_derived(destination)?;
@@ -324,6 +341,19 @@ impl Vault {
                 .map_err(Rejected::receipt)?;
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
+        }
+        // The reopened destination now has its actual custody binding.
+        // Journal each released instance there before dropping its mapping.
+        if !unlanded_bodies.is_empty()
+            && matches!(custody, Custody::Keep | Custody::Landed | Custody::Fork(_))
+        {
+            vault.with_write_txn_grouped(|txn| {
+                crate::code_run::retire_unlanded_inline_body_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &unlanded_bodies,
+                )
+            })?;
         }
         // Each pad a row names by reference rests again with the pad its
         // custody holds, or is withheld by its world's setting; any other is
