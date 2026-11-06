@@ -70,6 +70,9 @@ pub(crate) fn merge_policy_in_txn(
         accepted.revision = next_revision(accepted.revision)?;
     }
     POLICIES.put(&vault.store, txn, id, &accepted)?;
+    // Every window the policy rides takes the newer revision (fix list row
+    // 17203).
+    super::wake::wake_policy_in_txn(vault, txn, id)?;
     Ok(ReplicaMerge::Written)
 }
 
@@ -133,6 +136,7 @@ pub(crate) fn merge_event_in_txn(
         },
     };
     EVENTS.put(&vault.store, txn, &key, &merged)?;
+    super::wake::wake_policy_in_txn(vault, txn, policy)?;
     Ok(ReplicaMerge::Written)
 }
 
@@ -455,6 +459,7 @@ fn normalized_head_in_txn(
     }
     normal.revision = next_revision(held.revision)?;
     POLICIES.put(&vault.store, txn, id, &normal)?;
+    super::wake::wake_policy_in_txn(vault, txn, id)?;
     Ok(Some(normal))
 }
 
