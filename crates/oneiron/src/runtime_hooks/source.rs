@@ -388,53 +388,64 @@ fn claim_changes_after_in_txn(
         }
         let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(id));
         batch.through = Some(position);
-        let (kind, op) = match change.op {
-            ChangeOp::Create => (FactKind::ClaimLanded, FactOp::Create),
-            ChangeOp::Update => (FactKind::ClaimLanded, FactOp::Update),
-            ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
-            _ => continue,
-        };
-        let Some(record) = vault.store.port_entity_record(txn, &change.entity)? else {
-            continue;
-        };
-        if record.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
+        if let Some(entry) = claim_fact_in_txn(vault, txn, &change)? {
+            batch.entries.push(entry);
         }
-        let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
+    }
+    Ok(batch)
+}
+
+pub(super) fn claim_fact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &crate::ports::ChangeLogRecord,
+) -> Result<Option<FactEntry>> {
+    let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(change.id));
+    let (kind, op) = match change.op {
+        ChangeOp::Create => (FactKind::ClaimLanded, FactOp::Create),
+        ChangeOp::Update => (FactKind::ClaimLanded, FactOp::Update),
+        ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
+        _ => return Ok(None),
+    };
+    let Some(record) = vault.store.port_entity_record(txn, &change.entity)? else {
+        return Ok(None);
+    };
+    if record.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
+        vault,
+        txn,
+        &change.entity,
+        &change.input_hash,
+    )?;
+    let historical = match revision {
+        Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
             vault,
             txn,
             &change.entity,
-            &change.input_hash,
-        )?;
-        let historical = match revision {
-            Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
-                vault,
-                txn,
-                &change.entity,
-                crate::vault::ReadMode::Pinned(revision),
-            )?,
-            None => None,
-        };
-        let predicate = historical
-            .as_deref()
-            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-            .map(|body| body.predicate);
-        batch.entries.push(FactEntry {
-            position,
-            kind,
-            entity: change.entity,
-            op,
-            actor: change.actor_principal,
-            recorded_at: change.recorded_at,
-            input_hash: change.input_hash,
-            body_hash: Some(change.input_hash),
-            revision,
-            settlement: None,
-            predicate,
-        });
-    }
-    Ok(batch)
+            crate::vault::ReadMode::Pinned(revision),
+        )?,
+        None => None,
+    };
+    let predicate = historical
+        .as_deref()
+        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .map(|body| body.predicate);
+    Ok(Some(FactEntry {
+        position,
+        kind,
+        entity: change.entity,
+        op,
+        actor: change.actor_principal,
+        recorded_at: change.recorded_at,
+        input_hash: change.input_hash,
+        body_hash: Some(change.input_hash),
+        revision,
+        settlement: None,
+        predicate,
+    }))
 }
 
 /// Settlements after `after`.
@@ -465,33 +476,48 @@ fn settlements_after_in_txn(
         let (sequence, settled) = row?;
         let position = FactPosition::Settlement(SettlementPosition(sequence));
         batch.through = Some(position);
-        let revision = match settled.body_hash.as_ref() {
-            Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                vault,
-                txn,
-                &settled.proposal,
-                body_hash,
-            )?,
-            None => None,
-        };
-        batch.entries.push(FactEntry {
-            position,
-            kind: FactKind::ProposalSettled,
-            entity: settled.proposal,
-            op: FactOp::Settle,
-            actor: settled.settled_by,
-            recorded_at: settled.recorded_at,
-            input_hash: settled.input_hash(),
-            body_hash: settled.body_hash,
-            revision,
-            settlement: Some(SettlementDetails {
-                kind: settled.kind,
-                outcome: settled.outcome,
-            }),
-            predicate: None,
-        });
+        batch.entries.push(settlement_fact_in_txn(
+            vault,
+            txn,
+            SettlementPosition(sequence),
+            &settled,
+        )?);
     }
     Ok(batch)
+}
+
+pub(super) fn settlement_fact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    position: SettlementPosition,
+    settled: &SettledRow,
+) -> Result<FactEntry> {
+    let position = FactPosition::Settlement(position);
+    let revision = match settled.body_hash.as_ref() {
+        Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
+            vault,
+            txn,
+            &settled.proposal,
+            body_hash,
+        )?,
+        None => None,
+    };
+    Ok(FactEntry {
+        position,
+        kind: FactKind::ProposalSettled,
+        entity: settled.proposal,
+        op: FactOp::Settle,
+        actor: settled.settled_by,
+        recorded_at: settled.recorded_at,
+        input_hash: settled.input_hash(),
+        body_hash: settled.body_hash,
+        revision,
+        settlement: Some(SettlementDetails {
+            kind: settled.kind,
+            outcome: settled.outcome,
+        }),
+        predicate: None,
+    })
 }
 
 /// The newest position in `source`, or `None` while it is empty.
