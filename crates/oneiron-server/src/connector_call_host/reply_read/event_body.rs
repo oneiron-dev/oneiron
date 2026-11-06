@@ -28,6 +28,15 @@ impl Data {
     }
 
     pub(super) fn append(&mut self, field: &str, vault: Option<&Vault>) -> Result<(), ()> {
+        self.append_fragment(field, true, vault)
+    }
+
+    pub(super) fn append_fragment(
+        &mut self,
+        field: &str,
+        join: bool,
+        vault: Option<&Vault>,
+    ) -> Result<(), ()> {
         if let Self::Memory(data) = self
             && data.is_empty()
             && !field.is_empty()
@@ -38,17 +47,22 @@ impl Data {
         }
         match self {
             Self::Memory(data) => {
-                append_text(data, field);
+                if join {
+                    append_text(data, field);
+                } else {
+                    data.push_str(field);
+                }
                 Ok(())
             }
             Self::Spooled { file, len } => {
                 let before = *len;
+                let separator = join && before != 0;
                 let next = before
-                    .checked_add(u64::from(before != 0))
+                    .checked_add(u64::from(separator))
                     .and_then(|len| len.checked_add(field.len() as u64))
                     .ok_or(())?;
                 let written = (|| -> std::io::Result<()> {
-                    if before != 0 {
+                    if separator {
                         file.write_all(b"\n")?;
                     }
                     file.write_all(field.as_bytes())
@@ -59,20 +73,39 @@ impl Data {
                 }
                 // Recover only the last complete prefix: a failed write may
                 // have already written part of this field or its separator.
-                file.seek(SeekFrom::Start(0)).map_err(|_| ())?;
-                let mut data = Zeroizing::new(String::new());
-                (&mut *file)
-                    .take(before)
-                    .read_to_string(&mut data)
-                    .map_err(|_| ())?;
-                if data.len() as u64 != before {
-                    return Err(());
+                let mut data = recover_prefix(file, before)?;
+                if join {
+                    append_text(&mut data, field);
+                } else {
+                    data.push_str(field);
                 }
-                append_text(&mut data, field);
                 *self = Self::Memory(data);
                 Ok(())
             }
         }
+    }
+
+    pub(super) fn append_crs(&mut self, count: usize, vault: &Vault) -> Result<(), ()> {
+        if count == 0 {
+            return Ok(());
+        }
+        self.append_fragment("\r", false, Some(vault))?;
+        let count = count - 1;
+        match self {
+            Self::Memory(data) => data.extend(std::iter::repeat_n('\r', count)),
+            Self::Spooled { file, len } => {
+                let before = *len;
+                let next = before.checked_add(count as u64).ok_or(())?;
+                if std::io::copy(&mut std::io::repeat(b'\r').take(count as u64), file).is_ok() {
+                    *len = next;
+                } else {
+                    let mut data = recover_prefix(file, before)?;
+                    data.extend(std::iter::repeat_n('\r', count));
+                    *self = Self::Memory(data);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn read(self) -> Result<Option<(Value, RawOutboundBody)>, ()> {
@@ -91,6 +124,18 @@ impl Data {
             }
         }
     }
+}
+
+fn recover_prefix(file: &mut File, before: u64) -> Result<Zeroizing<String>, ()> {
+    file.seek(SeekFrom::Start(0)).map_err(|_| ())?;
+    let mut data = Zeroizing::new(String::new());
+    file.take(before)
+        .read_to_string(&mut data)
+        .map_err(|_| ())?;
+    if data.len() as u64 != before {
+        return Err(());
+    }
+    Ok(data)
 }
 
 fn append_text(data: &mut String, field: &str) {

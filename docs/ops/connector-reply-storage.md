@@ -32,15 +32,23 @@ The first `tools/call` SSE read writes normalized data fields into one
 anonymous event spool as they arrive. An answer moves that same file into
 its raw body before the credential clear; no complete event String is built
 on this path. An empty first data field does not open a file. If file
-placement fails, the original in-memory accumulation remains. If a field
-write fails partway through, the reader recovers only the last complete
-prefix, checks its length, and appends the complete current field once in
-memory. A failed recovery or spool read uses the existing unreadable-reply
-carrier; invalid JSON still skips that event. Each dispatch resets the data
-owner, so a dropped event does not leave its file in a stream history.
-The line reader, field joins, event ids and request classification are
-unchanged. Each line and the typed Value can still be arbitrarily large.
+placement fails, the original in-memory accumulation remains. If a fragment
+write fails partway through, the reader recovers only the successfully written
+prefix, checks its length, and appends the failed fragment once in memory.
+A failed recovery or spool read uses the existing unreadable-reply carrier;
+invalid JSON still skips that event. Each dispatch resets the data owner,
+so a dropped event does not leave its file in a stream history.
+
+The first read consumes `data:` payloads in native reader-buffer fragments,
+with only an incomplete UTF-8 suffix carried between buffers. It drops exactly
+one leading space and all trailing CR bytes, keeps internal CR runs without
+a whole repeated-CR String, and joins each field once, including an empty
+field after nonempty data. Non-data lines use the original line reader.
+Invalid UTF-8 still makes any line unreadable; event ids, EOF dispatch,
+request classification and the existing post-line deadline are unchanged.
 Control and later stream reads retain their original in-memory path.
+Typed Values, non-data lines and spool-fallback data can still be arbitrarily
+large.
 
 For a file-backed top-level JSON array, clearing first parses, clears and
 wipes one complete message at a time, and validates the entire array and
@@ -142,9 +150,9 @@ are not selected by this early publisher.
 
 This is not a bounded-memory implementation of the full connector result
 path. Individual typed JSON messages and credential-clearing comparisons
-still hold whole Values, as do non-array clearing inputs. Each SSE line
-and later SSE event data remain in memory. Event accumulation also stays
-in memory on a spool fallback. The stored STEP body is still an
+still hold whole Values, as do non-array clearing inputs. Non-data SSE lines
+and later SSE lines and event data remain in memory. First-read data also
+stays in memory on a spool fallback. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
 JSON clearing within each message, and spool-aware stored replay admission remain separate
 work. This transaction repair selects only delivered connector answers,
