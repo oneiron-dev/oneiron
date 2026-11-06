@@ -1,5 +1,5 @@
 //! Pure equality of one owned recapture after native pad normalization.
-//! Entity blobs and current document text resume one byte per existing work unit.
+//! Entity blobs, current document text, titles and fields resume one byte per work unit.
 
 use crate::error::Result;
 use crate::recovery::CanonicalDocument;
@@ -12,6 +12,13 @@ pub(in crate::recovery) struct CanonicalComparison {
     group: Group,
     next: usize,
     byte: usize,
+    payload: PayloadPart,
+}
+
+#[derive(PartialEq, Eq)]
+enum PayloadPart {
+    First,
+    Second,
 }
 
 enum Group {
@@ -47,6 +54,7 @@ impl CanonicalComparison {
             group: Group::Window,
             next: 0,
             byte: 0,
+            payload: PayloadPart::First,
         }
     }
 
@@ -121,6 +129,7 @@ impl CanonicalComparison {
                     &wanted.doc_snapshots,
                     &mut self.next,
                     &mut self.byte,
+                    &mut self.payload,
                 )?,
                 Group::EntityDocuments,
             ),
@@ -130,6 +139,7 @@ impl CanonicalComparison {
                     &wanted.entity_documents,
                     &mut self.next,
                     &mut self.byte,
+                    &mut self.payload,
                 )?,
                 Group::DocumentHeads,
             ),
@@ -211,6 +221,7 @@ impl CanonicalComparison {
             self.group = next_group;
             self.next = 0;
             self.byte = 0;
+            self.payload = PayloadPart::First;
         }
         Ok(matches!(self.group, Group::Complete))
     }
@@ -245,6 +256,7 @@ fn compare_documents(
     wanted: &[CanonicalDocument],
     next: &mut usize,
     byte: &mut usize,
+    payload: &mut PayloadPart,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
     let Some(CanonicalDocument {
@@ -268,17 +280,24 @@ fn compare_documents(
         birth_at: expected_birth_at,
         authorship: expected_authorship,
     } = &wanted[*next];
-    if *byte == 0 {
-        compare_value(entity_id, expected_entity)?;
-        compare_value(head, expected_head)?;
+    if *payload == PayloadPart::First {
+        if *byte == 0 {
+            compare_value(entity_id, expected_entity)?;
+            compare_value(head, expected_head)?;
+        }
+        if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
+            *payload = PayloadPart::Second;
+            *byte = 0;
+        }
+        return Ok(false);
     }
-    if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
-        compare_value(title, expected_title)?;
+    if compare_optional_text(title, expected_title, byte)? {
         compare_value(birth_actor, expected_birth_actor)?;
         compare_value(birth_at, expected_birth_at)?;
         compare_value(authorship, expected_authorship)?;
         *next += 1;
         *byte = 0;
+        *payload = PayloadPart::First;
     }
     Ok(false)
 }
@@ -288,6 +307,7 @@ fn compare_entity_documents(
     wanted: &[CanonicalEntityDocument],
     next: &mut usize,
     byte: &mut usize,
+    payload: &mut PayloadPart,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
     let Some(CanonicalEntityDocument {
@@ -317,10 +337,16 @@ fn compare_entity_documents(
         birth_at: expected_birth_at,
         history: expected_history,
     } = &wanted[*next];
-    if *byte == 0 {
-        compare_value(entity_id, expected_entity)?;
-        compare_value(document_id, expected_document)?;
-        compare_value(field, expected_field)?;
+    if *payload == PayloadPart::First {
+        if *byte == 0 {
+            compare_value(entity_id, expected_entity)?;
+            compare_value(document_id, expected_document)?;
+        }
+        if compare_optional_text(field, expected_field, byte)? {
+            *payload = PayloadPart::Second;
+            *byte = 0;
+        }
+        return Ok(false);
     }
     if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
         compare_value(metadata, expected_metadata)?;
@@ -331,8 +357,24 @@ fn compare_entity_documents(
         compare_value(history, expected_history)?;
         *next += 1;
         *byte = 0;
+        *payload = PayloadPart::First;
     }
     Ok(false)
+}
+
+fn compare_optional_text(
+    actual: &Option<String>,
+    wanted: &Option<String>,
+    next: &mut usize,
+) -> Result<bool> {
+    match (actual, wanted) {
+        (Some(actual), Some(wanted)) => compare_bytes(actual.as_bytes(), wanted.as_bytes(), next),
+        (None, None) => Ok(true),
+        _ => {
+            compare_value(&actual.is_some(), &wanted.is_some())?;
+            Ok(false)
+        }
+    }
 }
 
 fn compare_bytes(actual: &[u8], wanted: &[u8], next: &mut usize) -> Result<bool> {
