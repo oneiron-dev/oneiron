@@ -88,6 +88,14 @@ pub(crate) fn erase_citations_in_txn(
     for citing in &dependents {
         super::citation_scrub::scrub_pending(vault, txn, *citing)?;
     }
+    // A NOTE held only as a residence copy is in no index this read: its
+    // copy goes whole, the source now marked (FIX 18400).
+    #[cfg(feature = "sync")]
+    for note in super::citation_residence::erase_residence_citations_in_txn(vault, txn)? {
+        if note != *id && !dependents.contains(&note) {
+            dependents.push(note);
+        }
+    }
     Ok(dependents)
 }
 
@@ -135,6 +143,13 @@ pub(crate) fn erase_restored_citations_in_txn(
     scrubbed.extend(scrub_retired_canonical_citations(vault, txn)?);
     for note in citing.iter().chain(&scrubbed) {
         drop_view_receipts(store, txn, *note)?;
+    }
+    // Residence copies the image held: an erased item's own, and every
+    // cached NOTE's that cites one (FIX 18400).
+    #[cfg(feature = "sync")]
+    {
+        super::citation_residence::erase_own_copies_in_txn(store, txn, erased.iter().copied())?;
+        super::citation_residence::erase_residence_citations_in_txn(vault, txn)?;
     }
     Ok(())
 }
