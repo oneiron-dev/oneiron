@@ -58,8 +58,9 @@ impl PreparedHomeClaimDelivery {
     }
 }
 
-/// One machine's opaque copy. Sender authentication still comes from the
-/// connection; knowing the recipient's public key does not authenticate a sender.
+/// One machine's opaque copy. Knowing the recipient's public key does not
+/// authenticate its sender. The direct opener needs a proven peer; the signed
+/// wrapper separately authenticates only this optional copy's origin.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SealedHomeClaimVector {
