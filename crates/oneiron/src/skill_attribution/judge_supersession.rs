@@ -268,6 +268,33 @@ pub fn supersede_displaced_judge_receipts_with_positions(
                     replacement,
                     output_positions.and_then(|positions| positions.get(&judgment.sequence)),
                 )?;
+                // The receipt's model is not necessarily a callable's invoker.
+                // Mark its retained physical arms even if the skill has moved
+                // to a newer revision since these outcomes were written.
+                for actual in crate::skill_reliability::stored_outcome_executors_in_txn(
+                    vault,
+                    txn,
+                    &subject,
+                    receipt_ref,
+                )? {
+                    if executor.as_deref() == Some(actual.as_str()) {
+                        continue;
+                    }
+                    crate::skill_reliability::mark_displaced_outcome_positioned_in_txn(
+                        vault,
+                        txn,
+                        &subject,
+                        Some(&actual),
+                        receipt_ref,
+                        displaced,
+                        replacement,
+                        None,
+                    )?;
+                    let pair = (subject, Some(actual));
+                    if !affected.contains(&pair) {
+                        affected.push(pair);
+                    }
+                }
                 let pair = (subject, executor);
                 if !affected.contains(&pair) {
                     affected.push(pair);

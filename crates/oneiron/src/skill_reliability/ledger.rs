@@ -693,3 +693,19 @@ pub(super) fn projection_outcomes_in_txn(
     records.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(records)
 }
+
+/// Stored physical arms for this exact skill and receipt, including displaced
+/// rows. Historical arms do not depend on the skill's current revision.
+pub(crate) fn stored_outcome_executors_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    receipt: &str,
+) -> Result<Vec<String>> {
+    Ok(PAIRED_OUTCOME
+        .scan_from(&vault.store, txn, skill.as_bytes())?
+        .into_iter()
+        .filter(|(key, _)| key.receipt == receipt)
+        .map(|(key, _)| key.arm.executor)
+        .collect())
+}

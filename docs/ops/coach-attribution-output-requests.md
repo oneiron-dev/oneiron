@@ -109,3 +109,12 @@ the ordinary placement-clearing behavior. The judgment's own position, receipt,
 funding, read grants and advertised executor supply no output placement. No entry
 grants source access, declares a complete read set, enables FACT or authorizes
 model release.
+
+Displacing a defect's judge also marks every stored native executor arm for that
+exact skill and first receipt. The receipt's advertised model is not assumed to
+be a callable's invoker, and a later skill revision does not hide retained arms.
+These arms re-project after the same displacement commit, including on retries.
+The existing receipt-model marker request remains on its original arm only.
+Additional arms have unknown marker placement; one judgment request is never
+broadcast to several physical markers. Native marker birth and no-restamp rules
+remain unchanged.
