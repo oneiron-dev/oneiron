@@ -21,9 +21,11 @@ use super::support::{
 use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
 mod checkpoint;
 mod cursor;
+mod pending_step;
 mod position;
 
 pub use self::checkpoint::CodeRunStepCheckpoint;
+pub use self::pending_step::PendingCodeStep;
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
@@ -640,6 +642,10 @@ pub struct CodeRunReplayRecord {
     /// Skills loaded and other runs' result rows read so far (FIX 6999).
     /// `None` once any such constituent read is unknown.
     pub callable_rows: Option<Vec<EntityId>>,
+    /// The step its deadline stopped before its program ended (FIX 7703):
+    /// the run's next entry runs that stored program again before any new
+    /// model turn. `None` while no step is pending.
+    pub pending_step: Option<PendingCodeStep>,
     /// Decoded row memos, never part of the replay codec or ABI (FIX 837).
     /// Any future in-place prefix outcome rewrite must invalidate them.
     pub(crate) verb_rows_cache: VerbRowsCache,
@@ -698,6 +704,8 @@ pub struct CodeRunReplayGeneration {
     pub step_checkpoint_count: u64,
     pub output_count: u64,
     pub last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    /// The pending step's digest, zero while none is pending (FIX 7703).
+    pub pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN],
 }
 
 impl CodeRunReplayGeneration {
@@ -715,6 +723,10 @@ impl CodeRunReplayGeneration {
                 .map_or([0; CODE_RUN_REPLAY_HASH_LEN], |checkpoint| {
                     checkpoint.state_hash
                 }),
+            pending_digest: match &record.pending_step {
+                Some(pending) => super::codec::pending_step_digest(pending)?,
+                None => [0; CODE_RUN_REPLAY_HASH_LEN],
+            },
         })
     }
 }
@@ -784,6 +796,7 @@ impl CodeRunReplayRecord {
             bindings: Vec::new(),
             live_run: None,
             callable_rows: Some(Vec::new()),
+            pending_step: None,
             verb_rows_cache: VerbRowsCache::default(),
         }
     }
