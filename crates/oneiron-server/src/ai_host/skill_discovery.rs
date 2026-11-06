@@ -10,6 +10,10 @@
 //! rule tier on its Rule rung first (a defect, a lapse or a discovery), then
 //! the host's model rungs for what the rules leave open. A doubtful answer
 //! takes a Coach note and holds in the unclear ledger.
+//!
+//! An attempt's anchored outcome is read from its stored source, never
+//! asked of the classifier's model: a completed random audit of the
+//! attempt's exact result (FIX 3611, [`stored_anchored_outcome`]).
 use oneiron::attempt_queue::{AttemptId, ReadSetProducer};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::limit_ask::EngineLimit;
@@ -17,7 +21,7 @@ use oneiron::receipt::ReceiptRecord;
 use oneiron::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttributionNotes, AttributionVerdict, DeviationCause,
     FollowedState, HunkVerdict, JudgeRequest, ReceiptAttributionFacts, ReceiptAttributionSource,
-    ReceiptTrace, receipt_attribution_trace_sourced,
+    ReceiptTrace, WitnessedPackOutcome, receipt_attribution_trace_sourced, stored_anchored_outcome,
 };
 use oneiron::{EntityId, LlmMessageRole, Vault};
 use serde::Deserialize;
@@ -183,6 +187,16 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         };
         record_attribution_rows(self.vault, self.attempt, rows);
         Ok(parse_facts(&text, &trace))
+    }
+
+    /// The attempt's anchored outcome, read from its stored source with that
+    /// source's witness (FIX 3611); no model is asked whether a success is
+    /// anchored.
+    fn anchored_outcome(
+        &self,
+        receipt: &ReceiptRecord,
+    ) -> oneiron::Result<Option<WitnessedPackOutcome>> {
+        stored_anchored_outcome(self.vault, receipt)
     }
 }
 
