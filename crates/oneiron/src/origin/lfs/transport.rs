@@ -7,8 +7,9 @@
 //! the upload-then-verify order, the bound of a batch answer, the store's
 //! size and SHA-256 checks before an upload, and the upload door's scan,
 //! SHA-256 and size checks on a download. A transport carries each exchange
-//! once and judges no answer. Today every exchange goes through the direct
-//! HTTPS client; a host's credential broker can carry the same requests.
+//! once and judges no answer. A served host's credential broker carries a
+//! mirror's upload and an outside import's download; a vault opened with no
+//! host sends a mirror's upload through the direct HTTPS client.
 //!
 //! No request holds a credential. A batch call names its credential slot:
 //! none, or the remote's own credential (a mirror's push credential, an
