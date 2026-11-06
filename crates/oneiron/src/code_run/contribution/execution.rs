@@ -64,7 +64,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, LlmResponse, Result, Vault};
 
 pub use self::callable::{CallableBranch, execute_callable_branch};
-pub(super) use self::callable::{CallableTarget, callable_target_in_txn};
+pub(super) use self::callable::{CallerTarget, caller_target_in_txn};
 
 /// A program run's part, or the shadow runner's reason it has none.
 type Ran<T> = Result<std::result::Result<T, ShadowUnavailable>>;

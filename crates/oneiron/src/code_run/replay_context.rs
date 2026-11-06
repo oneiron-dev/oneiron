@@ -199,6 +199,14 @@ impl StepReplayContext {
         })
     }
 
+    /// The delivery of `skill`'s body kept for the call at bridge position
+    /// `seq`.
+    pub(crate) fn delivery_at(&self, seq: u64, skill: EntityId) -> Option<&CapturedSkillDelivery> {
+        self.deliveries
+            .iter()
+            .find(|delivery| delivery.seq == seq && delivery.body.entity == skill)
+    }
+
     /// Its body: canonical JSON.
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(self)

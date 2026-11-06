@@ -10,35 +10,65 @@
 //! caller's program goes on with its own fallback. A callable the context
 //! did not freeze, one whose file was not read, or one that does not run
 //! to its recorded end stops the arm; it is never answered otherwise.
+//!
+//! A delivery branch's arm (FIX 3608) runs the caller's program again the
+//! same way, every recorded callable present, and treats one call whose
+//! answer delivered a skill's body to the program. With the body present,
+//! the call answers as its row recorded it. With the body absent, its row is
+//! matched as recorded, and the call answers what the live host answers when
+//! the skill is not found: the verb's own not-found refusal, never a cut of
+//! the recorded answer. A call with no such answer of its own stops the arm.
 
 use super::super::types::{ShadowUnavailable, ShadowUnavailableReason as Reason};
 use super::ShadowBridgeHost;
 use crate::code_run::{
-    CapturedCallable, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfFailedResult,
+    CapturedCallable, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfEffect,
+    SelfFailedResult,
 };
 use crate::engine_executor::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream, SelfDispatchResponse,
     StepCancellation, bridge_result_output_path,
 };
+use crate::memory::MemoryError;
 use crate::store::sandbox_contract::{SandboxBoundaryContract, SandboxGuestTier};
+use crate::task_verb::sdk::AgentVerb;
 use crate::{Error, Result};
 
-/// Whether a callable branch runs the load it treats, or leaves it absent.
+/// Whether a branch runs the load or the skill body it treats, or leaves
+/// it absent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArmCallableLoad {
     Present,
     Absent,
 }
 
-/// What a callable branch's arm does at the step's recorded callables:
-/// the invocation it treats, by the bridge position of its call, whether
-/// that load is present, and each recorded callable's stored file as its
-/// load read it, read and checked before the arm starts (`None` for one no
-/// arm can run). Every callable but the treated one runs present.
+/// What the call a branch treats is (FIX 3608): a callable's load the
+/// step's program called, or a call whose answer delivered a skill's body to
+/// the step's program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArmTreatedCall {
+    Callable,
+    Delivery,
+}
+
+/// What a callable or delivery branch's arm does at the step's recorded
+/// callables: the call it treats, by its bridge position and kind, whether
+/// that load or body is present, and each recorded callable's stored file as
+/// its load read it, read and checked before the arm starts (`None` for one
+/// no arm can run). Every callable but a treated one runs present.
 pub(crate) struct ArmCallables {
     pub(crate) treated: u64,
+    pub(crate) kind: ArmTreatedCall,
     pub(crate) load: ArmCallableLoad,
     pub(crate) programs: Vec<(u64, Option<String>)>,
+}
+
+impl ArmCallables {
+    /// Whether the arm leaves out the treated call of `kind` at bridge
+    /// position `position`.
+    fn leaves_out(&self, kind: ArmTreatedCall, position: u64) -> bool {
+        self.kind == kind && self.treated == position && self.load == ArmCallableLoad::Absent
+    }
 }
 
 /// What the live host answers a call whose skill's entity is not found:
@@ -49,6 +79,23 @@ fn absent_callable_outcome() -> SelfDispatchOutcome {
         error: Error::EntityNotFound.to_string(),
         code: None,
         disk_floor: None,
+    })
+}
+
+/// What the live host answers a call of `verb` whose skill is not found,
+/// for a delivery branch without the skill's body (FIX 3608):
+/// `vault.skills.get`'s refusal, the code a missing entity's error carries
+/// through the verb's door. `None` for any other call, which has no answer
+/// of its own for one skill absent: a library page lists the others, an
+/// archive or a restore changes state, and the leader's pattern load that
+/// finds no pattern ends its step with no reply.
+pub(crate) fn absent_delivery_outcome(verb: Option<AgentVerb>) -> Option<SelfDispatchOutcome> {
+    (verb == Some(AgentVerb::VaultSkillsGet)).then(|| {
+        SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: SelfEffect::AgentVerb,
+            outcome: MemoryError::from(Error::EntityNotFound).code,
+            reason_codes: Vec::new(),
+        })
     })
 }
 
@@ -125,7 +172,7 @@ impl ShadowBridgeHost<'_> {
             Ok(response) => response,
             Err(missing) => return Err(self.stop(missing)),
         };
-        if position == callables.treated && callables.load == ArmCallableLoad::Absent {
+        if callables.leaves_out(ArmTreatedCall::Callable, position) {
             // Its own calls never happen: the next call is the one after.
             self.cursor.skip_to(captured.nested_end)?;
             self.next_seq = captured.nested_end;
@@ -150,6 +197,50 @@ impl ShadowBridgeHost<'_> {
             outcome,
             budget: response.budget,
             view: response.view.clone(),
+        })
+    }
+
+    /// Whether the arm is a delivery branch without the skill's body whose
+    /// treated call is at its next bridge position (FIX 3608).
+    pub(super) fn leaves_out_delivery(&self) -> bool {
+        let position = self.cursor.consumed() as u64;
+        self.callables
+            .is_some_and(|callables| callables.leaves_out(ArmTreatedCall::Delivery, position))
+    }
+
+    /// `call`, the call whose answer delivered a skill's body, in a delivery
+    /// branch without that body (FIX 3608): its row matched as recorded,
+    /// then answered as the live host answers it when the skill is not found
+    /// ([`absent_delivery_outcome`]), with the budget envelope its live guest
+    /// read and no hook view. A call with no such answer, or another call
+    /// than the recorded one, stops the arm.
+    pub(super) fn dispatch_absent_delivery(
+        &mut self,
+        call: SelfCall,
+    ) -> Result<SelfDispatchResponse> {
+        let position = self.cursor.consumed() as u64;
+        let verb = match &call {
+            SelfCall::AgentVerb(verb) => Some(verb.verb),
+            _ => None,
+        };
+        let Some(outcome) = absent_delivery_outcome(verb) else {
+            let unanswered =
+                ShadowUnavailable::new(Reason::WholeRunUnsupported, "delivery_absence");
+            return Err(self.stop(unanswered));
+        };
+        if self.cursor.dispatch(call).is_err() {
+            let mismatch = ShadowUnavailable::new(Reason::BridgeReplayMismatch, "skill_delivery");
+            return Err(self.stop(mismatch));
+        }
+        let step = self.step;
+        let response = match step.guest_response(position) {
+            Ok(response) => response,
+            Err(missing) => return Err(self.stop(missing)),
+        };
+        Ok(SelfDispatchResponse {
+            outcome,
+            budget: response.budget,
+            view: None,
         })
     }
 

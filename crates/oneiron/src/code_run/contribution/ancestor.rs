@@ -8,16 +8,17 @@
 //! is found by searching the request's text.
 //!
 //! A loaded skill whose first step's task does not expose it, but whose load
-//! a step's own program called as a callable, has its check regenerate the
-//! step after that call's (FIX 3608, [`super::execution`]): the first call
-//! its step's replay context froze, in the earliest such step of the latest
-//! lease generation. The step-zero rule for a body in the task stays as it
-//! is.
+//! a step's own program called as a callable, or whose body a call's answer
+//! delivered to a step's own program at the skill's current revision, has
+//! its check regenerate the step after that call's (FIX 3608,
+//! [`super::execution`]): the first such call its step's replay context
+//! kept, in the earliest such step of the latest lease generation. The
+//! step-zero rule for a body in the task stays as it is.
 
 use std::cmp::Reverse;
 
 use super::super::replay_capsule::{ExposureSlot, StepReplayCapsule};
-use super::execution::{CallableTarget, callable_target_in_txn};
+use super::execution::{CallerTarget, caller_target_in_txn};
 use super::{ContributionReplayUnavailable, FIRST_STEP};
 use crate::skill_attribution::ContributionTarget;
 use crate::{Result, Vault};
@@ -26,8 +27,9 @@ use crate::{Result, Vault};
 pub(super) enum TargetStep {
     /// The step whose task exposed the target, else why there is none.
     Knowledge(std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>),
-    /// The step after a call of the target's load (FIX 3608).
-    Callable(Box<CallableTarget>),
+    /// The step after a call of the target's load, or after a call whose
+    /// answer delivered the target's body (FIX 3608).
+    Caller(Box<CallerTarget>),
 }
 
 impl TargetStep {
@@ -35,7 +37,7 @@ impl TargetStep {
     pub(super) fn regenerated(&self) -> Option<&StepReplayCapsule> {
         match self {
             Self::Knowledge(capsule) => capsule.as_ref().ok(),
-            Self::Callable(callable) => callable.next.as_ref(),
+            Self::Caller(caller) => caller.next.as_ref(),
         }
     }
 }
@@ -43,8 +45,8 @@ impl TargetStep {
 /// What `target`'s check regenerates among `capsules`, one run's captured
 /// steps, read in `txn`: the knowledge step [`target_step`] selects when its
 /// task exposes the target, else the step after a call of the target's
-/// load, when a step's replay context froze one, else the knowledge step's
-/// reason.
+/// load, or after a call whose answer delivered its body, when a step's
+/// replay context kept one, else the knowledge step's reason.
 ///
 /// # Errors
 ///
@@ -59,8 +61,8 @@ pub(super) fn select_target(
     let exposed = knowledge
         .as_ref()
         .is_ok_and(|capsule| !target_slots(capsule, target).is_empty());
-    if !exposed && let Some(callable) = callable_target_in_txn(vault, txn, capsules, target)? {
-        return Ok(TargetStep::Callable(Box::new(callable)));
+    if !exposed && let Some(caller) = caller_target_in_txn(vault, txn, capsules, target)? {
+        return Ok(TargetStep::Caller(Box::new(caller)));
     }
     Ok(TargetStep::Knowledge(knowledge))
 }

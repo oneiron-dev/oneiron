@@ -9,6 +9,7 @@
 //! outcome in its place.
 
 use super::{Outcome, PreparedShadowStep, Reason, unavailable};
+use crate::EntityId;
 use crate::code_run::{
     CapturedCallable, CapturedGuestResponse, CodeRunReplayRecord, ExecutorStepStart,
     StepReplayCapsule, StepReplayContext,
@@ -120,6 +121,16 @@ impl PreparedShadowStep {
         match &self.context {
             ArmContext::Captured { context, .. } => context.callables.as_slice(),
             ArmContext::Missing => &[],
+        }
+    }
+
+    /// Whether the step's replay context kept a delivery of `skill`'s body
+    /// by the call at bridge position `seq` (FIX 3608); `false` when no
+    /// context is read.
+    pub(crate) fn delivered_at(&self, seq: u64, skill: EntityId) -> bool {
+        match &self.context {
+            ArmContext::Captured { context, .. } => context.delivery_at(seq, skill).is_some(),
+            ArmContext::Missing => false,
         }
     }
 
