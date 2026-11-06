@@ -38,7 +38,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitWire;
-use crate::git_wire::mutation_commands::canonical_mutation_scope;
+use crate::git_wire::mutation_commands::{canonical_mutation_repo_ref, repo_mutation_repo_key};
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::store::code_snapshot::RepoRef;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -245,7 +245,10 @@ impl Vault {
             }
             _ => root.to_path_buf(),
         };
-        Ok((canonical_mutation_scope(&folder)?, anchor))
+        Ok((
+            repo_mutation_repo_key(&canonical_mutation_repo_ref(&folder)?),
+            anchor,
+        ))
     }
 
     /// Resume's check of a projection-bound intent: its proof validated
