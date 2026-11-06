@@ -1,168 +1,16 @@
 //! Native optional-copy evidence retained with the actual client frames.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use loro::LoroDoc;
 
 use super::SyncClient;
-use crate::Vault;
-use crate::authority::PeerMachine;
-use crate::embed::home_vectors::{HomeClaimDelivery, PreparedHomeClaimSend};
 use crate::sync::transport::{TransportError, WindowPadBinding, WindowPadKind};
 use crate::sync::window::PreparedWindowPads;
+use crate::sync::window::claim_frames::WindowClaimCopies;
 
-/// A response frame and its original optional-copy evidence travel together.
-/// The required bytes can be inspected without turning serialized copies into a grant.
-pub struct PreparedSyncFrame {
-    frame: Vec<u8>,
-    release: Option<WindowClaimCopyRelease>,
-}
-
-impl PreparedSyncFrame {
-    /// Required bytes only. An optional-only continuation has no required bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        let required = self
-            .release
-            .as_ref()
-            .map_or(self.frame.len(), |release| release.required_prefix());
-        &self.frame[..required]
-    }
-
-    /// Takes required bytes only; an optional-only continuation returns empty.
-    pub fn into_bytes(mut self) -> Vec<u8> {
-        if let Some(release) = &mut self.release {
-            release.stage(&mut self.frame);
-        }
-        self.frame
-    }
-
-    pub(crate) fn for_policy(&self) -> &[u8] {
-        &self.frame
-    }
-
-    pub(crate) fn into_batch_parts(mut self) -> (Vec<u8>, Option<WindowClaimCopyRelease>) {
-        if let Some(release) = &mut self.release {
-            release.stage(&mut self.frame);
-        }
-        (self.frame, self.release)
-    }
-
-    pub(crate) fn release(mut self, vault: &Vault, peer: PeerMachine) -> Option<Vec<u8>> {
-        if let Some(release) = &mut self.release {
-            release.stage(&mut self.frame);
-            release.recheck(vault, peer);
-            if release.retained() {
-                self.frame.extend_from_slice(&release.suffix);
-            }
-        }
-        (!self.frame.is_empty()).then_some(self.frame)
-    }
-}
-
-impl From<Vec<u8>> for PreparedSyncFrame {
-    fn from(frame: Vec<u8>) -> Self {
-        Self {
-            frame,
-            release: None,
-        }
-    }
-}
-
-struct WindowClaimCopies {
-    window: String,
-    payload: Vec<u8>,
-    sends: Vec<PreparedHomeClaimSend>,
-    abandoned: AtomicBool,
-}
-
-impl WindowClaimCopies {
-    fn current(&self, vault: &Vault, peer: PeerMachine) -> bool {
-        let delivery = HomeClaimDelivery {
-            window: &self.window,
-            payload: &self.payload,
-        };
-        self.sends
-            .iter()
-            .all(|send| matches!(send.copy_for(vault, peer, &delivery), Ok(Some(_))))
-    }
-
-    fn encode(&self, client: &SyncClient) -> Option<Vec<u8>> {
-        let delivery = HomeClaimDelivery {
-            window: &self.window,
-            payload: &self.payload,
-        };
-        let mut signed = Vec::with_capacity(self.sends.len());
-        for send in &self.sends {
-            signed.push(
-                send.copy_for(&client.vault, client.home_peer, &delivery)
-                    .ok()??,
-            );
-        }
-        if signed.is_empty() {
-            return None;
-        }
-        rmp_serde::to_vec(&signed).ok()
-    }
-}
-
-/// This member's native evidence, not its serialized copy as a later grant.
-pub(crate) struct WindowClaimCopyRelease {
-    copies: Arc<WindowClaimCopies>,
-    required_prefix: usize,
-    suffix: Vec<u8>,
-}
-
-impl std::fmt::Debug for WindowClaimCopyRelease {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WindowClaimCopyRelease")
-            .field("required_prefix", &self.required_prefix)
-            .finish_non_exhaustive()
-    }
-}
-
-impl WindowClaimCopyRelease {
-    pub(crate) fn required_prefix(&self) -> usize {
-        self.required_prefix
-    }
-
-    pub(crate) fn stage(&mut self, frame: &mut Vec<u8>) {
-        self.suffix = frame.split_off(self.required_prefix);
-    }
-
-    pub(crate) fn recheck(&self, vault: &Vault, peer: PeerMachine) {
-        if !self.copies.current(vault, peer) {
-            self.abandon();
-        }
-    }
-
-    pub(crate) fn abandon(&self) {
-        self.copies.abandoned.store(true, Ordering::Relaxed);
-    }
-
-    pub(crate) fn retained(&self) -> bool {
-        !self.copies.abandoned.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn added_bytes(&self) -> usize {
-        self.suffix.len() + if self.adds_member() { 4 } else { 0 }
-    }
-
-    pub(crate) fn adds_member(&self) -> bool {
-        self.required_prefix == 0 && !self.suffix.is_empty()
-    }
-
-    pub(crate) fn append(&mut self, index: usize, frames: &mut Vec<Vec<u8>>) {
-        if self.suffix.is_empty() || !self.retained() {
-            return;
-        }
-        if self.required_prefix == 0 {
-            frames.insert(index, std::mem::take(&mut self.suffix));
-        } else {
-            frames[index].extend_from_slice(&self.suffix);
-        }
-    }
-}
+pub use crate::sync::window::PreparedSyncFrame;
+pub(crate) use crate::sync::window::WindowClaimCopyRelease;
 
 /// One prepared send, including the native tokens its selected members keep
 /// until the final write. Probe frames never reserve a queue sequence.
@@ -204,24 +52,11 @@ impl SyncClient {
             && let Some(kind) = WindowPadKind::of_sub_tag(sub_tag)
         {
             let payload = prepared.envelope(kind, None).payload;
-            let delivery = HomeClaimDelivery {
-                window,
-                payload: &payload,
-            };
-            if let Ok(sends) =
-                self.vault
-                    .prepare_carried_home_claim_sends(self.home_peer, &delivery, context)
+            if let Some((native, encoded)) =
+                WindowClaimCopies::prepare(&self.vault, self.home_peer, window, payload, context)
             {
-                let native = WindowClaimCopies {
-                    window: window.to_owned(),
-                    payload,
-                    sends,
-                    abandoned: AtomicBool::new(false),
-                };
-                if let Some(encoded) = native.encode(self) {
-                    copies = Some(Arc::new(native));
-                    encoded_copies = encoded;
-                }
+                copies = Some(native);
+                encoded_copies = encoded;
             }
         }
         PreparedWindowClaimSend {
@@ -245,7 +80,7 @@ impl PreparedWindowClaimSend {
         Ok(frames
             .into_iter()
             .zip(releases)
-            .map(|(frame, release)| PreparedSyncFrame { frame, release })
+            .map(|(frame, release)| PreparedSyncFrame::with_release(frame, release))
             .collect())
     }
 
@@ -315,11 +150,10 @@ impl PreparedWindowClaimSend {
         let (frames, binding, prefixes) = self.encoded_frames(queue_seq, batched)?;
         let releases = (0..frames.len())
             .map(|index| {
-                Some(WindowClaimCopyRelease {
-                    copies: self.copies.as_ref()?.clone(),
-                    required_prefix: *prefixes.get(index)?,
-                    suffix: Vec::new(),
-                })
+                Some(WindowClaimCopyRelease::new(
+                    self.copies.as_ref()?.clone(),
+                    *prefixes.get(index)?,
+                ))
             })
             .collect();
         client.record_window_frames(
