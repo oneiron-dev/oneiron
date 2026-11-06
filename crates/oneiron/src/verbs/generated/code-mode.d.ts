@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4655 declarations.
-// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4656 declarations.
+// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2298,6 +2298,7 @@ declare namespace Sdk {
   type CodeRunSecretLiftProposalView = { handle: string; occurrence: string; detector_reason: string; suggested_secret_name: string };
   type CodeRunSecretLiftDismissal = { handle: string; occurrence: string; dismissed_by: string; dismissed_at: number; receipt: string };
   type CodeRunSecretLiftStatus = { proposals: CodeRunSecretLiftProposalView[]; dismissed?: CodeRunSecretLiftDismissal | null };
+  type CodeRunRoomSecretLiftRequest = { room_ref: string; session_ref: string };
   type LiftCloseReason = "not_a_secret" | "rotated" | "accepted" | "read_clean" | "answered" | "deleted";
   type SecretLiftClose = { proposal: string; reason: LiftCloseReason };
   type SecretLiftRequest = { start?: boolean; close?: SecretLiftClose | null };
@@ -7467,6 +7468,8 @@ declare const vault: Sdk.VaultHost & {
   secrets: {
     /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
     code_run_lifts(input: Sdk.CodeRunSecretLiftRequest): Promise<Sdk.CodeRunSecretLiftStatus | StoredResult>;
+    /** The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned. */
+    code_run_room_lifts(input: Sdk.CodeRunRoomSecretLiftRequest): Promise<Sdk.CodeRunSecretLiftProposalView[] | StoredResult>;
     custody: {
       /** The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to. */
       get(input: Sdk.SecretCustodyGetRequest): Promise<Sdk.SecretCustodyViewReply | StoredResult>;
