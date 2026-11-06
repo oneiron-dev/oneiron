@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1267 facade rows, 4598 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1219.
+// UniFFI census: 1269 facade rows, 4598 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1221.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), MemoryResult (an untyped union), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -27658,6 +27658,32 @@ pub struct EvalRepairCaseReference {
     pub receipt: ScopedReadReceipt,
 }
 
+/// `oneiron::skill_optimize::eval_set::doors::EvalAuthoringRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalAuthoringRef {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+}
+
+/// `oneiron::skill_optimize::eval_set::doors::EvalAuthoringResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalAuthoringResult {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(rename = "terminal")]
+    pub terminal: bool,
+    #[serde(
+        rename = "last_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_error: Option<String>,
+}
+
 /// `oneiron::skill_optimize::eval_set::authoring::apply::FamilyDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27881,32 +27907,6 @@ pub struct EvalMeasurementRequest {
 pub struct EvalMeasurementRef {
     #[serde(rename = "digest")]
     pub digest: String,
-}
-
-/// `oneiron::skill_optimize::eval_set::doors::EvalAuthoringRef`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringRef {
-    #[serde(rename = "attempt")]
-    pub attempt: String,
-}
-
-/// `oneiron::skill_optimize::eval_set::doors::EvalAuthoringResult`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringResult {
-    #[serde(rename = "attempt")]
-    pub attempt: String,
-    #[serde(rename = "state")]
-    pub state: AttemptState,
-    #[serde(rename = "terminal")]
-    pub terminal: bool,
-    #[serde(
-        rename = "last_error",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub last_error: Option<String>,
 }
 
 /// `oneiron::skill_optimize::eval_set::doors::EvalSeatRequest`.

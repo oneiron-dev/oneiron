@@ -127,6 +127,28 @@ impl Vault {
         )
     }
 
+    /// Load a shared skill for a call whose answering rung is not known yet.
+    /// The ordinary package, exploration and lease checks still run here;
+    /// the caller stamps the actual executor after the ladder answers.
+    pub fn load_attempt_call_skill_pack_sourced(
+        &self,
+        attempt: AttemptId,
+        skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        at: u64,
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
+        self.load_skill_pack_bound(
+            attempt,
+            skill,
+            LoadResident::Named(None),
+            lease_owner,
+            attempt_count,
+            None,
+            at,
+        )
+    }
+
     /// Loads a resident fork only for its named owner. The check and manifest
     /// stamp share a transaction; an unscoped load cannot use a bound fork.
     #[expect(

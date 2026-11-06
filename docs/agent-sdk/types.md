@@ -2709,7 +2709,14 @@ class Oneiron:
         def record(self, spec: Facade.EvalRepairCaseRequest) -> Facade.EvalRepairCaseReference:
             """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""
         @property
+        def authoring(self) -> "Oneiron._VaultEvalsRepairAuthoringVerbs": ...
+        @property
         def cohorts(self) -> "Oneiron._VaultEvalsRepairCohortsVerbs": ...
+    class _VaultEvalsRepairAuthoringVerbs:
+        def request(self, spec: Facade.EvalRepairNominationRequest) -> Facade.EvalAuthoringRef:
+            """The owner queues a new Coach Repair authoring pass with the authenticated request's original source reader. Returns only its attempt ref; no caller-supplied context, plan, grader or source grant."""
+        def result(self, spec: Facade.EvalAuthoringRef) -> Facade.EvalAuthoringResult | None:
+            """Read the explicit source-bound Repair authoring job's actual queue state and terminal error. A completed pass may author nothing; its private reader context is never served."""
     class _VaultEvalsRepairCohortsVerbs:
         def setup(self, spec: Facade.EvalRepairCohortSetup) -> Facade.EvalRepairCohortReport:
             """The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses."""

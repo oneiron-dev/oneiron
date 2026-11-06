@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1318 code-mode rows (1278 host rows, 40 run rows), 4659 declarations.
-// Replies: 1128 fully typed, 189 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1320 code-mode rows (1280 host rows, 40 run rows), 4659 declarations.
+// Replies: 1130 fully typed, 189 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1794,6 +1794,8 @@ declare namespace Sdk {
   type EvalRepairNominations = { sources: EvalRepairSourceNominations[]; receipt: ScopedReadReceipt };
   type EvalRepairCaseRequest = { recipe: EvalRepairCaseRecipe; purpose: FamilyPurpose };
   type EvalRepairCaseReference = { case_ref?: EntityId | null; receipt: ScopedReadReceipt };
+  type EvalAuthoringRef = { attempt: EntityId };
+  type EvalAuthoringResult = { attempt: EntityId; state: AttemptState; terminal: boolean; last_error?: string | null };
   type FamilyDecision = { group: string; purpose: FamilyPurpose };
   type CaseDecision = { candidate: string; stratum?: string | null };
   type CutDecision = { seat: EvalSeat; from: number; until: number; rubric_revision: string; reference: boolean };
@@ -1810,8 +1812,6 @@ declare namespace Sdk {
   type EvalMeasurementRequest = { decision: string; seat: EvalSeat; incumbent: EvalArmPin; candidate: EvalArmPin; cohort: EntityId; membership_digest: string; rubric_revision: string; scorer: string; axis: EvalAxisPin; floor_slices: FloorSlicePolicy; canary?: string | null; method: MeasurementMethodPin; retry: number };
   type EvalMeasurementRef = { digest: string };
   type EvalAuthorNowRequest = Record<string, never>;
-  type EvalAuthoringRef = { attempt: EntityId };
-  type EvalAuthoringResult = { attempt: EntityId; state: AttemptState; terminal: boolean; last_error?: string | null };
   type EvalSeatRequest = { seat: EvalSeat };
   type SourceFamily = { id: EntityId; seat: EvalSeat; purpose: FamilyPurpose; roots: string[]; assigned_at: number };
   type DerivationKind = "receipt" | "repair" | "paraphrase" | "summary" | "translation" | "synthetic" | "rubric";
@@ -6321,6 +6321,12 @@ declare const vault: Sdk.VaultHost & {
       request(input: Sdk.EvalMeasurementRequest): Promise<Sdk.EvalMeasurementRef | StoredResult>;
     };
     repair: {
+      authoring: {
+        /** The owner queues a new Coach Repair authoring pass with the authenticated request's original source reader. Returns only its attempt ref; no caller-supplied context, plan, grader or source grant. */
+        request(input: Sdk.EvalRepairNominationRequest): Promise<Sdk.EvalAuthoringRef | StoredResult>;
+        /** Read the explicit source-bound Repair authoring job's actual queue state and terminal error. A completed pass may author nothing; its private reader context is never served. */
+        result(input: Sdk.EvalAuthoringRef): Promise<Sdk.EvalAuthoringResult | null | StoredResult>;
+      };
       cohorts: {
         /** The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses. */
         setup(input: Sdk.EvalRepairCohortSetup): Promise<Sdk.EvalRepairCohortReport | StoredResult>;

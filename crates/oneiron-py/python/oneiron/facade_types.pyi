@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1267 facade rows, 4602 declarations.
-Inputs: 1197 of 1267 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1098 of 1267 fully typed, 169 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1269 facade rows, 4602 declarations.
+Inputs: 1199 of 1269 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1100 of 1269 fully typed, 169 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -9014,6 +9014,13 @@ class EvalRepairCaseRequest(TypedDict):
 class EvalRepairCaseReference(TypedDict):
     case_ref: NotRequired[EntityId | None]
     receipt: ScopedReadReceipt
+class EvalAuthoringRef(TypedDict):
+    attempt: EntityId
+class EvalAuthoringResult(TypedDict):
+    attempt: EntityId
+    state: AttemptState
+    terminal: bool
+    last_error: NotRequired[str | None]
 class FamilyDecision(TypedDict):
     group: str
     purpose: FamilyPurpose
@@ -9091,13 +9098,6 @@ class EvalMeasurementRef(TypedDict):
     digest: str
 class EvalAuthorNowRequest(TypedDict):
     ...
-class EvalAuthoringRef(TypedDict):
-    attempt: EntityId
-class EvalAuthoringResult(TypedDict):
-    attempt: EntityId
-    state: AttemptState
-    terminal: bool
-    last_error: NotRequired[str | None]
 class EvalSeatRequest(TypedDict):
     seat: EvalSeat
 class SourceFamily(TypedDict):

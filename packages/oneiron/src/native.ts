@@ -490,6 +490,8 @@ vaultEvalsInventory(input: unknown): unknown
 vaultEvalsRepairNominate(input: unknown): unknown
 vaultEvalsRepairPrepare(input: unknown): unknown
 vaultEvalsRepairRecord(input: unknown): unknown
+vaultEvalsRepairAuthoringRequest(input: unknown): unknown
+vaultEvalsRepairAuthoringResult(input: unknown): unknown
 vaultEvalsRepairCohortsSetup(input: unknown): unknown
 vaultEvalsMeasurementsRequest(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown

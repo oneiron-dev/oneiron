@@ -2276,6 +2276,16 @@ export_facade! {
     let output = client.vault_evals_repair_record(&input)?;
     crate::codec::lift_record("vault.evals.repair.record", &output)
 };
+"vault.evals.repair.authoring.request" => fn vault_evals_repair_authoring_request(&self, input: EvalRepairNominationRequest) -> EvalAuthoringRef = |client| {
+    let input: oneiron::skill_optimize::EvalRepairNominationRequest = crate::codec::lower_record("vault.evals.repair.authoring.request", input)?;
+    let output = client.vault_evals_repair_authoring_request(&input)?;
+    crate::codec::lift_record("vault.evals.repair.authoring.request", &output)
+};
+"vault.evals.repair.authoring.result" => fn vault_evals_repair_authoring_result(&self, input: EvalAuthoringRef) -> Option<EvalAuthoringResult> = |client| {
+    let input: oneiron::skill_optimize::eval_doors::EvalAuthoringRef = crate::codec::lower_record("vault.evals.repair.authoring.result", input)?;
+    let output = client.vault_evals_repair_authoring_result(&input)?;
+    crate::codec::lift_record("vault.evals.repair.authoring.result", &output)
+};
 "vault.evals.repair.cohorts.setup" => fn vault_evals_repair_cohorts_setup(&self, input: EvalRepairCohortSetup) -> EvalRepairCohortReport = |client| {
     let input: oneiron::skill_optimize::EvalRepairCohortSetup = crate::codec::lower_record("vault.evals.repair.cohorts.setup", input)?;
     let output = client.vault_evals_repair_cohorts_setup(&input)?;

@@ -1428,6 +1428,12 @@ impl OneironClient {
                 "vault.evals.repair.record" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalRepairCaseReference,
                 >(client, verb, &input),
+                "vault.evals.repair.authoring.request" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::eval_doors::EvalAuthoringRef,
+                >(client, verb, &input),
+                "vault.evals.repair.authoring.result" => remote_agent_verb_output::<
+                    Option<oneiron::skill_optimize::eval_doors::EvalAuthoringResult>,
+                >(client, verb, &input),
                 "vault.evals.repair.cohorts.setup" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalRepairCohortReport,
                 >(client, verb, &input),
@@ -9572,6 +9578,31 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.evals.repair.record", value)
+    }
+    pub fn vault_evals_repair_authoring_request(
+        &self,
+        input: &oneiron::skill_optimize::EvalRepairNominationRequest,
+    ) -> Result<oneiron::skill_optimize::eval_doors::EvalAuthoringRef, MemoryError> {
+        oneiron::memory::caps::check_limit_nonzero(input.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.repair.authoring.request", value)
+    }
+    pub fn vault_evals_repair_authoring_result(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalAuthoringRef,
+    ) -> Result<Option<oneiron::skill_optimize::eval_doors::EvalAuthoringResult>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.repair.authoring.result", value)
     }
     pub fn vault_evals_repair_cohorts_setup(
         &self,

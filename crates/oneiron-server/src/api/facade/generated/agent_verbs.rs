@@ -505,6 +505,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.evals.repair.nominate", post(facade_route))
         .route("/vault.evals.repair.prepare", post(facade_route))
         .route("/vault.evals.repair.record", post(facade_route))
+        .route("/vault.evals.repair.authoring.request", post(facade_route))
+        .route("/vault.evals.repair.authoring.result", post(facade_route))
         .route("/vault.evals.repair.cohorts.setup", post(facade_route))
         .route("/vault.evals.measurements.request", post(facade_route))
         .route("/vault.evals.cohorts.setup", post(facade_route))
