@@ -156,14 +156,22 @@ impl ModelRouter {
 
     /// The access this router's offers hold now, each with the models it
     /// serves by their own id, configured or mesh-discovered, as
-    /// [`Self::served`] finds them (FIX 5366): what a vault's model pack
-    /// picks a role's variant from. Read from the host-bound offers alone;
-    /// nothing is probed. A seat's rungs, reached only through the seat,
-    /// are left out.
+    /// [`Self::served`] finds them, and on device, as [`Self::served_at`]
+    /// finds them there (FIX 5366): what a vault's model pack picks a role's
+    /// variant from. A local GPU is held only by an on-device view's offers
+    /// ([`oneiron::llm::model_pack::model_pack_access_for`]). Read from the
+    /// host-bound offers alone; nothing is probed. A seat's rungs, reached
+    /// only through the seat, are left out.
     pub fn access_snapshot(&self) -> AccessSnapshot {
         let mut snapshot = AccessSnapshot::new();
         let discovered = self.discovered();
-        for (model, (_, ladder)) in self.routes.iter().chain(discovered.iter()) {
+        let ladders = self
+            .routes
+            .iter()
+            .chain(discovered.iter())
+            .map(|(model, (_, ladder))| (model, ladder))
+            .chain(self.on_device.iter());
+        for (model, ladder) in ladders {
             for offer in ladder.offer_bindings() {
                 if offer.model == *model {
                     snapshot.insert_offer(offer);

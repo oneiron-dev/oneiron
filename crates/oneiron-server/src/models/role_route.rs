@@ -251,7 +251,8 @@ impl ModelRuntime {
     /// before, when no pack is installed, no variant runs here, or the role's
     /// work stays on the device and the pick would leave it; a reranker's
     /// pick also needs a reranker rung, as a manifest's does. A local-GPU
-    /// pick takes the model's on-device view when this server has one.
+    /// pick runs only on the model's on-device view: served at any other
+    /// route, which may leave the device, it is no pick.
     fn model_pack_route(
         &self,
         vault: &Vault,
@@ -276,6 +277,12 @@ impl ModelRuntime {
         let Some((served, ladder)) = router.served_at(&model, route) else {
             return Ok(None);
         };
+        // A local-GPU pick runs on device alone: with no on-device view,
+        // `served_at` falls back to the model's default route, which may
+        // send input off the device.
+        if served > route {
+            return Ok(None);
+        }
         if self.stays_on_device.contains(&role) && served == ModelLocality::ThirdParty {
             return Ok(None);
         }
