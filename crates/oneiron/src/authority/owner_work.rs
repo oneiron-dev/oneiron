@@ -217,6 +217,21 @@ impl AuthorityFold {
             .map(|folded| folded.request.as_ref())
     }
 
+    /// The entry hashes of the admitted requests that count here (FIX
+    /// 4633): the owner-work map's keys whose stored `counts` flag is
+    /// true. Same native membership as
+    /// [`counted_owner_work_request`](Self::counted_owner_work_request),
+    /// as an enumeration.
+    pub(super) fn counted_owner_work_request_hashes(
+        &self,
+    ) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+        self.owner_work
+            .requests
+            .iter()
+            .filter(|(_, folded)| folded.counts)
+            .map(|(hash, _)| *hash)
+    }
+
     /// The one result of the request signed as entry `request`.
     pub(crate) fn owner_work_result(
         &self,
