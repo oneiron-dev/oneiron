@@ -3691,6 +3691,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.proposal_rereview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalRereviewRequest,
+                >(),
+            ),
+            (
                 "vault.code.conflict_record",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeConflictRecordRequest,
@@ -3706,6 +3712,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.proposal_resolve",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeProposalResolveRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_resolve_rereview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalResolveRereviewRequest,
                 >(),
             ),
             (
@@ -7743,9 +7755,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "graph_fs.head",
     "graph_fs.wc",
     "vault.code.proposal_submit",
+    "vault.code.proposal_rereview",
     "vault.code.conflict_record",
     "vault.code.conflict_view",
     "vault.code.proposal_resolve",
+    "vault.code.proposal_resolve_rereview",
     "vault.code.proposal_review",
     "vault.code.proposal_settle",
     "vault.code.proposal_settlement",
@@ -9619,6 +9633,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.proposal_submit" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSubmitted,
         >(),
+        "vault.code.proposal_rereview" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
         "vault.code.conflict_record" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeConflictView,
         >(),
@@ -9626,6 +9643,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::memory::code_doors::CodeConflictHistory,
         >(),
         "vault.code.proposal_resolve" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.proposal_resolve_rereview" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSubmitted,
         >(),
         "vault.code.proposal_review" => crate::code_run::vault_read::request_schema::<
@@ -15544,6 +15564,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.proposal_rereview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.conflict_record" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15559,6 +15586,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.proposal_resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_resolve_rereview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21917,6 +21951,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
                 decode(value.clone())?;
         }
+        "vault.code.proposal_rereview" => {
+            let _input: crate::memory::code_doors::CodeProposalRereviewRequest =
+                decode(value.clone())?;
+        }
         "vault.code.conflict_record" => {
             let _input: crate::memory::code_doors::CodeConflictRecordRequest =
                 decode(value.clone())?;
@@ -21926,6 +21964,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.proposal_resolve" => {
             let _input: crate::memory::code_doors::CodeProposalResolveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_resolve_rereview" => {
+            let _input: crate::memory::code_doors::CodeProposalResolveRereviewRequest =
                 decode(value.clone())?;
         }
         "vault.code.proposal_review" => {
@@ -25419,11 +25461,18 @@ pub fn invoke(
         "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
         "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
         "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.proposal_rereview" => {
+            encode(vault_code_proposal_rereview(memory, decode(value)?)?)
+        }
         "vault.code.conflict_record" => encode(vault_code_conflict_record(memory, decode(value)?)?),
         "vault.code.conflict_view" => encode(vault_code_conflict_view(memory, decode(value)?)?),
         "vault.code.proposal_resolve" => {
             encode(vault_code_proposal_resolve(memory, decode(value)?)?)
         }
+        "vault.code.proposal_resolve_rereview" => encode(vault_code_proposal_resolve_rereview(
+            memory,
+            decode(value)?,
+        )?),
         "vault.code.proposal_review" => encode(vault_code_proposal_review(memory, decode(value)?)?),
         "vault.code.proposal_settle" => encode(vault_code_proposal_settle(memory, decode(value)?)?),
         "vault.code.proposal_settlement" => {
@@ -32390,6 +32439,16 @@ pub fn vault_code_proposal_submit(
 ) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
     memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
 }
+pub fn vault_code_proposal_rereview(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalRereviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_rereview_as(
+        &memory.embedded_owner("vault.code.proposal_rereview")?,
+        input.original,
+        input.change,
+    )
+}
 pub fn vault_code_conflict_record(
     memory: &Memory<'_>,
     input: crate::memory::code_doors::CodeConflictRecordRequest,
@@ -32409,6 +32468,16 @@ pub fn vault_code_proposal_resolve(
     memory.code_proposal_resolve_as(
         &memory.embedded_owner("vault.code.proposal_resolve")?,
         input,
+    )
+}
+pub fn vault_code_proposal_resolve_rereview(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalResolveRereviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_resolve_rereview_as(
+        &memory.embedded_owner("vault.code.proposal_resolve_rereview")?,
+        input.original,
+        input.change,
     )
 }
 pub fn vault_code_proposal_review(

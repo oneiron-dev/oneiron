@@ -21504,6 +21504,40 @@ async fn vault_code_proposal_submit(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_code_proposal_rereview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_rereview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_rereview", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.proposal_rereview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_proposal_rereview(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_conflict_record(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -21586,6 +21620,41 @@ async fn vault_code_proposal_resolve(
     let mut hooks = facade_hooks_pre(server, call, "vault.code.proposal_resolve", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_code_proposal_resolve(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_proposal_resolve_rereview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_resolve_rereview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_resolve_rereview", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.code.proposal_resolve_rereview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_proposal_resolve_rereview(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -41341,12 +41410,18 @@ async fn call_verb_row(
         "vault.code.proposal_submit" => {
             Box::pin(vault_code_proposal_submit(server, call, input)).await
         }
+        "vault.code.proposal_rereview" => {
+            Box::pin(vault_code_proposal_rereview(server, call, input)).await
+        }
         "vault.code.conflict_record" => {
             Box::pin(vault_code_conflict_record(server, call, input)).await
         }
         "vault.code.conflict_view" => Box::pin(vault_code_conflict_view(server, call, input)).await,
         "vault.code.proposal_resolve" => {
             Box::pin(vault_code_proposal_resolve(server, call, input)).await
+        }
+        "vault.code.proposal_resolve_rereview" => {
+            Box::pin(vault_code_proposal_resolve_rereview(server, call, input)).await
         }
         "vault.code.proposal_review" => {
             Box::pin(vault_code_proposal_review(server, call, input)).await
