@@ -20,7 +20,7 @@
 //! HNSW rows hold ids only. A room's vector recall walks base's graph and
 //! scores the vectors the room stages; its own graph serves only its writes,
 //! whose walk skips a neighbour without its vector, and whose insert, when
-//! no node loads one, counts the vectorless nodes it keeps
+//! no other node loads one, counts the vectorless nodes it keeps
 //! (`hnsw::insert::start_room_graph`). Rewriting the totals or the graph
 //! before the writer commits would leave them wrong if it aborts. The
 //! record's phonetic rows, its room revision rows and its embedding device

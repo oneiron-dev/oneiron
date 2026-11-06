@@ -282,7 +282,9 @@ fn start_graph(
 /// point may name a node base has dropped since, or one whose vector the
 /// room hid (Astra 1397b). The insert enters at a node other than `id` that
 /// the walk loads a vector for ([`room_entry`]); with none, `id` is the
-/// graph's sole node. It never asks for a rebuild, which runs on base alone.
+/// graph's entry point, the nodes it holds without a vector kept and counted
+/// ([`start_room_graph`]). It never asks for a rebuild, which runs on base
+/// alone.
 fn room_insert(
     store: &impl VectorIndexDbs,
     config: &VaultConfig,
@@ -335,13 +337,18 @@ fn room_insert(
 /// whose vector the room hid, or one base deleted whose copy the room
 /// dropped, FIX 17382). Each of them stays counted, `id` too, so a later
 /// insert of one of them, which finds its node and adds no count, and a
-/// delete of each, which takes one, keep the count whole. A graph that held
-/// no node is symmetric by construction, as [`start_graph`] marks it.
+/// delete of each, which takes one, keep the count whole. A new `id` starts
+/// with no link and an existing one keeps its own. A graph that held no node
+/// is symmetric by construction, as [`start_graph`] marks it.
 fn start_room_graph(
     store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<InsertOutcome> {
+    let existing = store
+        .index_neighbors()
+        .get(&*wtxn, id.as_bytes())?
+        .is_some();
     let mut others = 0_u64;
     for row in store.index_neighbors().iter(&*wtxn)? {
         let (key, _) = row?;
@@ -363,7 +370,11 @@ fn start_room_graph(
     store
         .index_meta()
         .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
-    write_neighbors(store, wtxn, id, &[])?;
+    // A node the room already holds keeps its links, so each node that
+    // links back to it still finds its own link in its list.
+    if !existing {
+        write_neighbors(store, wtxn, id, &[])?;
+    }
     Ok(InsertOutcome::Applied)
 }
 
