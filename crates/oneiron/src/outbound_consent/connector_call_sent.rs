@@ -14,6 +14,7 @@
 //! than resumed: nothing is cleared of the current value alone.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -98,28 +99,67 @@ pub struct ConnectorSentClearer {
     matchers: Vec<(KnownValues, String)>,
 }
 
-impl ConnectorSentClearer {
-    /// `data` with each known value replaced by its record's text, or
-    /// `None` when none is in it.
-    fn cleared(&self, data: &[u8]) -> Option<Vec<u8>> {
-        let mut out: Option<Vec<u8>> = None;
-        for (matcher, text) in &self.matchers {
-            let current = out.as_deref().unwrap_or(data);
-            let spans = matcher.spans(current);
-            if spans.is_empty() {
-                continue;
-            }
-            let mut next = Vec::with_capacity(current.len());
-            let mut at = 0;
-            for hit in &spans {
-                next.extend_from_slice(&current[at..hit.span.start]);
-                next.extend_from_slice(text.as_bytes());
-                at = hit.span.end;
-            }
-            next.extend_from_slice(&current[at..]);
-            out = Some(next);
+/// `data` with each of `spans` replaced by its text, or `None` when there
+/// is none. Spans that overlap or touch are replaced as one, by the first
+/// one's text, so no copy of a value is left cut by another's replacement:
+/// a value that contains another, or that another contains, goes whole
+/// (fix list row 10550).
+#[must_use]
+pub fn replace_spans(data: &[u8], mut spans: Vec<(Range<usize>, &str)>) -> Option<Vec<u8>> {
+    if spans.is_empty() {
+        return None;
+    }
+    spans.sort_by_key(|(span, _)| (span.start, std::cmp::Reverse(span.end)));
+    let mut out = Vec::with_capacity(data.len());
+    let mut at = 0;
+    let mut open: Option<(Range<usize>, &str)> = None;
+    for (span, text) in spans {
+        if let Some((current, _)) = open.as_mut()
+            && span.start <= current.end
+        {
+            current.end = current.end.max(span.end);
+            continue;
         }
-        out
+        if let Some((current, text)) = open.take() {
+            out.extend_from_slice(&data[at..current.start]);
+            out.extend_from_slice(text.as_bytes());
+            at = current.end;
+        }
+        open = Some((span, text));
+    }
+    if let Some((current, text)) = open {
+        out.extend_from_slice(&data[at..current.start]);
+        out.extend_from_slice(text.as_bytes());
+        at = current.end;
+    }
+    out.extend_from_slice(&data[at..]);
+    Some(out)
+}
+
+impl ConnectorSentClearer {
+    /// Where each earlier value sits in `data`, in any spelling the index
+    /// finds, beside its record's text: what a pass that clears these and
+    /// the value presented now at once replaces together
+    /// ([`replace_spans`]).
+    #[must_use]
+    pub fn spans(&self, data: &[u8]) -> Vec<(Range<usize>, &str)> {
+        let mut spans = Vec::new();
+        for (matcher, text) in &self.matchers {
+            spans.extend(
+                matcher
+                    .spans(data)
+                    .into_iter()
+                    .map(|hit| (hit.span, text.as_str())),
+            );
+        }
+        spans
+    }
+
+    /// `data` with each earlier value replaced by its record's text, every
+    /// record's matched against the untouched bytes, or `None` when none is
+    /// in it.
+    fn cleared(&self, data: &[u8]) -> Option<Vec<u8>> {
+        replace_spans(data, self.spans(data))
     }
 
     /// Each earlier value in `string`.

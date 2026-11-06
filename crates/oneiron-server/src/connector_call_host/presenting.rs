@@ -22,7 +22,9 @@
 //! (CONNECTOR_PRESENT_BY_RECORD_ID).
 
 use oneiron::limit_ask::EngineLimit;
-use oneiron::outbound_consent::{ConnectorSentClearer, SentGeneration, SentGenerations};
+use oneiron::outbound_consent::{
+    ConnectorSentClearer, SentGeneration, SentGenerations, replace_spans,
+};
 use oneiron::secret_lease::ConnectorGrantRedemption;
 use zeroize::Zeroizing;
 
@@ -515,20 +517,45 @@ pub(super) struct Both<'n, 'b> {
 
 impl Clears for Both<'_, '_> {
     fn clear_json(&self, json: &mut Value) {
-        if let Some(now) = &self.now {
-            now.clear_json(json);
+        if self.before.is_none() {
+            if let Some(now) = &self.now {
+                now.clear_json(json);
+            }
+            return;
         }
-        if let Some(before) = self.before {
-            before.clear_json(json);
+        match json {
+            Value::String(string) => self.clear_string(string),
+            Value::Array(items) => items.iter_mut().for_each(|item| self.clear_json(item)),
+            Value::Object(fields) => {
+                let taken = std::mem::take(fields);
+                for (mut key, mut field) in taken {
+                    self.clear_string(&mut key);
+                    self.clear_json(&mut field);
+                    fields.insert(key, field);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
         }
     }
 
+    /// The value now and the earlier ones are matched against the untouched
+    /// text and replaced together, so a value that contains another, or
+    /// that another contains, goes whole.
     fn clear_string(&self, string: &mut String) {
+        let Some(before) = self.before else {
+            if let Some(now) = &self.now {
+                now.clear_string(string);
+            }
+            return;
+        };
+        let data = string.as_bytes();
+        let mut spans = before.spans(data);
         if let Some(now) = &self.now {
-            now.clear_string(string);
+            spans.extend(now.spans(data));
         }
-        if let Some(before) = self.before {
-            before.clear_string(string);
+        if let Some(bytes) = replace_spans(data, spans) {
+            *string = String::from_utf8(bytes)
+                .unwrap_or_else(|error| String::from_utf8_lossy(&error.into_bytes()).into_owned());
         }
     }
 }
