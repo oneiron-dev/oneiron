@@ -2671,6 +2671,31 @@ oneiron api raw POST /v1/owner/maintain
 oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 ```
 
+## The operator's admin routes
+
+On a self-hosted vault, the host operator runs the admin commands without an owner slip. The
+operator's own credential comes from `oneiron token operator` on the stopped vault; it is never
+an owner or a person, and it reaches `/v1/operator/*` only. The host's root also passes. A
+managed vault serves none of these routes to its operator.
+
+| Route | What it does |
+|---|---|
+| `GET /v1/operator/status` | The same answer as `GET /v1/owner/status`. |
+| `GET /v1/operator/backups` | This vault's backups, oldest first. |
+| `POST /v1/operator/backups` | Takes one backup now, under the server's backup lock and retention. |
+| `POST /v1/operator/backups/rehearse` | `{}` or `{"file": "<name>"}`: a restore rehearsal in a scratch copy; the vault does not change. |
+| `POST /v1/operator/maintain` | Every housekeeping sweep now, as `POST /v1/owner/maintain` without `lift_secrets`. |
+
+A restore over the vault and the named repairs of `oneiron maintain` need a stopped vault, so they
+stay CLI commands. Lifting secrets is an owner act and has no operator route. Owner recovery is
+an owner act too: the operator's credential gets 403 at `/v1/operator/shared/recover-owner`.
+With the credential's `token` in `ONEIRON_SECRET` and its `binding_key` in `ONEIRON_BINDING_KEY`:
+
+```sh
+oneiron api raw GET /v1/operator/status
+oneiron api raw POST /v1/operator/backups
+```
+
 ## Shared-merge evidence questions
 
 Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-merge
