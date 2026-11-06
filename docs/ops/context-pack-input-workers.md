@@ -274,8 +274,13 @@ creates the holder before either raw producer and keeps it through the raw
 assembly tuple. Each producer records the final section's capacities
 before its next await: the retrieval path before advancing observations, and
 the pins-only path before recording delivery. The same holder moves into the
-response without another charge. The public section type, optional wire field,
-response schema and tuple payloads are unchanged.
+response without another charge. The retrieval path also records its initial
+successful projection, refreshed visible-row snippets, fallback pins-only
+metadata, and successful explicit and manifest pin changes. Each update resizes
+the same holder to the current section's actual capacities; it does not add a
+second holder or charge. A later error drops the section before the caller
+releases that holder. The public section type, optional wire field, response
+schema and tuple payloads are unchanged.
 
 This holder records the version string, actual row-vector slots, each row's id,
 short id, content hash, asset reference, world, snippet and hook strings, and the
@@ -297,9 +302,11 @@ drop the producer or board payload before the caller's holder. A missing or
 filtered-out section has no backing to charge. The independent turn-record clone
 still needs its own holder.
 
-Earlier projection and pin construction, filter scratch, allocation and
-reallocation peaks, dynamic JSON copies, serializer buffers and other metadata
-backing remain separate work. No clone is claimed covered because it came from
+Projection and pin construction scratch, partially mutated failing pin
+operations, allocation and reallocation peaks, dynamic JSON copies, serializer
+buffers and other metadata backing remain separate work. The pins-only
+producer's internal construction is recorded only after it returns its finished
+section. No clone is claimed covered because it came from
 a charged source. No memory wait, size cap, deadline, refusal, policy or format
 version changes here.
 

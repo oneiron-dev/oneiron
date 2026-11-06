@@ -359,6 +359,7 @@ pub(crate) async fn run_context_pack_builder(
         })
         .transpose()
         .map_err(|error| core_engine_error("memory provenance projection failed", error))?;
+    memories_storage.retain(projected_memories.as_ref());
     // Instruction files name only units the projection's cuts kept (FIX 9761).
     let pack = pack
         .finish_projected_json(&projection, |pack| {
@@ -405,6 +406,7 @@ pub(crate) async fn run_context_pack_builder(
         }
         section
     });
+    memories_storage.retain(projected_memories.as_ref());
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let mut pin_narrowing = Vec::new();
@@ -414,6 +416,7 @@ pub(crate) async fn run_context_pack_builder(
             // projection; the mandatory pins still assemble.
             let mut section = projected_memories
                 .or_else(|| Some(oneiron::MemoriesSection::pins_only(assembly.clone())));
+            memories_storage.retain(section.as_ref());
             if let Some(section) = &mut section {
                 pin_narrowing = section
                     .include_pinned_refs_with_disclosure(
@@ -422,6 +425,7 @@ pub(crate) async fn run_context_pack_builder(
                         disclosure.as_ref(),
                     )
                     .map_err(|error| core_engine_error("memory pin read failed", error))?;
+                memories_storage.retain(Some(&*section));
                 let automatic = scoped_read
                     .manifest_pinned_refs()
                     .map_err(|error| core_engine_error("manifest pin read failed", error))?;
@@ -437,6 +441,7 @@ pub(crate) async fn run_context_pack_builder(
                             core_engine_error("manifest pin disclosure failed", error)
                         })?,
                 );
+                memories_storage.retain(Some(&*section));
                 pin_narrowing.extend(
                     section
                         .include_hook_pins(scoped_read, &request.hook_pins, disclosure.as_ref())
