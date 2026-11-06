@@ -34,18 +34,6 @@ pub(crate) struct Succession {
     pub(crate) version: Vec<u8>,
 }
 
-/// What a canonical restore left on its document's head here: the history
-/// it replaces and the version it rebuilt. A capture of the document
-/// unchanged since names the history it came from, so its recapture is its
-/// snapshot.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Restored {
-    pub(super) replaces: Succession,
-    /// The rebuilt document's version vector, encoded.
-    pub(super) version: Vec<u8>,
-}
-
 impl Succession {
     /// The history `origin` names: an incarnation that is an id, and a
     /// version with each peer once, in peer order.
@@ -57,16 +45,6 @@ impl Succession {
         Ok(Self {
             incarnation: EntityId::from_bytes(origin.incarnation)?.to_hex(),
             version: version.encode(),
-        })
-    }
-
-    /// The origin a capture names for this history.
-    pub(super) fn origin(&self) -> Result<CanonicalDocumentOrigin> {
-        let version = VersionVector::decode(&self.version)
-            .map_err(|_| invalid("entity document succession version"))?;
-        Ok(CanonicalDocumentOrigin {
-            incarnation: *EntityId::from_hex(&self.incarnation)?.as_bytes(),
-            version: origin_version(&version),
         })
     }
 
@@ -90,8 +68,8 @@ pub(super) fn replaced_version_in(
         return Ok(None);
     }
     Ok(super::storage::head(store, txn, entity)?
-        .restored
-        .and_then(|restored| VersionVector::decode(&restored.replaces.version).ok()))
+        .succeeds
+        .and_then(|succeeds| VersionVector::decode(&succeeds.version).ok()))
 }
 
 /// `version` as a canonical snapshot carries it: (peer, counter) pairs in

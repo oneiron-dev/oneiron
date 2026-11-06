@@ -26,7 +26,7 @@ use super::forks::{
 use super::pins::{CitationPin, ENTITY_DOC_PIN, ENTITY_DOC_PURGE_RECEIPT};
 use super::side_keys::HexPair;
 use super::storage::{self, ENTITY_DOC_HEAD, Head};
-use super::succession::{Restored, Succession};
+use super::succession::Succession;
 use super::{EntityDoc, ForkStatus, TextField};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ArtifactError, Error, Result};
@@ -261,10 +261,7 @@ fn local_in(
         version,
         shallow,
         switched,
-        succeeds: head
-            .restored
-            .as_ref()
-            .map(|restored| restored.replaces.clone()),
+        succeeds: head.succeeds.clone(),
     };
     Ok(Some((head, carried)))
 }
@@ -377,7 +374,7 @@ impl Vault {
                     generation: 0,
                     pending: 0,
                     birth_frontier: None,
-                    restored: restored_of(carried),
+                    succeeds: carried.succeeds.clone(),
                 };
                 storage::persist(self, txn, &message, &mut head, &incoming, None)?;
                 if incoming.doc.is_shallow() {
@@ -503,15 +500,6 @@ fn purged_at_carried_floor(
     Ok(Ok(shallow))
 }
 
-/// What a head that names the history it replaces leaves on the head that
-/// installs it here: that history, at the carried version (FIX 3553).
-fn restored_of(carried: &CarriedDocument) -> Option<Restored> {
-    carried.succeeds.clone().map(|replaces| Restored {
-        replaces,
-        version: carried.version.clone(),
-    })
-}
-
 /// Takes `carried`, a canonical restore's successor of the incarnation
 /// `head` names here, in place of it (FIX 3553; Engine 11-06 20:16, A):
 /// the successor's history replaces this one. Operations held here past the
@@ -521,8 +509,10 @@ fn restored_of(carried: &CarriedDocument) -> Option<Restored> {
 /// same span and quote, as a restore binds it (FIX 3464). A history with
 /// rows the successor does not carry stands, as a restore refuses to drop
 /// them: a fork, receipt or purge receipt here, a live citation floor, a
-/// pin with no twin, or a purge floor the successor does not keep. `None`
-/// once it is taken; otherwise what the head does.
+/// pin with no twin, or a purge floor the successor does not keep; and so
+/// does a history a hold keeps, on the record or on its pad's world, as
+/// the purge door refuses it. `None` once it is taken; otherwise what the
+/// head does.
 fn superseded_in(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -532,12 +522,21 @@ fn superseded_in(
     incoming: &EntityDoc,
 ) -> Result<Option<DocumentMerge>> {
     let store = &vault.store;
-    let Some(replaces) = carried.succeeds.clone() else {
+    let Some(replaces) = &carried.succeeds else {
         return Ok(Some(DocumentMerge::Conflict));
     };
     let Ok(replaced) = VersionVector::decode(&replaces.version) else {
         return Ok(Some(DocumentMerge::Refused("not a whole head")));
     };
+    let pad_held = match EntityStoreRead::port_entity_raw(store, txn, message)? {
+        Some(raw) => crate::world_keys::held_pad_world_in_txn(store, txn, &raw)?,
+        None => false,
+    };
+    if pad_held || crate::store::legal_hold::held_in_txn(store, txn, message.as_bytes())? {
+        return Ok(Some(DocumentMerge::Deferred(
+            "a hold or selected storage-only restriction keeps its history",
+        )));
+    }
     let rows = format!("{}:", message.to_hex()).into_bytes();
     if !super::forks::all_forks(store, txn, message)?.is_empty()
         || !super::forks::receipts(store, txn, message)?.is_empty()
@@ -567,7 +566,8 @@ fn superseded_in(
     }
     super::citation_floor::erase_in_txn(store, txn, message)?;
     head.incarnation.clone_from(&carried.incarnation);
-    head.restored = restored_of(carried);
+    head.birth_frontier = None;
+    head.succeeds = carried.succeeds.clone();
     let slot = DocumentSlot::from_hex(&head.document)?;
     storage::persist(vault, txn, message, &mut head, incoming, None)?;
     if incoming.doc.is_shallow() {
