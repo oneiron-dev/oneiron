@@ -430,8 +430,8 @@ pub(super) fn set_cell(
 
 /// Rebuild with the first paragraph/run template (else the first field's).
 /// Same-count lines keep their same-index paragraph properties and
-/// each direct run/field's properties on the common character prefix/suffix
-/// as static runs; the first line's replacement keeps the global template,
+/// each direct run/field/br's properties on the common character prefix/suffix
+/// as static runs and breaks; the first line's replacement keeps the global template,
 /// later lines use their paragraph's first run/field (else global).
 /// With different counts, unchanged common whole-paragraph prefix/suffix
 /// lines and paired middle lines keep their original paragraph and static
@@ -535,18 +535,29 @@ fn rebuilt(
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
         let segments: Vec<(usize, &Node, Vec<char>)> = tree
             .children(para)
-            .filter(|(_, node)| node.is(DML, "r") || node.is(DML, "fld"))
+            .filter(|(_, node)| node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br"))
             .map(|(at, node)| {
-                let text = within(tree, at)
-                    .filter(|(_, node)| node.is(DML, "t"))
-                    .flat_map(|(_, node)| node.text.chars())
-                    .collect();
-                (at, node, text)
+                if node.is(DML, "br") {
+                    (at, node, vec!['\u{b}'])
+                } else {
+                    let text = within(tree, at)
+                        .filter(|(_, node)| node.is(DML, "t"))
+                        .flat_map(|(_, node)| node.text.chars())
+                        .collect();
+                    (at, node, text)
+                }
             })
             .collect();
         let old: Vec<char> = within(tree, para)
-            .filter(|(_, node)| node.is(DML, "t"))
-            .flat_map(|(_, node)| node.text.chars())
+            .flat_map(|(_, node)| {
+                if node.is(DML, "br") && node.parent == Some(para) {
+                    vec!['\u{b}']
+                } else if node.is(DML, "t") {
+                    node.text.chars().collect::<Vec<char>>()
+                } else {
+                    Vec::new()
+                }
+            })
             .collect();
         if !segments
             .iter()
