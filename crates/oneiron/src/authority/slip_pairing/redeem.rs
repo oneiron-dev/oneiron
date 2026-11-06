@@ -208,8 +208,20 @@ impl Vault {
             delegation: None,
             comm: pending.principal.comm,
             trusted_contact: None,
+            seat_claim: None,
         };
-        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        // FIX 11713: the owner who made the link is the member who minted
+        // this holder's slip, signed in the same mint; a host-only link
+        // names no person, and none is guessed.
+        let slip = self.mint_slip_action_in_txn(
+            &mut txn,
+            issuer,
+            SlipMintAction {
+                claims,
+                renews: None,
+                minting_member: pending.owner,
+            },
+        )?;
         if let Some(facet) = write_facet {
             PAIRED_WRITE_FACET.put(
                 &self.store,

@@ -38,7 +38,7 @@ impl RemoteClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         // A body this size rides the long client's total timeout, sent as it
         // is: the route spools the raw bytes.
-        let reply = self.send(Method::POST, url, headers, Some(body), true)?;
+        let reply = self.send(Method::POST, url, headers, Some(body.into()), true)?;
         self.note_reply_receipt(&reply.headers);
         let status = reply.status;
         if !status.is_success() {
