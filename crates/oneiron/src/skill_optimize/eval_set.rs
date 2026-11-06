@@ -371,17 +371,16 @@ pub(super) fn put_case_in_txn(
 }
 
 impl Vault {
-    /// Known receipt-content dependencies of a parentless eval case. The
-    /// receipt keeps its original complete read set even when erasure shrinks
-    /// the case's source list. Labels are not source authority, and unknown
-    /// dependencies do not cancel receipt dependencies that are proven.
+    /// Known receipt-content dependencies of an eval case and its ancestors.
+    /// Receipt read sets survive shrinking source lists. Labels stay untraced;
+    /// unknown dependencies do not cancel receipt dependencies that are proven.
     pub(crate) fn eval_case_receipt_sources_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         case: &EntityId,
     ) -> Result<Vec<EntityId>> {
         let key = [CASE_PREFIX, case.as_bytes()].concat();
-        let Some(row) = self
+        let Some(root) = self
             .store
             .vault_meta
             .get(txn, &key)?
@@ -389,24 +388,44 @@ impl Vault {
         else {
             return Ok(Vec::new());
         };
-        if row.id != *case || !row.parents.is_empty() {
+        if root.id != *case {
             return Ok(Vec::new());
         }
+        let family = root.family;
+        let seat = root.seat.clone();
+        let mut pending = vec![root];
+        let mut seen = BTreeSet::from([*case]);
         let mut proven = BTreeSet::new();
-        for receipt in &row.receipts {
-            let receipt =
-                match crate::receipt::attempt_pack_receipt_in_txn(&self.store, txn, receipt) {
-                    Ok(Some(receipt)) => receipt,
+        while let Some(row) = pending.pop() {
+            for receipt in &row.receipts {
+                let receipt =
+                    match crate::receipt::attempt_pack_receipt_in_txn(&self.store, txn, receipt) {
+                        Ok(Some(receipt)) => receipt,
+                        Ok(None) | Err(Error::CorruptedIndex(_)) => continue,
+                        Err(Error::Store(crate::error::StoreError::SideTableRow {
+                            table, ..
+                        })) if table == crate::side_table::ATTEMPT_PACK_RECEIPT.name => {
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
+                if let Some(sources) = receipt.pack_source_rows() {
+                    proven.extend(sources);
+                }
+            }
+            for id in row.parents {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let parent = match case_in_txn(self, txn, &id) {
+                    Ok(Some(parent)) => parent,
                     Ok(None) | Err(Error::CorruptedIndex(_)) => continue,
-                    Err(Error::Store(crate::error::StoreError::SideTableRow { table, .. }))
-                        if table == crate::side_table::ATTEMPT_PACK_RECEIPT.name =>
-                    {
-                        continue;
-                    }
                     Err(error) => return Err(error),
                 };
-            if let Some(sources) = receipt.pack_source_rows() {
-                proven.extend(sources);
+                if parent.id != id || parent.family != family || parent.seat != seat {
+                    continue;
+                }
+                pending.push(parent);
             }
         }
         let live = super::live_source_rows_in(self, txn, Some(proven.into_iter().collect()))?;
