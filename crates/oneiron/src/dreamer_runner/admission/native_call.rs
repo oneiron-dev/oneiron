@@ -9,6 +9,7 @@ use crate::dreamer_wake::owed::WakeOwedCall;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use oneiron_model::llm::BudgetMeterRange;
 
 const CALLS: SideTable<AdmittedCallId, NativeCallObligation, Named> =
     SideTable::new(&side_table::DREAMER_BUDGET_NATIVE_CALL);
@@ -24,6 +25,7 @@ struct NativeCallObligation {
     admitted_at: u64,
     invoice: NativeCallInvoice,
     terminal_claims: Vec<EntityId>,
+    meter: NativeCallMeter,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +37,17 @@ enum NativeCallInvoice {
     Invoiced { units: u64 },
     /// The original line's money and this fact committed in the same writer.
     Paid { units: u64, at: u64 },
+}
+
+/// A producer-observed interval, not a vault payment or cross-guard credit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum NativeCallMeter {
+    Unknown,
+    Settled {
+        start_used_units: u64,
+        end_used_units: u64,
+    },
 }
 
 /// Result of explicitly paying one retained native NET invoice. It says
@@ -85,11 +98,13 @@ pub(crate) fn retain_native_call_in_txn(
         admitted_at: admitted.at,
         invoice: NativeCallInvoice::Admitted,
         terminal_claims: Vec::new(),
+        meter: NativeCallMeter::Unknown,
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
         original.invoice = NativeCallInvoice::Admitted;
         original.terminal_claims.clear();
+        original.meter = NativeCallMeter::Unknown;
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
@@ -192,5 +207,36 @@ pub(crate) fn bind_native_call_terminal_in_txn(
     })();
     if let Err(error) = written {
         tracing::warn!(kind = ?error.kind(), %error, "native call terminal binding skipped");
+    }
+}
+
+/// Retain the interval read from the original native guard and lease token.
+/// Empty is a known settled interval; absence is not converted to zero.
+pub(crate) fn record_native_call_meter_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: AdmittedCallId,
+    lease_id: &str,
+    range: BudgetMeterRange,
+) -> Result<()> {
+    let Some(mut row) = CALLS.get(&vault.store, &*wtxn, &origin)? else {
+        return Err(invalid_dreamer_runner(
+            "native call has no original admission",
+        ));
+    };
+    if row.lease != lease_id || range.end_used_units < range.start_used_units {
+        return Err(invalid_dreamer_runner("native call meter binding differs"));
+    }
+    let settled = NativeCallMeter::Settled {
+        start_used_units: range.start_used_units,
+        end_used_units: range.end_used_units,
+    };
+    match row.meter {
+        NativeCallMeter::Unknown => {
+            row.meter = settled;
+            CALLS.put(&vault.store, wtxn, &origin, &row)
+        }
+        _ if row.meter == settled => Ok(()),
+        _ => Err(invalid_dreamer_runner("native call settled meter differs")),
     }
 }
