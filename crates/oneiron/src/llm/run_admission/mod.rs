@@ -31,7 +31,8 @@ mod wire;
 mod work_context;
 
 pub use admission::{
-    RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
+    RawDispatch, RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied,
+    UNRESOLVED_SELECTOR,
 };
 pub use allocation::{
     AllocationCallKey, AllocationCommit, AllocationProducer, AllocationServingFence,
