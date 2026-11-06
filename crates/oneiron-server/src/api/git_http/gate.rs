@@ -6,8 +6,6 @@
 
 use super::routes::GitService;
 use crate::auth::CoreAuth;
-use crate::auth::RevokedTokenJtis;
-use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
@@ -28,14 +26,17 @@ pub(super) const GIT_HTTP_CHALLENGE: &str = "Bearer realm=\"oneiron-origin\"";
 /// Split from the handlers so the gate is testable as itself: the dev hatch,
 /// the scope check, and the registered-principal demand are one function with
 /// no transport around them.
-pub(super) fn authenticate(
+pub(super) async fn authenticate(
     headers: &HeaderMap,
-    config: &SyncServerConfig,
-    revoked: &dyn RevokedTokenJtis,
+    server: &SyncServer,
     service: GitService,
 ) -> Result<CoreAuth, Box<Response>> {
-    let auth =
-        CoreAuth::from_headers(headers, config, revoked).map_err(|_| Box::new(challenge()))?;
+    let verified = if server.managed_issuer.is_some() {
+        CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
+    } else {
+        CoreAuth::for_server_async(headers, server).await
+    };
+    let auth = verified.map_err(|_| Box::new(challenge()))?;
     admit(auth, service)
 }
 
@@ -45,7 +46,7 @@ pub(super) fn authenticate(
 /// records him as its live owner, his registered principal and every owner
 /// scope, judged by the same gate a bearer is. Every other request
 /// authenticates by its headers, as before.
-pub(super) fn authenticate_request(
+pub(super) async fn authenticate_request(
     parts: &Parts,
     server: &SyncServer,
     service: GitService,
@@ -56,12 +57,7 @@ pub(super) fn authenticate_request(
         crate::auth::request_path(parts),
         server,
     ) else {
-        return authenticate(
-            &parts.headers,
-            &server.config,
-            server.vault().as_ref(),
-            service,
-        );
+        return authenticate(&parts.headers, server, service).await;
     };
     let auth =
         attested.map_err(|error| Box::new(text_response(error.status(), error.message())))?;

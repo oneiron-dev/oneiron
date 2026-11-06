@@ -17,7 +17,7 @@ use oneiron::engine_executor::{
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
-use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
+use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
@@ -544,6 +544,9 @@ pub struct McpEngineNativeCodeHost {
     /// Where each run's seat to spawn reader children comes from; none
     /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
     reader_seats: Option<Arc<crate::server::ReaderSeats>>,
+    /// The operator's own Git door base each run's checkouts point at (FIX
+    /// 7181); `None` keeps a run's own base.
+    git_door_base: Option<String>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -567,6 +570,7 @@ impl McpEngineNativeCodeHost {
             seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
             reader_seats: None,
+            git_door_base: None,
         }
     }
 
@@ -575,6 +579,13 @@ impl McpEngineNativeCodeHost {
     #[must_use]
     pub(crate) fn with_reader_seats(mut self, seats: Arc<crate::server::ReaderSeats>) -> Self {
         self.reader_seats = Some(seats);
+        self
+    }
+
+    /// The operator's own Git door base for each run's checkouts (FIX 7181).
+    #[must_use]
+    pub(crate) fn with_git_door_base(mut self, base: Option<String>) -> Self {
+        self.git_door_base = base;
         self
     }
 
@@ -621,6 +632,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
         let reader_seats = self.reader_seats.clone();
+        let git_door_base = self.git_door_base.clone();
         let runs = &self.runs;
         Box::pin(async move {
             let changed =
@@ -711,6 +723,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         worlds,
                         reader_seat,
                         seat.as_mut(),
+                        git_door_base,
                     );
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
                         let ended = outcome.as_ref().is_ok_and(|outcome| {
@@ -800,11 +813,13 @@ fn run_engine_native_code_mode(
     worlds: Vec<EntityId>,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
+    git_door_base: Option<String>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
-        .with_bound_run(config.run_id);
+        .with_bound_run(config.run_id)
+        .with_git_door_base(git_door_base);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
     }
@@ -1139,10 +1154,15 @@ pub(crate) fn task_run_seat(
     run_id: EntityId,
     type_ref: &TaskTypeRef,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, worlds, task)
+    seat_for(vault, provider, run_id, pin, None, worlds, |facet| {
+        let mut task = task(facet);
+        task.learning = learning;
+        task
+    })
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -1239,11 +1259,18 @@ pub(crate) fn task_engine_run_seat(
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        engine_seat_task(config, facet, warm_scope, model, listed)
-    })
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| engine_seat_task(config, facet, warm_scope, model, listed),
+    )
 }
 
 /// The task an engine-native run's seat is born for, from `config` as it
@@ -1273,6 +1300,7 @@ fn engine_seat_task(
         worlds: Vec::new(),
         // Stamped by `seat_for` from the host's served set (FIX 2745).
         served: None,
+        learning: None,
     }
 }
 

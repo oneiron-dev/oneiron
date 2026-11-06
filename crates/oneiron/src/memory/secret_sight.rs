@@ -11,6 +11,13 @@ use crate::task_verb::task_create_origin_in_txn;
 use crate::typed_body::LiftedSources;
 
 impl Memory<'_> {
+    /// The request's real Owner proof for queue-check exhaust, when the host
+    /// bound the owner's own direct request (`with_owner_authorship`).
+    /// Borrowed from the existing field; never a new field or factory.
+    pub(crate) fn queue_check_request_owner(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        self.owner_authorship.as_ref()
+    }
+
     /// One artifact version's export, its bytes as this caller reads them: a
     /// file stored with keys in it reads whole for the owner, and for an
     /// agent that says `why` once a grant covers its keys (OF-560, granted
@@ -21,6 +28,26 @@ impl Memory<'_> {
         version: Option<u64>,
         why: Option<&str>,
     ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
+        self.export_blob_artifact_sighted_with_owner(artifact, version, why, None)
+    }
+
+    pub(crate) fn export_blob_artifact_sighted_as_owner(
+        &self,
+        artifact: &EntityId,
+        version: Option<u64>,
+        why: Option<&str>,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
+        self.export_blob_artifact_sighted_with_owner(artifact, version, why, Some(owner))
+    }
+
+    fn export_blob_artifact_sighted_with_owner(
+        &self,
+        artifact: &EntityId,
+        version: Option<u64>,
+        why: Option<&str>,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
         let vault = self.vault();
         // FIX 4997: pin the exact version once, then judge a wording
         // version's source through the caller's own lane; no sight bypasses
@@ -30,6 +57,20 @@ impl Memory<'_> {
         let Some((pinned, _)) = vault.blob_artifact_version_rows(artifact, version)? else {
             return Ok(None);
         };
+        if vault.blob_artifact_version_is_queue_check(artifact, pinned)? {
+            let Some(owner) = owner else {
+                return Ok(None);
+            };
+            self.artifact_owner_matches(owner)?;
+            let lane = self.queue_check_owner_read_lane(owner, ClaimReadStatus::Recorded)?;
+            return Ok(vault.export_blob_artifact_for_reader(
+                artifact,
+                Some(pinned),
+                self.secret_sight()?,
+                Some(owner),
+                Some(&lane),
+            )?);
+        }
         if vault.commitment_reminder_wording_protected(artifact, pinned)?
             && !self
                 .read_lane(ClaimReadStatus::Recorded)?
@@ -151,6 +192,7 @@ impl Memory<'_> {
         .with_reader(self.read_key()?)
         .with_attempt(attempt)
         .with_task(task)
-        .with_step(self.host_step()))
+        .with_step(self.host_step())
+        .with_exec_run(self.bound_code_run()))
     }
 }

@@ -14,8 +14,9 @@
 //! finisher retires the key and the bodies no row names are unlinked.
 //!
 //! A read checks the row first: an absent row, a standing retirement, a
-//! missing key, a lock or erase since the admission are cold, and a body
-//! that is missing or does not open retires its row. A body opens under its
+//! missing key, a lock or erase since the admission are cold. A missing or
+//! invalid body retires its row; body I/O and allocation faults do not retire
+//! it. A body opens under its
 //! own row alone: the catalog id and the manifest are its associated data.
 //! The wrapped key's bytes never reach the row, the body, a log, an error
 //! or a receipt; the copy a call holds is wiped before it returns.
@@ -36,7 +37,9 @@ use super::catalog::{
 };
 use super::lifecycle::SnapshotAdmission;
 use super::retention::SnapshotBudget;
-use super::seal::{SealedSnapshot, WrappedSnapshotKey, open_snapshot, seal_snapshot};
+use super::seal::{
+    SealedSnapshot, WrappedSnapshotKey, open_snapshot_with_expected_len, seal_snapshot,
+};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::store::{INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES, Store};
@@ -110,7 +113,13 @@ fn named_id(name: &str) -> Option<SnapshotId> {
 /// binds, so it opens under its own row alone.
 fn associated_data(id: &SnapshotId, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
     let manifest = rmp_serde::to_vec_named(manifest).map_err(|_| corrupt())?;
-    let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 16 + manifest.len());
+    let len = AAD_DOMAIN
+        .len()
+        .checked_add(16)
+        .and_then(|len| len.checked_add(manifest.len()))
+        .ok_or_else(|| std::io::Error::from(ErrorKind::OutOfMemory))?;
+    let mut aad = Vec::new();
+    aad.try_reserve_exact(len).map_err(std::io::Error::from)?;
     aad.extend_from_slice(AAD_DOMAIN);
     aad.extend_from_slice(&id.0);
     aad.extend_from_slice(&manifest);
@@ -200,7 +209,7 @@ impl Vault {
     /// room inside `budget`. Never a refusal of the turn that made it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn publish_inference_snapshot(
         &self,
         admission: &SnapshotAdmission,
@@ -326,11 +335,11 @@ impl Vault {
     /// Opens snapshot `id` under `admission`: its row and its plaintext,
     /// wiped on drop. `Ok(None)` is cold: no row, a row that may serve no
     /// restore, a standing retirement, no key, a locked key, or a lock or
-    /// erase since the admission. A body that is missing or does not open,
-    /// or whose plaintext does not match its row, retires the row.
+    /// erase since the admission. A missing, malformed or unauthenticated
+    /// body, or plaintext that does not match its row, retires the row.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn read_inference_snapshot(
         &self,
         admission: &SnapshotAdmission,
@@ -380,8 +389,9 @@ impl Vault {
         Ok(Some((record, plaintext)))
     }
 
-    /// `record`'s plaintext: `Some(None)` when its body is missing, does not
-    /// open or does not match the row, and `None` while the key is locked.
+    /// `record`'s plaintext: `Some(None)` for a missing, invalid or mismatched
+    /// body, and `None` while the key is locked. I/O and allocation faults
+    /// return an error without retiring the row.
     fn open_body(
         &self,
         record: &SnapshotRecord,
@@ -403,16 +413,26 @@ impl Vault {
         let Some(body) = body else {
             return Ok(Some(None));
         };
-        let plaintext = SealedSnapshot::parse(&body)
-            .ok()
-            .filter(|sealed| {
-                sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
-            })
-            .and_then(|sealed| open_snapshot(&key, wrapped, &aad, &sealed).ok())
-            .filter(|plaintext| {
-                plaintext.len() as u64 == record.plaintext_bytes
-                    && sha256(plaintext) == record.snapshot_sha256
-            });
+        let Some(sealed) = SealedSnapshot::parse(&body).ok().filter(|sealed| {
+            sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
+        }) else {
+            return Ok(Some(None));
+        };
+        let plaintext = match open_snapshot_with_expected_len(
+            &key,
+            wrapped,
+            &aad,
+            &sealed,
+            record.plaintext_bytes,
+        ) {
+            Ok(plaintext) => Some(plaintext),
+            Err(Error::CorruptedIndex(_)) => None,
+            Err(error) => return Err(error),
+        }
+        .filter(|plaintext| {
+            plaintext.len() as u64 == record.plaintext_bytes
+                && sha256(plaintext) == record.snapshot_sha256
+        });
         Ok(Some(plaintext))
     }
 

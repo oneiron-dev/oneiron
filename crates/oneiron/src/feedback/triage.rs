@@ -43,15 +43,21 @@ mod github;
 mod jobs;
 mod owner;
 mod source;
+mod source_state;
 mod sweep_pending;
+mod target;
 mod work;
 mod work_store;
 
-pub(crate) use self::erased::erase_handoff_in_txn;
+pub(crate) use self::erased::{
+    erase_handoff_actor_in_txn, erase_handoff_as_in_txn, erase_handoff_in_txn, refuse_erased_in_txn,
+};
 pub(crate) use self::jobs::job_target;
 use self::jobs::{
     attempt_id, attempt_ref, enqueue_triage_in_txn, invalid_job, requeue_unacknowledged,
 };
+pub use self::source_state::FeedbackTriageHandoffSource;
+pub(crate) use self::target::erased_queue_input_in_txn;
 pub(crate) use self::work_store::node_target;
 
 pub use self::github::{
@@ -86,10 +92,10 @@ use crate::{EntityId, Error, Result, TimeRange, Vault};
 /// absorbs the next run.
 pub const COACH_FEEDBACK_SWEEP_FACET: &str = "coach.feedback_sweep";
 /// The Coach's triage of one handed-off revision on the bound skill. Input:
-/// `{source, id, revision, evidence}`.
+/// a tagged retained source/evidence, or an erased handoff key.
 pub const COACH_FEEDBACK_TRIAGE_FACET: &str = "coach.feedback_triage";
 /// One part of a long revision's item, answered on the bound skill (FIX
-/// 7549). Input: `{source, id, revision, evidence, generation, node}`.
+/// 7549). Input: `{target, generation, node}`.
 pub const COACH_FEEDBACK_TRIAGE_PART_FACET: &str = "coach.feedback_triage_part";
 /// One ordered batch of a long revision's answers, joined on the bound
 /// skill (FIX 7549). Input as a part's.
@@ -166,16 +172,33 @@ impl FeedbackTriageSourceRef {
 
 /// The skill the triage runs, as the owner bound it. Unset until the owner
 /// binds one: no skill is bound for him.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackTriageBinding {
     /// The SKILL entity the triage loads; `None` while none is bound.
     pub skill: Option<EntityId>,
+    /// Queue the ordinary sweep when a new inbox note lands. Off keeps
+    /// the existing manual and nightly batching.
+    pub enqueue_on_intake: bool,
     /// 0 while never set, then one more for each change. A change names
     /// the revision it read.
     pub revision: u64,
     /// Vault seconds of the last change; `None` while never set.
     pub set_at: Option<u64>,
+}
+
+/// Keep intake batched unless the owner enables an ordinary sweep per intake.
+const DEFAULT_ENQUEUE_ON_INTAKE: bool = false;
+
+impl Default for FeedbackTriageBinding {
+    fn default() -> Self {
+        Self {
+            skill: None,
+            enqueue_on_intake: DEFAULT_ENQUEUE_ON_INTAKE,
+            revision: 0,
+            set_at: None,
+        }
+    }
 }
 
 /// One source's state: where the next sweep resumes it, the walk that last
@@ -217,11 +240,8 @@ pub struct FeedbackTriageContinuation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackTriageHandoff {
-    /// The item and revision.
-    pub source_ref: FeedbackTriageSourceRef,
-    /// The host-written ASSET holding the exact encoded item the triage
-    /// reads; every finding cites it.
-    pub evidence: EntityId,
+    /// The retained revision and evidence, or their erased identity.
+    pub source: FeedbackTriageHandoffSource,
     /// The sweep that handed it off.
     pub sweep: EntityId,
     /// The sweep that queued its current triage job.
@@ -232,9 +252,6 @@ pub struct FeedbackTriageHandoff {
     pub handed_off_at: u64,
     /// The committed result; `None` while the revision is unacknowledged.
     pub result: Option<FeedbackTriageResult>,
-    /// Vault seconds a sweep or the erase path found its evidence ASSET erased by the owner:
-    /// settled, with or without a result, it is never queued again.
-    pub erased_at: Option<u64>,
     /// The part and synthesis graph of an item too long for the Coach's
     /// window (FIX 7549), every answer kept; `None` for an item triaged
     /// whole, and once the owner erased its evidence.
@@ -408,6 +425,19 @@ fn binding_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<FeedbackTriage
     Ok(BINDING.get(&vault.store, txn, &())?.unwrap_or_default())
 }
 
+/// The owner's standing intake policy, read with the note's write. Anonymous
+/// feedback supplies no authority; an enabled owner binding requests the sweep.
+pub(super) fn queue_intake_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    received_at: u64,
+) -> Result<()> {
+    if binding_in_txn(vault, txn)?.enqueue_on_intake {
+        sweep_pending::requested_in_txn(vault, txn, received_at)?;
+    }
+    Ok(())
+}
+
 /// The handoff of `source_ref`, checked against the key it is stored under.
 fn handoff_in_txn(
     vault: &Vault,
@@ -417,7 +447,7 @@ fn handoff_in_txn(
     let Some(handoff) = HANDOFFS.get(&vault.store, txn, &handoff_key(source_ref))? else {
         return Ok(None);
     };
-    if handoff.source_ref != *source_ref {
+    if !handoff.source.matches(source_ref) {
         return Err(Error::CorruptedIndex("feedback triage handoff identity"));
     }
     Ok(Some(handoff))
@@ -429,13 +459,7 @@ pub(crate) fn job_handoff_in_txn(
     txn: &heed::RoTxn<'_>,
     attempt: &DreamerAdmittedAttempt,
 ) -> Result<FeedbackTriageHandoff> {
-    let (source_ref, evidence) = job_target(&attempt.status.payload.input)?;
-    let handoff = handoff_in_txn(vault, txn, &source_ref)?
-        .ok_or(Error::CorruptedIndex("feedback triage handoff missing"))?;
-    if handoff.evidence != evidence {
-        return Err(invalid_job());
-    }
-    Ok(handoff)
+    target::Target::decode(&attempt.status.payload.input)?.handoff_in_txn(vault, txn)
 }
 
 /// Acknowledges `handoff`'s revision with `result`, in the write that files
@@ -448,8 +472,10 @@ pub(crate) fn acknowledge_feedback_triage_in_txn(
     handoff: &FeedbackTriageHandoff,
     result: FeedbackTriageResult,
 ) -> Result<()> {
-    let key = handoff_key(&handoff.source_ref);
-    let mut row = handoff_in_txn(vault, txn, &handoff.source_ref)?
+    erased::refuse_erased_in_txn(vault, txn, handoff)?;
+    let (source_ref, _) = handoff.retained()?;
+    let key = handoff_key(source_ref);
+    let mut row = handoff_in_txn(vault, txn, source_ref)?
         .ok_or(Error::CorruptedIndex("feedback triage handoff missing"))?;
     if row.result.is_some() || row.attempt != result.attempt {
         return Err(invalid_job());
@@ -512,23 +538,20 @@ fn hand_off_revision_in_txn(
     let evidence = evidence_id(&source_ref)?;
     retain_evidence_in_txn(vault, txn, &evidence, bytes, received_at, now)?;
     let attempt = enqueue_triage_in_txn(vault, txn, &source_ref, evidence, sweep, run_id, now)?;
+    let key = handoff_key(&source_ref);
     let handoff = FeedbackTriageHandoff {
-        source_ref,
-        evidence,
+        source: FeedbackTriageHandoffSource::Retained {
+            source_ref,
+            evidence,
+        },
         sweep: sweep_ref,
         queued_by: sweep_ref,
         attempt,
         handed_off_at: now,
         result: None,
-        erased_at: None,
         work: None,
     };
-    HANDOFFS.put(
-        &vault.store,
-        txn,
-        &handoff_key(&handoff.source_ref),
-        &handoff,
-    )?;
+    HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
     Ok((handoff, true))
 }
 

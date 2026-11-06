@@ -178,7 +178,12 @@ async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
 ) -> Result<Option<tsp::ValidatedToken>, SealError> {
-    let anchors = trust_anchors(ctx.config)?;
+    let anchors = trust_anchors(ctx.config, ctx.limits)
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?
+        .ok_or(SealError::Fatal {
+            stage: SealStage::InputValidation,
+            code: FatalCode::InvalidConfiguration,
+        })?;
     let memory = ctx
         .limits
         .memory
@@ -460,6 +465,15 @@ fn degrade_warning(
     }
 }
 
+fn push_warning(
+    ctx: &SealContext<'_>,
+    warnings: &mut Vec<SealWarning>,
+    warning: SealWarning,
+) -> Result<(), SealError> {
+    pdf::admitted::push(ctx.limits, warnings, warning)
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
+}
+
 /// Append the DocTimeStamp revision for B-LTA (§7.6). `Ok(None)` means the
 /// archival timestamp could not be produced; caller degrades to B-LT. The
 /// engine writes this revision, so past the ladder its hole grows to the
@@ -560,11 +574,11 @@ pub(crate) async fn assemble(
     if token.is_some() {
         achieved = PadesProfile::BaselineT;
     } else if target >= PadesProfile::BaselineT {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::TimestampUnavailable,
-        ));
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(target, achieved, ProfileDegradeReason::TimestampUnavailable),
+        )?;
     }
     let mut bytes = draft.bytes;
     if target >= PadesProfile::BaselineLt && achieved == PadesProfile::BaselineT {
@@ -573,18 +587,26 @@ pub(crate) async fn assemble(
                 bytes = append_dss(&bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;
             }
-            None => warnings.push(degrade_warning(
+            None => push_warning(
+                ctx,
+                &mut warnings,
+                degrade_warning(
+                    target,
+                    achieved,
+                    ProfileDegradeReason::ValidationMaterialUnavailable,
+                ),
+            )?,
+        }
+    } else if target >= PadesProfile::BaselineLt {
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(
                 target,
                 achieved,
                 ProfileDegradeReason::ValidationMaterialUnavailable,
-            )),
-        }
-    } else if target >= PadesProfile::BaselineLt {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::ValidationMaterialUnavailable,
-        ));
+            ),
+        )?;
     }
     if target == PadesProfile::BaselineLta && achieved == PadesProfile::BaselineLt {
         match append_doc_timestamp(&bytes, ctx).await? {
@@ -592,18 +614,26 @@ pub(crate) async fn assemble(
                 bytes = b;
                 achieved = PadesProfile::BaselineLta;
             }
-            None => warnings.push(degrade_warning(
+            None => push_warning(
+                ctx,
+                &mut warnings,
+                degrade_warning(
+                    target,
+                    achieved,
+                    ProfileDegradeReason::DocumentTimestampUnavailable,
+                ),
+            )?,
+        }
+    } else if target == PadesProfile::BaselineLta {
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(
                 target,
                 achieved,
                 ProfileDegradeReason::DocumentTimestampUnavailable,
-            )),
-        }
-    } else if target == PadesProfile::BaselineLta {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::DocumentTimestampUnavailable,
-        ));
+            ),
+        )?;
     }
     // The output grows by whatever its validation material and timestamps
     // need (Rule 5): the host measures that growth against its `[limits]`

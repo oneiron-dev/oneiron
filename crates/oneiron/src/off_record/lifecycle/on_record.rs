@@ -346,10 +346,24 @@ impl<'vault> OffRecordSession<'vault> {
         check: Option<SaverCheck<'_, '_>>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<T> {
-        self.vault.with_write_txn_grouped(|wtxn| {
-            self.participant_and_saver_in_txn(check.as_ref(), wtxn)?;
-            write(wtxn)
-        })
+        self.with_saver_write_txn_after_commit(check, write, Ok)
+    }
+
+    /// The same participant and saver checks, with a session publication
+    /// completed before the write door starts its postcommit work.
+    pub(crate) fn with_saver_write_txn_after_commit<T, U>(
+        &self,
+        check: Option<SaverCheck<'_, '_>>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+        after_commit: impl FnOnce(T) -> Result<U>,
+    ) -> Result<U> {
+        self.vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                self.participant_and_saver_in_txn(check.as_ref(), wtxn)?;
+                write(wtxn)
+            },
+            after_commit,
+        )
     }
 
     /// A run's participant, then `saver`, in `txn`. A run removed from the

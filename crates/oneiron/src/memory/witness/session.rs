@@ -115,6 +115,7 @@ impl Memory<'_> {
                 admit: None,
                 rostered: None,
                 turn_vector,
+                terminal: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -196,6 +197,7 @@ impl Memory<'_> {
                 admit: Some(&admit),
                 rostered: None,
                 turn_vector,
+                terminal: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -252,6 +254,7 @@ impl Memory<'_> {
                 admit: Some(&admit),
                 rostered: Some(room),
                 turn_vector,
+                terminal: None,
             },
             WitnessDoor::Guest,
             || {},
@@ -288,6 +291,7 @@ impl Memory<'_> {
                 admit: Some(&admit),
                 rostered: None,
                 turn_vector,
+                terminal: None,
             },
             host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
             || {
@@ -328,26 +332,43 @@ impl Memory<'_> {
         rostered: Option<(&OffRecordSession<'_>, EntityId)>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.vault.write_txn_door(callback, |wtxn| {
-            admit.map_or(Ok(()), |admit| admit(wtxn))?;
-            let Some((session, room)) = rostered else {
-                self.verify_actor_write_in_txn(wtxn)?;
-                return write(wtxn);
-            };
-            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
-            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
-                self.vault
-                    .verify_write_actor_in_txn(wtxn, &self.write_actor())?;
-            }
-            if !session.is_member_in_txn(wtxn, room, self.actor)? {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN,
-                    "the speaker is not in this stretch's room".to_owned(),
-                    &["Join the room before speaking in it."],
-                ));
-            }
-            write(wtxn)
-        })
+        self.with_witness_write_txn_as_after_commit(callback, admit, rostered, write, Ok)
+    }
+
+    /// Publishes a landed witness before the write door can reacquire its
+    /// writer for postcommit work, under the same admission checks.
+    pub(super) fn with_witness_write_txn_as_after_commit<T, U>(
+        &self,
+        callback: crate::store::Callback,
+        admit: Option<Admit<'_>>,
+        rostered: Option<(&OffRecordSession<'_>, EntityId)>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+        after_commit: impl FnOnce(T) -> MemoryResult<U>,
+    ) -> MemoryResult<U> {
+        self.vault.write_txn_door_after_commit(
+            callback,
+            |wtxn| {
+                admit.map_or(Ok(()), |admit| admit(wtxn))?;
+                let Some((session, room)) = rostered else {
+                    self.verify_actor_write_in_txn(wtxn)?;
+                    return write(wtxn);
+                };
+                verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+                if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
+                    self.vault
+                        .verify_write_actor_in_txn(wtxn, &self.write_actor())?;
+                }
+                if !session.is_member_in_txn(wtxn, room, self.actor)? {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "the speaker is not in this stretch's room".to_owned(),
+                        &["Join the room before speaking in it."],
+                    ));
+                }
+                write(wtxn)
+            },
+            after_commit,
+        )
     }
 
     // ── the overlay landing ─────────────────────────────────────────────
@@ -447,6 +468,11 @@ impl Memory<'_> {
         sink: &OverlaySink<'_, '_>,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<(TxnSegmentGuard, Vec<(String, u8)>)> {
+        if sink.session.read_view()?.read().base().open_nonce != self.vault.store.open_nonce {
+            return Err(MemoryError::bad_request(
+                "the off-record session belongs to another vault open",
+            ));
+        }
         let scope = JournalScope::new(plan.conversation_id, plan.turn_id);
         let entry = |role: JournalRole, op: BatchOp| JournalEntry {
             scope,
@@ -461,6 +487,7 @@ impl Memory<'_> {
             entity_type,
             occurred: plan.occurred,
             learned_at: plan.learned_at,
+            row_version: None,
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,

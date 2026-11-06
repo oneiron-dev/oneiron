@@ -32,9 +32,17 @@ settlement from resealing a deleted or newer outbox reference. Before replacing
 a settlement cursor, its writer checks the same current RemoteApplied carrier.
 Truthful recording after admitted I/O adds no fresh owner or credential gate.
 
-Passport/index writes still use their existing separate transactions. This
-slice does not claim whole-settlement atomicity or fix every concurrent
-passport/cursor ordering race. There is no migration or old masked-row reader.
+Outbound RemoteApplied settlement publishes its cursor, passport admissions and
+supersessions, UID index, and final Committed outbox row in one writer. Passport
+and subject reads include that writer's pending rows. The existing Active-only
+passport comparison and admitted-or-local UID index rule remain distinct.
+
+A stale carrier guard or final outbox compare-and-swap discards this settlement's
+staged rows and returns the already-admitted provider receipt. A claim, signing,
+or store error also rolls back this settlement; the outbox stays retryable.
+Retirement finishing runs only after the outer commit. This does not serialize
+provider I/O or other inbound operations. There is no migration or old masked-row
+reader.
 
 ## Archived-vault activation
 
@@ -55,3 +63,28 @@ mark; it is never silently dropped or blessed as pending. A later source
 retirement is not revived; a subsequent activation plans its proved retirement.
 This does not change credential, owner, or installed-seat admission. Side-restore
 parity is not established by this slice.
+
+## Automatic CalDAV polling
+
+The served calendar worker consumes the `calendar.caldav.sync` attempts that
+successful pulls already enqueue. A new seat still needs its first explicit
+`calendar.connector.pull`; configuration alone does not start a chain. Google
+internal sync attempts are not consumed by this worker.
+
+Each pass uses the existing local owner and housekeeping admission. It shares
+the ICS worker's 60-second tick, 16-row per-kind pass limit, lease recovery, and
+shutdown handle. Without a local owner, attempts remain queued. No new worker,
+timer, credential grant, or cadence default is introduced.
+
+Connector attempts carry their due instant in `not_before`, rather than a
+queue-level defer. An early claim is requeued to that instant without provider
+I/O. A due poll reads the current installed registration and cursor; the
+payload cursor is not installed or used to construct an operation. Missing or
+reconfigured seats complete unpolled. Native kill handling schedules no successor.
+
+The poll uses the same owner-bound `HttpCalDav` operation and credential door as
+an explicit pull. Success records the native outcome through `observe_sync`.
+If a concurrent pull or reconfiguration moved the registration, its newer
+cursor remains untouched and the completed pull is not replayed. Other failures
+retry one native cadence step later. Undecodable payloads or an invalid native
+cadence fail as attempt records, without a made-up cadence fallback.

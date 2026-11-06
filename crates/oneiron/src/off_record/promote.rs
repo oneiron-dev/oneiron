@@ -304,17 +304,26 @@ impl Appended {
 /// exactly as for any ordinary base write.
 pub(crate) struct PromoteReplayGrant {
     members: BTreeSet<EntityId>,
+    selected_saver: Option<crate::WriteActor>,
 }
 
 impl PromoteReplayGrant {
     fn mint(plan: &PromotePlan) -> Self {
         Self {
             members: plan.replayed.iter().copied().collect(),
+            selected_saver: None,
         }
     }
 
     fn mint_for(members: BTreeSet<EntityId>) -> Self {
-        Self { members }
+        Self {
+            members,
+            selected_saver: None,
+        }
+    }
+
+    pub(crate) const fn selected_saver(&self) -> Option<crate::WriteActor> {
+        self.selected_saver
     }
 
     /// Readable crate-wide so both membership doors can ASK a grant they were
@@ -400,7 +409,10 @@ impl FloorWrites<'_> {
         // terminus every gated batch uses; the only thing promotion adds is the
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
+        let stream_messages = self.promoted_stream_messages_in_txn(vault, wtxn, plan, None)?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
@@ -416,6 +428,7 @@ impl FloorWrites<'_> {
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
         // A result MESSAGE lands with its hold on the body (FIX 365).
         self.keep_message_results_in_txn(vault, wtxn, &message_results(&plan.ops))?;
+        self.keep_promoted_stream_receipts_in_txn(vault, wtxn, plan, &stream_messages)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
         for (id, temporary) in &plan.temporary_short_ids {
@@ -640,7 +653,11 @@ impl FloorWrites<'_> {
             })
             .collect();
         let grant = PromoteReplayGrant::mint_for(fresh.clone());
+        let stream_messages =
+            self.promoted_stream_messages_in_txn(vault, wtxn, plan, Some(&fresh))?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        let replay_ops =
+            crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(
@@ -653,6 +670,7 @@ impl FloorWrites<'_> {
         let mut results = message_results(&plan.ops);
         results.retain(|(id, _)| fresh.contains(id));
         self.keep_message_results_in_txn(vault, wtxn, &results)?;
+        self.keep_promoted_stream_receipts_in_txn(vault, wtxn, plan, &stream_messages)?;
 
         let replayed: Vec<EntityId> = plan
             .replayed
@@ -732,6 +750,22 @@ impl FloorWrites<'_> {
             "off-record promote staged pickup markers for its source windows"
         );
         Ok(())
+    }
+}
+
+impl FloorWrites<'_> {
+    pub(in crate::off_record) fn save_scratch_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        session_ref: &str,
+        prepared: crate::off_record::lifecycle::PreparedScratchSave,
+    ) -> Result<crate::off_record::lifecycle::SavedScratch> {
+        let grant = PromoteReplayGrant {
+            members: prepared.members().clone(),
+            selected_saver: Some(prepared.saver()),
+        };
+        prepared.land(self, vault, txn, session_ref, &grant)
     }
 }
 

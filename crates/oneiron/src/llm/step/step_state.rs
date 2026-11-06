@@ -366,8 +366,18 @@ pub(super) fn step_state_read(
     step_hash: &[u8; 32],
 ) -> Result<Option<StepStateRow>> {
     let rtxn = vault.store.env.read_txn()?;
+    step_state_read_in_txn(vault, &rtxn, attempt_id, step_hash)
+}
+
+/// The same typed, erase-aware row in the caller's snapshot.
+pub(super) fn step_state_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Option<StepStateRow>> {
     let key = (attempt_id, *step_hash);
-    let Some(raw) = STEP_STATE.get_borrowed(&vault.store, &rtxn, &key)? else {
+    let Some(raw) = STEP_STATE.get_borrowed(&vault.store, txn, &key)? else {
         return Ok(None);
     };
     let raw =

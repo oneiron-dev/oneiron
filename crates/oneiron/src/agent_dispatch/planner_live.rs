@@ -22,6 +22,7 @@
 
 mod intent;
 mod learning;
+pub(crate) use learning::seat_model_rates_in_txn;
 mod root_plan;
 mod team_launch;
 mod width_outcomes;
@@ -48,7 +49,9 @@ use super::planner::{
     PlannerQuestionContext, PlannerRung, PlannerThresholds, ShapeQuote, SkillRevisionRef,
     SpawnPlanReceipt, plan_ranked, planned_rung, ranked_quotes,
 };
-use super::task_type_tree::{load_team_type_tree, load_team_type_tree_in_txn, place_in_tree};
+use super::task_type_tree::{
+    load_team_type_tree, load_team_type_tree_sourced_in_txn, place_in_tree,
+};
 use super::team_shape::{CoordinationPattern, team_shape_default};
 use super::types::{AgentDispatchInput, AgentDispatchTarget, SpawnNeed};
 use super::widen_record::invalid;
@@ -206,7 +209,7 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
-        let request = &request.with_owner_choices(self.vault, project)?;
+        let (request, _) = request.with_owner_choices(self.vault, project)?;
         let evidence = self.planner_evidence_for(
             project,
             Some(live.id),
@@ -235,16 +238,26 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
-        let request = &request.with_owner_choices(self.vault, project)?;
-        let evidence =
-            self.planner_evidence_for(project, Some(live.id), None, &request.need, seats, at)?;
+        let (request, owner_choices) = request.with_owner_choices(self.vault, project)?;
+        let (evidence, root_lookup) = self.planner_evidence_sourced_for(
+            project,
+            Some(live.id),
+            None,
+            &request.need,
+            seats,
+            at,
+        )?;
         // The answering rung's workflow skill loads through the same door,
         // so its revision is on the manifest and its executors on the receipt.
-        self.plan_over_evidence(request, team_shape, &evidence, |skill| {
-            let live = self.live_planner_lease(leased)?;
-            self.vault
-                .load_leased_callable_skill_pack(&live, skill, request.executor, at)
-        })
+        let (mut receipt, quotes) =
+            self.plan_over_evidence(&request, team_shape, &evidence, |skill| {
+                let live = self.live_planner_lease(leased)?;
+                self.vault
+                    .load_leased_callable_skill_pack(&live, skill, request.executor, at)
+            })?;
+        receipt.owner_choices = owner_choices;
+        receipt.type_tree_root_lookup = root_lookup;
+        Ok((receipt, quotes))
     }
 
     /// The plan over gathered evidence and a loaded team-shape pack: the
@@ -342,11 +355,8 @@ impl AgentDispatcher<'_> {
     }
 
     /// Everything one plan reads, from the vault, in the launch context the
-    /// caller names: the project whose tree is in force, and the parent and
-    /// root spend the launch is stated under. The launch statement, the
-    /// model descriptions and the admitted pattern skills read first; the
-    /// tree in force and every measured read then share one snapshot, and
-    /// nothing that opens a snapshot of its own runs while it is held.
+    /// caller names, without the root-lookup audit value: advice that ranks
+    /// quotes and freezes no receipt.
     fn planner_evidence_for(
         &self,
         project: Option<EntityId>,
@@ -356,6 +366,28 @@ impl AgentDispatcher<'_> {
         seats: PlanSeats<'_>,
         at: u64,
     ) -> Result<PlannerEvidence> {
+        self.planner_evidence_sourced_for(project, parent, spend, need, seats, at)
+            .map(|(evidence, _)| evidence)
+    }
+
+    /// Everything one plan reads, from the vault, in the launch context the
+    /// caller names: the project whose tree is in force, and the parent and
+    /// root spend the launch is stated under. The launch statement, the
+    /// model descriptions and the admitted pattern skills read first; the
+    /// tree in force and every measured read then share one snapshot, and
+    /// nothing that opens a snapshot of its own runs while it is held. The
+    /// second value is the actual default-hub alias and pin the initial
+    /// tree load's root selection consulted in that same snapshot, audit
+    /// metadata only.
+    fn planner_evidence_sourced_for(
+        &self,
+        project: Option<EntityId>,
+        parent: Option<AttemptId>,
+        spend: Option<&SpawnSpend>,
+        need: &SpawnNeed,
+        seats: PlanSeats<'_>,
+        at: u64,
+    ) -> Result<(PlannerEvidence, Option<crate::skill_hub::HubRef>)> {
         let (seats, unfiltered) = match seats {
             PlanSeats::Listed(seats) => (seats, false),
             PlanSeats::Unfiltered(seats) => (seats, true),
@@ -452,7 +484,7 @@ impl AgentDispatcher<'_> {
         // Every team receipt, read once in the planner's own snapshot and
         // folded at one evaluation time (FIX 9568).
         let outcomes = WidthOutcomes::read_in_txn(self.vault, &txn, at, !patterns.is_empty())?;
-        let tree = load_team_type_tree_in_txn(self.vault, &txn, project)?;
+        let (tree, root_lookup) = load_team_type_tree_sourced_in_txn(self.vault, &txn, project)?;
         tree.validate_current_ref(&need.type_ref)
             .map_err(|_| invalid("spawn type stamp is not in the tree in force"))?;
         let type_ref = TypeRef::from(&need.type_ref);
@@ -545,12 +577,15 @@ impl AgentDispatcher<'_> {
             }
         }
         drop(txn);
-        Ok(PlannerEvidence {
-            models,
-            solo,
-            patterns,
-            budget,
-        })
+        Ok((
+            PlannerEvidence {
+                models,
+                solo,
+                patterns,
+                budget,
+            },
+            root_lookup,
+        ))
     }
 
     /// A bound pattern skill the planner may run: admitted, at its revision.

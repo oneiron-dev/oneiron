@@ -37,7 +37,7 @@ pub(crate) mod checkpoint;
 pub mod door_types;
 mod pointer_rows;
 /// Lease-bound live process previews, separate from pinned artifact pointers.
-pub mod preview;
+pub use oneiron_store::artifact_hosting::preview;
 mod publication_sync;
 mod serving;
 // The serving descriptor of a published blob version (FIX 1195).

@@ -71,6 +71,22 @@ impl SessionWitnessBinding {
         self.route.target() == RouteTarget::Discard
     }
 
+    /// Rechecks this original caller and exact captured session route.
+    pub fn revalidate(&self, vault: &crate::Vault) -> MemoryResult<()> {
+        self.context(vault)?.revalidate()
+    }
+
+    /// Claims a request in the actual session-owned RAM keep, never a durable
+    /// invocation store. Revalidate again after a wait and before release.
+    pub fn claim_invocation(
+        &self,
+        vault: &crate::Vault,
+        invocation: crate::runtime_hooks::InvocationId,
+        body: [u8; 32],
+    ) -> MemoryResult<crate::runtime_hooks::verb::InvocationEntry> {
+        self.context(vault)?.claim_invocation(invocation, body)
+    }
+
     /// Witnesses through the captured caller route after native asynchronous
     /// work. `author` still supplies its own write authority and envelopes.
     /// No stored receipt is invented for an Anonymous route.
@@ -80,6 +96,49 @@ impl SessionWitnessBinding {
         turn: &WitnessTurn,
     ) -> MemoryResult<SessionWitnessOutcome> {
         self.context(author.vault)?.witness(author, turn)
+    }
+
+    pub(in crate::memory::witness) fn check_stream_caller(
+        &self,
+        vault: &crate::Vault,
+    ) -> MemoryResult<()> {
+        let context = self.context(vault)?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        context.admit_in_txn(&txn)
+    }
+
+    pub(in crate::memory::witness) fn admit_stream(
+        &self,
+        author: &Memory<'_>,
+        turn: &WitnessTurn,
+    ) -> MemoryResult<()> {
+        self.context(author.vault)?.admit_stream(author, turn)
+    }
+
+    pub(in crate::memory::witness) fn project_stream_text(
+        &self,
+        vault: &crate::Vault,
+        text: &str,
+    ) -> MemoryResult<String> {
+        self.context(vault)?.project_stream_text(text)
+    }
+
+    pub(in crate::memory::witness) fn witness_stream_terminal(
+        &self,
+        author: &Memory<'_>,
+        turn: &WitnessTurn,
+        terminal: &super::super::super::stream::SessionStreamTerminal,
+    ) -> MemoryResult<SessionWitnessOutcome> {
+        self.context(author.vault)?
+            .witness_with_terminal(author, turn, Some(terminal))
+    }
+
+    pub(in crate::memory::witness) fn stream_terminal_receipt(
+        &self,
+        vault: &crate::Vault,
+        candidate: &super::super::super::stream::MessageStreamReceipt,
+    ) -> MemoryResult<Option<super::super::super::stream::MessageStreamReceipt>> {
+        self.context(vault)?.stream_terminal_receipt(candidate)
     }
 
     fn context<'v>(&self, vault: &'v crate::Vault) -> MemoryResult<SessionWitnessContext<'v>> {

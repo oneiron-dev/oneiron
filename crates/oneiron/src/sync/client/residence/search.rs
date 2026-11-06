@@ -4,6 +4,9 @@
 //! holds that many hits or the list ends. A list that changed between pages
 //! starts the search over, so the answer never mixes two lists and is never
 //! complete while the home holds more of it.
+//!
+//! A host that shows a list page by page asks for one page at a time
+//! instead ([`search_page`], FIX 9258), holding the cursor between asks.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -28,6 +31,135 @@ struct SearchPageReply {
     next_cursor: Option<ResidenceSearchCursor>,
 }
 
+/// One page of a home search, as a host shows it (FIX 9258): its hits in
+/// the home's ranked order and where the list goes on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidenceSearchPage {
+    pub hits: Vec<ResidenceHit>,
+    /// The home's list, or this device's partial offline scan when no home
+    /// answered a first page.
+    pub source: SearchSource,
+    /// Where the next page starts; `None` once the list ends, and for an
+    /// offline page.
+    pub next: Option<ResidenceSearchCursor>,
+    /// The home's list changed since the cursor's page: these hits are the
+    /// first page of the new list, and the hits shown before are not part of
+    /// it.
+    pub restarted: bool,
+}
+
+/// What one page request got back.
+enum PageAnswer {
+    Page {
+        hits: Vec<ResidenceHit>,
+        next: Option<ResidenceSearchCursor>,
+    },
+    /// The list changed since the page the cursor names.
+    RevisionChanged,
+}
+
+/// The search one page request asks, and as whom.
+#[derive(Clone, Copy)]
+struct PageRequest<'a> {
+    query: &'a str,
+    limit: usize,
+    selector_wire: &'a [u8],
+    scope: Option<&'a ResolvedRecallSelection>,
+    as_of: Option<u64>,
+    caller: Option<(&'a crate::authority::ForwardedCallerProof, CallerLocality)>,
+}
+
+/// Asks the home for the page of `request` that `page` names (the first
+/// page with none), and checks the reply against the cursor it was asked
+/// with: the hits before it are the cursor's offset, and the whole list
+/// holds at most the request's limit.
+async fn ask_page(
+    vault: &crate::Vault,
+    rpc: &mut ResidenceRpc,
+    request: &PageRequest<'_>,
+    page: Option<&ResidenceSearchCursor>,
+) -> Result<PageAnswer, TransportError> {
+    let PageRequest {
+        query,
+        limit,
+        selector_wire,
+        scope,
+        as_of,
+        caller,
+    } = *request;
+    let selector = base64::engine::general_purpose::STANDARD.encode(selector_wire);
+    let mut params = json!({"query": query, "limit": limit, "selector": selector});
+    if let Some(scope) = scope {
+        params["scope"] = serde_json::to_value(scope).map_err(|_| refused())?;
+    }
+    if let Some(as_of) = as_of {
+        params["as_of"] = json!(as_of);
+    }
+    if let Some(page) = page {
+        params["page"] = serde_json::to_value(page).map_err(|_| refused())?;
+    }
+    if let Some((caller, locality)) = caller {
+        // Each page's request is signed whole, its cursor and the
+        // caller's locality too (FIX 3550).
+        let machine = crate::sync::residence::with_forwarded_search_page(
+            query,
+            limit,
+            selector_wire,
+            scope,
+            as_of,
+            locality,
+            page,
+            |request| vault.forwarding_machine_proof(request, caller),
+        )
+        .map_err(|e| TransportError::Storage(e.to_string()))?
+        .ok_or_else(refused)?;
+        params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
+        params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
+        params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
+    }
+    let reply = match rpc.call("residence.search", params).await? {
+        Ok(reply) => reply,
+        // The list changed since its first page.
+        Err(refusal) if refusal.code.as_deref() == Some("SEARCH_REVISION_CHANGED") => {
+            return Ok(PageAnswer::RevisionChanged);
+        }
+        Err(_) => return Err(TransportError::InvalidPayload("home refused residence RPC")),
+    };
+    let reply: SearchPageReply = serde_json::from_value(reply).map_err(|_| refused())?;
+    let held = match page {
+        Some(page) => usize::try_from(page.offset).map_err(|_| refused())?,
+        None => 0,
+    };
+    let end = held.saturating_add(reply.hits.len());
+    if reply.source != "home"
+        || reply.complete != reply.next_cursor.is_none()
+        || end > limit
+        || page.is_some_and(|page| page.revision != reply.revision)
+        || reply.next_cursor.as_ref().is_some_and(|next| {
+            reply.hits.is_empty()
+                || next.offset != end as u64
+                || next.revision != reply.revision
+                || as_of.is_some_and(|as_of| as_of != next.as_of)
+                || page.is_some_and(|page| page.as_of != next.as_of)
+        })
+    {
+        return Err(refused());
+    }
+    let mut hits = Vec::with_capacity(reply.hits.len());
+    for hit in reply.hits {
+        let window = WindowKey::try_new(&hit.window).ok_or_else(refused)?;
+        hits.push(ResidenceHit {
+            entity_id: hit.entity_id,
+            score: hit.score,
+            window,
+        });
+    }
+    Ok(PageAnswer::Page {
+        hits,
+        next: reply.next_cursor,
+    })
+}
+
 /// Asks the home for `limit` hits a page at a time over `rpc`, as the caller
 /// a forwarded search names, at its locality, within `scope`.
 pub(super) async fn search_pages(
@@ -37,81 +169,76 @@ pub(super) async fn search_pages(
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    as_of: Option<u64>,
     caller: Option<(&crate::authority::ForwardedCallerProof, CallerLocality)>,
 ) -> Result<ResidenceSearch, TransportError> {
-    let selector = base64::engine::general_purpose::STANDARD.encode(selector_wire);
+    let request = PageRequest {
+        query,
+        limit,
+        selector_wire,
+        scope,
+        as_of,
+        caller,
+    };
     let mut hits: Vec<ResidenceHit> = Vec::new();
     let mut page: Option<ResidenceSearchCursor> = None;
     loop {
-        let mut params = json!({"query": query, "limit": limit, "selector": selector});
-        if let Some(scope) = scope {
-            params["scope"] = serde_json::to_value(scope).map_err(|_| refused())?;
-        }
-        if let Some(page) = &page {
-            params["page"] = serde_json::to_value(page).map_err(|_| refused())?;
-        }
-        if let Some((caller, locality)) = caller {
-            // Each page's request is signed whole, its cursor and the
-            // caller's locality too (FIX 3550).
-            let machine = crate::sync::residence::with_forwarded_search_page(
-                query,
-                limit,
-                selector_wire,
-                scope,
-                locality,
-                page.as_ref(),
-                |request| vault.forwarding_machine_proof(request, caller),
-            )
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .ok_or_else(refused)?;
-            params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
-            params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
-            params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
-        }
-        let reply = match rpc.call("residence.search", params).await? {
-            Ok(reply) => reply,
+        match ask_page(vault, rpc, &request, page.as_ref()).await? {
             // The list changed since its first page: the search starts over.
-            Err(refusal) if refusal.code.as_deref() == Some("SEARCH_REVISION_CHANGED") => {
+            PageAnswer::RevisionChanged => {
                 hits.clear();
                 page = None;
-                continue;
             }
-            Err(_) => return Err(TransportError::InvalidPayload("home refused residence RPC")),
-        };
-        let reply: SearchPageReply = serde_json::from_value(reply).map_err(|_| refused())?;
-        let end = hits.len().saturating_add(reply.hits.len());
-        if reply.source != "home"
-            || reply.complete != reply.next_cursor.is_none()
-            || end > limit
-            || page
-                .as_ref()
-                .is_some_and(|page| page.revision != reply.revision)
-            || reply.next_cursor.as_ref().is_some_and(|next| {
-                reply.hits.is_empty()
-                    || next.offset != end as u64
-                    || next.revision != reply.revision
-                    || page.as_ref().is_some_and(|page| page.as_of != next.as_of)
-            })
-        {
-            return Err(refused());
+            PageAnswer::Page { hits: more, next } => {
+                hits.extend(more);
+                match next {
+                    Some(next) => page = Some(next),
+                    None => {
+                        return Ok(ResidenceSearch {
+                            hits,
+                            source: SearchSource::Home,
+                            complete: true,
+                        });
+                    }
+                }
+            }
         }
-        for hit in reply.hits {
-            let window = WindowKey::try_new(&hit.window).ok_or_else(refused)?;
-            hits.push(ResidenceHit {
-                entity_id: hit.entity_id,
-                score: hit.score,
-                window,
-            });
-        }
-        match reply.next_cursor {
-            Some(next) => page = Some(next),
-            None => {
-                return Ok(ResidenceSearch {
+    }
+}
+
+/// Asks the home over `rpc` for the one page of a `limit`-hit search that
+/// `cursor` names, the first page with none (FIX 9258). A list that changed
+/// since the cursor's page is asked again from its first page, marked
+/// restarted; one that changes again at once is refused.
+pub(super) async fn search_page(
+    vault: &crate::Vault,
+    rpc: &mut ResidenceRpc,
+    query: &str,
+    limit: usize,
+    selector_wire: &[u8],
+    cursor: Option<&ResidenceSearchCursor>,
+) -> Result<ResidenceSearchPage, TransportError> {
+    let request = PageRequest {
+        query,
+        limit,
+        selector_wire,
+        scope: None,
+        as_of: None,
+        caller: None,
+    };
+    let mut asked = cursor;
+    loop {
+        match ask_page(vault, rpc, &request, asked).await? {
+            PageAnswer::Page { hits, next } => {
+                return Ok(ResidenceSearchPage {
                     hits,
                     source: SearchSource::Home,
-                    complete: true,
+                    next,
+                    restarted: cursor.is_some() && asked.is_none(),
                 });
             }
+            PageAnswer::RevisionChanged if asked.is_some() => asked = None,
+            PageAnswer::RevisionChanged => return Err(refused()),
         }
     }
 }

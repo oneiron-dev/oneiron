@@ -26,7 +26,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -173,6 +174,8 @@ struct CacheState {
     entries: HashMap<[u8; 32], CachedVerdict>,
     /// Punched key ids and when the punch landed, node clock.
     punched: HashMap<String, u64>,
+    /// Per-acceptance revoke latches; independent of verdict/tombstone expiry.
+    accepted: HashMap<String, Vec<Weak<AtomicBool>>>,
 }
 
 impl CacheState {
@@ -181,6 +184,19 @@ impl CacheState {
             .retain(|_, entry| now < entry.lease_until && now < entry.key_expires_at);
         self.punched
             .retain(|_, at| now.saturating_sub(*at) < TOMBSTONE_RETENTION_SECS);
+        self.accepted.retain(|_, accepted| {
+            accepted.retain(|latch| latch.strong_count() != 0);
+            !accepted.is_empty()
+        });
+    }
+
+    fn accept(&mut self, key_id: &str) -> Arc<AtomicBool> {
+        let revoked = Arc::new(AtomicBool::new(false));
+        self.accepted
+            .entry(key_id.to_owned())
+            .or_default()
+            .push(Arc::downgrade(&revoked));
+        revoked
     }
 }
 
@@ -223,6 +239,18 @@ impl AccountKeys {
         plaintext: &[u8],
         now: u64,
     ) -> Result<VerifiedAccountKey, AccountKeyError> {
+        self.verify_with_revocation(plaintext, now)
+            .await
+            .map(|(verified, _)| verified)
+    }
+
+    /// The same verification with a monotone latch for this acceptance.
+    /// Only an explicit punch sets it; lease or key expiry never does.
+    pub(crate) async fn verify_with_revocation(
+        &self,
+        plaintext: &[u8],
+        now: u64,
+    ) -> Result<(VerifiedAccountKey, Arc<AtomicBool>), AccountKeyError> {
         let started = Instant::now();
         let result = self.verify_inner(plaintext, now).await;
         if result.is_err() {
@@ -235,7 +263,7 @@ impl AccountKeys {
         &self,
         plaintext: &[u8],
         now: u64,
-    ) -> Result<VerifiedAccountKey, AccountKeyError> {
+    ) -> Result<(VerifiedAccountKey, Arc<AtomicBool>), AccountKeyError> {
         if !(MIN_PLAINTEXT_LEN..=MAX_PLAINTEXT_LEN).contains(&plaintext.len()) {
             return Err(AccountKeyError::Rejected);
         }
@@ -245,14 +273,16 @@ impl AccountKeys {
             state.prune(now);
             if let Some(entry) = state.entries.get_mut(&instrument) {
                 entry.last_used_at = entry.last_used_at.max(now);
-                return Ok(VerifiedAccountKey {
+                let verified = VerifiedAccountKey {
                     key_id: entry.key_id.clone(),
                     principal_ref: entry.principal_ref.clone(),
                     scopes: entry.scopes.clone(),
                     expires_at: entry.key_expires_at,
                     last_used_at: entry.last_used_at,
                     instrument,
-                });
+                };
+                let revoked = state.accept(&verified.key_id);
+                return Ok((verified, revoked));
             }
         }
         let check_started = now;
@@ -286,14 +316,16 @@ impl AccountKeys {
                 },
             );
         }
-        Ok(VerifiedAccountKey {
+        let verified = VerifiedAccountKey {
             key_id: verdict.key_id,
             principal_ref: verdict.principal_ref,
             scopes,
             expires_at: verdict.expires_at,
             last_used_at: now,
             instrument,
-        })
+        };
+        let revoked = state.accept(&verified.key_id);
+        Ok((verified, revoked))
     }
 
     /// Punches one key id now: every cached verdict for it is removed and
@@ -309,6 +341,11 @@ impl AccountKeys {
         let before = state.entries.len();
         state.entries.retain(|_, entry| entry.key_id != key_id);
         let removed = before - state.entries.len();
+        if let Some(accepted) = state.accepted.remove(key_id) {
+            for revoked in accepted.into_iter().filter_map(|latch| latch.upgrade()) {
+                revoked.store(true, Ordering::Release);
+            }
+        }
         state
             .punched
             .entry(key_id.to_owned())

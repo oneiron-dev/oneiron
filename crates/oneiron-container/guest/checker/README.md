@@ -135,6 +135,13 @@ lockfile; the image-family and `--archive` routes from release.toml's
 
 ## Pin
 
+For the published registry image, the explicit
+[merge-queue deployment config](../../../../deploy/merge-queue/oneiron.toml)
+pins its manifest digest. Its [publication record](../../../../deploy/merge-queue/README.md)
+names the source, dependency store and binaries; it does not claim compatibility
+with a newer engine or install anything on a serving host. The local build and
+import routes below remain available.
+
 Put the id this host's store answers and the receipt's identities in the
 engine's config. On a classic store that is the printed id; on a
 containerd store it is the `--store-id` output (or the stderr line):

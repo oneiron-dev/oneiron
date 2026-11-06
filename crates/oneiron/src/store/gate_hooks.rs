@@ -153,6 +153,7 @@ pub(crate) trait StoreGateHooks: Send + Sync {
         store: &Store,
         txn: &RoTxn<'_>,
         machine: EntityId,
+        authored_by: Option<EntityId>,
         body: &[u8],
     ) -> Result<()>;
 
@@ -210,6 +211,15 @@ pub(crate) trait StoreGateHooks: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
+
+    /// The engine's `campaign::compliance::campaign_compliance_gate`.
+    fn campaign_compliance_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+        now_utc: u64,
+    ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>>;
 }
 
 /// The actor scrub `PROPOSAL_ACTOR_COUNT` declares:
