@@ -2281,7 +2281,8 @@ How a call runs:
   lexicon). A run that ends with only a backchannel, or no words, stops
   nothing, and a backchannel `final` while the agent holds the floor starts
   no reply. Once the reply's audio has drained, a short final ("うん" to a
-  question) is an answer and starts a reply.
+  question) is an answer and starts a reply, even while a safeguard verdict
+  on the reply is still out.
 - What the person heard is recorded apart from the generated text. Each
   sentence handed to speech is one utterance, keyed by session, generation
   and submission. Its played share comes from the `played_samples` that
@@ -2289,7 +2290,8 @@ How a call runs:
   sent, an upper bound. A part-played sentence's heard text needs a TTS
   alignment, which no rung supplies yet, so it is left out. The next turn
   hears which sentences the person heard in full when that was fewer than
-  were spoken.
+  were spoken, or when an interrupted reply generated words that speech
+  never took.
 
 A full media queue makes heard audio wait for the next cut and a sentence
 wait for room. A queue that takes nothing for 30 seconds stops the reply.

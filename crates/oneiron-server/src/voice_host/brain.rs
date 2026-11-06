@@ -120,6 +120,10 @@ pub struct ChatBrain {
     /// The rows each of this call's turns was made from, by generation: a
     /// safeguard notice is made from the turn whose sentence it judged.
     said_by: BTreeMap<GenerationEpoch, Vec<EntityId>>,
+    /// What each interrupted turn generated, by generation, until what the
+    /// person heard of it arrives (FIX 4899): words speech never took count
+    /// as unheard.
+    interrupted: BTreeMap<GenerationEpoch, String>,
 }
 
 /// One history message, beside the rows it was made from (FIX 4778): the
@@ -196,6 +200,7 @@ impl ChatBrain {
             retiring: Vec::new(),
             foreign: Vec::new(),
             said_by: BTreeMap::new(),
+            interrupted: BTreeMap::new(),
         })
     }
 
@@ -506,16 +511,17 @@ impl ChatBrain {
             tracing::warn!("voice brain: a cancelled turn's memories receipt was not delivered");
         }
         let said = running.said.lock().ok().and_then(|mut said| said.take());
-        if let Some(said) = said.filter(|said| !said.is_empty())
-            && let Ok(mut history) = self.history.lock()
-        {
-            history.push((
-                text_message(
-                    LlmMessageRole::Assistant,
-                    format!("{said}{INTERRUPTED_MARK}"),
-                ),
-                running.said_from,
-            ));
+        if let Some(said) = said.filter(|said| !said.is_empty()) {
+            if let Ok(mut history) = self.history.lock() {
+                history.push((
+                    text_message(
+                        LlmMessageRole::Assistant,
+                        format!("{said}{INTERRUPTED_MARK}"),
+                    ),
+                    running.said_from,
+                ));
+            }
+            self.interrupted.insert(running.generation, said);
         }
     }
 }
@@ -640,15 +646,16 @@ impl Brain for ChatBrain {
     /// What the person heard of `generation`'s answer enters the call's
     /// history as System context beside the answer, which keeps the words
     /// it generated (FIX 4899): when they heard fewer of its sentences in
-    /// full than it handed to speech, the next turn knows which. It is heard
-    /// as made from that turn's rows; a turn already answering is not
-    /// interrupted.
+    /// full than it handed to speech, or an interrupted turn generated words
+    /// speech never took, the next turn knows which. It is heard as made
+    /// from that turn's rows; a turn already answering is not interrupted.
     fn heard(
         &mut self,
         generation: GenerationEpoch,
         playback: &HeardPlayback,
     ) -> oneiron::Result<()> {
-        let Some(note) = heard_note(playback) else {
+        let generated = self.interrupted.remove(&generation);
+        let Some(note) = heard_note(playback, generated.as_deref()) else {
             return Ok(());
         };
         let rows = self.said_by.get(&generation).cloned().unwrap_or_default();
@@ -662,23 +669,37 @@ impl Brain for ChatBrain {
 
 /// The history's note on what the person heard of an answer (FIX 4899):
 /// the sentences heard in full, then the heard part of the next one when an
-/// alignment placed it. `None` when they heard every sentence in full.
-fn heard_note(playback: &HeardPlayback) -> Option<String> {
+/// alignment placed it. `generated` is what an interrupted answer generated:
+/// text the cadence still held, or speech had not taken, was never spoken.
+/// `None` when they heard every sentence in full and no generated word went
+/// unspoken.
+fn heard_note(playback: &HeardPlayback, generated: Option<&str>) -> Option<String> {
     let full: Vec<&str> = playback
         .utterances
         .iter()
         .filter(|utterance| utterance.coverage == HeardCoverage::Full)
         .map(|utterance| utterance.text.trim())
         .collect();
-    if full.len() == playback.utterances.len() {
+    let submitted: usize = playback
+        .utterances
+        .iter()
+        .map(|utterance| visible_chars(&utterance.text))
+        .sum();
+    let unspoken = generated.is_some_and(|generated| visible_chars(generated) > submitted);
+    if full.len() == playback.utterances.len() && !unspoken {
         return None;
+    }
+    if playback.utterances.is_empty() {
+        return Some(
+            "What the person heard of the answer above: nothing; none of it was spoken.".to_owned(),
+        );
     }
     let basis = match playback.basis {
         HeardBasis::ClientReport => "as their client reported it",
         HeardBasis::SentUpperBound => "at most, as their client reported nothing",
     };
     let mut note = format!(
-        "What the person heard of the answer above ({basis}): {} of its {} sentences in full",
+        "What the person heard of the answer above ({basis}): {} of the {} sentences handed to speech in full",
         full.len(),
         playback.utterances.len()
     );
@@ -705,6 +726,13 @@ fn heard_note(playback: &HeardPlayback) -> Option<String> {
     }
     note.push_str(" They did not hear the rest.");
     Some(note)
+}
+
+/// `text`'s characters other than whitespace: the cadence cuts the
+/// generated text into sentences without changing them, so what speech took
+/// of it measures the same way.
+fn visible_chars(text: &str) -> usize {
+    text.chars().filter(|ch| !ch.is_whitespace()).count()
 }
 
 impl Drop for ChatBrain {

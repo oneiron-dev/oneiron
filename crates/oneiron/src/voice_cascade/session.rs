@@ -165,6 +165,10 @@ struct Generation {
     audio_open: bool,
     sentence: u64,
     pending_safeguards: BTreeSet<u64>,
+    /// The host acknowledged its playout drained after the brain was done:
+    /// the agent no longer holds the floor, though a verdict still out
+    /// keeps the generation until it lands (FIX 4899).
+    drained: bool,
 }
 
 pub struct VoiceCascadeSession {
@@ -348,6 +352,7 @@ impl VoiceCascadeSession {
                     audio_open: true,
                     sentence: 0,
                     pending_safeguards: BTreeSet::new(),
+                    drained: false,
                 });
                 Ok(AsrUpdate::Final(request))
             }
@@ -619,9 +624,10 @@ impl VoiceCascadeSession {
         if self.speech_latched || held < self.config.barge_in_hold {
             return Ok(None);
         }
-        // Idle speech does not spend this interval's interruption. A final may
-        // start output while the same continuous speech is still in progress.
-        if self.generation.is_none() {
+        // Idle speech, or speech after the agent's playout drained, does not
+        // spend this interval's interruption. A final may start output while
+        // the same continuous speech is still in progress.
+        if !self.holds_floor() {
             return Ok(None);
         }
         self.interruption_pending = true;
@@ -641,7 +647,9 @@ impl VoiceCascadeSession {
     /// agent holds the floor starts no reply: its utterance closes, and
     /// nothing waits for it. Words with no interruption pending, words of an
     /// utterance not open, and every word once the agent's playout drained,
-    /// are prepared as usual. A host validates the words first
+    /// are prepared as usual: a final after the drain is an answer, and when
+    /// a verdict still out keeps the drained generation, the final releases
+    /// it as a barge-in would. A host validates the words first
     /// ([`Self::validate_asr`]): a stale or mismatched event must not reach
     /// the floor.
     pub fn observe_words(
@@ -651,11 +659,21 @@ impl VoiceCascadeSession {
         text: &str,
     ) -> FloorWords {
         if self.ended
-            || self.generation.is_none()
             || !matches!(kind, AsrEventKind::Partial | AsrEventKind::Final)
             || !self.retrieval.is_open(handle)
-            || !backchannel::has_words(text)
         {
+            return FloorWords::Prepare;
+        }
+        if !self.holds_floor() {
+            // The playout drained: a final is the person's answer, and a
+            // generation kept only for its verdicts must not refuse it.
+            return if kind == AsrEventKind::Final && self.generation.is_some() {
+                FloorWords::Interrupt(self.interrupt())
+            } else {
+                FloorWords::Prepare
+            };
+        }
+        if !backchannel::has_words(text) {
             return FloorWords::Prepare;
         }
         // Undecided: the person may be saying "I see" or "なるほど" yet.
@@ -673,6 +691,14 @@ impl VoiceCascadeSession {
         self.interruption_pending = false;
         self.close_utterance(handle);
         FloorWords::Backchannel
+    }
+
+    /// Whether the agent holds the floor: a generation is live and its
+    /// playout has not drained (FIX 4899).
+    fn holds_floor(&self) -> bool {
+        self.generation
+            .as_ref()
+            .is_some_and(|active| !active.drained)
     }
 
     /// The person took the floor from the live generation.
@@ -710,14 +736,21 @@ impl VoiceCascadeSession {
     /// Normal response completion: the host acknowledges TTS end AND drained
     /// server/client output. Pending verdicts must still be able to stop playback,
     /// so neither Done nor an early drain acknowledgement drops the generation.
+    /// A drain after Done still releases the agent's floor (FIX 4899): with
+    /// a verdict still out, the person's next final is an answer, not a
+    /// backchannel ([`Self::observe_words`]).
     pub fn finish_playout(&mut self, generation: GenerationEpoch) -> Result<bool> {
         let Some(active) = self
             .generation
-            .as_ref()
+            .as_mut()
             .filter(|active| active.request.generation == generation)
         else {
             return Ok(false);
         };
+        if active.llm_done {
+            active.drained = true;
+            self.interruption_pending = false;
+        }
         if !active.llm_done || !active.pending_safeguards.is_empty() {
             return Err(invalid(
                 "brain or safeguard still pending at playout finish",
