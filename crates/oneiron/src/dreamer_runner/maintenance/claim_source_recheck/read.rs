@@ -211,30 +211,24 @@ fn standing(body: &ClaimBody) -> Standing {
 
 /// Finds, in one scan of the claims, the claims of every re-check still
 /// owed whose round has found none yet, and keeps each set on its re-check
-/// row in one write (FIX 20502): the deletes one sync pass lands share one
-/// scan, and a resumed job reads its kept set.
+/// row (FIX 20502): the deletes one sync pass lands share one scan, and a
+/// resumed job reads its kept set. The scan and the sets it keeps are one
+/// write, so a claim born from a found claim either is in the scan or
+/// commits after it and finds that claim named, which reopens its round
+/// (FIX 20387).
 pub(super) fn discover_pending(vault: &Vault) -> Result<()> {
-    let found: Vec<_> = {
-        let txn = vault.store.env.read_txn()?;
-        let unfound = crate::mail_pack::claim_recheck::claim_rechecks_unfound_in(vault, &txn)?;
+    vault.with_write_txn_grouped(|txn| {
+        let unfound = crate::mail_pack::claim_recheck::claim_rechecks_unfound_in(vault, &*txn)?;
         if unfound.is_empty() {
             return Ok(());
         }
-        let census = Census::read(vault, &txn)?;
-        unfound
-            .into_iter()
-            .map(|recheck| {
-                let found: Vec<(EntityId, Vec<EntityId>)> = census
-                    .found(&recheck.targets)
-                    .into_iter()
-                    .map(|(head, supports)| (head, supports.into_iter().collect()))
-                    .collect();
-                (recheck, found)
-            })
-            .collect()
-    };
-    vault.with_write_txn_grouped(|txn| {
-        for (recheck, found) in found {
+        let census = Census::read(vault, &*txn)?;
+        for recheck in unfound {
+            let found: Vec<(EntityId, Vec<EntityId>)> = census
+                .found(&recheck.targets)
+                .into_iter()
+                .map(|(head, supports)| (head, supports.into_iter().collect()))
+                .collect();
             crate::mail_pack::claim_recheck::record_claim_recheck_found_in_txn(
                 vault, txn, &recheck, found,
             )?;
