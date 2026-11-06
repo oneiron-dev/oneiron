@@ -13,6 +13,7 @@ mod export_records;
 mod membership;
 mod removal;
 mod removal_archive;
+mod removal_file;
 mod removal_import;
 
 pub use erase_ask::{
@@ -21,6 +22,8 @@ pub use erase_ask::{
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use removal_file::removal_archive_body_keys_in_txn;
 pub use removal_import::{ReceivedRemovalArchive, ReceivedRemovalArchiveState};
 
 use super::FederationGrantRole as Role;
@@ -50,14 +53,37 @@ const SHARED_VAULT_DELETION: SideTable<(), SharedVaultDeletion, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_DELETION);
 
 /// Each export-first removal's archive, bound to the removed Owner, with its
-/// records' frozen positions (FIX-LIST 8224). Key: hex32 (removed Owner)
-/// ":" hex32 (receipt id).
+/// records' frozen positions (FIX-LIST 8224) and the file its bytes are
+/// (FIX 3679). Key: hex32 (removed Owner) ":" hex32 (receipt id).
 const REMOVAL_EXPORT: SideTable<String, removal_archive::StoredRemovalExport, Named> =
     SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT);
 
 /// The row key of `member`'s archive from the removal receipt `receipt_id`.
 fn removal_export_key(member: &str, receipt_id: &str) -> String {
     format!("{member}:{receipt_id}")
+}
+
+/// One archive row by its key's two halves: the removed member and the
+/// removal receipt. Its archive file is held under this pair
+/// ([`removal_file::removal_archive_owner`]), never the receipt alone, so
+/// one member's expiry or erase reaches no other member's archive of the
+/// same receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveRow {
+    pub(crate) member: EntityId,
+    pub(crate) receipt: EntityId,
+}
+
+impl ArchiveRow {
+    /// The row an archive row key names; `None` for a key that does not
+    /// read.
+    fn from_key(row_key: &str) -> Option<Self> {
+        let (member, receipt) = row_key.split_once(':')?;
+        Some(Self {
+            member: EntityId::from_hex(member).ok()?,
+            receipt: EntityId::from_hex(receipt).ok()?,
+        })
+    }
 }
 
 /// The acts the shared preset lists. Their names are the policy row names.
@@ -204,11 +230,22 @@ pub struct SharedActExecutionReceipt {
     pub revoked_slips: Vec<String>,
     /// The export made for a removed Owner before the removal.
     pub export: Option<SharedActExport>,
-    /// The hash (hex) of the host-signed `OwnerHandover` AUTHORITY_LOG
-    /// entry an ownership change wrote in this writer, which names this
-    /// receipt back. `None` when nothing was signed: a membership change, or
-    /// an act run with no slip issuer.
+    /// The hash (hex) of the AUTHORITY_LOG entry that signs the change and
+    /// names this receipt back: the host-signed `OwnerHandover` an ownership
+    /// change wrote in this writer, or the carrier-signed membership
+    /// execution record of a change no host issuer signed, in this writer
+    /// or once a later pass counted it (FIX 12335). `None` while that record
+    /// is pending, and for a change no entry names: an invitation, an
+    /// erase, or a member change whose withdrawals the host signed apart.
     pub authority_entry: Option<String>,
+    /// Whether the change's signed record is pending (FIX 12335): its writer
+    /// had no host issuer to sign the withdrawal of a Grant an owner's
+    /// signed mint made, or its Owner handover, and the carrier-signed
+    /// record of it does not count yet. The pass that counts it clears this
+    /// and names the record in `authority_entry`. A pending change is never
+    /// reported signed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub authority_record_pending: bool,
     /// The person who authorized the change, PERSON hex, when the writer
     /// holds one apart from its actor: the attested account owner of a
     /// managed vault's proof-of-control recovery, as its signed handover
@@ -280,19 +317,6 @@ pub struct RemovalExportCopy {
     pub delivered_at: u64,
     pub expires_at: u64,
     pub export: crate::memory::MemoryExport,
-}
-
-impl RemovalExportCopy {
-    /// What the delivery tells an Owner: never the archive.
-    fn delivery(&self) -> RemovalExportDelivery {
-        RemovalExportDelivery {
-            receipt_id: self.receipt_id.clone(),
-            recipient: self.member.clone(),
-            digest: self.export.digest.clone(),
-            delivered_at: self.delivered_at,
-            expires_at: self.expires_at,
-        }
-    }
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -432,6 +456,29 @@ pub struct SharedVaultDeletion {
     pub receipt_id: String,
     pub deleted_at: u64,
     pub backup_retain_until: u64,
+}
+
+/// What the authority log holds of one change, as its receipt names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChangeRecord {
+    /// No entry names the change: an invitation, an erase, or a member
+    /// change whose withdrawals the host signed apart.
+    Unnamed,
+    /// The counted entry that signs the change and names its receipt.
+    Signed(crate::authority::AuthorityEntryHash),
+    /// No issuer signed the change in its writer, and its carrier-signed
+    /// record does not count yet (FIX 12335).
+    Pending,
+}
+
+impl ChangeRecord {
+    /// The entry a receipt names, for a signed change alone.
+    const fn entry(self) -> Option<crate::authority::AuthorityEntryHash> {
+        match self {
+            Self::Signed(hash) => Some(hash),
+            Self::Unnamed | Self::Pending => None,
+        }
+    }
 }
 
 /// One applied effect, before its receipt is written.
@@ -618,7 +665,7 @@ impl Vault {
             .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
             .ok_or_else(invalid)?;
         REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
-        Ok(Some(stored.copy.delivery()))
+        Ok(Some(stored.delivery()))
     }
 
     /// Persist the receipt and one notice to each live Owner, the actor and
@@ -634,7 +681,7 @@ impl Vault {
         owners: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
-        authority_entry: Option<crate::authority::AuthorityEntryHash>,
+        record: ChangeRecord,
         authorizer: Option<EntityId>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
@@ -653,9 +700,11 @@ impl Vault {
                 .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
                 .collect(),
             export,
-            authority_entry: authority_entry
+            authority_entry: record
+                .entry()
                 .as_ref()
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
+            authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
             completed_at: now,
         };

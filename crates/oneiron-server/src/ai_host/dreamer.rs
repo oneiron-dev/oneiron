@@ -227,12 +227,10 @@ impl DreamerHost {
             status: Arc::clone(&start.status),
             stopping: Arc::clone(&stopping),
         };
-        let thread = std::thread::Builder::new()
-            .name("oneiron-dreamer".into())
-            .spawn(move || {
-                let _ended = thread_ended;
-                run(start, serve, ready)
-            })?;
+        let thread = crate::engine_thread("oneiron-dreamer".into()).spawn(move || {
+            let _ended = thread_ended;
+            run(start, serve, ready)
+        })?;
         match started.await {
             Ok(Ok((shutdown, hints))) => Ok(Self {
                 shutdown,
@@ -1017,8 +1015,8 @@ impl PassExecutorFactory for ObservedFactory {
         let dreamer = self.actor;
         let after = self.settle_after;
         let joined = std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
+            crate::engine_thread("dreamer-question-pump".into())
+                .spawn_scoped(scope, || {
                     let mut may_start = || !paused(epoch.as_ref());
                     let pumped =
                         crate::decision_graph::pump_due_while(&server, now_secs, &mut may_start);
@@ -1029,6 +1027,7 @@ impl PassExecutorFactory for ObservedFactory {
                     };
                     (pumped, settled)
                 })
+                .expect("failed to spawn thread")
                 .join()
         });
         let Ok((pumped, settled_to)) = joined else {
@@ -1460,6 +1459,45 @@ pub(super) fn served_slot_model(
         .find_map(served_at_route))
 }
 
+/// Dreamer executions in flight on the server's status. One that ends
+/// without its outcome (a panic the driver contains, or a dropped future)
+/// still ends, counted failed, so the Dreamer never reads working after it.
+struct DreamerRunning<'p> {
+    status: &'p StatusCell,
+    count: u64,
+    ended: bool,
+}
+
+impl<'p> DreamerRunning<'p> {
+    fn start(status: &'p StatusCell, count: u64) -> Self {
+        status.dreamer_started(count);
+        Self {
+            status,
+            count,
+            ended: false,
+        }
+    }
+
+    /// The executions ended with their outcomes, folded in by `change`.
+    fn end(mut self, change: impl FnOnce(&mut super::status::AiStatus)) {
+        self.ended = true;
+        self.status.dreamer_ended(self.count, change);
+    }
+}
+
+impl Drop for DreamerRunning<'_> {
+    fn drop(&mut self) {
+        if self.ended {
+            return;
+        }
+        let count = self.count;
+        self.status.dreamer_ended(count, |status| {
+            status.dreamer.failed = status.dreamer.failed.saturating_add(count);
+            status.dreamer.last_error = Some("dreamer execution ended without its outcome".into());
+        });
+    }
+}
+
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
     fn runs_coach_host_jobs(&self) -> bool {
         self.coach_host.is_some() || self.inner.runs_coach_host_jobs()
@@ -1474,10 +1512,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Working;
-            status.dreamer.started += 1;
-        });
+        let running = DreamerRunning::start(self.status, 1);
         // The kind of an attempt that ends without its work because the host
         // lends no resident instruction: it still ends (a park would strand
         // the nightly item, a Retry would loop every pass), but the status
@@ -1571,8 +1606,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             );
         }
         let one_writer_reads = ctx.vault.dreamer_one_writer_reads();
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Waiting;
+        running.end(|status| {
             status.dreamer_one_writer_reads = one_writer_reads;
             match &outcome {
                 Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
@@ -1607,16 +1641,12 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
     ) -> Vec<oneiron::Result<DreamerAttemptExecution>> {
         let started = u64::try_from(window.len()).unwrap_or(u64::MAX);
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Working;
-            status.dreamer.started = status.dreamer.started.saturating_add(started);
-        });
+        let running = DreamerRunning::start(self.status, started);
         let outcomes = self.inner.execute_partition_window(window).await;
         let one_writer_reads = window
             .first()
             .map(|(_, ctx)| ctx.vault.dreamer_one_writer_reads());
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Waiting;
+        running.end(|status| {
             if let Some(reads) = one_writer_reads {
                 status.dreamer_one_writer_reads = reads;
             }
