@@ -59,8 +59,24 @@ impl VaultResidentLedger {
         overdraft_units: u64,
     ) -> Result<()> {
         let mut txn = self.vault.store.env.write_txn()?;
+        self.charge_in_write_txn(&mut txn, resident, allocation, units, overdraft_units)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Charges the resident in this vault's caller-owned writer. The caller
+    /// can commit a hold's terminal state with its charge, once, in that same
+    /// writer. Repeated calls still charge repeatedly; this is not a deduper.
+    pub fn charge_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        resident: EntityId,
+        allocation: &AllocationRef,
+        units: u64,
+        overdraft_units: u64,
+    ) -> Result<()> {
         let mut row = RESIDENTS
-            .get(&self.vault.store, &txn, &resident)?
+            .get(&self.vault.store, txn, &resident)?
             .unwrap_or_default();
         if row.allocation.as_ref() != Some(allocation) {
             row.allocation = Some(allocation.clone());
@@ -73,8 +89,7 @@ impl VaultResidentLedger {
         if overdraft_units > 0 {
             row.overdrafts = row.overdrafts.saturating_add(1);
         }
-        RESIDENTS.put(&self.vault.store, &mut txn, &resident, &row)?;
-        txn.commit()?;
+        RESIDENTS.put(&self.vault.store, txn, &resident, &row)?;
         Ok(())
     }
 }

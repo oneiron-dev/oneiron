@@ -9,6 +9,19 @@ impl UsageLedger {
     /// Commits pending custody before the final ledger write. An existing event
     /// or pending row keeps its first payload; only event + source define replay.
     pub(crate) fn stage_settlement(&self, raw: &[u8]) -> Result<(), UsageError> {
+        self.vault
+            .try_with_write_txn_grouped(|txn| self.stage_settlement_in_write_txn(txn, raw))
+    }
+
+    /// Stages the frozen settlement in this vault's caller-owned writer, so
+    /// its producer can commit its terminal state and pending delivery together.
+    /// The caller commits or aborts the writer; this method acquires none.
+    /// An error must abort the caller's transaction.
+    pub(crate) fn stage_settlement_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        raw: &[u8],
+    ) -> Result<(), UsageError> {
         let stored = decode_entry(raw)?;
         stored.event.validate()?;
         let pending_key = pending_key(&stored)?;
@@ -17,20 +30,18 @@ impl UsageLedger {
             &stored.event.vault_id,
             &stored.event.idempotency_key,
         );
-        self.vault.try_with_write_txn_grouped(|txn| {
-            if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &event_key)? {
-                return same_settlement(&decode_entry(&first)?, &stored);
-            }
-            if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &pending_key)? {
-                return same_settlement(&decode_entry(&first)?, &stored);
-            }
-            let live = self
-                .vault
-                .usage_event_with_live_sources_in_write_txn(txn, raw)?;
-            self.vault
-                .sync_state_put_in_write_txn(txn, &pending_key, &live)?;
-            Ok(())
-        })
+        if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &event_key)? {
+            return same_settlement(&decode_entry(&first)?, &stored);
+        }
+        if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &pending_key)? {
+            return same_settlement(&decode_entry(&first)?, &stored);
+        }
+        let live = self
+            .vault
+            .usage_event_with_live_sources_in_write_txn(txn, raw)?;
+        self.vault
+            .sync_state_put_in_write_txn(txn, &pending_key, &live)?;
+        Ok(())
     }
 
     /// The pending row, final event and rollup marker share the SAME writer.
