@@ -3616,6 +3616,9 @@ class Oneiron:
         @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
             return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
+        @property
+        def model_pack(self) -> "Oneiron._VaultSettingsModelPackVerbs":
+            return Oneiron._VaultSettingsModelPackVerbs(self._client)
     class _VaultSettingsLearningVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3652,6 +3655,15 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
             return json.loads(_translate(lambda: self._client.vault_settings_web_connector_replace(json.dumps(spec))))
+    class _VaultSettingsModelPackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack."""
+            return json.loads(_translate(lambda: self._client.vault_settings_model_pack(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries."""
+            return json.loads(_translate(lambda: self._client.vault_settings_model_pack_replace(json.dumps(spec))))
     class _VaultSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

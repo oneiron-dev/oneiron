@@ -88,6 +88,8 @@
 //! - `vault.messages.react`
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
+//! - `vault.settings.model_pack`
+//! - `vault.settings.model_pack.replace`
 //! - `vault.connectors.web.usage`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
