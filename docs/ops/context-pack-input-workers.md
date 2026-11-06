@@ -303,6 +303,13 @@ The section uses the same selected version, row-slot, row-string, companion and
 disclosure calculation as the Board response; it does not inherit the response's
 charge. The capture payload drops before its trailing holders.
 
+Settling starts with the same cloned version, companion and disclosure metadata,
+the same copied budget, and an empty row vector. It clones only the rows the
+original selection keeps, instead of cloning every input row and clearing those
+copies first. The foreign/pinned/shown selection, ordering, row indices and
+unmatched-render result are unchanged. Temporary per-section filter vectors
+remain separate storage.
+
 The existing live-turn and queued-action paths move that same capture into the
 frozen context, then into the detached answer-recording task and its blocking
 record callback. No consumer clones the holders onto different allocations.
