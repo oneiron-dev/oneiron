@@ -51,7 +51,7 @@ impl Vault {
     /// DOOR-141, as the host's turn wake runs it: every owed program wake is
     /// admitted, a batch at a time, until none is left. A failure is logged;
     /// the wakes it leaves wait for the next turn or the next boot.
-    fn admit_owed_turn_programs(&self, now: u64) {
+    pub(super) fn admit_owed_turn_programs(&self, now: u64) {
         loop {
             match self.wake_turn_programs(now) {
                 Ok(drain) if drain.more => {}

@@ -265,6 +265,15 @@ fn check_window_update(
             key,
             &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
         )?;
+        // FIX 5266: and every turn-program arming and riding wake.
+        crate::sync::turn_programs::admit_turn_program_arm_map(
+            key,
+            &candidate.get_map(crate::sync::turn_programs::TURN_PROGRAM_ARMS_MAP),
+        )?;
+        crate::sync::turn_programs::admit_turn_program_wake_map(
+            key,
+            &candidate.get_map(crate::sync::turn_programs::TURN_PROGRAM_WAKES_MAP),
+        )?;
         // FIX 853: and every document quote pin and MESSAGE document.
         crate::sync::document_pins::admit_document_pin_map(
             key,
@@ -340,6 +349,14 @@ fn check_window_update(
             crate::sync::room_facts::admit_room_fact_map(
                 key,
                 &root.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
+            )?;
+            crate::sync::turn_programs::admit_turn_program_arm_map(
+                key,
+                &root.get_map(crate::sync::turn_programs::TURN_PROGRAM_ARMS_MAP),
+            )?;
+            crate::sync::turn_programs::admit_turn_program_wake_map(
+                key,
+                &root.get_map(crate::sync::turn_programs::TURN_PROGRAM_WAKES_MAP),
             )?;
             crate::sync::document_pins::admit_document_pin_map(
                 key,
@@ -441,6 +458,14 @@ fn check_window_update(
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
     let room_facts =
         ContainerID::new_root(crate::sync::room_facts::ROOM_FACTS_MAP, ContainerType::Map);
+    let turn_program_arms = ContainerID::new_root(
+        crate::sync::turn_programs::TURN_PROGRAM_ARMS_MAP,
+        ContainerType::Map,
+    );
+    let turn_program_wakes = ContainerID::new_root(
+        crate::sync::turn_programs::TURN_PROGRAM_WAKES_MAP,
+        ContainerType::Map,
+    );
     let document_pins = ContainerID::new_root(
         crate::sync::document_pins::DOCUMENT_PINS_MAP,
         ContainerType::Map,
@@ -480,6 +505,10 @@ fn check_window_update(
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == room_facts {
             crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
+        } else if op.container == turn_program_arms {
+            crate::sync::turn_programs::admit_turn_program_arm_carrier(key, &map_key, &value)?;
+        } else if op.container == turn_program_wakes {
+            crate::sync::turn_programs::admit_turn_program_wake_carrier(key, &map_key, &value)?;
         } else if op.container == document_pins {
             crate::sync::document_pins::admit_document_pin_carrier(key, &map_key, &value)?;
         } else if op.container == message_docs {
