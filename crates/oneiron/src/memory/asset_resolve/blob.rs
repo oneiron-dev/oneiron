@@ -171,7 +171,7 @@ fn held_blob_hash_in_txn(
     // metadata reference. Its descriptor suffices even when the file's
     // bytes no longer read; the blob lifecycle releases that carrier.
     if crate::blob_artifact::carrier_content_hash(store, wtxn, id, &raw)?.is_some() {
-        return Ok(());
+        return Ok(None);
     }
     // The writer still holds the prior descriptor: collection cannot
     // retire or unlink its file before this read and reference release.
