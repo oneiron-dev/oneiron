@@ -89,12 +89,14 @@ pub struct OfferSwitchUndo {
     pub at: u64,
 }
 
-/// The owner a switch or its undo names: an actor, or no one once that
-/// actor was erased (FIX 3520). It reads and writes as the actor's hex id,
-/// or as [`ERASED_CALL_IDENTITY`].
+/// The authority a switch or its undo names: a person's actor, the saved
+/// stock-policy revision, or no one after an actor erase (FIX 3520). A policy
+/// revision never impersonates an actor or a current owner proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwitchOwner {
     Actor(EntityId),
+    /// A stock switch under the owner's saved policy, not a person answering now.
+    StockPolicy(EntityId),
     Erased,
 }
 
@@ -122,6 +124,9 @@ impl Serialize for SwitchOwner {
     ) -> std::result::Result<S::Ok, S::Error> {
         match self {
             Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
+            Self::StockPolicy(revision) => {
+                serializer.serialize_str(&format!("stock_policy:{}", revision.to_hex()))
+            }
             Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
         }
     }
@@ -135,13 +140,19 @@ impl<'de> Deserialize<'de> for SwitchOwner {
         if value == ERASED_CALL_IDENTITY {
             return Ok(Self::Erased);
         }
+        if let Some(revision) = value.strip_prefix("stock_policy:") {
+            return EntityId::from_hex(revision)
+                .map(Self::StockPolicy)
+                .map_err(serde::de::Error::custom);
+        }
         EntityId::from_hex(&value)
             .map(Self::Actor)
             .map_err(serde::de::Error::custom)
     }
 }
 
-/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+/// Its wire form is an actor's hex id, `stock_policy:<revision>`, or
+/// [`ERASED_CALL_IDENTITY`].
 impl schemars::JsonSchema for SwitchOwner {
     fn schema_name() -> String {
         "SwitchOwner".to_owned()
@@ -194,7 +205,7 @@ pub fn seat_model_role(seat: &EvalSeat) -> Option<ModelRole> {
 pub(super) fn apply_switch_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    owner: EntityId,
+    owner: SwitchOwner,
     offer: &EntityId,
     seat: &EvalSeat,
     from: &OfferModelPin,
@@ -241,7 +252,7 @@ pub(super) fn apply_switch_in_txn(
     let application = if role == ModelRole::RetrievalEmbedder {
         let source = BindingSource::Offer {
             offer: *offer,
-            owner: SwitchOwner::Actor(owner),
+            owner,
         };
         let pending = crate::embed::stage_embedder_binding_in_txn(
             vault,
@@ -262,7 +273,7 @@ pub(super) fn apply_switch_in_txn(
         previous,
         binding,
         to: to.clone(),
-        owner: SwitchOwner::Actor(owner),
+        owner,
         at,
         application,
         undone: None,
