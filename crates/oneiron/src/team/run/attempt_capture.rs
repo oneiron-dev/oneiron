@@ -39,15 +39,15 @@ impl DispatchProjection {
     }
 }
 
-/// One physical attempt value the authoritative depth fold actually read.
+/// One physical attempt value an original host or depth-fold read observed.
 /// A hash or an absent value records provenance only, never native permission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct TeamDepthParentRead {
+pub(crate) struct TeamParentRead {
     attempt: AttemptId,
     value_hash: Option<[u8; 32]>,
 }
 
-impl TeamDepthParentRead {
+impl TeamParentRead {
     pub(crate) fn observed(attempt: AttemptId, value: Option<&[u8]>) -> Self {
         Self {
             attempt,
@@ -64,7 +64,8 @@ pub(crate) struct TeamAttemptSource {
     native_attempt: AttemptId,
     birth_hash: [u8; 32],
     type_source: Option<CapturedTeamType>,
-    depth_parent_reads: Vec<TeamDepthParentRead>,
+    depth_parent_reads: Vec<TeamParentRead>,
+    host_parent_read: TeamParentRead,
 }
 
 impl TeamAttemptSource {
@@ -145,6 +146,7 @@ pub(crate) struct TeamAttemptCapture {
     position: CapturePosition,
     envelope: WriteEnvelope,
     team: crate::agent_dispatch::TeamRunStamp,
+    host_parent_read: TeamParentRead,
     _body_pins: Option<crate::store::result_body_pins::ResultBodyPin>,
 }
 
@@ -155,6 +157,7 @@ impl TeamAttemptCapture {
         envelope: WriteEnvelope,
         key: ScopedReadActorKey,
         team: &crate::agent_dispatch::TeamRunStamp,
+        host_parent_read: &TeamParentRead,
     ) -> Option<Self> {
         let position = CapturePosition::resolve(vault, selected)?;
         vault.scoped_read(key.clone()).persist_grant_clock().ok()?;
@@ -163,6 +166,7 @@ impl TeamAttemptCapture {
             position,
             envelope,
             team: team.clone(),
+            host_parent_read: host_parent_read.clone(),
             _body_pins: crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies()),
         })
     }
@@ -175,7 +179,7 @@ impl TeamAttemptCapture {
         parent: &mut heed::RwTxn<'_>,
         status: &AgentDispatchStatus,
         type_selection: Option<&SelectedTeamType>,
-        depth_parent_reads: &[TeamDepthParentRead],
+        depth_parent_reads: &[TeamParentRead],
         now: u64,
     ) -> Option<AttemptRecord> {
         self.capture(
@@ -195,7 +199,7 @@ impl TeamAttemptCapture {
         parent: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
         type_selection: Option<&SelectedTeamType>,
-        depth_parent_reads: &[TeamDepthParentRead],
+        depth_parent_reads: &[TeamParentRead],
         now: u64,
     ) -> Result<AttemptRecord> {
         let projection = DispatchProjection {
@@ -233,6 +237,7 @@ impl TeamAttemptCapture {
             birth_hash: birth_hash(record)?,
             type_source,
             depth_parent_reads: depth_parent_reads.to_vec(),
+            host_parent_read: self.host_parent_read.clone(),
         };
         let admitted =
             reader.read_projected_in_txn(&child, &[PointRead::id(claim)], None, |_, rows| {

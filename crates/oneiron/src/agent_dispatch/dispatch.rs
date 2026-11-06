@@ -288,9 +288,7 @@ impl<'a> AgentDispatcher<'a> {
         };
         let mut depth_parent_reads = Vec::new();
         let mut observe_parent = |attempt, value: Option<&[u8]>| {
-            depth_parent_reads.push(crate::team::run::TeamDepthParentRead::observed(
-                attempt, value,
-            ));
+            depth_parent_reads.push(crate::team::run::TeamParentRead::observed(attempt, value));
         };
         let parent_output = self
             .team_attempt_capture

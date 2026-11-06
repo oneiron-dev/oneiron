@@ -971,6 +971,20 @@ impl<'a> DreamerRunnerStore<'a> {
             .transpose()
     }
 
+    /// The same status read, lending its one stored native value to the
+    /// original caller before either decoder. Observation is not a read grant.
+    pub(crate) fn status_with_source(
+        &self,
+        id: AttemptId,
+        source: impl FnOnce(AttemptId, Option<&[u8]>),
+    ) -> Result<Option<DreamerAttemptStatus>> {
+        let record = {
+            let txn = self.vault.store.env.read_txn()?;
+            self.attempts.get_with_source_in_txn(&txn, id, source)?
+        };
+        record.map(decode_dreamer_attempt_status).transpose()
+    }
+
     /// Reads one Dreamer attempt in the caller's snapshot.
     pub(crate) fn status_in_txn(
         &self,
