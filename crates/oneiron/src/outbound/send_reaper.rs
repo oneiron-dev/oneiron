@@ -59,6 +59,17 @@ pub struct ConnectorSendLeaseReap {
 }
 
 impl Vault {
+    /// FIX 4747 (review #6574): a new serve run over a vault that stayed open
+    /// takes, renews and reaps send executor leases again. The embedded
+    /// engine calls it when it serves again after a stop, once the stopped
+    /// run's workers have joined, so no pass of that run outlives the
+    /// release; an app whose lid or sleep hook released the leases calls it
+    /// when the machine wakes.
+    pub fn resume_send_executor_leases(&self) {
+        self.send_executor_leases_released
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Releases every send executor lease this machine holds on a TASK that
     /// still permits a send (FIX 4747 slice 4), in one writer: each keeps its
     /// holder and generation and is held until now, so another machine's
