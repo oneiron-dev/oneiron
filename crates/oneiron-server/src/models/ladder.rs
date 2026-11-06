@@ -451,6 +451,21 @@ impl OfferLadder {
         }
     }
 
+    /// The immutable offer held by an exact-model call's single picked rung.
+    /// This is route and price evidence, not availability or run authority.
+    pub(crate) fn exact_offer_binding(&self) -> Option<&OfferBinding> {
+        match self.rungs.as_slice() {
+            [rung]
+                if self.picked
+                    && self.name == rung.model
+                    && rung.model == rung.offer.binding.model =>
+            {
+                Some(&rung.offer.binding)
+            }
+            _ => None,
+        }
+    }
+
     /// The rate this ladder's one picked offer supplies for `unit` when that
     /// offer serves exactly `model` (FIX 3041): `cost` units per `per`
     /// tokens, which a launch's USD quote reads to price a unit other than
