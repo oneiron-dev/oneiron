@@ -293,3 +293,17 @@ schema, authority, config, dependency, BC, policy or deploy changes. Raw comment
 gaps are not implemented in this slice. This is a source-only direct-child correction, part of
 the existing 17480/residual 18510 pack, not full 17480, full-feature, whole OF-509/OF-510 or
 PowerPoint fidelity proof, and no compiler, runtime, Office runtime or build comparison is claimed.
+
+## Original intra-paragraph gaps on retained table-cell text
+
+When native PPTX table-cell fallback rebuilds a changed paragraph, it now
+keeps the original raw bytes between consecutive direct children inside the
+same unchanged character prefix or suffix. Original child ordinals exclude
+gaps crossing paragraph properties that the fallback places separately.
+The gap-facing ends of both children must stay in that retained interval;
+comments, processing instructions and whitespace there keep their byte order.
+Zero-text children use the existing strict retained-interval carry. A paragraph
+with any actual DrawingML field keeps the previous gap behavior, so field
+flattening and its cut receipts do not change. Edited, leading, trailing and
+nonconsecutive gaps still use the previous fallback behavior. This does not
+claim full paragraph fidelity or change retained-mapping selection.
