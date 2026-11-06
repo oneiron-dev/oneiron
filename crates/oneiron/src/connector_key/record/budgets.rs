@@ -76,12 +76,17 @@ pub enum EffectorBudgetWindow {
     },
 }
 
-/// What happens when a budget row would be exceeded.
+/// What happens when a budget row would be exceeded. A sends or rate row is a
+/// count, so its crossing never suspends a key, whatever the row says
+/// ([`EffectorBudget::exhaust_policy`], FIX 8753): `Suspend` binds spend rows
+/// only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EffectorBudgetOnExhaust {
-    /// Deny the effect; the key stays active.
+    /// Deny the effect; the key stays active. A count row's effect waits for
+    /// its window at every door that paces (FIX 8686).
     Refuse,
-    /// Deny the effect AND flip the whole key to Suspended (hard cap).
+    /// Spend rows: deny the effect AND flip the whole key to Suspended (hard
+    /// cap). On a sends or rate row it acts as [`Self::Refuse`].
     Suspend,
 }
 
@@ -188,6 +193,20 @@ pub struct EffectorBudget {
 }
 
 impl EffectorBudget {
+    /// What exhausting this row does (FIX 8753). A sends or rate crossing is a
+    /// count, a health signal rather than a cap on authority, so it never
+    /// suspends the key: it refuses, and waits for its window at every door
+    /// that paces. Only a spend row honours its `Suspend`.
+    #[must_use]
+    pub const fn exhaust_policy(&self) -> EffectorBudgetOnExhaust {
+        match self.dimension {
+            EffectorBudgetDimension::Spend => self.on_exhaust,
+            EffectorBudgetDimension::Sends | EffectorBudgetDimension::Rate => {
+                EffectorBudgetOnExhaust::Refuse
+            }
+        }
+    }
+
     /// Sends-dimension row.
     #[must_use]
     pub fn sends(

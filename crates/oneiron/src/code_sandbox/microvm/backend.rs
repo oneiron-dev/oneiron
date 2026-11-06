@@ -13,6 +13,7 @@ use crate::{Error, Result};
 
 use super::credential::CredentialResolver;
 use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
+use super::output::MicroVmOutputSink;
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 use super::overlay::{
     collect_overlay_writes, overlay_error, overlay_io_detail, prepare_overlay_handle,
@@ -86,6 +87,7 @@ pub trait MicroVmBackend: Send + Sync {
         image: &GuestImage,
         budget: ExecutionBudget,
         _proxy: &super::credential::CredentialEgressProxy,
+        _output: &mut dyn MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         self.run(vm, image, budget)
     }
@@ -102,9 +104,10 @@ pub trait MicroVmBackend: Send + Sync {
         budget: ExecutionBudget,
         proxy: &super::credential::CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         cancel.check()?;
-        let exit = self.run_with_proxy(vm, image, budget, proxy);
+        let exit = self.run_with_proxy(vm, image, budget, proxy, output);
         cancel.check()?;
         exit
     }
@@ -190,8 +193,9 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
         image: &GuestImage,
         budget: ExecutionBudget,
         proxy: &super::credential::CredentialEgressProxy,
+        output: &mut dyn MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        (**self).run_with_proxy(vm, image, budget, proxy)
+        (**self).run_with_proxy(vm, image, budget, proxy, output)
     }
 
     fn run_with_proxy_cancellable(
@@ -201,8 +205,9 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
         budget: ExecutionBudget,
         proxy: &super::credential::CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        (**self).run_with_proxy_cancellable(vm, image, budget, proxy, cancel)
+        (**self).run_with_proxy_cancellable(vm, image, budget, proxy, cancel, output)
     }
 
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {

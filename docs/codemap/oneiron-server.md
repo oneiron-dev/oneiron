@@ -1648,7 +1648,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/usage/settlement.rs` | src | s | 1 crate-vis | — | Attribution and durable recording of served run receipts |
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 7 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
-| `src/server/board_publisher.rs` | src | s | 5 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
+| `src/server/board_publisher.rs` | src | m | 5 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
 | `src/server/browser_seats.rs` | src | s | 3 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
 | `src/server/browser_seats/handles.rs` | src | s | 3 crate-vis | — | A run browser's live-handle registry, charged to the host's retained-memory line… |
 | `src/server/claim_vad_payment.rs` | src | s | 1 crate-vis | — | The host's claim VAD payment worker (FIX 11702, Engine 10-31 04:1x) |
@@ -1767,7 +1767,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/tests/pass_attachment.rs` | test | m | — | — | The voice host attached to a real wake supervisor through the driver's generic pass-attachment seam (moved… |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
 | `src/voice_host/wire.rs` | src | s | 1 struct · 12 crate-vis | VoiceWireBindings | The voice wire's media ops (OF-410) |
-| `src/wake_adapters/board_stream.rs` | src | s | 4 crate-vis | — | STREAM frames for the production host wake handoff |
+| `src/wake_adapters/board_stream.rs` | src | s | 5 crate-vis | — | STREAM frames for the production host wake handoff |
 | `src/wake_adapters/delivery.rs` | src | s | 1 crate-vis | — | The preference/degrade ladder belongs to this host, never the engine |
 | `src/wake_adapters/inbox.rs` | src | s | 6 crate-vis | — | A local handoff inbox and occurrence-id acknowledgements |
 | `src/wake_adapters/mod.rs` | src | s | 4 crate-vis | — | Host-side, per-config-directory wake delivery (OF-385) |
