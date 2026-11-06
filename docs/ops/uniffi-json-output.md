@@ -309,3 +309,15 @@ state. `vault.models.bindings.read` has no opaque usage JSON and is unchanged.
 Native calls, admission, inputs, public records, clients and hooks are
 unchanged. This is selected output conversion, not end-to-end depth, heap
 or runtime closure.
+
+
+`ai.streams.abort` and `ai.streams.terminal` consume every tool-call input,
+tool-result output, required provider JSON and optional token-score JSON in
+the terminal response before a conversion error can return. Required null
+values remain present. Missing or null token scores still read as absent;
+a missing response stays missing. The original whole-terminal record codec
+keeps every finite content variant, content order, finish reason, failure,
+empty-assertion omission, counter width and per-verb conversion diagnostic.
+Native streams, public records, inputs, typed clients, hooks and authority
+are unchanged. This is selected output conversion, not end-to-end depth,
+heap or runtime proof.

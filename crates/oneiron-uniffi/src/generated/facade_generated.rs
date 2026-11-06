@@ -4494,12 +4494,12 @@ export_facade! {
 "ai.streams.abort" => fn ai_streams_abort(&self, input: ModelStreamAbort) -> ModelStreamTerminal = |client| {
     let input: oneiron::llm::model_stream::ModelStreamAbort = crate::codec::lower_record("ai.streams.abort", input)?;
     let output = client.ai_streams_abort(&input)?;
-    crate::codec::lift_record("ai.streams.abort", &output)
+    crate::codec::lift_model_stream_terminal("ai.streams.abort", output)
 };
 "ai.streams.terminal" => fn ai_streams_terminal(&self, input: ModelStreamTerminalRequest) -> ModelStreamTerminal = |client| {
     let input: oneiron::llm::model_stream::ModelStreamTerminalRequest = crate::codec::lower_record("ai.streams.terminal", input)?;
     let output = client.ai_streams_terminal(&input)?;
-    crate::codec::lift_record("ai.streams.terminal", &output)
+    crate::codec::lift_model_stream_terminal("ai.streams.terminal", output)
 };
 "ai.reply" => fn ai_reply(&self, input: AiReplyRequest) -> AiReply = |client| {
     let input: oneiron::task_verb::sdk::AiReplyRequest = crate::codec::lower_record("ai.reply", input)?;
