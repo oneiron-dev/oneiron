@@ -401,14 +401,11 @@ impl RemoteClient {
                     ))
                 });
             }
-            let bytes = serde_json::to_vec(&body).unwrap_or_default();
-            return Err(
-                self::response::parse_error_envelope(&bytes).unwrap_or_else(|| {
-                    transport_error(format!(
-                        "the server answered {status} with a body that is not an Oneiron error envelope"
-                    ))
-                }),
-            );
+            return Err(self::response::parse_error_value(body).unwrap_or_else(|| {
+                transport_error(format!(
+                    "the server answered {status} with a body that is not an Oneiron error envelope"
+                ))
+            }));
         }
         if !status.is_success() {
             return Err(read_error_envelope(reply.body, status));
@@ -589,15 +586,16 @@ fn read_json<R: DeserializeOwned, B: Read>(
     status: StatusCode,
     what: &str,
 ) -> Result<R, MemoryError> {
-    let bytes = read_capped(body, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
-        ReadFailure::TooLarge => transport_error(format!(
-            "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-        )),
-        ReadFailure::Io(message) => {
-            transport_error(format!("the server's response was truncated: {message}"))
-        }
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
+    let decoded = self::response::read_capped_json::<R, _>(body, MAX_REMOTE_RESPONSE_BYTES)
+        .map_err(|failure| match failure {
+            ReadFailure::TooLarge => transport_error(format!(
+                "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
+            )),
+            ReadFailure::Io(message) => {
+                transport_error(format!("the server's response was truncated: {message}"))
+            }
+        })?;
+    decoded.map_err(|error| {
         transport_error(format!(
             "the server answered {status} for {what} with a body this call could not decode: {error}"
         ))

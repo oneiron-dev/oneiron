@@ -17,9 +17,13 @@ dispatch, so malformed or over-limit compressed input still reaches no handler.
 For the same ordinary calls, receipt middleware stages the input bytes and
 parses its receipt input from a file reader. After capturing the receipt's
 inputs and digest, it drops that parsed value before dispatch. It replays the
-original bytes to the unchanged handler JSON extractor, which still buffers
-and parses the final input. Compressed calls currently stage the decoded file
-again for this receipt read; this is not a single-pass disk-I/O claim.
+original bytes to the handler. For these same ordinary calls, the handler
+stages those bytes again and parses its final JSON input from a file reader
+on a blocking worker. RAM-only calls still use Axum's original JSON extractor.
+The content-type check runs before handler staging and accepts the same MIME
+types as that extractor. Compressed calls also stage the decoded file again
+for the receipt read. These separate passes add disk I/O; this is not a
+single-pass, speed, heap-bound or disk-privacy claim.
 
 Requests at or above the codec threshold use zstd only when the encoded
 body is smaller. Compression uses the existing codec level. If compression
@@ -50,9 +54,25 @@ call or refusal receipt. This adds no disk or memory admission policy.
 The receipt's existing canonical digest is carried to invocation admission,
 so it need not read and parse the same body again. A custody arrival keeps its
 original combined redaction-and-secret digest, not the receipt's redacted-only
-digest. The handler's JSON parsing and its content-type refusals are unchanged.
+digest. The handler keeps the same accepted JSON, content types and malformed
+request error. A physical handler staging or file-read failure returns an
+internal error through the existing call and refusal-receipt path.
 
 The holder proof, invocation identifier, turn and session headers, response
 receipts, timeouts and redirect policy are unchanged. The holder proof signs
 the slip's timestamp-and-nonce challenge, not the request body. Invocation
 claims separately bind the server's canonical call-body digest.
+
+## SDK response bodies
+
+The synchronous SDK parses ordinary success replies and error envelopes
+from a buffered, capped reader instead of collecting the complete raw body
+in a byte vector. Ordinary successes keep the existing 64 MiB read limit and
+unchanged truncation, over-limit and JSON-decode error handling.
+The existing 64 KiB limit and its one-byte overrun probe still apply. Invalid
+JSON is drained only to that same bound, so over-limit and unreadable errors
+keep their existing transport-error message. Foreign response bytes still
+never appear in that message. All typed refusal fields keep their existing
+mapping. A lens callback's already-decoded 202 refusal goes straight from its
+JSON value to the same typed envelope, without serializing another byte copy.
+Raw asynchronous model responses keep their existing limits and readers.

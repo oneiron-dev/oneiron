@@ -126,6 +126,28 @@ pub(super) fn read_capped<B: Read>(body: B, limit: usize) -> Result<Vec<u8>, Rea
     Ok(buffer)
 }
 
+/// Separates bounded arrival failures from JSON decoding without a raw-body copy.
+pub(super) fn read_capped_json<R: DeserializeOwned, B: Read>(
+    body: B,
+    limit: usize,
+) -> Result<Result<R, serde_json::Error>, ReadFailure> {
+    let mut reader = std::io::BufReader::new(body.take(limit as u64 + 1));
+    let decoded = match serde_json::from_reader(&mut reader) {
+        Err(error) if error.is_io() => {
+            return Err(ReadFailure::Io(std::io::Error::from(error).to_string()));
+        }
+        decoded => decoded,
+    };
+    // Invalid JSON can stop early; the arrival's size and I/O still decide
+    // the same read failure before its parse result is reported.
+    std::io::copy(&mut reader, &mut std::io::sink())
+        .map_err(|error| ReadFailure::Io(error.to_string()))?;
+    if reader.get_ref().limit() == 0 {
+        return Err(ReadFailure::TooLarge);
+    }
+    Ok(decoded)
+}
+
 /// Decodes an export straight from the wire.
 ///
 /// An export is one document that may pass the ordinary success ceiling, so
@@ -150,25 +172,24 @@ pub(super) fn read_export<R: DeserializeOwned, B: Read>(
 /// purpose: an HTML error page rendered into a `message` or a `suggestion`
 /// becomes text a caller displays, logs, or — in the worst case — executes.
 pub(super) fn read_error_envelope<B: Read>(body: B, status: reqwest::StatusCode) -> MemoryError {
-    let Ok(bytes) = read_capped(body, MAX_ERROR_BODY_BYTES) else {
+    let Ok(parsed) = read_capped_json::<ApiErrorEnvelope, _>(body, MAX_ERROR_BODY_BYTES) else {
         return transport_error(format!(
             "the server answered {status} with an unreadable or oversized error body"
         ));
     };
-    parse_error_envelope(&bytes).unwrap_or_else(|| {
+    parsed.ok().and_then(build_error).unwrap_or_else(|| {
         transport_error(format!(
             "the server answered {status} with a body that is not an Oneiron error envelope"
         ))
     })
 }
 
-/// Rebuilds a [`MemoryError`] from envelope bytes, or `None` if they are not
-/// one.
-///
-/// Split out from the response handling so the lossless-mapping property can
-/// be tested against bytes rather than against a live server.
-pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
-    let envelope = serde_json::from_slice::<ApiErrorEnvelope>(bytes).ok()?;
+/// Rebuilds a [`MemoryError`] from an already decoded response envelope.
+pub(super) fn parse_error_value(value: serde_json::Value) -> Option<MemoryError> {
+    build_error(serde_json::from_value(value).ok()?)
+}
+
+fn build_error(envelope: ApiErrorEnvelope) -> Option<MemoryError> {
     if envelope.error.code.is_empty() {
         // An envelope-shaped body with no code is not an Oneiron refusal; it
         // is something else that happened to have an `error` key.
