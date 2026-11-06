@@ -1,6 +1,7 @@
 //! Gate input assembled from the canonical outbound request.
 use crate::Vault;
 use crate::consent::EffectDigest;
+use crate::consent::approval_proof::PinnedApprovalFamily;
 use crate::gate::{
     ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateProvenanceHandles,
     LinearMirrorFacts, OutboundSendFacts,
@@ -12,17 +13,25 @@ use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchReq
 /// `frozen_payload` is the payload the request froze
 /// ([`super::request_binding::PreparedOutboundDispatch::frozen_payload_bytes`]),
 /// whose digest a Linear send's press pins (FIX 6424 part 2a).
+/// `native_mail_recipient` is the producer's prepared native or member mail
+/// classification (FIX 11869).
 pub(super) fn gate_input(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
     policy_risk: ExternalEffectPolicyRisk,
     frozen_payload: Option<&[u8]>,
+    native_mail_recipient: bool,
 ) -> ExternalEffectGateInput {
     ExternalEffectGateInput {
         actor: request.actor.gate_actor(),
         provenance: GateProvenanceHandles {
             mail_content_ref: request.intent.content_ref.clone(),
-            approval_target: approval_target(request, &verb_contract.kind, frozen_payload),
+            approval_target: approval_target(
+                request,
+                &verb_contract.kind,
+                frozen_payload,
+                native_mail_recipient,
+            ),
             ..request.actor.provenance()
         },
         verb: verb_contract.kind.clone(),
@@ -58,6 +67,7 @@ pub(super) fn approval_target(
     request: &OutboundDispatchRequest,
     verb: &str,
     frozen_payload: Option<&[u8]>,
+    native_mail_recipient: bool,
 ) -> Option<ApprovalTarget> {
     let connector = normalize_key(&request.intent.channel);
     if connector == LINEAR_CONNECTOR {
@@ -74,6 +84,7 @@ pub(super) fn approval_target(
         connector: &connector,
         target: &request.intent.target,
         sender: request.channel_identity_ref,
+        native_mail_recipient,
         thread_ref: request.reply_thread_ref.as_deref(),
         content_ref: request.intent.content_ref.as_deref(),
         send_ref: approval_send_ref(request, &connector),
@@ -202,6 +213,7 @@ fn prepared_gate_effect(
         prepared.verb_contract,
         prepared.policy_risk,
         frozen.as_deref(),
+        prepared.native_mail_recipient,
     ))
 }
 
@@ -221,8 +233,23 @@ fn pinned_approval_digest(effect: &ExternalEffectGateInput) -> Option<EffectDige
 /// whose admitted press is recomposed from those bytes, so the ledger's
 /// proof check, a retry and a delivery's link mint recompose the digest the
 /// press approved; a failure-signal batch freezes it whether or not it pins
-/// (FIX 6679). `None` for every other send.
-pub(super) fn frozen_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
+/// (FIX 6679). Ordinary communication, calendar and HTTP-bundle targets
+/// freeze their existing intent ref too, without changing its selection.
+pub(super) fn frozen_approval_send_ref(
+    request: &OutboundDispatchRequest,
+    native_mail_recipient: bool,
+) -> Option<&str> {
     let connector = normalize_key(&request.intent.channel);
-    ApprovalTarget::freezes_send_ref_of(&connector).then(|| approval_send_ref(request, &connector))
+    let ordinary_target = approval_target(request, "", None, native_mail_recipient)
+        .is_some_and(|target| target.pinned_family() == Some(PinnedApprovalFamily::ConnectorSlate));
+    (ApprovalTarget::freezes_send_ref_of(&connector) || ordinary_target)
+        .then(|| approval_send_ref(request, &connector))
+}
+
+/// The stable reference the native Linear target already pins. Only ordinary
+/// Linear requests freeze this supplier; a mirror request needs all its own
+/// operation facts and stays on its existing approval path.
+pub(super) fn frozen_linear_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
+    (normalize_key(&request.intent.channel) == LINEAR_CONNECTOR && request.linear_mirror.is_none())
+        .then(|| stable_send_ref(request))
 }

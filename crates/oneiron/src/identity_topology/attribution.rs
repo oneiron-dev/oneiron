@@ -413,6 +413,8 @@ pub(crate) fn redact_actor_in_txn(
                 .map(|carrier| (*key, carrier.source))
         })
         .collect();
+    // FIX 9870: the actor's proposer handle no longer resolves to it.
+    super::proposer_scope::forget_actor_in_txn(&vault.store, wtxn, actor)?;
     let mut scrubbed = Vec::new();
     for (key, source) in keys {
         scrubbed.extend(
@@ -443,6 +445,7 @@ fn held_decision_digest_in_txn(
         StoredIdentityOpAction::AdmissionDisposition(_)
             | StoredIdentityOpAction::AuthorAttribution { .. }
             | StoredIdentityOpAction::AuthorRedaction { .. }
+            | StoredIdentityOpAction::OperationPart { .. }
     ) {
         return Ok(None);
     }

@@ -123,6 +123,7 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+pub(crate) mod read_capture;
 mod read_lane;
 mod read_selection;
 mod reads;
@@ -405,6 +406,10 @@ pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_hol
 pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
+};
+pub(crate) use witness::{
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
+    archived_message_body,
 };
 pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
