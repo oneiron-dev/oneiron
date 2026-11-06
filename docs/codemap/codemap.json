@@ -120005,6 +120005,7 @@
       "RecoveryKitIssueArgs",
       "RecoveryKitPadAccessArgs",
       "RecoveryKitPinArgs",
+      "RecoveryKitRecoverAuthorityArgs",
       "RecoveryKitRestoreArgs",
       "RecoveryKitRootsArgs",
       "RecoveryKitStatusArgs",
@@ -120014,7 +120015,7 @@
      "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key…",
      "surface": {
       "enum": 1,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -120704,10 +120705,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/owner/recovery_kit/authority_recover.rs",
+     "purpose": "Lost-owner recovery uses the kit's pre-enrolled key, never this host's owner key",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/owner/recovery_kit/authority_recovery.rs",
      "purpose": "Explicit recovery-key enrollment before loss; kit issuance is separate",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -128054,7 +128065,17 @@
      "path": "src/owner/recovery_kit.rs",
      "purpose": "The world kit's public side, shared by `oneiron recovery-kit` and `GET /v1/owner/recovery-kit` (OF-173): the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/recovery_kit/authority_recovery.rs",
+     "purpose": "Explicit successor input and committed recovery receipts; no authority is inferred here",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -130599,7 +130620,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -130900,7 +130921,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -131042,7 +131063,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1654,
+   "source_files": 1656,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
