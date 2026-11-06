@@ -182,7 +182,7 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output_sourced(
+        let mut finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
@@ -190,6 +190,7 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = output.producing_step_start;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
