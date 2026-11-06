@@ -33,33 +33,48 @@ struct Run {
     style: Style,
     x: f64,
 }
-/// Frees the operations and their text before returning their admissions.
+/// Frees the operations and their payloads before returning their admissions.
 pub(super) struct PageOperations {
     operations: ScratchVec<Operation>,
-    text_backing: Backing,
+    payload_backing: Backing,
 }
 impl PageOperations {
     fn new(budget: &Budget) -> Self {
         Self {
             operations: ScratchVec::new(budget),
-            text_backing: Backing::new(budget.clone()),
+            payload_backing: Backing::new(budget.clone()),
         }
     }
 
-    fn push(&mut self, operation: Operation) -> Result<()> {
-        self.operations.push(operation)
+    fn push(&mut self, name: &str, operands: ScratchVec<Object>) -> Result<()> {
+        let mut operator = ScratchVec::new(self.payload_backing.budget());
+        operator.extend(name.bytes())?;
+        let operator =
+            String::from_utf8(operator.into_values_charged_to(&mut self.payload_backing)?)
+                .map_err(|_| ContentTemplateError::Overflow)?;
+        let operands = operands.into_values_charged_to(&mut self.payload_backing)?;
+        self.operations.push(Operation { operator, operands })
     }
 
     fn push_text(&mut self, text: ScratchVec<u8>) -> Result<()> {
-        let bytes = text.into_bytes_charged_to(&mut self.text_backing)?;
-        self.push(Operation::new(
-            "Tj",
-            vec![Object::String(bytes, lopdf::StringFormat::Literal)],
-        ))
+        let bytes = text.into_values_charged_to(&mut self.payload_backing)?;
+        let mut operands = ScratchVec::new(self.payload_backing.budget());
+        operands.push(Object::String(bytes, lopdf::StringFormat::Literal))?;
+        self.push("Tj", operands)
+    }
+
+    fn push_font(&mut self, name: &str, size: f64) -> Result<()> {
+        let mut font = ScratchVec::new(self.payload_backing.budget());
+        font.extend(name.bytes())?;
+        let font = font.into_values_charged_to(&mut self.payload_backing)?;
+        let mut operands = ScratchVec::new(self.payload_backing.budget());
+        operands.push(Object::Name(font))?;
+        operands.push(Object::Real(size as f32))?;
+        self.push("Tf", operands)
     }
 
     fn extend(&mut self, mut page: Self) -> Result<()> {
-        self.text_backing.absorb(&mut page.text_backing)?;
+        self.payload_backing.absorb(&mut page.payload_backing)?;
         self.operations.extend(page.operations)
     }
 }
@@ -224,13 +239,7 @@ impl Flow {
                 (true, true) => "F3",
             };
             op(ops, "rg", &style.color)?;
-            ops.push(Operation::new(
-                "Tf",
-                vec![
-                    Object::Name(name.as_bytes().to_vec()),
-                    Object::Real(style.size as f32),
-                ],
-            ))?;
+            ops.push_font(name, style.size)?;
             op(
                 ops,
                 "Tm",
@@ -403,8 +412,9 @@ impl Flow {
     }
 }
 fn op(ops: &mut PageOperations, name: &str, values: &[f64]) -> Result<()> {
-    ops.push(Operation::new(
-        name,
-        values.iter().map(|n| Object::Real(*n as f32)).collect(),
-    ))
+    let mut operands = ScratchVec::new(ops.payload_backing.budget());
+    for value in values {
+        operands.push(Object::Real(*value as f32))?;
+    }
+    ops.push(name, operands)
 }

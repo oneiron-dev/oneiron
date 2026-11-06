@@ -44,6 +44,10 @@ impl Backing {
         Self { budget, bytes: 0 }
     }
 
+    pub(super) fn budget(&self) -> &Budget {
+        &self.budget
+    }
+
     fn resize(&mut self, bytes: usize) -> Result<()> {
         let bytes = u64::try_from(bytes).map_err(|_| ContentTemplateError::Overflow)?;
         if let Some(memory) = &self.budget.memory {
@@ -147,9 +151,8 @@ impl<T> ScratchVec<T> {
     pub(super) fn drain(&mut self, range: std::ops::RangeFull) -> std::vec::Drain<'_, T> {
         self.values.drain(range)
     }
-}
-impl ScratchVec<u8> {
-    pub(super) fn into_bytes_charged_to(mut self, destination: &mut Backing) -> Result<Vec<u8>> {
+
+    pub(super) fn into_values_charged_to(mut self, destination: &mut Backing) -> Result<Vec<T>> {
         destination.absorb(&mut self.backing)?;
         Ok(self.values)
     }
