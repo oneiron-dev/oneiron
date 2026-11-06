@@ -11,6 +11,9 @@ A non-embedder switch records a `Finding` notification for each current vault
 owner in the same write as its binding and switch receipt. An embedder switch
 records the notification only when its staged space move applies the binding;
 waiting, filling and not-applied moves do not announce an applied switch.
+The staged move's raw-transaction owner explicitly signals notification readers
+after its successful concluded commit; uncommitted or still-filling writes do
+not send that signal.
 
 The notification source is `coach.training_offer.switch`. Its `result` and sole
 subject reference name the training offer. Its event identity combines the offer
