@@ -20,7 +20,8 @@
 //! view. After that view drops, native pad normalization runs whole in the
 //! completion turn; pure snapshot equality resumes between rows, within native
 //! strings and byte payloads, and between nested EntityDoc history items.
-//! EntityDoc metadata maps still compare whole at their native field positions.
+//! EntityDoc metadata maps resume between owned entries at their native field
+//! positions; each entry's key lookup and value equality still run whole.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
