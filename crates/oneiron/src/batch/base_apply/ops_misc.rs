@@ -6,14 +6,15 @@ use super::*;
 use crate::write_envelope::WriteEnvelope;
 
 pub(super) fn apply_edge_arm(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     state: &mut BatchApplyState,
     op: BatchOp,
 ) -> Result<()> {
+    let store = write.store;
     let endpoints = edge_op_endpoints(&op);
     state.project_edge_endpoints.extend(endpoints);
-    let changed = apply_edge_op(store, wtxn, op)?;
+    let changed = apply_edge_op(write, wtxn, op)?;
     state.had_graph_mutation |= changed;
     if changed {
         state.question_arrival_ids.extend(endpoints);

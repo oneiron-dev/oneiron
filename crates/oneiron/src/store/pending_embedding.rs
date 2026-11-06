@@ -26,7 +26,7 @@ const SEALED_PENDING_EMBEDDING_MARKER_VERSION: u8 = 3;
 
 const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
 
-pub(super) const ENTITY_BODY_OFFSET: usize = 25;
+pub(super) const ENTITY_BODY_OFFSET: usize = crate::batch::ENTITY_METADATA_HEADER_LEN;
 
 /// Typed door for the `pe:` marker family. The value stays `Vec<u8>`: every
 /// reader compares the stored bytes against a freshly computed token rather
@@ -288,4 +288,15 @@ impl Store {
 /// messages' text, not to its own body.
 fn is_turn_record(record: &[u8]) -> bool {
     record.len() > ENTITY_BODY_OFFSET && record[0] == ENTITY_TYPE_TURN
+}
+
+impl Store {
+    /// Raw presence: even a stale marker leaves a prior vector unsettled.
+    pub(crate) fn pending_embedding_marker_present(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(MARKERS.get(self, txn, &HexId(*id))?.is_some())
+    }
 }

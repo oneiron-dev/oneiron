@@ -288,6 +288,8 @@ pub(crate) struct Wait<'a, 'b> {
     pub(crate) grant: Grant<'a>,
     pub(crate) asks: &'a mut CallAsks<'b>,
     pub(crate) deadline: Instant,
+    /// The caller's wall deadline, not extended by waits for room.
+    pub(crate) fixed_deadline: bool,
     pub(crate) grace: Duration,
 }
 
@@ -537,6 +539,7 @@ impl OrganProcess {
             grant,
             asks,
             deadline,
+            fixed_deadline,
             grace,
         } = wait;
         lock(&self.grants).insert(grant.name.to_owned());
@@ -547,6 +550,7 @@ impl OrganProcess {
                 grant,
                 asks: &mut *asks,
                 deadline,
+                fixed_deadline,
                 grace,
             };
             self.exchange(call, fds, &reply, wait)
@@ -587,22 +591,23 @@ impl OrganProcess {
     /// Room for a call or an answer this process is about to be sent, made
     /// before it takes the writer (FIX 6195): the encoding the host makes
     /// first, counted with nothing allocated, then the organ's own read of
-    /// it, held in `room` until the call ends ([`reserve_read`]), under the
-    /// deadline sampled after that wait, so room waits (which move the
-    /// clock) are never charged as lateness. The deadline-bound read comes
-    /// last, so a pair that does not jointly fit ends instead of stalling
-    /// past the deadline. Waits on the call's clock until the deadline;
-    /// [`FrameError::Withdrawn`] once `stopped` says the frame is not
-    /// wanted.
+    /// it with its descriptors' room, held in `room` until the call ends
+    /// ([`reserve_read`]), under the deadline sampled after that wait, so
+    /// room waits (which move the clock) are never charged as lateness. The
+    /// deadline-bound read comes last, so a pair that does not jointly fit
+    /// ends instead of stalling past the deadline. Waits on the call's
+    /// clock until the deadline; [`FrameError::Withdrawn`] once `stopped`
+    /// says the frame is not wanted.
     fn book(
         &self,
         msg: &ToOrgan,
+        fds: &[BorrowedFd<'_>],
         room: &CallRoom,
         clock: Clock<'_>,
         stopped: &dyn Fn() -> bool,
     ) -> Result<Lease, FrameError> {
         let frame = book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)?;
-        reserve_read(room, msg, clock.deadline(), stopped)?;
+        reserve_read(room, msg, fds, clock.deadline(), stopped)?;
         Ok(frame)
     }
 
@@ -636,13 +641,18 @@ impl OrganProcess {
         answer: &ToOrgan,
         fds: &[BorrowedFd<'_>],
         clock: Clock<'_>,
+        fixed_deadline: bool,
         room: &CallRoom,
         grant: Grant<'_>,
     ) -> Result<Option<u64>, FrameError> {
         let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
+        let stopped = || dropped() || (fixed_deadline && clock.passed());
         // Room for the frame first, before it waits for the writer.
-        let _frame = match self.book(answer, room, clock, &dropped) {
+        let _frame = match self.book(answer, fds, room, clock, &stopped) {
             Ok(frame) => frame,
+            Err(FrameError::Withdrawn) if !dropped() && fixed_deadline && clock.passed() => {
+                return Err(FrameError::Late);
+            }
             Err(FrameError::Withdrawn) => return Ok(None),
             Err(err) => return Err(err),
         };
@@ -777,6 +787,7 @@ impl OrganProcess {
             grant,
             asks,
             deadline: set,
+            fixed_deadline,
             grace,
         } = wait;
         if !self.is_alive() {
@@ -787,16 +798,23 @@ impl OrganProcess {
         // meanwhile, the reader's for frames and the call's own: waiting for
         // room is not the call's time (FIX 6196).
         let room = asks.room();
-        let clock = Clock::new(set, room.waits()).with_reader(&self.inbox.room);
+        let clock = if fixed_deadline {
+            Clock::fixed(set)
+        } else {
+            Clock::new(set, room.waits()).with_reader(&self.inbox.room)
+        };
         let call = ToOrgan::Call(call);
-        let unwanted = || grant.revoked() || !self.is_alive();
+        let unwanted = || grant.revoked() || !self.is_alive() || (fixed_deadline && clock.passed());
         let sent = self
-            .book(&call, room, clock, &unwanted)
+            .book(&call, fds, room, clock, &unwanted)
             .and_then(|_frame| self.send(&call, fds, self.max_call_frame, clock.deadline()));
         match sent {
             Ok(len) => asks.frame_sent(len),
             // Withdrawn while it waited for room: nothing left.
             Err(FrameError::Withdrawn) if grant.revoked() => return Err(CallFailure::Revoked),
+            Err(FrameError::Withdrawn) if fixed_deadline && self.is_alive() && clock.passed() => {
+                return Err(CallFailure::Deadline { stopped: false });
+            }
             Err(FrameError::Withdrawn) => return Err(CallFailure::Crashed),
             // Nothing left: the organ is in step and keeps its other calls.
             Err(FrameError::Late) => return Err(CallFailure::Deadline { stopped: false }),
@@ -869,7 +887,15 @@ impl OrganProcess {
                             let held: Vec<BorrowedFd<'_>> =
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
-                            let sent = self.send_answer(id, &answer, &held, clock, room, grant);
+                            let sent = self.send_answer(
+                                id,
+                                &answer,
+                                &held,
+                                clock,
+                                fixed_deadline,
+                                room,
+                                grant,
+                            );
                             if !matches!(sent, Ok(Some(_))) {
                                 asks.unsent();
                             }

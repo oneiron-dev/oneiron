@@ -1,21 +1,10 @@
-//! Declared native build commands and their secret-consumption inputs.
+//! Core half of `build_cache::command_spec`: its store-layer items live in `oneiron_store::build_cache::command_spec` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::build_cache::command_spec::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeBuildClass {
-    Build,
-    Verify,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeSecretTaintRef {
-    pub secret_ref: String,
-    pub rotation_generation: u32,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

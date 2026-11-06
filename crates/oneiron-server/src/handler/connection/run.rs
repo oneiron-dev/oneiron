@@ -129,6 +129,12 @@ pub(super) async fn handle_connection(
     // A proven machine's socket carries custody carrier leaf keys while it
     // lives (FIX 11785).
     let _leaf_key_socket = LeafKeySocket::register(&server, conn_id, machine, &direct_tx);
+    // A machine of the owner's whose hello listed sealed world updates is
+    // offered the home's queue of them (DEC-0005 fix 8).
+    conn_state.sealed_world_updates = transport.peer_codecs().decodes_sealed_world_updates();
+    if let Some(offer) = super::super::sealed_updates::offer(&server, conn_id, &conn_state) {
+        let _ = direct_tx.send(offer);
+    }
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -272,6 +278,17 @@ pub(super) async fn handle_connection(
                         ) {
                             continue;
                         }
+                        // A stored sealed world update goes only to the
+                        // sockets that asked for them (DEC-0005 fix 8).
+                        if data.first() == Some(&oneiron::sync::transport::TAG_SEALED_UPDATE) {
+                            if let Some(frame) =
+                                super::super::sealed_updates::release(&server, &conn_state, data)
+                                && !transport.send_binary(frame).await
+                            {
+                                break;
+                            }
+                            continue;
+                        }
                         if matches!(
                             data.first(),
                             Some(&oneiron::sync::transport::TAG_DOCUMENT)
@@ -376,6 +393,7 @@ pub(super) async fn handle_connection(
                 let Some(data) = direct_msg else {
                     break;
                 };
+                let machine_only_reply = app_connection.is_own_machine_reply(&data);
                 let mut data = data;
                 // A queued app body is judged again at its last door before
                 // the send, by the rows it carries (DEC-0005).
@@ -405,7 +423,15 @@ pub(super) async fn handle_connection(
                         | super::super::conn_state::WindowSyncMode::Residence
                 ) && data.first().copied()
                     == Some(protocol::TAG_WINDOW_SYNC));
+                let machine_reply_allowed = machine_only_reply
+                    && conn_state.bound_auth.is_none()
+                    && !gone()
+                    && server
+                        .vault()
+                        .home_claim_vector_peer_stands(conn_state.peer_machine(server.vault()))
+                        .unwrap_or(false);
                 if app_frame
+                    && !machine_reply_allowed
                     && conn_state.bound_auth.as_ref().is_none_or(|auth| {
                         session_credential_revoked(server.vault().as_ref(), auth.jti())
                     })
