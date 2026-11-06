@@ -229,13 +229,21 @@ impl DecisionModel for LocalVisionModel {
         let record_request = admitted.request.clone();
         // Cooling waits also keep the vault's limit; sends keep the full work time.
         let wait_budget = ladder.cooling_wait_budget(time_left);
-        let response = self.runtime.block_on(async {
-            tokio::time::timeout(
-                time_left,
-                ladder.generate_recorded_by(&run, admitted.request, None, &|| true, wait_budget),
-            )
-            .await
-            .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+        let response = crate::decision_host::run_native_read(&run, || {
+            self.runtime.block_on(async {
+                tokio::time::timeout(
+                    time_left,
+                    ladder.generate_recorded_by(
+                        &run,
+                        admitted.request,
+                        None,
+                        &|| true,
+                        wait_budget,
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            })
         });
         let response = response.map(|(response, binding)| {
             if let Some(caller) = caller {

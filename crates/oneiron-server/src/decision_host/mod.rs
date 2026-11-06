@@ -71,10 +71,12 @@ mod attach;
 mod claim_merge;
 mod doors;
 mod native_capture;
+mod native_read;
 mod notes;
 mod refresh;
 
 pub(crate) use adapters::description_notes;
+pub(crate) use native_read::run_native_read;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
