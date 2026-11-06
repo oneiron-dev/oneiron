@@ -191,10 +191,18 @@ struct LiveRows {
 /// Whether a restore over the live vault keeps `key` of `database` from it:
 /// a runtime row no image holds and none may drop. Each proposing actor's
 /// handle map (FIX 9870): the vault's own and erasable, so never imaged, yet
-/// kept, so an actor's proposals keep one ramp scope across a restore.
+/// kept, so an actor's proposals keep one ramp scope across a restore. And
+/// each author carrier's written-here mark (FIX 17143): never imaged, as its
+/// digest could confirm an erased author; kept, so a carrier this vault
+/// wrote still reads as its own, once the restore holds that carrier.
 fn carried_from_live(database: &str, key: &[u8]) -> bool {
     database == "sync_state"
-        && key.starts_with(crate::side_table::IDENTITY_TOPOLOGY_PROPOSER_SCOPE.prefix)
+        && [
+            crate::side_table::IDENTITY_TOPOLOGY_PROPOSER_SCOPE.prefix,
+            crate::side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE.prefix,
+        ]
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
 }
 
 /// Entity ids with the authority their bodies carry and the class's name.

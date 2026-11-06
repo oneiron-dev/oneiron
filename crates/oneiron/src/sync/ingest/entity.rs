@@ -23,6 +23,7 @@ use crate::vault::Vault;
 
 mod asset_ref;
 mod beside;
+mod window_admission;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
@@ -320,7 +321,10 @@ pub(in crate::sync) fn ingest_entity_in_txn(
     if key != id.to_hex() {
         return Ok(refuse(Some(id), Error::InvalidKey));
     }
-    if let Some(step) = check_residence(ctx, wtxn, id, blob)? {
+    if let Some(step) = window_admission::check_residence(ctx, wtxn, id, blob)? {
+        return Ok(step);
+    }
+    if let Some(step) = window_admission::check_discarded(ctx, wtxn, id, &header, blob)? {
         return Ok(step);
     }
     match admit(ctx, wtxn, id, &header, blob) {
@@ -332,61 +336,6 @@ pub(in crate::sync) fn ingest_entity_in_txn(
             }))
         }
         admitted => admitted,
-    }
-}
-
-/// A body whose world or month is not its window's is not admitted by that window, except a
-/// retained world shell the window still holds.
-fn check_residence(
-    ctx: &IngestCtx<'_>,
-    wtxn: &heed::RwTxn<'_>,
-    id: EntityId,
-    blob: &[u8],
-) -> Result<Option<EntityStep>> {
-    let Some(residence) = ctx.residence else {
-        return Ok(None);
-    };
-    let Some(window) = crate::sync::types::WindowKey::try_new(ctx.window_key) else {
-        return Ok(None);
-    };
-    if crate::sync::types::entity_belongs_to_window(blob, &window) {
-        return Ok(None);
-    }
-    let outside = || Error::InvalidConfig("entity outside window residence".into());
-    match residence {
-        Residence::Quarantine(doc) => {
-            if window.world().is_some()
-                && crate::sync::types::retained_world_shell_belongs_to_window(
-                    ctx.vault,
-                    wtxn,
-                    doc,
-                    ctx.tombstones,
-                    &id,
-                    blob,
-                    &window,
-                    false,
-                )?
-            {
-                return Ok(None);
-            }
-            Ok(Some(refuse(Some(id), outside())))
-        }
-        Residence::Forward { doc, trusted } => {
-            if crate::sync::types::retained_world_shell_belongs_to_window(
-                ctx.vault,
-                wtxn,
-                doc,
-                ctx.tombstones,
-                &id,
-                blob,
-                &window,
-                trusted,
-            )? {
-                // The dedicated shell restorer runs after this pass.
-                return Ok(Some(EntityStep::Skip));
-            }
-            Err(outside())
-        }
     }
 }
 

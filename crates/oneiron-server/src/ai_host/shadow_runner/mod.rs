@@ -34,6 +34,7 @@
 
 mod arm_store;
 mod model;
+mod runtimes;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -54,8 +55,10 @@ use oneiron::engine_executor::{
 };
 use oneiron::{EntityId, Error, LlmResponse, Result, Vault};
 
-use self::arm_store::{ArmEntry, ArmRegistry};
+use self::arm_store::ArmEntry;
+pub(crate) use self::arm_store::ArmRegistry;
 use self::model::Gateway;
+pub(crate) use self::runtimes::{CheckedInRuntimes, checked_in_runtimes};
 use crate::server::SyncServer;
 
 /// Where an arm's program runs: a fresh JS runtime for each step, made on
@@ -504,8 +507,9 @@ fn prepare_step(vault: &Vault, step: ShadowStepIdentity) -> Result<Outcome<Prepa
 
 /// What an arm of a step `actor`'s source run is for asks at each read and
 /// publication (FIX 5718): whether the actor is still here, in a short read
-/// of the vault of its own. A vault that is gone holds nothing.
-fn source_hold(vault: &Arc<Vault>, actor: EntityId) -> ShadowSourceHold {
+/// of the vault of its own. A vault that is gone holds nothing. A
+/// contribution fork's scratch store asks it too (FIX 3607).
+pub(crate) fn source_hold(vault: &Arc<Vault>, actor: EntityId) -> ShadowSourceHold {
     let vault = Arc::downgrade(vault);
     ShadowSourceHold::new(move || {
         vault
