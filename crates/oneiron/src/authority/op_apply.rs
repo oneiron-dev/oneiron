@@ -48,7 +48,8 @@ pub(super) fn apply_op(
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::SlipGrantRevoke { .. } => {}
+        | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. } => {}
         AuthorityOp::FederationConfirm(action) => {
             state.federation_confirms.insert(entry_hash, action.clone());
         }
@@ -100,7 +101,8 @@ pub(super) fn apply_op(
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
         // grant-travel, owner-choice, home-candidacy, agent-grant-act,
         // policy-setting, export-act, owner-work (a custody permit piece
-        // among them) and world-key arms return before reaching here.
+        // among them), membership-execution and world-key arms return before
+        // reaching here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
@@ -121,7 +123,8 @@ pub(super) fn apply_op(
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
-        | AuthorityOp::FrontierJoin(_) => {}
+        | AuthorityOp::FrontierJoin(_)
+        | AuthorityOp::MembershipExecution(_) => {}
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
         AuthorityOp::OwnerHandover(_) => {}
