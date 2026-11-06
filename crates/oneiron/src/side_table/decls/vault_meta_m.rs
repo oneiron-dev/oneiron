@@ -73,6 +73,11 @@ side_tables! {
     /// fields, its manifest's digest and its carrier's ref, sealed under its revision's own
     /// erasable ConnectorResume key, after the revision (u64be). Key: id16(draft).
     MAIL_PACK_REPLY_PLAN_STUB: VaultMeta b"mail_pack:reply_plan_stub:v1:" Raw Ciphertext;
+    /// The highest revision of a drafted reply that landed with files (fix list row 17645),
+    /// kept past the erase that drops the draft, so the draft drafted again under its request
+    /// key lands above it and no revision, send or approval of it repeats. Key: id16(draft).
+    /// Value: u64be.
+    MAIL_PACK_REPLY_REVISION_FLOOR: VaultMeta b"mail_pack:reply_revision_floor:v1:" Raw Engine;
     /// One connected mail or calendar source: provider, kind, address, custody name, owner,
     /// audience and what it keeps (FIX 12559). Key: id16(source).
     MAIL_PACK_SOURCE: VaultMeta b"mail_pack:source:v1:" Named

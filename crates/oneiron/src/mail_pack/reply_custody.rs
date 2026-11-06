@@ -3,10 +3,10 @@
 //! erasable custody key, a ConnectorResume leaf whose ref derives from the
 //! draft, the revision and the nonce its landing drew at random, under a
 //! domain of the record's own, apart from every connector call's and ledger
-//! row's. The draft's row keeps that nonce, and so does each record's row;
-//! a draft an erase dropped and drafted again under its request key is
-//! revision 1 again, and its fresh nonce seals it under refs custody never
-//! held:
+//! row's. The draft's row keeps that nonce, and so does each record's row,
+//! so each landing seals under refs custody never held; a draft an erase
+//! dropped and drafted again under its request key also lands above every
+//! revision it was (`reply_erase`'s revision floor):
 //!
 //! - **The message**: the exact RFC 5322 bytes the revision sends, written
 //!   once at draft. The send opens it, checks it against the revision's
