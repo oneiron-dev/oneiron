@@ -574,6 +574,7 @@ fn attach_ref(
         )?;
         return Ok(stored_answers);
     }
+    let at = run.now_ms / 1_000;
     if vault
         .store
         .port_edge_get(txn, &source, EdgeKind::Supports, &head)?
@@ -583,7 +584,7 @@ fn attach_ref(
         // Gate above; provenance policy and both edge indexes co-commit below.
         vault
             .batch_in()
-            .edge_with_created_at(&source, EdgeKind::Supports, &head, 1.0, run.now_ms)
+            .edge_with_created_at(&source, EdgeKind::Supports, &head, 1.0, at)
             .apply(txn)?;
     }
     vault.write_edge_provenance_in_txn(
@@ -593,7 +594,7 @@ fn attach_ref(
             subject: &edge,
             body: &record,
             actor_class: run.agent_actor.actor_class(),
-            learned_at: run.now_ms,
+            learned_at: at,
             explicit_prior: None,
             scope_project: None,
             imported_evidence: None,

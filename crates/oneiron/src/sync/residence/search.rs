@@ -85,8 +85,8 @@ pub fn with_forwarded_search_page<R>(
 
 /// The actor-readable lexical candidates of a paged search, ranked `window`
 /// deep at `as_of` (unix seconds) past the read lane's candidate window, and
-/// how many rows the ranking held: fewer than `window` only once the matches
-/// ran out. The read key and `scope` are those of
+/// whether its lexical scan exhausted the matches without a window cut.
+/// The read key and `scope` are those of
 /// [`super::home_search_candidates`].
 pub fn home_search_page_candidates(
     vault: &Vault,
@@ -96,8 +96,8 @@ pub fn home_search_page_candidates(
     scope: Option<&ResolvedRecallSelection>,
     as_of: u64,
     recall_as_of: Option<u64>,
-) -> Result<(Vec<(EntityId, f32, WindowKey)>, usize)> {
-    let (found, ranked) = vault
+) -> Result<(Vec<(EntityId, f32, WindowKey)>, bool)> {
+    let (found, exhausted) = vault
         .scoped_read(actor)
         .with_judged_at(recall_as_of)
         .residence_search_page(query, window, scope, as_of)?;
@@ -108,7 +108,7 @@ pub fn home_search_page_candidates(
         };
         results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
-    Ok((results, ranked))
+    Ok((results, exhausted))
 }
 
 /// The revision of a paged search's final list: its request and each hit's

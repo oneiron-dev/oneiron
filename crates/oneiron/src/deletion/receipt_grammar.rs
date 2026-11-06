@@ -51,7 +51,7 @@ const RECEIPT_BODY_KEYS: [&str; 17] = [
 ///   minimization: free text here would smuggle names/content into an
 ///   immutable, replicated audit record);
 /// * `reason` must be one of the pinned receipt-writing DeleteReason
-///   literals `user_hard_delete | gdpr_delete | policy_delete`
+///   literals `user_hard_delete | owner_erase | gdpr_delete | policy_delete`
 ///   (`user_delete` writes no receipt, so it can never legitimately appear);
 /// * the three completion timestamps must be non-negative integers;
 /// * `erase_complete_at`, set on an erase's overall final row alone, must be
@@ -131,10 +131,10 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
             }
             "scope" => validate_receipt_scope(value)?,
             "reason" => match value.as_str() {
-                Some("user_hard_delete" | "gdpr_delete" | "policy_delete") => {}
+                Some("user_hard_delete" | "owner_erase" | "gdpr_delete" | "policy_delete") => {}
                 _ => {
                     return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "reason must be user_hard_delete | gdpr_delete | policy_delete",
+                        "reason must be user_hard_delete | owner_erase | gdpr_delete | policy_delete",
                     )));
                 }
             },
