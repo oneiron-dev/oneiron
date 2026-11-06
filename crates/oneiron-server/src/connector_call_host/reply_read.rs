@@ -10,6 +10,8 @@ use zeroize::Zeroizing;
 use super::live_exchange::AnswerReceipts;
 use super::*;
 
+mod first_answer;
+
 /// One reply body: a parsed JSON message with its owned raw body, or an
 /// event stream still open.
 pub(super) enum Reply {
@@ -155,9 +157,9 @@ fn timed_out(error: &std::io::Error) -> bool {
     }
 }
 
-/// Opens one control reply body, JSON or an event stream. JSON still parses
-/// whole, whatever its size (FIX 8227); the tools/call path below spools its
-/// raw bytes. A body that answers nothing, and every other message of a
+/// Opens one control reply body, JSON or an event stream. Each JSON message
+/// still parses whole, whatever its size (FIX 8227). The tools/call path below
+/// spools its raw bytes. A body that answers nothing, and every other message of a
 /// batch, is wiped as it drops (FIX 11861), as a stream's are.
 pub(super) fn open_reply(
     response: reqwest::blocking::Response,
@@ -208,22 +210,7 @@ fn open_reply_body(
             RawOutboundBody::from_bytes(std::mem::take(&mut *bytes))
         }
     };
-    let value: Value =
-        serde_json::from_reader(ZeroizingBufReader::new(bytes.reader())).map_err(|_| ())?;
-    let mut found = None;
-    match value {
-        Value::Array(batch) => {
-            for message in batch {
-                if found.is_none() && answers(&message, id) {
-                    found = Some(message);
-                } else {
-                    zeroize_json(message);
-                }
-            }
-        }
-        message if answers(&message, id) => found = Some(message),
-        message => zeroize_json(message),
-    }
+    let found = first_answer::read(&bytes, id)?;
     Ok(Reply::Json(found.map(|message| (message, bytes))))
 }
 
