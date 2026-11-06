@@ -3,6 +3,7 @@
 //! `ReaderFoldReceipt` is defined by `code_run`; host state stays in `engine_executor::host`.
 
 use super::*;
+pub(super) use crate::code_run::{merge_ranges, subtract_ranges};
 
 impl RecordingJsHost<'_, '_> {
     /// The fold receipt `input` names, computed here from the jobs it names
@@ -158,37 +159,4 @@ impl RecordingJsHost<'_, '_> {
         };
         Ok(Ok((receipt, named)))
     }
-}
-
-/// `ranges` sorted and merged where they touch or overlap.
-pub(super) fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    ranges.retain(|(start, end)| start < end);
-    ranges.sort_unstable();
-    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
-    for (start, end) in ranges {
-        match merged.last_mut() {
-            Some(last) if start <= last.1 => last.1 = last.1.max(end),
-            _ => merged.push((start, end)),
-        }
-    }
-    merged
-}
-
-/// What of `whole` the merged `covered` ranges leave.
-pub(super) fn subtract_ranges(whole: (u64, u64), covered: &[(u64, u64)]) -> Vec<(u64, u64)> {
-    let mut left = Vec::new();
-    let mut at = whole.0;
-    for &(start, end) in covered {
-        if end <= at || start >= whole.1 {
-            continue;
-        }
-        if start > at {
-            left.push((at, start.min(whole.1)));
-        }
-        at = at.max(end);
-    }
-    if at < whole.1 {
-        left.push((at, whole.1));
-    }
-    left
 }
