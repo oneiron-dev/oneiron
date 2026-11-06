@@ -327,13 +327,43 @@ pub(crate) fn restore_in_txn(
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     let rebuilt = documents::join(&opened)?;
-    rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
+    let restored = rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
         if documents::owns(at) {
             let row = rebuilt.get(at).cloned();
             return row.map(Some).ok_or_else(rows::bad_part);
         }
         join(dbs, view, &opened, at, value, parts)
-    })
+    })?;
+    retire_left_fork_causes(dbs, txn, &opened, &restored)?;
+    Ok(restored)
+}
+
+/// Retires the dependency causes of each pending fork this restore left
+/// out (FIX 6443), as the erase of its opener does beside the record and
+/// snapshot (`erase_fork_actor_in_txn`). The image's vault-wide dependency
+/// rows landed before this compartment and would otherwise keep a cause for
+/// a fork that is gone; ordinary causes and other forks' causes stay.
+fn retire_left_fork_causes(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    opened: &OpenedOwnerRows,
+    restored: &Restored,
+) -> Result<()> {
+    for at in &restored.dropped {
+        if !at.in_table(ENTITY_DOC_FORK.decl()) {
+            continue;
+        }
+        let part = opened.rows.iter().find(|part| part.at() == at);
+        let Some(RowPart::NoActor { value, .. }) = part else {
+            return Err(rows::bad_part());
+        };
+        let fork = ENTITY_DOC_FORK.decode_value(value)?;
+        let (Some(entity), Some(id)) = (hex_id(&fork.entity), hex_id(&fork.fork)) else {
+            return Err(rows::bad_part());
+        };
+        crate::ports::remove_fork_dependencies_in_txn(dbs, txn, &entity, &id)?;
+    }
+    Ok(())
 }
 
 /// The entity whose tree `opened` is.
