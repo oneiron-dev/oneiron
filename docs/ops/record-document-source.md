@@ -158,6 +158,56 @@ The joined rows remain in a private prepared product through the original
 write-budget calculation. The original restore writer consumes that product
 after the content/carrier bundles and before call rows. Row order, errors,
 markers, erasure filtering and snapshot/pending/queue slicing are unchanged.
-This connects the authenticated source to the actual applying writer; it does
-not yet connect the native source bank or implement variable piece-count
-reconstruction. Native root and producer activation remain off.
+This connects the authenticated source to the actual applying writer. The native
+operation reconstruction below is still separate from the production carrier,
+source-aware restore and native admission. Native root and producer activation
+remain off.
+
+## Native operation reconstruction (source only)
+
+The classified source owner now has a concrete per-window reconstruction entry.
+It rejoins each original native source once across the snapshot and combined
+pending/queued groups. Identity is the original head operation, or its actual
+nonretained shallow winner, plus the entity key; never a digest or temporary atom
+ordinal. Both groups use that same native transport and one shared fresh-peer
+allocator over all original peers.
+
+Reconstruction replaces each head at its original operation id. Every original
+head/row operation retains its id, dependency, Lamport time and timestamp. Old
+native part values and withheld keys become deletes at their original ids, so no
+actor-bearing old part bytes remain in an allegedly immutable base. Each rebuilt
+snapshot and FIRST descriptor gets a real additional map operation on its source's
+fresh peer, including repeated positions and shared pieces. Same-key pieces must
+be byte-equal. Native heads still use opaque entity keys; piece keys use `part/`.
+
+Added operations depend on the original head, or the actual retained shallow
+frontier for a nonretained head. The original operations do not gain invented
+dependencies. Each update retains its exact original operation spans and adds only
+the extension of heads actually in those spans. A snapshot includes its own
+extensions; they are not copied wholesale into every pending or queued row. The
+per-window coordinator replays the actual output snapshot and update slices and
+compares the full retained history, versions, frontiers, shallow boundary and
+latest values against the complete reconstructed document before returning rows.
+
+This proof is against an explicitly extended scratch skeleton, not the original
+version vector. Added source spans and native source/actor availability are
+reported separately. The ordinary `WINDOW_ROUND_TRIP` remains unchanged. The
+opened-source entry first uses the original authenticated home and actor-part
+checks; a decoded source or generated piece is not native operation permission.
+Its per-window cache shares a native rejoin only after each source's own copy
+opened with equal content and actor fields at the same original head. An absent
+copy is never filled from the cache. The cache and its shared transports end with
+the reconstruction call. Original native opening checks are unchanged.
+
+Even when all native content opened, old part operations were rewritten.
+`native_lossless` reports content/actor availability; `rewritten_native_history`
+reports that separate history change. Source-aware restore must not use the first
+as an unchanged-original-history verdict or skip the existing altered-history
+marker rule. An ordinary snapshot with no SKILL source remains a valid base for
+the first native head in a pending update.
+
+This implements the source reconstruction kernel and its per-window all-open
+entry. Production `operations::prepare`, the outer carrier format, custody-copy
+enumeration, shared authenticated native source opening and source-aware restore
+still need integration. The root registry and native producers remain off. No
+complete window restoration, compiler result or runtime proof is claimed here.
