@@ -11,9 +11,7 @@ use serde::Deserialize;
 
 use super::*;
 use crate::authority::checkpoint::checkpoint_image_bytes_in_txn;
-use crate::authority::checkpoint_image::{
-    AUTHORITY_CHECKPOINT_V2_DOMAIN, AUTHORITY_CHECKPOINT_V2_MAX_BYTES, checkpoint_image_id,
-};
+use crate::authority::checkpoint_image::{AUTHORITY_CHECKPOINT_V2_DOMAIN, checkpoint_image_id};
 
 /// What a known candidate/current policy mismatch does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +68,7 @@ pub(super) fn image_policy_in_txn(
     let Ok(Some(bytes)) = checkpoint_image_bytes_in_txn(store, txn, image) else {
         return ImagePolicy::Unknown;
     };
-    if checkpoint_image_id(&bytes) != *image || bytes.len() > AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
+    if checkpoint_image_id(&bytes) != *image {
         return ImagePolicy::Unknown;
     }
     let built = bytes
