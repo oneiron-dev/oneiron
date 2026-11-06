@@ -1,4 +1,9 @@
 //! Atomic critic admission and exact-prefix replay for a tested proposal stack.
+//!
+//! Members may share a path when their changes compose from one verified base
+//! (FIX 4360). Each such member's slot seals how its reviewed change lands on
+//! its prefix; see `reviewed_composition`. CALL A's automatic driver never
+//! forms such a stack: it hands same-path proposals to reconciliation.
 use super::git::{canonical_repo_ref_for_root, resolve_mutable_repo_root};
 use super::oplog::{
     OPLOG, SNAPSHOT, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
@@ -7,8 +12,12 @@ use super::oplog::{
 use super::proposal::{
     self, PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid,
 };
+use super::queue::PreparedRepoMutationExecution;
+use super::reviewed_composition::{
+    EffectiveApplication, MemberApplication, StackApplication, StepApplication,
+};
 use super::snapshot::capture_repo_snapshot;
-use super::types::{RepoForkHash, RepoMutationOutcome, RepoMutationStatus};
+use super::types::{RepoForkHash, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus};
 use crate::{
     EntityId, Vault,
     codebase::RepoRef,
@@ -18,6 +27,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ReviewedStack {
@@ -35,17 +45,30 @@ struct ReviewedStack {
 /// One position in a stack's history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum StackMember {
-    /// The proposal's hex id, as the batch names it.
-    Proposal(String),
-    /// A member deleted with its erased actor before it ran. It names nothing.
+    /// The proposal's hex id, as the batch names it, and how its change
+    /// lands on a path an earlier member also changed (FIX 4360). `None`
+    /// lands its reviewed whole file.
+    Proposal {
+        id: String,
+        application: Option<StackApplication>,
+    },
+    /// A member deleted with its erased actor before it ran. It names
+    /// nothing, and its application went with its slot.
     Erased,
 }
 
 impl StackMember {
     fn proposal(&self) -> Result<Option<EntityId>> {
         match self {
-            Self::Proposal(id) => EntityId::from_hex(id).map(Some),
+            Self::Proposal { id, .. } => EntityId::from_hex(id).map(Some),
             Self::Erased => Ok(None),
+        }
+    }
+
+    fn application(&self) -> Option<&StackApplication> {
+        match self {
+            Self::Proposal { application, .. } => application.as_ref(),
+            Self::Erased => None,
         }
     }
 }
@@ -65,8 +88,9 @@ enum StackEnd {
 
 impl ReviewedStack {
     /// Whether this stored row is `admitted`'s admission: the same identity and
-    /// the same members in order, each still itself or erased. The end and the
-    /// erased slots are all an erase changes (FIX 5219).
+    /// the same members in order, each still itself with its sealed
+    /// application (FIX 4360) or erased. The end and the erased slots are all
+    /// an erase changes (FIX 5219).
     fn admits(&self, admitted: &Self) -> bool {
         self.repo_identity == admitted.repo_identity
             && self.batch == admitted.batch
@@ -110,8 +134,36 @@ pub(super) struct StackStep {
     stack: String,
     proposal: EntityId,
     expected: RepoForkHash,
+    /// A composed member's sealed application (FIX 4360).
+    application: Option<StepApplication>,
 }
 impl StackStep {
+    /// The request this step executes, derived only after `proposal::authorize`
+    /// accepted the original reviewed request (FIX 4360): a composed member's
+    /// content becomes its sealed `C`, with the `S -> C` texts its document
+    /// lowering writes. `None` keeps the original request.
+    pub(super) fn effective_application(
+        &self,
+        request: &RepoMutationRequest,
+        repo_root: &Path,
+    ) -> Result<Option<EffectiveApplication>> {
+        self.application
+            .as_ref()
+            .map(|application| application.effective(request, repo_root))
+            .transpose()
+    }
+
+    /// A composed member's prepared tree is its staged next prefix (FIX 4360).
+    pub(super) fn require_prepared_tree(
+        &self,
+        repo_root: &Path,
+        execution: &PreparedRepoMutationExecution,
+    ) -> Result<()> {
+        self.application.as_ref().map_or(Ok(()), |application| {
+            application.require_prepared_tree(repo_root, execution)
+        })
+    }
+
     pub(super) fn authorize(&self, row: &RepoProposal, actual: RepoForkHash) -> Result<()> {
         if row.id != self.proposal || row.merge_stack.as_deref() != Some(self.stack.as_str()) {
             return Err(invalid("stack step does not authorize this proposal"));
@@ -403,6 +455,9 @@ impl Vault {
         {
             return Err(invalid("tested stack capability scope differs"));
         }
+        // Every member's application is rederived from the tested batch alone
+        // (FIX 4360), so a stored stack's sealed proofs compare on replay.
+        let plan = super::reviewed_composition::plan_stack_applications(batch)?;
         let expected = ReviewedStack {
             repo_identity: repo.identity().as_hex(),
             batch: batch.id.clone(),
@@ -412,7 +467,11 @@ impl Vault {
             members: batch
                 .proposals
                 .iter()
-                .map(|p| StackMember::Proposal(p.id.clone()))
+                .zip(&plan)
+                .map(|(p, application)| StackMember::Proposal {
+                    id: p.id.clone(),
+                    application: application.as_ref().map(|a| a.proof.clone()),
+                })
                 .collect(),
             end: StackEnd::Open,
         };
@@ -420,7 +479,7 @@ impl Vault {
             Some(stored) if stored.admits(&expected) => stored,
             Some(_) => return Err(invalid("reviewed stack identity changed")),
             None => {
-                self.admit_reviewed_stack(&repo, tested, &expected)?;
+                self.admit_reviewed_stack(&repo, tested, &expected, &plan)?;
                 expected
             }
         };
@@ -505,7 +564,7 @@ impl Vault {
         if stack.end != StackEnd::Open && outcomes.len() != rows.len() {
             return Err(invalid("ended reviewed stack prefix is not applied"));
         }
-        for row in rows.into_iter().skip(outcomes.len()) {
+        for (index, row) in rows.into_iter().enumerate().skip(outcomes.len()) {
             // An erased actor's member never runs again, so its failed attempt stays failed.
             row.actor.live()?;
             // A not-yet-effected masked copy's member runs only cleared (FIX 7608).
@@ -515,11 +574,16 @@ impl Vault {
             } {
                 return Err(invalid(cause));
             }
+            let application = stack.members[index]
+                .application()
+                .map(|proof| StepApplication::read(&wire, &repo, proof))
+                .transpose()?;
             let step = StackStep {
                 key: key(&stack.repo_identity, &stack.batch),
                 stack: stack.batch.clone(),
                 proposal: row.id,
                 expected: hash,
+                application,
             };
             if row.operation_seq.is_some() {
                 // Recovery proved this failed attempt had no repository effect.
@@ -580,6 +644,7 @@ impl Vault {
         repo: &GitWireRepo,
         tested: &TestedBatch,
         stack: &ReviewedStack,
+        plan: &[Option<MemberApplication>],
     ) -> Result<()> {
         if capture_repo_snapshot(self, repo.repo_root())?.0 != stack.pre_snapshot {
             return Err(Error::ConcurrentWrite("reviewed stack base changed"));
@@ -602,20 +667,16 @@ impl Vault {
         if snapshot.head.as_deref() != Some(stack.expected_head.as_str()) {
             return Err(invalid("reviewed stack snapshot HEAD differs"));
         }
-        let mut paths = BTreeSet::new();
         let mut conflicts = BTreeSet::new();
         let mut ids = BTreeSet::new();
         let mut rows = Vec::new();
-        for candidate in &tested.batch().proposals {
+        // The plan admitted a repeated path only as a proven composition, and
+        // refused every other repeat, a received bundle's paths included (FIX
+        // 4360). A repeated proposal never lands twice.
+        for (candidate, application) in tested.batch().proposals.iter().zip(plan) {
             let id = EntityId::from_hex(&candidate.id)?;
             let row = self.repo_proposal(id)?.ok_or(Error::EntityNotFound)?;
-            // Every path of every member, a received bundle's all of them.
-            if !ids.insert(id)
-                || !row
-                    .paths()
-                    .into_iter()
-                    .all(|path| paths.insert(path.to_owned()))
-            {
+            if !ids.insert(id) {
                 return Err(invalid("reviewed stack repeats a proposal or path"));
             }
             if let RepoProposalOperation::ResolveConflictFile {
@@ -633,7 +694,16 @@ impl Vault {
                 repo.repo_ref(),
                 &snapshot,
             )?;
-            super::reviewed_file::require_document_base(self, &row, &snapshot)?;
+            // A composed member's prefix text exists only in memory until the
+            // members before it land; its path's first member checked the
+            // live document.
+            match application {
+                Some(application) => {
+                    let (staged, composed) = application.texts()?;
+                    super::reviewed_file::require_stacked_document(self, &row, staged, composed)?;
+                }
+                None => super::reviewed_file::require_document_base(self, &row, &snapshot)?,
+            }
             proposal::validate_conflict(self, &row, repo.repo_root())?;
             super::queue::validate_operation(&row.request()?.operation)?;
             super::trailer::validate_repo_provenance_request(self, &row.request()?)?;
@@ -643,6 +713,9 @@ impl Vault {
         if rows.is_empty() {
             return Err(invalid("reviewed stack bound exceeded"));
         }
+        // Every composed prefix, rederived in memory, is its staged prefix tree.
+        super::reviewed_composition::require_composed_commits(&rows, plan)?;
+        super::reviewed_composition::require_staged_prefixes(&GitWire::new(self)?, repo, plan)?;
         let mut txn = self.store.env.write_txn()?;
         // Review can run concurrently. Re-read every vote and the vault's review
         // policy in this ONE transaction, and seal the review each member met
