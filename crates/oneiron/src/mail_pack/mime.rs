@@ -148,11 +148,17 @@ pub(super) fn decode_words(raw: &[u8]) -> String {
 /// One mailbox of a raw address header (`phrase <address>` or an address):
 /// a phrase with encoded words decoded and written as a display name again
 /// (a quoted phrase read without its quotes first), the angle address as
-/// the sender wrote it. A mailbox with no encoded word, no angle address,
-/// or a `:` in its phrase (a group's opening) is left as it is.
+/// the sender wrote it. The angle address is the one outside quoted strings
+/// and comments; a mailbox with no encoded word, not exactly one such angle
+/// address ending it, or a `:` in its phrase (a group's opening) is left
+/// as it is.
 fn decoded_mailbox(mailbox: &str) -> String {
     let mailbox = mailbox.trim();
-    let Some(open) = mailbox.rfind('<') else {
+    let (places, unclosed) = super::gmail::address_places(mailbox);
+    let mut angles = places.iter().filter(|(_, character, place)| {
+        *character == '<' && *place == super::gmail::AddressPlace::Top
+    });
+    let (Some(&(open, _, _)), None, false) = (angles.next(), angles.next(), unclosed) else {
         return mailbox.to_owned();
     };
     let (phrase, address) = (mailbox[..open].trim(), &mailbox[open..]);
