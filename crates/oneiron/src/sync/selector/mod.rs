@@ -73,7 +73,8 @@ pub(in crate::sync) use self::admission::{
 };
 pub use self::authorize::authorize_sync_selector;
 pub(in crate::sync) use self::authorize::{
-    authorize_sync_selector_in_txn, check_bootstrap_sources,
+    authorize_selector_export_in_txn, authorize_sync_selector_in_txn, check_authority_history,
+    check_bootstrap_sources, check_projection_history, project_source,
 };
 pub(crate) use self::born_with::{
     CarriedText, carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,

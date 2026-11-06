@@ -1787,6 +1787,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.replica_manifest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedReplicaManifestRequest,
+                >(),
+            ),
+            (
+                "vault.members.replica_window",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedReplicaWindowRequest,
+                >(),
+            ),
+            (
                 "vault.members.accept",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedInvitationRequest,
@@ -13322,6 +13334,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.members.replica_manifest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.replica_window" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.accept" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20845,6 +20871,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.invitations" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
         }
+        "vault.members.replica_manifest" => {
+            let _input: crate::task_verb::sdk::SharedReplicaManifestRequest =
+                decode(value.clone())?;
+        }
+        "vault.members.replica_window" => {
+            let _input: crate::task_verb::sdk::SharedReplicaWindowRequest = decode(value.clone())?;
+        }
         "vault.members.accept" => {
             let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
         }
@@ -24759,6 +24792,12 @@ pub fn invoke(
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
         "vault.members.invitations" => encode(vault_members_invitations(memory, decode(value)?)?),
+        "vault.members.replica_manifest" => {
+            encode(vault_members_replica_manifest(memory, decode(value)?)?)
+        }
+        "vault.members.replica_window" => {
+            encode(vault_members_replica_window(memory, decode(value)?)?)
+        }
         "vault.members.accept" => encode(vault_members_accept(memory, decode(value)?)?),
         "vault.members.accept_with_credential" => encode(vault_members_accept_with_credential(
             memory,
@@ -29671,6 +29710,28 @@ pub fn vault_members_invitations(
     crate::task_verb::sdk::read_shared_invitations(
         memory.vault(),
         &memory.embedded_owner("vault.members.invitations")?,
+        input,
+    )
+}
+pub fn vault_members_replica_manifest(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedReplicaManifestRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedReplicaManifest> {
+    crate::task_verb::sdk::read_shared_replica_manifest(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.replica_manifest")?,
+        &crate::federation::Scope::top(),
+        input,
+    )
+}
+pub fn vault_members_replica_window(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedReplicaWindowRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedReplicaWindow> {
+    crate::task_verb::sdk::read_shared_replica_window(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.replica_window")?,
+        &crate::federation::Scope::top(),
         input,
     )
 }

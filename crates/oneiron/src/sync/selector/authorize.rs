@@ -104,7 +104,7 @@ pub(in crate::sync) fn authorize_sync_selector_in_txn(
         .map(|_| ())
 }
 
-fn authorize_selector_export_in_txn(
+pub(in crate::sync) fn authorize_selector_export_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     grant_scope: FederationGrantScope,
@@ -366,5 +366,6 @@ mod filter;
 mod projection;
 mod projection_history;
 mod selection;
-pub(in crate::sync) use bootstrap_check::check_bootstrap_sources;
+pub(in crate::sync) use bootstrap_check::{check_authority_history, check_bootstrap_sources, project_source};
+pub(in crate::sync) use projection_history::check_projection_history;
 pub(super) use filter::{filter_window_doc, filter_window_doc_in_scope};
