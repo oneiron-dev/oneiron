@@ -125,14 +125,18 @@ fn validate_document_metadata_field(
 }
 
 fn validate_document_metadata_value(field: &str, bytes: &[u8]) -> Result<()> {
+    let value = decode_document_metadata_value(bytes)?;
+    crate::ports::validate_metadata(field, &value)
+}
+
+fn decode_document_metadata_value(bytes: &[u8]) -> Result<rmpv::Value> {
     let mut cursor = bytes;
     let value =
         rmpv::decode::read_value(&mut cursor).map_err(|_| invalid("document metadata encoding"))?;
     if !cursor.is_empty() {
         return Err(invalid("trailing document metadata bytes"));
     }
-    crate::ports::validate_metadata(field, &value)?;
-    Ok(())
+    Ok(value)
 }
 
 /// A scope summary's purpose and derivation (FIX 756): only those two keys,
