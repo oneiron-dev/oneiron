@@ -33,6 +33,8 @@ use rmpv::Value;
 // A paired eval measurement's job, queued per request (FIX 574).
 mod eval_measurement;
 mod skill_discovery;
+mod type_tree_outcomes;
+pub use type_tree_outcomes::TypeTreeOutcomeReadRequests;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
 // Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
