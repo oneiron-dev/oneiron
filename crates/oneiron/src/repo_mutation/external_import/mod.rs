@@ -556,6 +556,25 @@ impl Vault {
         self.put_external_import_observation(call.import, &record)
     }
 
+    /// Judges again, now, whether the custody secret `binding` may carry
+    /// `importer`'s fetch from the https `origin`, as the import judged it
+    /// before its fetch: for a host whose source relay sends each exchange
+    /// through the credential broker (OSH-3), which judges the binding at
+    /// each one. Reads no secret.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] naming the code and the fix when the binding no
+    /// longer admits the fetch; a store, fold or clock failure.
+    pub fn check_external_import_source_binding(
+        &self,
+        binding: &str,
+        origin: &str,
+        importer: EntityId,
+    ) -> Result<()> {
+        self.external_import_binding_admits(binding, origin, importer)?
+            .map_err(|(code, message)| Error::Refused(format!("{code}: {message}")))
+    }
+
     /// Whether the custody secret `binding` may carry this import's fetch
     /// (CALL T, the actor-bound source credential): a binding for
     /// [`EXTERNAL_IMPORT_FETCH_EFFECTOR`] whose scopes name the source's
