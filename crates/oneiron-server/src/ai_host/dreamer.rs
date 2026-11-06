@@ -361,6 +361,7 @@ async fn supervise(
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
             confession_instruction: settings.wording.confession().to_owned(),
+            compaction_check_rubric: settings.compaction_check_rubric.clone(),
             windows,
             pass_deadline: None,
             device_cancel: None,
@@ -499,6 +500,8 @@ struct ObservedFactory {
     device_cancel: Option<WorkCancel>,
     /// A TASK's realization is asked for its confession in this (FIX 8696).
     confession_instruction: String,
+    /// A self-written compaction is checked against this rubric (FIX 4814).
+    compaction_check_rubric: String,
     windows: BTreeMap<ModelId, u64>,
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
@@ -790,6 +793,7 @@ impl PassExecutorFactory for ObservedFactory {
                 weaver,
                 guard,
                 egress: self.egress,
+                rubric: &self.compaction_check_rubric,
             });
         Ok(ObservedExecutor {
             inner: self
@@ -867,6 +871,7 @@ impl PassExecutorFactory for ObservedFactory {
                 weaver,
                 guard,
                 egress: self.egress,
+                rubric: &self.compaction_check_rubric,
             });
         self.inner
             .as_mut()
