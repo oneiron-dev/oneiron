@@ -2,7 +2,7 @@
 //! The flow pages as far as its content runs (Rule 5): no page, operation or
 //! byte count refuses it, and a table row taller than a page splits across
 //! pages.
-use super::budget::{Backing, Budget, ScratchVec, WorkDeadlineWriter};
+use super::budget::{Backing, Budget, ScratchText, ScratchVec, WorkDeadlineWriter};
 use super::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, Stream, dictionary};
@@ -137,11 +137,21 @@ impl Flow {
         self.budget.checkpoint()?;
         if style.pre {
             self.space = false;
-            let normalized = text
-                .replace("\r\n", "\n")
-                .replace('\r', "\n")
-                .replace('\t', "    ");
-            let mut lines = normalized.split('\n').peekable();
+            let mut normalized = ScratchText::new(&self.budget);
+            let mut chars = text.chars().peekable();
+            while let Some(ch) = chars.next() {
+                match ch {
+                    '\r' => {
+                        if chars.peek() == Some(&'\n') {
+                            chars.next();
+                        }
+                        normalized.push('\n')?;
+                    }
+                    '\t' => normalized.push_str("    ")?,
+                    ch => normalized.push(ch)?,
+                }
+            }
+            let mut lines = normalized.as_str()?.split('\n').peekable();
             while let Some(line) = lines.next() {
                 self.budget.checkpoint()?;
                 self.word(line, style)?;
@@ -155,18 +165,18 @@ impl Flow {
             }
             return Ok(());
         }
-        let mut word = String::new();
+        let mut word = ScratchText::new(&self.budget);
         for ch in text.chars() {
             self.budget.checkpoint()?;
             if ch.is_whitespace() && ch != '\u{a0}' {
-                self.word(&word, style)?;
+                self.word(word.as_str()?, style)?;
                 word.clear();
                 self.space = true;
             } else {
-                word.push(ch);
+                word.push(ch)?;
             }
         }
-        self.word(&word, style)
+        self.word(word.as_str()?, style)
     }
     fn word(&mut self, text: &str, style: Style) -> Result<()> {
         self.budget.checkpoint()?;
