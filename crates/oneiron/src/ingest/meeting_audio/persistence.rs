@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::blob_artifact::{
     BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance,
@@ -10,6 +10,7 @@ use crate::blob_artifact::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
+use crate::federation::ActorContentTxn;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{
@@ -59,7 +60,7 @@ impl Vault {
     ) -> Result<StoredMeetingTranscript> {
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
         let artifact = self.new_entity_id()?;
-        self.try_with_actor_content_write_txn(actor, |content| {
+        self.try_with_actor_content_write_txn(actor, |content: &mut ActorContentTxn<'_, '_, '_>| {
             owner.revalidate_in_txn(self, content.read())?;
             let (source_version, audio) = pinned_version(self, content.read(), source_audio)?;
             check_source_audio(transcript, &audio)?;
@@ -79,7 +80,7 @@ impl Vault {
                 &data,
             ))?;
             let made_by = storage_provenance(actor, &[source_version.claim_id], transcript, at);
-            let version = content.update_artifact(artifact, |txn| {
+            let version = content.update_artifact(artifact, |txn: &mut RwTxn<'_>| {
                 self.append_blob_artifact_version_made_by_in_txn(
                     txn,
                     &artifact,
@@ -110,8 +111,8 @@ impl Vault {
         labels: &BTreeMap<String, String>,
     ) -> Result<StoredMeetingTranscript> {
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
-        self.try_with_actor_content_write_txn(actor, |content| {
-            content.update_artifact(stored.transcript.artifact, |txn| {
+        self.try_with_actor_content_write_txn(actor, |content: &mut ActorContentTxn<'_, '_, '_>| {
+            content.update_artifact(stored.transcript.artifact, |txn: &mut RwTxn<'_>| {
                 owner.revalidate_in_txn(self, txn)?;
                 let (base, bytes) = pinned_version(self, txn, &stored.transcript)?;
                 let (source, audio) = pinned_version(self, txn, &stored.source_audio)?;
