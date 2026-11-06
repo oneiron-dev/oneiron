@@ -219,6 +219,18 @@ impl Vault {
         } else {
             request
         };
+        let digest = request_digest(request)?;
+        if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
+            // An open measurement's job is queued again; the queue's dedupe
+            // keeps one.
+            if matches!(
+                row.state,
+                MeasurementState::Pending | MeasurementState::Claimed
+            ) {
+                enqueue_coach_eval_measurement_in_txn(self, txn, &digest, now)?;
+            }
+            return Ok(digest);
+        }
         // A retry names its predecessor's Partial row with transient reasons
         // only (FIX 10442): a moved cohort is a new question, not a retry.
         if request.retry > 0 {
@@ -244,18 +256,6 @@ impl Vault {
                 return Err(invalid("a retry follows only transient failures"));
             }
         }
-        let digest = request_digest(request)?;
-        if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
-            // An open measurement's job is queued again; the queue's dedupe
-            // keeps one.
-            if matches!(
-                row.state,
-                MeasurementState::Pending | MeasurementState::Claimed
-            ) {
-                enqueue_coach_eval_measurement_in_txn(self, txn, &digest, now)?;
-            }
-            return Ok(digest);
-        }
         let cohort = cohort_in_txn(self, &*txn, &request.cohort)?;
         if cohort.seat != request.seat || cohort_moved(&cohort, request) {
             return Err(invalid(
@@ -272,7 +272,7 @@ impl Vault {
     /// one's job is queued again. Nothing is counted or paid here.
     /// # Errors
     /// Unbounded or identical arms, another method, a cohort that is not the
-    /// seat's as the request froze it, a retry without its predecessor's
+    /// seat's as the request froze it, a new retry without its predecessor's
     /// transient Partial, or storage errors.
     pub fn request_eval_measurement(
         &self,
