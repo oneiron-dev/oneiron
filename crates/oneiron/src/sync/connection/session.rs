@@ -12,6 +12,21 @@ use crate::sync::transport::TransportError;
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::WindowKey;
 
+/// Reason the steady-state loop exited.
+pub(super) enum LoopExit {
+    /// Clean shutdown requested.
+    Shutdown,
+    /// WebSocket disconnected (with error description).
+    Disconnected(String),
+    /// The server closed the socket with a close frame, read by its code
+    /// (FIX 5927): a server fault takes the retry path, a refusal is
+    /// reported as one.
+    Closed(super::server_close::ServerClose),
+    /// The residence mode changed (FIX 8869): what was buffered is queued,
+    /// and the next connect sends the new mode's hello.
+    Renegotiate,
+}
+
 /// Whether `next` fits a node batch alone. A window write's first frame may
 /// pass a member's room by its envelope header's allowance (FIX 7107): it
 /// then goes as a frame of its own, never refused for it.
