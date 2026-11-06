@@ -3,6 +3,7 @@
 
 pub(crate) use oneiron_store::graph_fs::snapshot::*;
 
+use super::coreutils_text::{checkpoint, copy_text_parts, copy_utf8_field};
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
@@ -139,22 +140,47 @@ impl GraphFsResolver<'_, '_> {
             .map(|entries| !entries.is_empty())
     }
 
-    pub(super) fn snapshot_readdir(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
+    pub(super) fn snapshot_readdir(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsPage> {
         let entries = self.snapshot_entries(path)?;
-        let scope = self.cursor_scope(&format!("snapshot readdir {path}"));
-        let after: Option<String> = scope.open(cursor)?;
+        let listing = copy_text_parts(
+            &["snapshot readdir ", path],
+            reader,
+            self.options.page_byte_cap,
+        )?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let after: Option<String> = scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| copy_utf8_field(bytes, reader, quantum),
+        )?;
         let mut page = PageBuilder::new(path, self.options);
-        let mut last = None;
+        let mut last: Option<String> = None;
         let mut next = None;
         for entry in entries {
             if after.as_deref().is_some_and(|after| entry.name() <= after) {
                 continue;
             }
             if !page.try_push(entry.clone()) {
-                next = last.as_ref().map(|last| scope.seal(last));
+                next = last
+                    .as_ref()
+                    .map(|last| {
+                        scope.seal_bytes_with(last.as_bytes(), quantum, || checkpoint(reader))
+                    })
+                    .transpose()?;
                 break;
             }
-            last = Some(entry.name().to_owned());
+            last = Some(copy_text_parts(
+                &[entry.name()],
+                reader,
+                self.options.page_byte_cap,
+            )?);
         }
         Ok(page.finish(next))
     }
