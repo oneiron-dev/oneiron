@@ -53,3 +53,10 @@ uses its existing `ContentTemplateError::Pdf` route. Memory-floor wait deadlines
 are not substituted for work checkpoints. An individual parser, matcher,
 encoding, sort or PDF-codec call is not preempted; this is not a wall-time bound
 on those calls. Full FIX 9615 memory and deadline coverage remains open.
+
+Native PDF output writing also checks the same work deadline at its `Write`
+callbacks before forwarding bytes or flushes to the original output vector.
+The first actual work-deadline refusal survives the native I/O error channel as
+`WorkDeadline`; a non-deadline I/O failure keeps the existing `Overflow` result.
+This adds no output copy or output-memory admission. Work between callbacks,
+including an allocation or one write, is not preempted.

@@ -2,7 +2,7 @@
 //! The flow pages as far as its content runs (Rule 5): no page, operation or
 //! byte count refuses it, and a table row taller than a page splits across
 //! pages.
-use super::budget::{Budget, ScratchVec};
+use super::budget::{Budget, ScratchVec, WorkDeadlineWriter};
 use super::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, Stream, dictionary};
@@ -354,8 +354,12 @@ impl Flow {
         doc.trailer.set("Root", root);
         let mut bytes = Vec::new();
         self.budget.checkpoint()?;
-        doc.save_to(&mut bytes)
-            .map_err(|_| ContentTemplateError::Overflow)?;
+        let mut writer = WorkDeadlineWriter::new(&mut bytes, &self.budget);
+        let saved = doc.save_to(&mut writer);
+        if let Some(refusal) = writer.into_refusal() {
+            return Err(refusal);
+        }
+        saved.map_err(|_| ContentTemplateError::Overflow)?;
         // lopdf's writer records each object's offset as a `u32`: past 4 GiB
         // the offsets it wrote are wrong (the codec's bound).
         self.budget.checkpoint()?;
