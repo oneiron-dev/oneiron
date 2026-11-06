@@ -158,19 +158,8 @@ pub(crate) fn effective_credit_subjects_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
-) -> Result<Vec<EntityId>> {
-    let (direct, shares) = match chain_in_txn(store, txn, &credit.receipt_id)?.pop() {
-        Some((_, last)) => (last.direct_subjects, last.shares),
-        None => (credit.direct_subjects.clone(), credit.shares.clone()),
-    };
-    let mut subjects: Vec<EntityId> = direct
-        .into_iter()
-        .flatten()
-        .chain(shares.into_iter().filter_map(|share| share.subject))
-        .collect();
-    subjects.sort();
-    subjects.dedup();
-    Ok(subjects)
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(retained_masses_in_txn(store, txn, credit)?.map(|masses| masses.into_keys().collect()))
 }
 
 /// The decay `credit` was projected under: the frozen one, or, for a
@@ -395,14 +384,23 @@ fn masses(direct: &[Option<EntityId>], shares: &[LateCreditShare]) -> BTreeMap<E
     out
 }
 
+/// What the retained credit proves about one subject's observation.
+pub(crate) enum StandingCreditObservation {
+    /// Erasure left no unambiguous latest mass. Keep the stored evidence.
+    Unknown,
+    /// A retained sealed credit or its latest adjustment names this mass.
+    Credited(bool, f64),
+    /// The standing credit names no mass for this subject.
+    Uncredited,
+}
+
 /// The observation `subject`'s evidence for `credit` currently stands at:
-/// the win and mass of the latest adjustment beside the sealed credit, or
-/// the sealed projection's own when no adjustment landed. `None` when the
-/// credit currently credits `subject` nothing. A failed credit is never
+/// the win and mass of the latest retained adjustment, including adjustments
+/// moved by erasure, or the intact sealed projection when none landed.
+/// An erased attribution without an addressable latest adjustment is unknown,
+/// never a reason to restore an older sealed mass. A failed credit is never
 /// adjusted, so its direct subjects stand whole at the failure unless every
-/// judgment that seated a subject was explicitly displaced. The
-/// anchored-amendment join (FIX 10148) restores to exactly this, never to
-/// the sealed projection alone.
+/// judgment that seated a subject was explicitly displaced.
 ///
 /// # Errors
 ///
@@ -412,23 +410,65 @@ pub(crate) fn standing_credit_observation_in_txn(
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
     subject: &EntityId,
-) -> Result<Option<(bool, f64)>> {
-    if !credit.succeeded {
-        if !credit.direct_subjects.contains(&Some(*subject))
-            || failed_credit_subject_displaced_in_txn(vault, txn, credit, subject)?
+) -> Result<StandingCreditObservation> {
+    let Some(masses) = retained_masses_in_txn(&vault.store, txn, credit)? else {
+        return Ok(StandingCreditObservation::Unknown);
+    };
+    Ok(match masses.get(subject) {
+        Some(_)
+            if !credit.succeeded
+                && failed_credit_subject_displaced_in_txn(vault, txn, credit, subject)? =>
         {
+            StandingCreditObservation::Uncredited
+        }
+        Some(mass) => StandingCreditObservation::Credited(credit.succeeded, *mass),
+        None => StandingCreditObservation::Uncredited,
+    })
+}
+
+/// The latest retained masses, or unknown when erasure hid their order.
+fn retained_masses_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Option<BTreeMap<EntityId, f64>>> {
+    if !credit.succeeded {
+        return Ok(Some(masses(&credit.direct_subjects, &[])));
+    }
+    let mut chain = chain_in_txn(store, txn, &credit.receipt_id)?;
+    for (key, row) in ADJUSTMENT.scan_from(store, txn, b"erased\0")? {
+        if let CreditJoinRow::Adjustment(adjustment) = row
+            && adjustment.base == credit.receipt_id
+        {
+            chain.push((key, adjustment));
+        }
+    }
+    // Non-base erasure keeps the factory receipt's numeric sequence, even
+    // though the row's storage key becomes opaque. Time is not its order.
+    let prefix = format!("{}:adjustment:", credit.receipt_id);
+    let mut seen = BTreeSet::new();
+    let mut latest: Option<(u64, &CreditAdjustmentReceipt)> = None;
+    for (_, adjustment) in &chain {
+        let Some(index) = adjustment
+            .receipt_id
+            .strip_prefix(&prefix)
+            .and_then(|index| index.parse::<u64>().ok())
+        else {
+            return Ok(None);
+        };
+        if !seen.insert(index) {
             return Ok(None);
         }
-        return Ok(Some((false, 1.0)));
+        if latest.as_ref().is_none_or(|(prior, _)| index > *prior) {
+            latest = Some((index, adjustment));
+        }
     }
-    let chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
-    let (direct, shares) = match chain.last() {
+    let (direct, shares) = match latest {
         Some((_, last)) => (&last.direct_subjects, &last.shares),
+        None if credit.attribution.is_none() => return Ok(None),
         None => (&credit.direct_subjects, &credit.shares),
     };
-    Ok(masses(direct, shares)
-        .get(subject)
-        .map(|mass| (true, *mass)))
+    Ok(Some(masses(direct, shares)))
 }
 
 /// An explicit displacement removes a failed credit's seated loss only
