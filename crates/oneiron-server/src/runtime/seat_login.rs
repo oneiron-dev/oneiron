@@ -92,6 +92,12 @@ pub struct OfficialCliSeatExecutor {
     /// the git configuration that calls the helper. `None` for a run with no
     /// helper destination.
     pub helper_env: Option<super::SeatHelperEnv>,
+    /// The model door environment the host built for the run (FIX 15702):
+    /// each offered slot's loopback URL and the run's reference to it, in the
+    /// variables the CLI's SDK reads. Set after the variables the seat
+    /// removes, so the reference is the one key the CLI holds. `None` for a
+    /// run offered no slot.
+    pub model_env: Option<super::SeatModelEnv>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
@@ -101,6 +107,7 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
             .field("secret_destinations", &self.secret_destinations)
             .field("floor", &self.floor.is_some())
             .field("helper_env", &self.helper_env)
+            .field("model_env", &self.model_env)
             .finish()
     }
 }
@@ -148,6 +155,9 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         }
         for name in SEAT_ENV_REMOVED {
             command.env_remove(name);
+        }
+        if let Some(model_env) = &self.model_env {
+            model_env.apply(&mut command);
         }
         let mut child = command
             .spawn()

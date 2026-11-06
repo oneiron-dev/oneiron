@@ -76,12 +76,17 @@ impl ScopedRead<'_> {
         selected: Option<(&ResolvedRecallSelection, WorldScope)>,
     ) -> Result<(Vec<ScoredEntity>, bool)> {
         let scope = selected.as_ref().map(|(scope, _)| *scope);
-        let (filter, policy) = self.resolve_retrieval_filter(None)?;
-        if filter.deny_all {
+        // The key's own rows and those its own live Grants add (FIX 7528).
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(None)?;
+        if candidates.deny_all {
             return Ok((Vec::new(), true));
         }
         let excluded = self.request_exclusions(&policy, None)?;
-        let plan = self.plan_admits(&filter, &policy, &excluded);
+        let plan = self.plan_admits(&filter, &policy, &excluded, None);
         let kinds = crate::memory::RecallKinds::new(scope.and_then(|scope| scope.kinds.clone()));
         let conversations = scope.and_then(|scope| {
             scope.conversation_ids.as_ref().map(|ids| {
@@ -114,7 +119,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .search_text(query, window)
