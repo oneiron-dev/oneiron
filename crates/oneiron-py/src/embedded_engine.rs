@@ -230,6 +230,76 @@ impl NativeEngine {
         }
         closed.map_err(|error| raise(engine_memory_error(&error)))
     }
+
+    /// Imports the original acceptance into `entry.path` and opens that same
+    /// target in this engine's current shared-env registry. The explicit
+    /// target config resolves as `start` does, never from the personal
+    /// vault. The credential file must already hold the accepting invitee's
+    /// key.
+    ///
+    /// Outer setup and task failures raise here. Once import answers, its
+    /// native result and committed flag remain separate on the returned
+    /// object. Keep the acceptance for its complete receipt regardless of
+    /// either result. This call does not persist the entry in host
+    /// configuration.
+    #[pyo3(signature = (acceptance, entry_json, dimensions=None, config_file=None))]
+    fn bootstrap_shared_env(
+        &self,
+        py: Python<'_>,
+        acceptance: &crate::shared_acceptance::NativeSharedAcceptance,
+        entry_json: &str,
+        dimensions: Option<usize>,
+        config_file: Option<PathBuf>,
+    ) -> PyResult<NativeSharedOutcome> {
+        let entry: oneiron_server::config::SharedEnvConfig =
+            crate::decode(entry_json, "shared env entry")?;
+        let (imported, committed) = py
+            .detach(|| {
+                let target =
+                    embedded_serve_config(&entry.path, dimensions, config_file.as_deref())?;
+                self.engine
+                    .bootstrap_shared_env(&acceptance.inner, &entry, &target)
+            })
+            .map_err(|error| raise(engine_memory_error(&error)))?;
+        let imported = match imported {
+            Ok(vault) => Ok(vault),
+            Err(error) => Err(match error.downcast_ref::<MemoryError>() {
+                Some(exact) => exact.clone(),
+                None => engine_memory_error(&error),
+            }),
+        };
+        Ok(NativeSharedOutcome {
+            imported,
+            committed,
+        })
+    }
+}
+
+/// The native import result and committed flag, retained independently.
+/// An outer setup or task failure raises from `bootstrap_shared_env`
+/// instead of appearing here.
+#[pyclass(frozen)]
+pub(crate) struct NativeSharedOutcome {
+    imported: Result<Arc<oneiron::Vault>, MemoryError>,
+    committed: bool,
+}
+
+#[pymethods]
+impl NativeSharedOutcome {
+    /// The native publication flag, including when a later step failed.
+    fn committed(&self) -> bool {
+        self.committed
+    }
+
+    /// The actual registry-held vault's path on success. A failed import,
+    /// credential update or insertion raises its native error instead; it
+    /// never returns an empty or fabricated successful path.
+    fn vault_path(&self) -> PyResult<String> {
+        match &self.imported {
+            Ok(vault) => Ok(vault.path().to_string_lossy().into_owned()),
+            Err(error) => Err(raise(error.clone())),
+        }
+    }
 }
 
 /// One connection the app holds to its engine's server: bytes both ways.

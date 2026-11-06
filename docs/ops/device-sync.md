@@ -319,8 +319,19 @@ particular, a committed publication followed by an error is not a successful pat
 acceptance's complete reply remains available independently.
 
 There is no CLI entry or second durable registry. Retaining the entry in explicit host
-configuration is still required to reopen it after restart. Other language bindings remain
-unimplemented.
+configuration is still required to reopen it after restart.
+
+The Python SDK exposes the same two-step flow. `Oneiron.accept_shared_invitation_https`
+and `retry_shared_invitation_https` return `oneiron.shared_env.SharedAcceptance`, whose
+`request`, `reply` and `member_client` use the original native acceptance. With the `engine`
+feature, `oneiron.engine.EmbeddedEngine.bootstrap_shared_env` takes that object and an
+explicit shared-env entry dict (`path`, `vault_id`, `member`, `home_url`, `credential_file`),
+plus the dedicated target's dimensions and config file. Here the entry's `vault_id` is a
+JSON number, as in native `SharedEnvConfig`; the invitation request's `vault_id` stays a
+decimal string. The returned `SharedEnvBootstrapOutcome.committed` property and
+`vault_path()` method preserve the same separate publication and import outcomes. Both
+setup failures and retained inner errors raise the existing `OneironError` with their
+native error details. Other language bindings remain unimplemented.
 
 ## How it fits
 

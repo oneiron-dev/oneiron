@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
     from .facade_types import LegalHoldNotice
+    from .shared_env import SharedAcceptance
 
 from ._native import NativeClient as _NativeClient
 
@@ -437,6 +438,44 @@ class Oneiron:
             _translate(
                 lambda: _NativeClient.vault_secrets_custody_seal(
                     json.dumps(view), change, holder, recipients, body
+                )
+            )
+        )
+
+    def accept_shared_invitation_https(self, request: dict[str, Any]) -> "SharedAcceptance":
+        """Accepts a shared invitation through this connected HTTPS handle with its own holder key.
+
+        An in-process or cleartext handle raises the native refusal. Keep the
+        returned object for bootstrap; a decoded receipt is not a substitute.
+        The ordinary ``vault.members.accept_with_credential`` facade verb is unchanged.
+        """
+        from .shared_env import SharedAcceptance
+
+        return SharedAcceptance(
+            _translate(lambda: self._client.accept_shared_invitation_https(json.dumps(request)))
+        )
+
+    def retry_shared_invitation_https(
+        self, pending: OneironError, request: dict[str, Any]
+    ) -> "SharedAcceptance":
+        """Retries a pending HTTPS acceptance under its original invocation.
+
+        Pass the refusal's pending error and the same request, not a decoded
+        generic retry reply: only the native HTTPS call produces this object.
+        """
+        from .shared_env import SharedAcceptance
+
+        refusal: dict[str, Any] = {
+            "code": pending.code,
+            "message": pending.message,
+            "suggestions": list(pending.suggestions),
+        }
+        if pending.hook is not None:
+            refusal["hook"] = pending.hook
+        return SharedAcceptance(
+            _translate(
+                lambda: self._client.retry_shared_invitation_https(
+                    json.dumps(refusal), json.dumps(request)
                 )
             )
         )

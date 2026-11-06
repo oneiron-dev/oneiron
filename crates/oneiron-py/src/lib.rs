@@ -33,6 +33,7 @@ mod embedded_engine;
 // FIX 5342: the rooted-only host-root open.
 mod host_root;
 mod pairing;
+mod shared_acceptance;
 
 /// One message inside a witnessed turn, with the SDK's optional fields.
 ///
@@ -484,6 +485,44 @@ impl NativeClient {
         let sealed =
             seal_custody_submit(&view, change, holder, &recipients, None, body).map_err(raise)?;
         encode(&sealed)
+    }
+
+    /// Accepts a shared invitation through this connected HTTPS handle with
+    /// its own holder key, keeping the successful call's original value.
+    /// An in-process or cleartext handle raises the native refusal. Keep
+    /// the returned object for bootstrap; a decoded receipt is not a
+    /// substitute. The ordinary `vault.members.accept_with_credential`
+    /// facade verb is unchanged.
+    fn accept_shared_invitation_https(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<crate::shared_acceptance::NativeSharedAcceptance> {
+        let request: oneiron::verbs::SharedInvitationAcceptWithCredentialRequest =
+            decode(input_json, "accept_shared_invitation_https")?;
+        let accepted = py
+            .detach(|| self.inner.accept_shared_invitation_https(request))
+            .map_err(raise)?;
+        Ok(crate::shared_acceptance::NativeSharedAcceptance::from_accepted(accepted))
+    }
+
+    /// Retries a pending HTTPS acceptance under its original invocation.
+    /// Pass the refusal's pending payload and the same request, not a
+    /// decoded generic retry reply: only the native HTTPS call produces
+    /// this object.
+    fn retry_shared_invitation_https(
+        &self,
+        py: Python<'_>,
+        pending_json: &str,
+        input_json: &str,
+    ) -> PyResult<crate::shared_acceptance::NativeSharedAcceptance> {
+        let pending: MemoryError = decode(pending_json, "pending")?;
+        let request: oneiron::verbs::SharedInvitationAcceptWithCredentialRequest =
+            decode(input_json, "retry_shared_invitation_https")?;
+        let accepted = py
+            .detach(|| self.inner.retry_shared_invitation_https(&pending, request))
+            .map_err(raise)?;
+        Ok(crate::shared_acceptance::NativeSharedAcceptance::from_accepted(accepted))
     }
 
     // BEGIN GENERATED AGENT VERBS
@@ -11509,10 +11548,13 @@ impl NativeClient {
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeClient>()?;
+    module.add_class::<shared_acceptance::NativeSharedAcceptance>()?;
     // The engine-backed served client, only in an `engine` build (OF-237).
     #[cfg(feature = "engine")]
     module.add_class::<embedded_engine::NativeEngine>()?;
     #[cfg(feature = "engine")]
     module.add_class::<embedded_engine::NativeEngineConnection>()?;
+    #[cfg(feature = "engine")]
+    module.add_class::<embedded_engine::NativeSharedOutcome>()?;
     Ok(())
 }
