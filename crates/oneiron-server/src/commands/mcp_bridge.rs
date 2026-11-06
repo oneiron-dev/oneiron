@@ -58,8 +58,11 @@ use crate::cli::{McpArgs, McpSurface};
 mod bridge_auth;
 mod call_meta;
 mod link;
+mod reply_body;
+mod request_id;
 
 use call_meta::{ClientSession, with_invocation};
+use request_id::RequestId;
 
 /// How many requests may be in flight at once. A client that sends more
 /// waits for the oldest to finish rather than spawning without bound; each
@@ -287,8 +290,8 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
         let bridge = Arc::clone(&bridge);
         let stdout = Arc::clone(&stdout);
         in_flight.push(std::thread::spawn(move || {
-            if let Some(answer) = bridge.answer(&line) {
-                emit(&stdout, &answer);
+            if let Some(answer) = bridge.answer(line) {
+                emit_answer(&stdout, answer);
             }
         }));
     }
@@ -303,6 +306,18 @@ fn emit(stdout: &Mutex<io::Stdout>, line: &str) {
     let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
     // A client that closed its end has gone; there is no one left to tell.
     let _ = writeln!(stdout, "{line}").and_then(|()| stdout.flush());
+}
+
+fn emit_answer(stdout: &Mutex<io::Stdout>, answer: Result<Value, String>) {
+    match answer {
+        Ok(answer) => {
+            let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
+            if serde_json::to_writer(&mut *stdout, &answer).is_ok() {
+                let _ = writeln!(stdout).and_then(|()| stdout.flush());
+            }
+        }
+        Err(refusal) => emit(stdout, &refusal),
+    }
 }
 
 /// One stdin line, read without holding more than [`MAX_FRAME_BYTES`] of it.
@@ -446,29 +461,29 @@ impl Bridge {
 
     /// One stdin line in, at most one stdout line out. A notification (no
     /// `id`) is forwarded and never answered, as JSON-RPC 2.0 requires.
-    fn answer(&self, line: &str) -> Option<String> {
-        let mut message: Value = match serde_json::from_str(line) {
+    fn answer(&self, line: String) -> Option<Result<Value, String>> {
+        let mut message: Value = match serde_json::from_str(&line) {
             Ok(message) => message,
             Err(error) => {
-                return Some(rpc_error(
+                return Some(Err(rpc_error(
                     &Value::Null,
                     -32700,
                     "parse_error",
                     &format!("the message is not JSON: {error}"),
                     None,
-                ));
+                )));
             }
         };
         // A batch, or anything but one object, is not a message this MCP
         // revision sends; answered here, it spends no holder proof.
         if !message.is_object() {
-            return Some(rpc_error(
+            return Some(Err(rpc_error(
                 &Value::Null,
                 -32600,
                 "invalid_request",
                 "send one JSON-RPC message object per line",
                 None,
-            ));
+            )));
         }
         // One deadline for the whole request, the endpoint probe included:
         // the called tool's own entry when `--tool-timeout-secs` names it,
@@ -486,14 +501,15 @@ impl Bridge {
                 .unwrap_or_else(mint_invocation)
         })
         .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten())
-        .unwrap_or_else(|| line.as_bytes().to_vec());
+        .unwrap_or_else(|| line.into_bytes());
         let sent = message
             .pointer("/params/_meta")
             .and_then(|meta| meta.get(INVOCATION_META))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let reply = self.post(body, until, deadline, tool);
-        let id = message.get("id").cloned()?;
+        let mut request_id = RequestId::new(message);
+        let reply = self.post(body, until, deadline, tool, Some(&mut request_id));
+        let id = request_id.into_id()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(answer) => {
                 if let Some(key) = key {
@@ -502,11 +518,11 @@ impl Bridge {
                 if let Some(offered) = offered {
                     self.client_session.note_initialize(offered, &answer);
                 }
-                answer.to_string()
+                Ok(answer)
             }
             // No answer from the server is no proof the call finished, so
             // the memory keeps what it holds.
-            Err(refusal) => refusal.rpc_error(&id, &self.auth),
+            Err(refusal) => Err(refusal.rpc_error(&id, &self.auth)),
         })
     }
 
@@ -635,6 +651,7 @@ impl Bridge {
                 until,
                 deadline,
                 tool,
+                None,
             )?
             .answer_to(&json!(SURFACE_PROBE_ID))?;
         let Some(result) = answer.get("result").and_then(Value::as_object) else {
@@ -665,7 +682,13 @@ impl Bridge {
         // The wake poll's own cap is inside the global deadline; its error
         // keeps naming that one, as before.
         let answer = self
-            .post(body.to_string().into_bytes(), until, self.deadline, None)?
+            .post(
+                body.to_string().into_bytes(),
+                until,
+                self.deadline,
+                None,
+                None,
+            )?
             .answer_to(&id)?;
         let Some(delivery) = answer.get("result").cloned() else {
             return Err(Refusal::Refused(answer));
@@ -680,9 +703,10 @@ impl Bridge {
         until: Instant,
         deadline: Duration,
         tool: Option<&str>,
+        request_id: Option<&mut RequestId>,
     ) -> Result<Reply, Refusal> {
         let surface = self.endpoint(until, deadline, tool)?;
-        self.post_to(surface, body, until, deadline, tool)
+        self.post_to(surface, body, until, deadline, tool, request_id)
     }
 
     /// One request to `surface` over the bridge's connection, signed for this
@@ -695,6 +719,7 @@ impl Bridge {
         until: Instant,
         deadline: Duration,
         tool: Option<&str>,
+        request_id: Option<&mut RequestId>,
     ) -> Result<Reply, Refusal> {
         if until.saturating_duration_since(Instant::now()).is_zero() {
             return Err(self.refusal_for(surface, link::Cut::Deadline, deadline, tool));
@@ -719,7 +744,7 @@ impl Bridge {
         };
         let exchange = self
             .link
-            .exchange(surface, &credential, body, &bounds)
+            .exchange(surface, &credential, body, &bounds, request_id)
             .map_err(|cut| self.refusal_for(surface, cut, deadline, tool))?;
         Ok(Reply {
             status: exchange.status,
@@ -762,11 +787,21 @@ impl Bridge {
     }
 }
 
+fn reply_body_text(body: Vec<u8>) -> String {
+    match String::from_utf8(body) {
+        Ok(text) => text,
+        Err(error) => {
+            let body = error.into_bytes();
+            String::from_utf8_lossy(&body).into_owned()
+        }
+    }
+}
+
 /// What the server sent back for one request.
 struct Reply {
     /// The HTTP status, when there was one.
     status: Option<u16>,
-    body: Vec<u8>,
+    body: reply_body::ReplyBody,
 }
 
 impl Reply {
@@ -774,8 +809,7 @@ impl Reply {
     /// it came with; anything else is the bridge's error for that request, so
     /// the client is never handed a line that answers nothing it sent.
     fn answer_to(self, id: &Value) -> Result<Value, Refusal> {
-        let body = serde_json::from_slice::<Value>(&self.body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
+        let body = self.body.into_json();
         let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
             && body.get("id") == Some(id)
             && match (body.get("result"), body.get("error")) {
@@ -842,14 +876,14 @@ enum Refusal {
 impl Refusal {
     /// The JSON-RPC error for request `id`; an auth refusal's advice is
     /// `auth`'s own.
-    fn rpc_error(&self, id: &Value, auth: &bridge_auth::Auth) -> String {
+    fn rpc_error(self, id: &Value, auth: &bridge_auth::Auth) -> String {
         match self {
             Self::Auth(body) => rpc_error(
                 id,
                 -32001,
                 "mcp_auth_required",
                 auth.refused_advice(),
-                Some(body.clone()),
+                Some(body),
             ),
             Self::Refused(answer) => match answer.get("error") {
                 Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
@@ -858,11 +892,11 @@ impl Refusal {
                     -32000,
                     "server_error",
                     "the server's /mcp initialize held no result, so no endpoint was picked; pass --surface to name one",
-                    Some(answer.clone()),
+                    Some(answer),
                 ),
             },
             Self::Server(message, body) => {
-                rpc_error(id, -32000, "server_error", message, Some(body.clone()))
+                rpc_error(id, -32000, "server_error", &message, Some(body))
             }
             Self::Unreachable(message) => rpc_error(
                 id,
