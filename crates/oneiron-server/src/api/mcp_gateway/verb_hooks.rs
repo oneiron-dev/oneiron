@@ -328,9 +328,9 @@ impl McpCallContext {
 /// The saved `call` run again in `context`, its door rebuilt: the saved args
 /// meet the admission the caller's own call of the tool meets, then run
 /// through the same dispatch. A native read runs again through its own
-/// verb-hook boundary, on the saved request, and its answer goes beside the
-/// rows it was derived from, for the caller's retry to be released by
-/// (FIX 1435).
+/// verb-hook boundary, on the saved request (FIX 1435). Either answer goes
+/// beside the rows it was derived from, for the caller's retry to be
+/// released by (FIX 1435, FIX 21054).
 #[cfg(feature = "code-sandbox-wasmtime")]
 async fn rerun_saved_call(
     server: &Arc<SyncServer>,
@@ -393,7 +393,15 @@ async fn rerun_saved_call(
                 }
                 hooks.spend(server);
             }
-            Ok(VerbAskResumed::Ran(Ok(output)))
+            Ok(
+                match super::served_rows::saved_answer_rows(&call.verb, served) {
+                    Some(producers) => VerbAskResumed::RanWithProducers {
+                        result: Ok(output),
+                        producers,
+                    },
+                    None => VerbAskResumed::Ran(Ok(output)),
+                },
+            )
         }
     }
 }

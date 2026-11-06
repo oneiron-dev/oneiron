@@ -321,9 +321,9 @@ pub enum VerbAskResumed {
     /// The door ran the call: what it returned, or its error.
     Ran(MemoryResult<Value>),
     /// The door ran the call and listed the rows its answer was derived
-    /// from, as a native memory read's door does (FIX 1435). They are saved
-    /// with the answer, and the door that answers the caller's retry
-    /// releases it by them.
+    /// from, as an MCP door does (FIX 1435, FIX 21054). They are saved with
+    /// the answer, and the door that answers the caller's retry releases it
+    /// by them.
     RanWithProducers {
         result: MemoryResult<Value>,
         producers: Vec<EntityId>,
