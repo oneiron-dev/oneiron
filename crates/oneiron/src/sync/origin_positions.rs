@@ -15,7 +15,7 @@ use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 
 mod import;
 pub(crate) use import::VerifiedOriginPosition;
-pub(in crate::sync) use import::prepare;
+pub(in crate::sync) use import::{DeferredPositions, prepare};
 pub use import::{OwnDevicePositionImport, prepare_own_device_push_positions};
 
 pub(crate) const ORIGIN_POSITIONS_MAP: &str = "origin_positions";
@@ -35,18 +35,25 @@ fn bound_position(doc: &LoroDoc, key: &str) -> Option<(OriginPosition, Vec<u8>)>
     if !has_positions(doc) {
         return None;
     }
-    let id = owner(key)?;
     let bytes = map_get_bytes(&doc.get_map(ORIGIN_POSITIONS_MAP), key)?;
     let position = OriginPosition::decode(&bytes)?;
-    let carrier = map_get_bytes(&doc.get_map("entities"), key)?;
+    holds_carrier(doc, key, &position).then_some((position, bytes))
+}
+
+fn holds_carrier(doc: &LoroDoc, key: &str, position: &OriginPosition) -> bool {
+    let Some(id) = owner(key) else {
+        return false;
+    };
+    let Some(carrier) = map_get_bytes(&doc.get_map("entities"), key) else {
+        return false;
+    };
     if !position.binds_carrier(&id, &carrier) {
-        return None;
+        return false;
     }
-    let reference = crate::sync::asset_body::references::bound_in(doc, &id, &carrier)
+    crate::sync::asset_body::references::bound_in(doc, &id, &carrier)
         .map(|reference| reference.encode())
         .transpose()
-        .ok()?;
-    (position.row.file_reference == reference).then_some((position, bytes))
+        .is_ok_and(|reference| position.row.file_reference == reference)
 }
 
 /// Copies optional data only for an own-machine projection, after that
