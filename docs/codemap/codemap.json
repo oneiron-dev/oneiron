@@ -92595,7 +92595,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 102,
+      "const": 103,
       "re-export": 1,
       "type": 1
      }
