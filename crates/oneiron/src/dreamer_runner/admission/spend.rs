@@ -105,7 +105,11 @@ impl DreamerRunnerStore<'_> {
     /// Keeps a measured charge whose settlement failed owed on its child's
     /// reservation (FIX 8728), never refunded: the reservation's next
     /// settlement or abort charges it.
-    pub(crate) fn owe_unsettled_charge(&self, input: &SettleDreamerBudget) -> Result<()> {
+    pub(crate) fn owe_unsettled_charge(
+        &self,
+        input: &SettleDreamerBudget,
+        native: Option<&super::NativeMeterSnapshot>,
+    ) -> Result<()> {
         validate_budget_id(&input.budget_id)?;
         self.vault.with_write_txn(|wtxn| {
             let mut budget = self.owing_budget_in_txn(wtxn, &input.budget_id)?;
@@ -115,7 +119,11 @@ impl DreamerRunnerStore<'_> {
                 input.child_attempt,
                 input.actual_units,
                 input.now,
-            )
+            )?;
+            if let Some(native) = native {
+                self.record_native_metered_owed_in_txn(wtxn, input, native);
+            }
+            Ok(())
         })
     }
 
