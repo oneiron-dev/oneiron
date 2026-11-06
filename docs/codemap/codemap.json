@@ -21019,7 +21019,7 @@
      "path": "src/connector_key/events/paced.rs",
      "purpose": "Connector event wakes a full count-bound budget window paces (FIX 8686)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -22589,7 +22589,7 @@
       "const": 7,
       "crate-vis": 4,
       "enum": 5,
-      "fn": 24,
+      "fn": 25,
       "struct": 13
      }
     },
@@ -22788,6 +22788,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/memory_writers.rs",
+     "purpose": "Who wrote each MEMORIES row (BOARD-LAYOUT add-on 2): the actor a board layout's `who` filter matches a…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -56701,7 +56711,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 13
      }
@@ -66836,14 +66846,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentBoardLayoutOverride",
       "BoardLayoutSettings"
      ],
      "path": "src/settings/board_layout.rs",
      "purpose": "The owner's board layout settings (BOARD-LAYOUT = A, owner 2026-11-03 20:25: \"better to just set the cap and…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -91009,7 +91021,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92222,7 +92234,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6487,
+   "source_files": 6488,
    "test_files": 895
   },
   "oneiron-android": {
@@ -112410,7 +112422,7 @@
      "path": "src/api/context_board/layout.rs",
      "purpose": "The actor's own board layout on the HTTP, chat and MCP boards (BOARD-LAYOUT = A, owner 2026-11-03 20:25)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
