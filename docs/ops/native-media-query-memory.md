@@ -311,9 +311,25 @@ released while its buffer is live or retained as part of the final record.
 An unbound finalizer adds no walk. This remains post-allocation accounting, not
 construction-peak, config-map, number-internal or full-working-set coverage.
 
+The finalizer's private trace-membership scratch uses a separate copied ID
+vector, sorted and deduplicated only for membership lookup. The caller's ID
+order, retained candidate order and final-stage clone stay unchanged. This
+replaces the former temporary hash set; it is not the canonical detached input
+copy or the final record's result-ID vector.
+
+When bound, the same lease records that scratch vector's actual capacity using
+the native ID element size immediately after copying, before sorting or trace
+filtering. Deduplication keeps its backing capacity. The vector drops at the
+end of the original trace scope, then only its remembered byte count is
+released before the current score/trace measurement. No zero-byte release is
+added for an absent or empty allocation. On unwind, the local vector still
+drops before the caller's lease. An unbound finalizer keeps the membership
+behavior without capacity accounting. This prices known vector backing, not
+allocator internals, the copy's allocation peak or a performance result.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
-other mutation copies, hash sets, config-map storage, number internals,
+other mutation copies, config-map storage, number internals,
 serialization scratch, marker/index/retention keys and values, construction
 peaks or pre-growth admission. They do not establish a full working-set bound
 or a compiler/runtime result.
