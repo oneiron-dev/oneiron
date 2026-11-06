@@ -125,7 +125,7 @@ pub use hooks::{CompactHooks, HOST_COMPACT, check_host_compact_rewrite, compact_
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{
     COMPACTION_STEP_RESPONSE_NAME, SelfLanding, admit_self_landing, admit_self_landing_on,
-    is_epoch_summary,
+    is_epoch_summary, refused_pass_execution,
 };
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,

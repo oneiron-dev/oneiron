@@ -130,6 +130,31 @@ pub(super) struct Served<D> {
     pub(super) latency: Duration,
 }
 
+/// A call refused after it went out (FIX 7745): the model it was admitted
+/// on, its durable-step identity and what the host wore it with, so a
+/// self-written pass keeps the call's receipt though it answered nothing.
+pub(super) struct Dispatched<D> {
+    pub(super) model: ModelId,
+    pub(super) step_hash: Option<[u8; 32]>,
+    pub(super) worn: D,
+}
+
+/// Why a call was not served: the refusal, and what had gone out when the
+/// refusal came after the call was sent.
+pub(super) struct Unserved<D> {
+    pub(super) refusal: CompactionRefusal,
+    pub(super) dispatched: Option<Dispatched<D>>,
+}
+
+impl<D> From<CompactionRefusal> for Unserved<D> {
+    fn from(refusal: CompactionRefusal) -> Self {
+        Self {
+            refusal,
+            dispatched: None,
+        }
+    }
+}
+
 impl ServedCompactionBackend {
     /// One pass's call: admitted by `admit`, held to the admitted model's
     /// context, then `dress`ed in the room it leaves (a self-written call's
@@ -144,7 +169,7 @@ impl ServedCompactionBackend {
             &mut LlmRequest,
             CallRoom,
         ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
-    ) -> Result<Served<D>, CompactionRefusal> {
+    ) -> Result<Served<D>, Unserved<D>> {
         let started = Instant::now();
         let mut llm = self.llm_request(request, retry);
         let admitted = match admit {
@@ -173,6 +198,7 @@ impl ServedCompactionBackend {
                 CompactionSuppression::TurnScoped { check: None },
                 "the call was not sent".to_owned(),
             )
+            .into()
         })
     }
 
@@ -194,14 +220,14 @@ impl ServedCompactionBackend {
             &mut LlmRequest,
             CallRoom,
         ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
-    ) -> Result<Option<Served<D>>, CompactionRefusal> {
+    ) -> Result<Option<Served<D>>, Unserved<D>> {
         let (worn, home_rows, guard, payer) =
             match self.ready(&mut call, summary_token_budget, dress) {
                 Ok(ready) => ready,
                 // Under `auto` nothing has gone out yet: the flight's cheap
                 // writer runs instead (FIX 6029).
                 Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
-                Err(refusal) => return Err(refusal),
+                Err(refusal) => return Err(refusal.into()),
             };
         let step_hash = call.request.canonical_hash().ok();
         let sent = if matches!(dispatch, Dispatch::Walk) {
@@ -276,7 +302,19 @@ impl ServedCompactionBackend {
                     LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
                     _ => CompactionSuppression::TurnScoped { check: None },
                 };
-                Err(refused(suppression, error.to_string()))
+                // A call that went out keeps what it was sent as beside the
+                // refusal, for its writer's receipt (FIX 7745); one its
+                // meter refused never left.
+                let dispatched =
+                    (!matches!(error, LlmError::BudgetDenied(_))).then_some(Dispatched {
+                        model,
+                        step_hash,
+                        worn,
+                    });
+                Err(Unserved {
+                    refusal: refused(suppression, error.to_string()),
+                    dispatched,
+                })
             }
         }
     }
@@ -435,9 +473,11 @@ impl CompactionBackend for ServedCompactionBackend {
         let sources = request
             .window_read_from_sources
             .then_some(request.sources.clone());
-        let served = self.serve(request, retry, sources, &admit, |_, _| {
-            Ok(((), Some(Vec::new())))
-        })?;
+        let served = self
+            .serve(request, retry, sources, &admit, |_, _| {
+                Ok(((), Some(Vec::new())))
+            })
+            .map_err(|unserved| unserved.refusal)?;
         Ok(product_of(&served.response, served.latency))
     }
 }

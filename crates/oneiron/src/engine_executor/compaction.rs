@@ -617,7 +617,8 @@ fn run_pass(
         let (product, mut execution) = match backend.compact_as_writer(request, retry) {
             Ok(answer) => answer,
             Err(refusal) => {
-                let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
+                let spent =
+                    crate::compaction::refused_pass_execution(backend, spent, rejected, calls);
                 return (PassOutcome::Refused(refusal), spent);
             }
         };
