@@ -150,7 +150,8 @@ impl NativeExl3Transport {
                 None => self.http.execute_with_tie(request, lease, tie),
             };
         };
-        self.shaping.execute(route, request, lease, release)
+        self.shaping
+            .execute_with_release(route, request, lease, release)
     }
 
     fn stream_with_release<'a>(
@@ -169,7 +170,9 @@ impl NativeExl3Transport {
                 None => self.http.stream_with_tie(request, lease, tie),
             };
         };
-        Ok(self.shaping.stream(route, request, lease, release))
+        Ok(self
+            .shaping
+            .stream_with_release(route, request, lease, release))
     }
 }
 
@@ -218,6 +221,15 @@ impl NativeShaping {
         route: NativeRoute,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+    ) -> OpenAiCompatFuture<'a> {
+        self.execute_with_release(route, request, lease, None)
+    }
+
+    fn execute_with_release<'a>(
+        &self,
+        route: NativeRoute,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
         release: Option<DispatchRelease<'a>>,
     ) -> OpenAiCompatFuture<'a> {
         let segments = request.host_segments;
@@ -237,6 +249,15 @@ impl NativeShaping {
 
     /// A streamed call over `route`, shaped as HTTP would send it.
     fn stream<'a>(
+        &self,
+        route: NativeRoute,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> OpenAiCompatProviderStream<'a> {
+        self.stream_with_release(route, request, lease, None)
+    }
+
+    fn stream_with_release<'a>(
         &self,
         route: NativeRoute,
         request: OpenAiCompatHttpRequest,
@@ -303,7 +324,7 @@ impl OpenAiCompatTransport for NativeLocalTransport {
         lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
         match self.route(&request.body) {
-            Ok(route) => self.shaping.execute(route, request, lease, None),
+            Ok(route) => self.shaping.execute(route, request, lease),
             Err(error) => Box::pin(async move { Err::<OpenAiCompatHttpResponse, _>(error) }),
         }
     }
@@ -314,7 +335,33 @@ impl OpenAiCompatTransport for NativeLocalTransport {
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let route = self.route(&request.body)?;
-        Ok(self.shaping.stream(route, request, lease, None))
+        Ok(self.shaping.stream(route, request, lease))
+    }
+
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> OpenAiCompatFuture<'a> {
+        match self.route(&request.body) {
+            Ok(route) => self
+                .shaping
+                .execute_with_release(route, request, lease, Some(release)),
+            Err(error) => Box::pin(async move { Err::<OpenAiCompatHttpResponse, _>(error) }),
+        }
+    }
+
+    fn stream_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        let route = self.route(&request.body)?;
+        Ok(self
+            .shaping
+            .stream_with_release(route, request, lease, Some(release)))
     }
 }
 

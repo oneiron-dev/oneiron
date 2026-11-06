@@ -11,8 +11,9 @@
 //! optional browser planner unbound leaves it unseated, as no rung does.
 use std::sync::Arc;
 
+use oneiron::llm::ExtractionEgressPredicate;
+use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{ExtractionEgressPredicate, HostInferenceContext};
 use oneiron::{LlmRequest, ModelId, ModelLocality, ModelTierRef, Vault};
 
 use super::{ModelRuntime, OfferLadder, Seat};
