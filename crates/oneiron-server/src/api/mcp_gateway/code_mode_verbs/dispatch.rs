@@ -285,6 +285,22 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.credential_lane().map(Some)
     }
 
+    /// A run's speech is its own record only where its storage lands it in
+    /// the run's own derived conversation; anywhere else it is a room write
+    /// and needs Write (`mcp_run_speech_gate`). It reads nothing.
+    fn admit_run_speech(
+        &self,
+        _effect: SelfEffect,
+        destination: oneiron::code_run::RunSpeechDestination,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        mcp_run_speech_gate(&self.server, &self.actor, destination).map_err(|error| {
+            AgentVerbRefusal {
+                code: error.kind.to_owned(),
+            }
+        })?;
+        Ok(None)
+    }
+
     /// The host turn's hooks read on the credential's lane, as the run's
     /// own search does (FIX 9841). A keyless reply stays keyless.
     fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
