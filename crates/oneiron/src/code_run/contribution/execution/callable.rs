@@ -20,12 +20,24 @@
 //! forks' own programs do not run: the branch without the load has no
 //! recorded world past its step, so the pair is scored in the `Text` mode.
 //!
+//! The console is the only message the request builder keeps a witness
+//! for. So the rest of the next request stays as captured only when no
+//! recorded call that the branch without the load never made has an answer
+//! that request shows outside the console (FIX 3608). Those calls are the
+//! load's own call and its subtree, and the calls past the point where that
+//! branch ended its step. A fold verb's change to the run's fold ledger, a
+//! board frame a verb's answer carried, and an answer kept as a bound
+//! result of the run make the pair unavailable. The recorded kind of each
+//! call decides, never its bytes.
+//!
 //! A branch the recorded calls do not answer, a callable whose stored file
-//! does not read again as it loaded, a branch that ends its run, and a next
-//! request that shows the console otherwise are unavailable for the shadow
+//! does not read again as it loaded, a branch that ends its run, a next
+//! request that shows the console otherwise, and a call left out whose
+//! answer that request shows elsewhere are unavailable for the shadow
 //! runner's own reason ([`Unavailable::ProgramReplay`]), never a loss.
 
 use std::cmp::Reverse;
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::super::{
@@ -38,12 +50,13 @@ use crate::code_run::shadow_runner::{
     ShadowUnavailableReason as Reason, prepare_shadow_step_source,
 };
 use crate::code_run::{
-    CapsuleHost, CapsuleRequest, CapturedCallable, CodeRunHistoryTurn, ConsoleSlot,
-    StepReplayCapsule, StepReplayContext, capsule_context_body, capsule_request,
+    CapsuleHost, CapsuleRequest, CapturedCallable, CodeRunBridgeCall, CodeRunHistoryTurn,
+    ConsoleSlot, SelfEffect, StepReplayCapsule, StepReplayContext, agent_verb_observations_of,
+    capsule_context_body, capsule_request,
 };
 use crate::engine_executor::{
-    ArmTypeFeedback, JsCodeModeRuntime, StepCancellation, observation_output_path,
-    run_shadow_callable_branch, script_output_path,
+    ArmTypeFeedback, JsCodeModeRuntime, StepCancellation, bridge_result_output_path,
+    observation_output_path, run_shadow_callable_branch, script_output_path,
 };
 use crate::skill_attribution::ContributionTarget;
 use crate::{ContentPart, EntityId, LlmRequest, Result, Vault};
@@ -267,13 +280,15 @@ impl Runner<'_> {
     /// at bridge position `seq` present, then absent: the caller's own
     /// recorded program run again in two scratch arms under the host's one
     /// pin, each to its step's end with its run going on. Only a callable
-    /// of the first-party tier runs in an arm.
+    /// of the first-party tier runs in an arm. The branch without the load
+    /// must leave out no recorded call whose answer the next request shows
+    /// outside the console (FIX 3608, [`shown_outside_console`]).
     fn branch_observations(&self, caller: &StepReplayCapsule, seq: u64) -> Ran<[String; 2]> {
         let step = match prepare_shadow_step_source(self.vault, caller)? {
             Ok(step) => step,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
-        match step.callable_at(seq) {
+        let nested_end = match step.callable_at(seq) {
             None => {
                 return Ok(Err(ShadowUnavailable::new(
                     Reason::SourceMissing,
@@ -284,7 +299,12 @@ impl Runner<'_> {
                 let tier = ShadowUnavailable::new(Reason::SandboxUnavailable, "callable_tier");
                 return Ok(Err(tier));
             }
-            Some(_) => {}
+            Some(callable) => callable.nested_end,
+        };
+        // The load's own call and its subtree never happen without it.
+        if let Some(cause) = shown_outside_console(&step, seq..nested_end) {
+            let shown = ShadowUnavailable::new(Reason::CapturedOutcomeMissing, cause);
+            return Ok(Err(shown));
         }
         let program = match caller_program(self.vault, &step)? {
             Ok(program) => program,
@@ -306,8 +326,10 @@ impl Runner<'_> {
             Err(unavailable) => return Ok(Err(unavailable)),
         };
         let mut observations = [String::new(), String::new()];
+        let mut matched = [0_u64; 2];
         let loads = [ArmCallableLoad::Present, ArmCallableLoad::Absent];
-        for (observation, load) in observations.iter_mut().zip(loads) {
+        let branches = observations.iter_mut().zip(matched.iter_mut()).zip(loads);
+        for ((observation, position), load) in branches {
             let branch = CallableBranch {
                 program: program.clone(),
                 callables: ArmCallables {
@@ -317,23 +339,78 @@ impl Runner<'_> {
                 },
             };
             match branch_observation(self.program, &step, &branch, runtime)? {
-                Ok(observed) => *observation = observed,
+                Ok((observed, consumed)) => {
+                    *observation = observed;
+                    *position = consumed;
+                }
                 Err(unavailable) => return Ok(Err(unavailable)),
             }
+        }
+        // The caller's fallback may end its step before the calls the live
+        // continuation made after the load's: those never happen either.
+        let [_, without_matched] = matched;
+        let (_, bridge_end) = step.bridge_window();
+        if let Some(cause) = shown_outside_console(&step, without_matched..bridge_end) {
+            let shown = ShadowUnavailable::new(Reason::CapturedOutcomeMissing, cause);
+            return Ok(Err(shown));
         }
         Ok(Ok(observations))
     }
 }
 
+/// What the next request shows, outside the caller's console, of an answer
+/// of a recorded call of `step` at a bridge position in `rows` (FIX 3608),
+/// as the cause the pair is unavailable for. The branch without the load
+/// never makes those calls. The request builder keeps a witness of where it
+/// put the console only, so a message it built from any other answer of
+/// theirs is not rebuilt. Each call's recorded kind decides:
+///
+/// - a fold verb's call (`fold_ledger`): a change to the run's fold ledger
+///   reshapes the turns before the console;
+/// - a verb's answer that carried a board frame (`board_frames`): the
+///   step's frames message beside its console shows it;
+/// - an answer kept as a bound result of the run, a reply spilled as a body
+///   or a stored typed reply (`bound_result`): the brief of the run's
+///   results lists it once a frame stands in for earlier turns, and no
+///   witness says whether the request had one.
+///
+/// `bridge_window` when the step's record does not hold `rows`; `None` when
+/// no call there has an answer of those kinds.
+fn shown_outside_console(step: &PreparedShadowStep, rows: Range<u64>) -> Option<&'static str> {
+    let window = &step.window;
+    let held = usize::try_from(rows.start)
+        .ok()
+        .zip(usize::try_from(rows.end).ok())
+        .and_then(|(start, end)| window.bridge_calls.get(start..end));
+    let Some(calls) = held else {
+        return Some("bridge_window");
+    };
+    if calls.iter().any(|call| call.effect == SelfEffect::Fold) {
+        return Some("fold_ledger");
+    }
+    if !agent_verb_observations_of(calls).is_empty() {
+        return Some("board_frames");
+    }
+    // A row is bound as the arm counts its spills: a stored reply the step
+    // froze, or a body at its row's result path.
+    let bound = |call: &CodeRunBridgeCall| {
+        let spilled = bridge_result_output_path(call.seq);
+        step.replies.iter().any(|reply| reply.seq == call.seq)
+            || window.outputs.iter().any(|output| output.path == spilled)
+    };
+    calls.iter().any(bound).then_some("bound_result")
+}
+
 /// `branch`'s observation of `step`, run by `program` on the component
-/// pinned at `runtime`: its step must end with its run going on, as the
+/// pinned at `runtime`, and the bridge position it matched the step's
+/// recorded calls to: its step must end with its run going on, as the
 /// caller's live step did, for a next request to exist.
 fn branch_observation(
     program: &dyn ContributionForkProgram,
     step: &PreparedShadowStep,
     branch: &CallableBranch,
     runtime: [u8; 32],
-) -> Ran<String> {
+) -> Ran<(String, u64)> {
     let executed = match program.execute_branch(step, branch)? {
         Ok(executed) => executed,
         Err(unavailable) => return Ok(Err(unavailable)),
@@ -347,13 +424,14 @@ fn branch_observation(
         return Ok(Err(ended));
     }
     let path = observation_output_path(step.step().step);
+    let consumed = executed.consumed;
     let observation = executed
         .outputs
         .into_iter()
         .find(|(body, _)| body.path == path)
         .map(|(_, bytes)| String::from_utf8(bytes));
     Ok(match observation {
-        Some(Ok(text)) => Ok(text),
+        Some(Ok(text)) => Ok((text, consumed)),
         Some(Err(_)) => Err(ShadowUnavailable::new(
             Reason::SourceDigestMismatch,
             "observation",
