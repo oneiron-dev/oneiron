@@ -105,7 +105,11 @@ impl<'k> AuthenticatedCheckpoint<'k> {
     pub(super) fn carry_current_authority(
         &mut self,
         current: &crate::Vault,
-    ) -> Result<(Vec<super::HomeTableNote>, crate::store::PadObjectsCapture)> {
+    ) -> Result<(
+        Vec<super::HomeTableNote>,
+        crate::store::PadObjectsCapture,
+        super::authority_plane::ImageEntityFloors,
+    )> {
         super::authority_plane::carry_current_authority(&mut self.image.databases, current)
     }
 
