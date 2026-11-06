@@ -52,11 +52,24 @@ pub trait FloorLease: Send {
     /// waits; used to roll back growth whose budget admission failed.
     fn shrink(&mut self, bytes: u64);
 
-    /// [`Self::grow`] with no deadline: only `stopped` ends the wait.
+    /// Grows allocated buffers without a deadline: only `stopped` ends the
+    /// wait. Use [`Self::grow_pending_untimed`] if earlier reservations are
+    /// not established allocations.
     ///
     /// # Errors
     /// As [`Self::grow`].
     fn grow_untimed(&mut self, more: u64, stopped: &dyn Fn() -> bool) -> Result<(), FloorRefusal>;
+
+    /// Grows without a deadline while every earlier unallocated reservation
+    /// stays charged. Only [`Self::materialized`] establishes allocation.
+    ///
+    /// # Errors
+    /// As [`Self::grow`].
+    fn grow_pending_untimed(
+        &mut self,
+        more: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), FloorRefusal>;
 }
 
 /// The machine's memory, as the host leases it to organs' own buffers. The

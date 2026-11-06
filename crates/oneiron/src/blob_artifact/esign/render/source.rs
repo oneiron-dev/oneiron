@@ -1,5 +1,6 @@
 //! Static page-tree and resource-graph admission and copying.
-use super::streams::decoded;
+use super::admitted::Stage;
+use super::streams::decoded_admitted;
 use super::*;
 
 pub(super) fn resolved<'a>(doc: &'a Document, object: &'a Object) -> Result<&'a Object> {
@@ -141,6 +142,7 @@ pub(super) struct VisualCopy<'a> {
     pub(super) ids: BTreeMap<ObjectId, ObjectId>,
     pub(super) active: BTreeSet<ObjectId>,
     pub(super) bound: StreamBound,
+    pub(super) stage: &'a Stage,
     /// Each source resource dictionary copied so far, by its address in the
     /// source this preparation borrows (FIX 3810): pages that share one copy
     /// it once, and each takes its own top-level map naming the same members.
@@ -192,8 +194,9 @@ impl VisualCopy<'_> {
                 if name(self.source, &stream.dict, b"Subtype")? == Some(b"Form")
                     || stream.dict.has(b"PatternType")
                 {
-                    let mut content = decoded(stream, self.bound)?;
-                    content.push(b'\n');
+                    let content_stage = self.stage.nested();
+                    let mut content = decoded_admitted(stream, self.bound, &content_stage)?;
+                    append_content(&mut content, &[], &content_stage)?;
                     check_content(&content)?;
                 }
                 Object::Stream(Stream::new(
@@ -326,8 +329,16 @@ impl VisualCopy<'_> {
                 } else if key == b"CharProcs" {
                     let mut glyphs = Dictionary::new();
                     for (name, glyph) in resolved(self.source, value)?.as_dict()? {
+                        let content_stage = self.stage.nested();
                         let mut content = Vec::new();
-                        glyph_content(self.source, glyph, &mut content, 0, self.bound)?;
+                        glyph_content(
+                            self.source,
+                            glyph,
+                            &mut content,
+                            0,
+                            self.bound,
+                            &content_stage,
+                        )?;
                         check_content(&content)?;
                         glyphs.set(name.clone(), self.copy(out, glyph, depth + 1)?);
                     }
@@ -349,6 +360,7 @@ fn glyph_content(
     bytes: &mut Vec<u8>,
     depth: usize,
     bound: StreamBound,
+    stage: &Stage,
 ) -> Result<()> {
     // Bounds this recursion's stack, not the content's size.
     if depth > 32 {
@@ -357,18 +369,37 @@ fn glyph_content(
     match resolved(doc, value)? {
         Object::Array(values) => {
             for v in values {
-                glyph_content(doc, v, bytes, depth + 1, bound)?;
+                glyph_content(doc, v, bytes, depth + 1, bound, stage)?;
             }
         }
         Object::Stream(stream) => {
             if stream.dict.has(b"F") {
                 return Err(PdfPreparationError::UnsupportedPdf);
             }
-            bytes.extend(decoded(stream, bound)?);
-            bytes.push(b'\n');
+            let decoded_stage = stage.nested();
+            let content = decoded_admitted(stream, bound, &decoded_stage)?;
+            append_content(bytes, &content, stage)?;
         }
         _ => return Err(PdfPreparationError::MalformedPdf),
     }
+    Ok(())
+}
+
+/// Append one fragment and its separator, admitting a whole new allocation
+/// while the old allocation is still held. `stage` outlives `bytes`.
+fn append_content(bytes: &mut Vec<u8>, fragment: &[u8], stage: &Stage) -> Result<()> {
+    let needed = bytes
+        .len()
+        .checked_add(fragment.len())
+        .and_then(|len| len.checked_add(1))
+        .ok_or(PdfPreparationError::Limit)?;
+    if needed > bytes.capacity() {
+        let grown = bytes.capacity().saturating_mul(2).max(needed);
+        stage.admit(grown)?;
+        bytes.reserve_exact(grown - bytes.len());
+    }
+    bytes.extend_from_slice(fragment);
+    bytes.push(b'\n');
     Ok(())
 }
 
@@ -393,6 +424,7 @@ impl PageContents {
         doc: &Document,
         value: &Object,
         bound: StreamBound,
+        stage: &Stage,
     ) -> Result<Vec<ObjectId>> {
         let stream = |value: &Object| -> Result<ObjectId> {
             match doc.dereference(value)? {
@@ -408,16 +440,16 @@ impl PageContents {
         if self.checked.contains(&streams) {
             return Ok(streams);
         }
+        let content_stage = stage.nested();
         let mut content = Vec::new();
         for id in &streams {
             let bytes = match self.decoded.entry(*id) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(decoded(doc.get_object(*id)?.as_stream()?, bound)?)
-                }
+                std::collections::btree_map::Entry::Vacant(entry) => entry.insert(
+                    decoded_admitted(doc.get_object(*id)?.as_stream()?, bound, stage)?,
+                ),
             };
-            content.extend_from_slice(bytes);
-            content.push(b'\n');
+            append_content(&mut content, bytes, &content_stage)?;
         }
         check_content(&content)?;
         self.checked.insert(streams.clone());

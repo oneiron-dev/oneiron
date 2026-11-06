@@ -33,6 +33,14 @@ impl oneiron_organ_host::FloorLease for OrganLease {
     ) -> Result<(), oneiron_organ_host::FloorRefusal> {
         MemoryLease::grow_untimed(&mut self.0, more, stopped).map_err(organ_refusal)
     }
+
+    fn grow_pending_untimed(
+        &mut self,
+        more: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), oneiron_organ_host::FloorRefusal> {
+        MemoryLease::grow_pending_untimed(&mut self.0, more, stopped).map_err(organ_refusal)
+    }
 }
 
 /// The machine's memory as the organ host's floor (FIX 7654): an organ's
