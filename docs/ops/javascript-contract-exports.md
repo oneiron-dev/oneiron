@@ -173,6 +173,11 @@ object itself, as in `var module = (module.exports = {a: 1}, module)`. Fresh pre
 values apply in source order and detach the old `exports` alias; an all-current
 prefix preserves keys and alias. The `module` binding stays native because the
 final read returns the same original module object, not the current exported value.
+A direct plain assignment to the native wrapper `module` binding uses the same
+module-object final rule, as in `module = (module.exports = {a: 1}, module)`.
+Its prefix replacements apply in order without rebinding the module object;
+only fresh replacements detach the old `exports` alias. A final export value,
+fresh value or assignment does not qualify for either module-binding form.
 Lexical and function shadows remain distinct from wrapper bindings. Destructured,
 conditional and loop-carried initializer flows are not modeled.
 A direct `module = module` or `var module = module` preserves its current

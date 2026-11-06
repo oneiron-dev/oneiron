@@ -217,6 +217,26 @@ pub(super) fn collect(
                                 )));
                     accounted.insert((identifier.span.start, identifier.span.end));
                 } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
+                    if assignment.operator.is_assign()
+                        && let Some(values) = module_final_sequence_values(
+                            &assignment.right,
+                            semantic,
+                            alias,
+                            native_module,
+                            &mut accounted,
+                        )
+                    {
+                        commonjs = true;
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        accounted.insert((identifier.span.start, identifier.span.end));
+                        continue;
+                    }
                     native_module = assignment.operator.is_assign()
                         && native_module
                         && wrapper(&assignment.right, "module", semantic, &mut accounted);
