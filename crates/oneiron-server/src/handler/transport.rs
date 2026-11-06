@@ -16,6 +16,10 @@ use super::protocol_close::ProtocolRefusal;
 use crate::auth::RevokedTokenJtis;
 use crate::protocol::close_codes;
 
+mod claim_copies;
+
+use self::claim_copies::ClaimCopyRelease;
+
 /// Out-buffer size an outbound frame must exceed before the WebSocket codec
 /// writes it straight to the socket, in bytes.
 ///
@@ -496,10 +500,38 @@ where
     /// process, the sink's own queue included, is revocable.
     #[must_use]
     pub(super) async fn send_binary(&mut self, data: Vec<u8>) -> bool {
+        self.send_binary_inner(data, None).await
+    }
+
+    async fn send_binary_inner(
+        &mut self,
+        data: Vec<u8>,
+        optional: Option<(
+            Vec<u8>,
+            ClaimCopyRelease,
+            &oneiron::Vault,
+            oneiron::authority::PeerMachine,
+        )>,
+    ) -> bool {
         // The codec frame wraps here, after the internal routing tag is gone
         // and before any consult, so every outbound kind gets it and the
         // threshold below is judged on the bytes that will be queued.
-        let data = self.wrap_outbound(data);
+        let required_tag = data.first().copied();
+        let required_len = data.len();
+        let has_optional = optional.is_some();
+        let mut data = if has_optional {
+            encode_codec_frame(&data, self.peer_codecs).unwrap_or(data)
+        } else {
+            self.wrap_outbound(data)
+        };
+        // Optional encoding and geometry cannot change the required send's result.
+        let mut optional = optional.and_then(|(candidate, copies, vault, peer)| {
+            let tag = candidate.first().copied();
+            let raw_len = candidate.len();
+            let encoded = encode_codec_frame(&candidate, self.peer_codecs).unwrap_or(candidate);
+            self.fits_below_write_through(encoded.len())
+                .then_some((encoded, tag, raw_len, copies, vault, peer))
+        });
         // Before anything is handed to the codec: a frame that could reach the
         // write-through threshold is refused outright, because queuing it would
         // put its bytes on the wire from inside `start_send` — between the
@@ -578,6 +610,18 @@ where
             // flushes no application bytes.
             self.close().await;
             return false;
+        }
+        let mut sent_tag = required_tag;
+        let mut sent_len = required_len;
+        if let Some((candidate, tag, raw_len, copies, vault, peer)) = optional.as_mut()
+            && copies.is_current(vault, *peer)
+        {
+            data = std::mem::take(candidate);
+            sent_tag = *tag;
+            sent_len = *raw_len;
+        }
+        if has_optional && let Some(tag) = sent_tag {
+            self.link_bytes.record_sent(tag, sent_len, data.len());
         }
         let Some(socket) = self.socket.as_mut() else {
             return false;

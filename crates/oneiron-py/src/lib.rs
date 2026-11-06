@@ -3373,6 +3373,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_members_invitation_code(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.invitation_code")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.invitation_code", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_members_change(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.members.change")?;
         let output = py
@@ -3405,6 +3415,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.members.accept")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.members.accept", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_accept_with_credential(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.accept_with_credential")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.accept_with_credential", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
@@ -7780,6 +7804,30 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "tasks.answer")?;
         let output = py
             .detach(|| self.inner.agent_verb("tasks.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward_challenge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward.challenge")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("tasks.answer.forward.challenge", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer.forward", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer.forward.status", input))
             .map_err(raise)?;
         encode(&output)
     }

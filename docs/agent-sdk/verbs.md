@@ -349,11 +349,13 @@ both bindings and their export-census tests in one change.
 - `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
+- `vault.members.invitation_code`
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
 - `vault.members.invitations`
 - `vault.members.accept`
+- `vault.members.accept_with_credential`
 - `vault.members.decline`
 - `vault.members.withdraw_invitation`
 - `vault.shared.object`
@@ -835,6 +837,9 @@ both bindings and their export-census tests in one change.
 - `ask`
 - `wait`
 - `tasks.answer`
+- `tasks.answer.forward.challenge`
+- `tasks.answer.forward`
+- `tasks.answer.forward.status`
 - `tasks.outcomes`
 - `vault.rooms.list`
 - `vault.rooms.messages`

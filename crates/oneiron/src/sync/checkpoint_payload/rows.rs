@@ -147,8 +147,14 @@ fn note_request(note: EntityId, request: &str, value: &[u8]) -> Option<Vec<Owner
 }
 
 /// Refuses an opened row unless it reads as one this projection seals: a
-/// cached item's entity blob, or a NOTE request's frame.
+/// cached item's entity blob, a NOTE request's frame or a copy-bearing job.
 pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
+    if at.db == RowDb::SyncQueue && at.path.is_empty() {
+        return match crate::sync::queue::checkpoint::embed_job(&at.key, value)? {
+            (_, Some(_)) => Ok(()),
+            (_, None) => Err(bad_part()),
+        };
+    }
     let blob = || {
         id_after(&at.key, SYNC_RESIDENCE_ITEM_BLOB.prefix).is_some()
             && EntityMetadataHeader::parse(value).is_some()

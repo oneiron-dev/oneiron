@@ -104,6 +104,7 @@ pub(in crate::recovery::checkpoint) fn seal_image(
         sealed.entry(db_name(*db)).or_default().insert(key.clone());
     }
     structure::strip(databases, &sealed);
+    carry_projected_skeletons(projected, filter, databases);
     carry_structure(projected, filter, databases);
     let erased: BTreeSet<OwnerRef> = owners
         .into_iter()
@@ -157,6 +158,32 @@ fn getter_links(projected: &Projected) -> Vec<structure::Link> {
             on: row.dependencies.clone(),
         })
         .collect()
+}
+
+/// Puts each projected row's payload-free image back after its full bytes
+/// left. The pending work survives even if its payload owner was erased.
+fn carry_projected_skeletons(
+    projected: &Projected,
+    filter: &ImageFilter,
+    databases: &mut BTreeMap<String, CanonicalRows>,
+) {
+    let skeletons = projected
+        .captures
+        .iter()
+        .flat_map(|(_, captured)| captured.owners())
+        .flat_map(|owner| &owner.image_skeletons);
+    for (at, value) in skeletons {
+        let database = db_name(at.db);
+        if !filter.takes(database, &at.key, value) {
+            continue;
+        }
+        let Some(held) = databases.get_mut(database) else {
+            continue;
+        };
+        if let Err(index) = held.binary_search_by(|(key, _)| key.cmp(&at.key)) {
+            held.insert(index, (at.key.clone(), value.clone()));
+        }
+    }
 }
 
 /// Puts each whole structure row a getter keeps into `databases` where the

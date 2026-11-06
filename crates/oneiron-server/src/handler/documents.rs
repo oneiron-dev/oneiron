@@ -16,7 +16,7 @@ pub(super) fn handle_document(
     entity: EntityId,
     kind: u8,
     payload: &[u8],
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct: &crate::handler::DirectSender,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     let joined = if kind == document_sub_tags::PART {
@@ -112,7 +112,7 @@ fn handle_document_inner(
     entity: EntityId,
     kind: u8,
     payload: &[u8],
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct: &crate::handler::DirectSender,
     state: &mut ConnState,
     logical_command: bool,
 ) -> Result<(), ProtocolError> {
@@ -332,7 +332,7 @@ fn owner_request(
     state: &mut ConnState,
     entity: EntityId,
     remote_vv: &[u8],
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     owner_auth(server, state, false)?;
     loro::VersionVector::decode(remote_vv).map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
@@ -383,7 +383,7 @@ fn artifact_publication(
     state: &mut ConnState,
     entity: EntityId,
     payload: &[u8],
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     let receipt = match owner_auth_checked(server, state, true) {
         Ok(auth) => server
@@ -421,7 +421,7 @@ fn owner_document(
     entity: EntityId,
     kind: u8,
     payload: &[u8],
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     match kind {
         document_sub_tags::ACK => {
@@ -820,7 +820,7 @@ pub(super) async fn direct_delivery(
     server: &SyncServer,
     state: &ConnState,
     transport: &mut super::socket_stop::StoppingTransport,
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct: &crate::handler::DirectSender,
     data: &[u8],
 ) -> DirectDelivery {
     let mut retry = Vec::new();
@@ -846,10 +846,7 @@ pub(super) async fn direct_delivery(
 
 /// Queues the notices whose export waited out its turn again after a pause,
 /// so a retried export never starves the socket's own input (rule 5).
-pub(super) fn retry_later(
-    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    notices: Vec<Vec<u8>>,
-) {
+pub(super) fn retry_later(direct: &crate::handler::DirectSender, notices: Vec<Vec<u8>>) {
     if notices.is_empty() {
         return;
     }

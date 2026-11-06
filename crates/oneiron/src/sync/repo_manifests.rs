@@ -33,6 +33,7 @@ pub(super) mod conflicts;
 
 use std::collections::BTreeSet;
 
+use heed::RwTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
@@ -316,6 +317,190 @@ fn holds_repo_manifest_map(doc: &LoroDoc) -> bool {
     matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(REPO_MANIFESTS_MAP))
 }
 
+/// Decodes one carried head row filed under `map_key`. `None` is malformed:
+/// the caller leaves it out, as before. Shared by the live driver and the
+/// bootstrap batch so the one spelling plus portable-id check lives once.
+fn checked_head(map_key: &str, bytes: &[u8]) -> Option<(CarriedHead, RepoPortableId)> {
+    match (decode(bytes), RepoPortableId::from_hex(map_key)) {
+        (Ok(carried), Some(portable)) => Some((carried, portable)),
+        _ => None,
+    }
+}
+
+/// Records one merge outcome: `Adopted` joins `merged`, every other native
+/// outcome keeps its original log. `Err` stays with the caller: the live
+/// driver logs it and continues, the bootstrap batch propagates it to its
+/// root.
+fn record_merge(window: &str, map_key: &str, outcome: RepoManifestMerge, merged: &mut usize) {
+    match outcome {
+        RepoManifestMerge::Adopted => *merged += 1,
+        RepoManifestMerge::Held => {}
+        RepoManifestMerge::Waiting => {
+            tracing::debug!(window, key = %map_key, "repo manifest waits for its CODE row");
+        }
+        RepoManifestMerge::Unproven => tracing::debug!(
+            window,
+            key = %map_key,
+            "repo manifest waits for a proven refs writer; the one held here stands"
+        ),
+        RepoManifestMerge::Conflict => tracing::warn!(
+            window,
+            key = %map_key,
+            "repo manifest conflicts; the one held here stands and the other stays in the window"
+        ),
+    }
+}
+
+/// What a repo-manifest merge pass installed, published only after its
+/// write commits. Owned: no live handles, observers or transactions.
+pub(super) struct RepoManifestEffects {
+    window: String,
+    merged: usize,
+}
+
+impl RepoManifestEffects {
+    /// Runs the existing final tracing, exactly as the live driver did. Call
+    /// only after the write actually committed; the batch stage never calls
+    /// this.
+    pub(super) fn publish_after_commit(self) {
+        if self.merged > 0 {
+            let window = self.window.as_str();
+            tracing::debug!(window, merged = self.merged, "repo manifests merged");
+        }
+    }
+}
+
+/// One staged bootstrap head: owned, no live handles.
+struct StagedRepoManifest {
+    map_key: String,
+    manifest: RepoManifest,
+    resolved_for: Option<(Option<String>, EntityId)>,
+    served: Option<EntityId>,
+}
+
+/// An isolated bootstrap batch: bare candidates collected off-txn, staged
+/// into the caller's root write txn. It never opens its own writer, never
+/// publishes, and never touches observers.
+pub(super) struct RepoManifestBatch {
+    window: String,
+    staged: Vec<StagedRepoManifest>,
+}
+
+impl RepoManifestBatch {
+    pub(super) fn prepare_full(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Option<Self> {
+        if !holds_repo_manifest_map(doc) {
+            return None;
+        }
+        let map = doc.get_map(REPO_MANIFESTS_MAP);
+        Some(Self::prepare(
+            vault,
+            &map,
+            key.as_str(),
+            head_rows(&map, |_| true),
+        ))
+    }
+
+    /// Collects every bare head in `rows` under `window`: decode, portable
+    /// check and part join are the live bodies ([`checked_head`],
+    /// [`join_parts`], [`RepoManifest::decode`]); malformed heads, heads
+    /// whose parts have not landed, and heads whose joined manifest names
+    /// another id or CODE entity log and stay out, as live does. Each
+    /// surviving head's held origin context is always resolved outside any
+    /// writer ([`Vault::repo_manifest_prepare_context`] with `skip_held`
+    /// unset: real held row plus filesystem served-name resolution, even
+    /// for a byte-equal copy); nothing is dropped pre-writer for `Held`,
+    /// since earlier staged rows can move the held copy before the leaf
+    /// runs. A context fault logs and stays out, as live's per-head `Err`
+    /// did. Holds owned rows only; no handles, observers or transactions.
+    pub(super) fn prepare(
+        vault: &Vault,
+        map: &LoroMap,
+        window: &str,
+        rows: Vec<(String, Vec<u8>)>,
+    ) -> Self {
+        let mut staged = Vec::new();
+        for (map_key, bytes) in rows {
+            let Some((carried, portable)) = checked_head(&map_key, &bytes) else {
+                tracing::warn!(window, key = %map_key, "repo manifest head malformed; left out");
+                continue;
+            };
+            let Some(joined) = join_parts(map, &carried.body) else {
+                tracing::debug!(window, key = %map_key, "repo manifest waits for its parts");
+                continue;
+            };
+            let Some(manifest) = RepoManifest::decode(&joined) else {
+                tracing::warn!(window, key = %map_key, "repo manifest malformed; left out");
+                continue;
+            };
+            if manifest.portable != portable || manifest.code != carried.code {
+                tracing::warn!(
+                    window,
+                    key = %map_key,
+                    "repo manifest names another id or CODE entity than its head; left in the window"
+                );
+                continue;
+            }
+            // `skip_held` unset: every head stages with its real context and
+            // the same-writer leaf decides `Held` on the current copy; a
+            // pre-writer byte-equal drop would go stale under earlier staged
+            // rows. `None` is unreachable here and stays out defensively.
+            let context = match vault.repo_manifest_prepare_context(&manifest, false) {
+                Ok(context) => context,
+                Err(error) => {
+                    tracing::warn!(
+                        window,
+                        key = %map_key,
+                        error = %error,
+                        "repo manifest not merged"
+                    );
+                    continue;
+                }
+            };
+            let Some((resolved_for, served)) = context else {
+                continue;
+            };
+            staged.push(StagedRepoManifest {
+                map_key,
+                manifest,
+                resolved_for,
+                served,
+            });
+        }
+        Self {
+            window: window.to_owned(),
+            staged,
+        }
+    }
+
+    /// Stages every prepared head into the supplied root write txn, in
+    /// prepare order, through the exact native leaf. The leaf rechecks the
+    /// current held copy, the served-name context, and the proven writer on
+    /// this same writer, and decides `Held` (byte-equal included) there; no
+    /// filesystem read runs here. `Adopted` heads join
+    /// the returned effects; every other native outcome keeps its live log.
+    /// Any `Err` propagates to the root: no nested writer, no
+    /// log-and-continue partial commit. Never publishes: the caller runs the
+    /// returned effects after the root actually commits.
+    pub(super) fn stage_in_txn(
+        self,
+        vault: &Vault,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<RepoManifestEffects> {
+        let Self { window, staged } = self;
+        let mut merged = 0_usize;
+        for row in &staged {
+            let outcome = vault.merge_carried_repo_manifest_in_txn(
+                txn,
+                &row.manifest,
+                &row.resolved_for,
+                row.served,
+            )?;
+            record_merge(window.as_str(), &row.map_key, outcome, &mut merged);
+        }
+        Ok(RepoManifestEffects { window, merged })
+    }
+}
+
 /// Merges each carried head's manifest here. A head whose parts have not
 /// landed waits for them; one whose joined manifest names another id or
 /// CODE entity than its key and head, or does not decode, is logged and
@@ -324,12 +509,9 @@ fn holds_repo_manifest_map(doc: &LoroDoc) -> bool {
 fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, Vec<u8>)>) {
     let mut merged = 0_usize;
     for (map_key, bytes) in heads {
-        let (carried, portable) = match (decode(&bytes), RepoPortableId::from_hex(&map_key)) {
-            (Ok(carried), Some(portable)) => (carried, portable),
-            _ => {
-                tracing::warn!(window, key = %map_key, "repo manifest head malformed; left out");
-                continue;
-            }
+        let Some((carried, portable)) = checked_head(&map_key, &bytes) else {
+            tracing::warn!(window, key = %map_key, "repo manifest head malformed; left out");
+            continue;
         };
         let Some(joined) = join_parts(map, &carried.body) else {
             tracing::debug!(window, key = %map_key, "repo manifest waits for its parts");
@@ -348,29 +530,17 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             continue;
         }
         match vault.merge_carried_repo_manifest(&manifest) {
-            Ok(RepoManifestMerge::Adopted) => merged += 1,
-            Ok(RepoManifestMerge::Held) => {}
-            Ok(RepoManifestMerge::Waiting) => {
-                tracing::debug!(window, key = %map_key, "repo manifest waits for its CODE row");
-            }
-            Ok(RepoManifestMerge::Unproven) => tracing::debug!(
-                window,
-                key = %map_key,
-                "repo manifest waits for a proven refs writer; the one held here stands"
-            ),
-            Ok(RepoManifestMerge::Conflict) => tracing::warn!(
-                window,
-                key = %map_key,
-                "repo manifest conflicts; the one held here stands and the other stays in the window"
-            ),
+            Ok(outcome) => record_merge(window, &map_key, outcome, &mut merged),
             Err(error) => {
                 tracing::warn!(window, key = %map_key, error = %error, "repo manifest not merged");
             }
         }
     }
-    if merged > 0 {
-        tracing::debug!(window, merged, "repo manifests merged");
+    RepoManifestEffects {
+        window: window.to_owned(),
+        merged,
     }
+    .publish_after_commit();
 }
 
 /// Drops from `doc` the manifest of each CODE row this vault erased or the

@@ -279,6 +279,49 @@ fn code_anchor_live(vault: &Vault, txn: &heed::RoTxn<'_>, code: &EntityId) -> Re
     ))
 }
 
+/// The portable id that stands for the repository at `repo` in `txn`
+/// (FIX 12761): the one standing id among the live CODE entities whose
+/// stored locator names the same repository (`RepoRef::same_repository`,
+/// commit ignored). `None` when none stands for it, or when two distinct
+/// standing ids do (two PROJECT anchors of one location): no first row is
+/// picked. A CODE row that is not live or whose locator does not parse
+/// names nothing. It reads only; it never mints or repairs.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn standing_portable_id_for_location_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    repo: &crate::codebase::RepoRef,
+) -> Result<Option<RepoPortableId>> {
+    let mut found: Option<[u8; 32]> = None;
+    for row in BY_CODE.iter_from(&vault.store, txn, &[])? {
+        let (code, portable) = row?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CODE_ARTIFACT,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &code)?
+        else {
+            continue;
+        };
+        let Some(located) = crate::code_artifact::decode_code_artifact_body(&body)
+            .ok()
+            .and_then(|artifact| crate::codebase::RepoRef::parse(&artifact.repo_ref).ok())
+        else {
+            continue;
+        };
+        if !located.same_repository(repo) {
+            continue;
+        }
+        match found {
+            None => found = Some(portable),
+            Some(seen) if seen == portable => {}
+            Some(_) => return Ok(None),
+        }
+    }
+    Ok(found.map(RepoPortableId))
+}
+
 /// Removes every repo manifest anchored at erased CODE entity `id`: the
 /// standing manifest, every alias of it, and their minted markers, with the
 /// CODE index row (FIX 6870). Registered in `deletion/derived_rows.rs`, so it
@@ -445,23 +488,29 @@ impl Vault {
         }
     }
 
-    /// Merges `carried`, a manifest a window brought, here: rule 7 against
-    /// the copy held under its id, then rule 3 against the manifest that
-    /// stands for its CODE entity. A copy already held is found by a read.
-    /// A copy that would replace the one held under its id must come from a
-    /// proven writer (FIX 12765, [`Self::repo_manifest_writer_proven_in_txn`]),
-    /// else it waits in the window.
+    /// Prepares one carried manifest's held origin context outside any
+    /// writer: the held copy's served-name/CODE pair the writer rechecks,
+    /// plus the served repo id whose authority row the writer judges. Where
+    /// `skip_held` is set, `None` is the read byte-equal shortcut (the copy
+    /// held here already): no filesystem read runs. Where it is not, the
+    /// real context is always resolved, even for a byte-equal copy, so the
+    /// stage writer judges the current copy itself. The read transaction is
+    /// dropped before the object-store resolution. Shared by the live
+    /// wrapper (`skip_held`, the no-FS shortcut kept) and the bootstrap
+    /// batch (always resolve, same-writer freshness) so the one resolution
+    /// lives once.
     #[cfg(feature = "sync")]
-    pub(crate) fn merge_carried_repo_manifest(
+    pub(crate) fn repo_manifest_prepare_context(
         &self,
         carried: &RepoManifest,
-    ) -> Result<RepoManifestMerge> {
+        skip_held: bool,
+    ) -> Result<Option<(Option<(Option<String>, EntityId)>, Option<EntityId>)>> {
         let held = {
             let txn = self.store.env.read_txn()?;
             MANIFESTS.get(&self.store, &txn, &carried.portable.0)?
         };
-        if held.as_ref() == Some(carried) {
-            return Ok(RepoManifestMerge::Held);
+        if skip_held && held.as_ref() == Some(carried) {
+            return Ok(None);
         }
         // Which repo this host serves for the copy held here (never what the
         // carried one says) is resolved outside the writer: it reads the
@@ -473,6 +522,24 @@ impl Vault {
         let served = match &held {
             Some(held) => self.served_origin_repo_id(held)?,
             None => None,
+        };
+        Ok(Some((resolved_for, served)))
+    }
+
+    /// Merges `carried`, a manifest a window brought, here: rule 7 against
+    /// the copy held under its id, then rule 3 against the manifest that
+    /// stands for its CODE entity. A copy already held is found by a read.
+    /// A copy that would replace the one held under its id must come from a
+    /// proven writer (FIX 12765, [`Self::repo_manifest_writer_proven_in_txn`]),
+    /// else it waits in the window.
+    #[cfg(feature = "sync")]
+    pub(crate) fn merge_carried_repo_manifest(
+        &self,
+        carried: &RepoManifest,
+    ) -> Result<RepoManifestMerge> {
+        let Some((resolved_for, served)) = self.repo_manifest_prepare_context(carried, true)?
+        else {
+            return Ok(RepoManifestMerge::Held);
         };
         self.with_write_txn_grouped(|txn| {
             self.merge_carried_repo_manifest_in_txn(txn, carried, &resolved_for, served)

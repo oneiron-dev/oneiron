@@ -258,7 +258,7 @@ fn session_gone(
 enum ConnEvent {
     Inbound(Option<Result<WsMessage, axum::Error>>),
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
-    Direct(Option<Vec<u8>>),
+    Direct(Option<super::direct::DirectFrame>),
     AppDelivery,
     /// The socket's by-reference body transfers are due a poll (FIX 5489).
     AssetBodies,

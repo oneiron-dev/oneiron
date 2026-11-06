@@ -10703,6 +10703,40 @@ async fn vault_members_invitation_slip(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_members_invitation_code(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitation_code")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitation_code", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.members.invitation_code", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_members_invitation_code(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_members_change(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10846,6 +10880,41 @@ async fn vault_members_accept(
         let (output, listed) =
             super::host_doors::vault_members_accept(server, auth, facade_door_input(&mut hooks)?)
                 .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_members_accept_with_credential(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.accept_with_credential")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.accept_with_credential", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.members.accept_with_credential", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_members_accept_with_credential(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
@@ -26600,6 +26669,74 @@ async fn tasks_answer(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_answer_forward_challenge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward.challenge",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke_in_turn(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward",
+        value,
+        &producers,
+        Some(turn),
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward.status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn tasks_outcomes(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40573,6 +40710,9 @@ async fn call_verb_row(
         "vault.members.invitation_slip" => {
             Box::pin(vault_members_invitation_slip(server, call, input)).await
         }
+        "vault.members.invitation_code" => {
+            Box::pin(vault_members_invitation_code(server, call, input)).await
+        }
         "vault.members.change" => Box::pin(vault_members_change(server, call, input)).await,
         "vault.members.remove" => Box::pin(vault_members_remove(server, call, input)).await,
         "vault.members.leave" => Box::pin(vault_members_leave(server, call, input)).await,
@@ -40580,6 +40720,9 @@ async fn call_verb_row(
             Box::pin(vault_members_invitations(server, call, input)).await
         }
         "vault.members.accept" => Box::pin(vault_members_accept(server, call, input)).await,
+        "vault.members.accept_with_credential" => {
+            Box::pin(vault_members_accept_with_credential(server, call, input)).await
+        }
         "vault.members.decline" => Box::pin(vault_members_decline(server, call, input)).await,
         "vault.members.withdraw_invitation" => {
             Box::pin(vault_members_withdraw_invitation(server, call, input)).await
@@ -41675,6 +41818,13 @@ async fn call_verb_row(
         "ask" => Box::pin(ask(server, call, input)).await,
         "wait" => Box::pin(wait(server, call, input)).await,
         "tasks.answer" => Box::pin(tasks_answer(server, call, input)).await,
+        "tasks.answer.forward.challenge" => {
+            Box::pin(tasks_answer_forward_challenge(server, call, input)).await
+        }
+        "tasks.answer.forward" => Box::pin(tasks_answer_forward(server, call, input)).await,
+        "tasks.answer.forward.status" => {
+            Box::pin(tasks_answer_forward_status(server, call, input)).await
+        }
         "tasks.outcomes" => Box::pin(tasks_outcomes(server, call, input)).await,
         "vault.rooms.list" => Box::pin(vault_rooms_list(server, call, input)).await,
         "vault.rooms.messages" => Box::pin(vault_rooms_messages(server, call, input)).await,

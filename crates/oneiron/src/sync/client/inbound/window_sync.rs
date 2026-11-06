@@ -6,9 +6,9 @@ use std::cmp::Ordering::{Equal, Less};
 
 use loro::VersionVector;
 
-use super::super::OwnDeviceImport;
 use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
+use super::super::{OwnDeviceImport, PreparedSyncFrame};
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
@@ -28,7 +28,7 @@ impl SyncClient {
         window_key: &str,
         sub_tag: u8,
         payload: &[u8],
-    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+    ) -> std::result::Result<Vec<PreparedSyncFrame>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
         // A world the owner keeps on one other machine left this one and never
         // lands here again (FIX 14534): its frames read as nothing, but for
@@ -70,7 +70,8 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             return Ok(vec![
                 transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
             ]);
         }
         // A device syncs what it opened (ARCH-0023b): a window this device
@@ -106,10 +107,12 @@ impl SyncClient {
             ));
         }
         // A window's bytes come in their envelope, its pads installed here first (FIX 7107).
-        let (sub_tag, payload) = match self.accept_window_pad_frame(&key, sub_tag, payload)? {
-            std::ops::ControlFlow::Continue(frame) => frame,
-            std::ops::ControlFlow::Break(answer) => return Ok(answer),
-        };
+        let (sub_tag, payload, copies) =
+            match self.accept_window_pad_frame(&key, sub_tag, payload)? {
+                std::ops::ControlFlow::Continue(frame) => frame,
+                std::ops::ControlFlow::Break(answer) => return Ok(answer),
+            };
+        let copy_delivery = payload.delivery_digest();
         let payload: &[u8] = &payload;
         match sub_tag {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
@@ -142,7 +145,8 @@ impl SyncClient {
                         window_sub_tags::VV_REQUEST,
                         &doc_version_vector(&window.doc),
                     )
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
                 ])
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
@@ -177,7 +181,8 @@ impl SyncClient {
                         window_sub_tags::SELECTOR_RETRY,
                         payload,
                     )
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
                 ])
             }
             window_sub_tags::VV_REQUEST => {
@@ -198,26 +203,22 @@ impl SyncClient {
                             window_sub_tags::VV_RESPONSE,
                             &doc_version_vector(doc),
                         )
-                        .into_result()?,
+                        .into_result()?
+                        .into(),
                     ]);
                 }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
-                    return Ok(vec![replacement_request(window_key)?]);
+                    return Ok(vec![replacement_request(window_key)?.into()]);
                 };
-                let mut responses = self.window_pad_frames(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    None,
-                    &delta,
-                    Some(doc),
-                )?;
+                let mut responses = self.prepared_window_reply(window_key, &delta, doc)?;
                 responses.push(
                     transport::encode_window_sync(
                         window_key,
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
-                    .into_result()?,
+                    .into_result()?
+                    .into(),
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
@@ -238,20 +239,22 @@ impl SyncClient {
                 }
                 // The home this connection proved, if it proved one, sent these bytes.
                 let mut answers = Vec::new();
-                match self.import_own_device_window_update(
+                match self.import_own_device_window_update_with_retained_copies(
                     window_key,
                     payload,
                     self.home_peer,
+                    copies,
+                    copy_delivery,
                     Some(&mut answers),
                 ) {
                     // What answers a deferred sealed update this import let in (FIX 10474).
-                    Ok(()) => Ok(answers),
+                    Ok(()) => Ok(answers.into_iter().map(PreparedSyncFrame::from).collect()),
                     // The update builds on history this window's own shallow root cut away: no
                     // update can bring it level, the server's replacement can.
                     Err(_) if self.update_reaches_below_root(&key, payload) => {
                         self.staged_world_updates
-                            .retain(|(staged, bytes, _)| staged != &key || bytes != payload);
-                        Ok(vec![replacement_request(window_key)?])
+                            .retain(|staged| staged.key != key || staged.bytes != payload);
+                        Ok(vec![replacement_request(window_key)?.into()])
                     }
                     Err(error) => Err(error),
                 }
@@ -267,7 +270,7 @@ impl SyncClient {
                 // Judged again once no demotion holds the window closed.
                 let (window, conflicts) = self
                     .manager
-                    .replace_window_bounded(
+                    .replace_window_bounded_with_retained_copies(
                         &key,
                         payload,
                         &evidence,
@@ -277,6 +280,7 @@ impl SyncClient {
                         },
                         ReplacementByteBound::NetworkFrame,
                         own_device.as_ref(),
+                        &copies,
                     )
                     .map_err(|error| match error {
                         Error::Sync(SyncError::SyncProtocolError {
@@ -302,7 +306,8 @@ impl SyncClient {
                 drop(window);
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                        .into_result()?,
+                        .into_result()?
+                        .into(),
                 ])
             }
             window_sub_tags::VV_RESPONSE => {
@@ -315,15 +320,9 @@ impl SyncClient {
                 }
                 let window = self.ensure_window(window_key)?;
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
-                    return Ok(vec![replacement_request(window_key)?]);
+                    return Ok(vec![replacement_request(window_key)?.into()]);
                 };
-                let responses = self.window_pad_frames(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    None,
-                    &delta,
-                    Some(&window.doc),
-                )?;
+                let responses = self.prepared_window_reply(window_key, &delta, &window.doc)?;
                 self.note_home_window_vv(window_key, server_vv)?;
                 Ok(responses)
             }
@@ -448,7 +447,7 @@ impl SyncClient {
             };
             let mut index = 0;
             while index < self.staged_world_updates.len() {
-                let key = self.staged_world_updates[index].0.clone();
+                let key = self.staged_world_updates[index].key.clone();
                 let live = self.ensure_window(key.as_str())?;
                 // A window demoted since its frame was staged stays closed.
                 if !self.full_window_exchange_allowed(key.as_str())? {
@@ -458,7 +457,7 @@ impl SyncClient {
                 match crate::sync::window::validate_window_update_with_staged_worlds(
                     &self.vault,
                     &live.doc,
-                    &self.staged_world_updates[index].1,
+                    &self.staged_world_updates[index].bytes,
                     &key,
                     &evidence,
                 ) {
@@ -476,35 +475,43 @@ impl SyncClient {
                         ));
                     }
                 }
-                let (key, bytes, from) = self.staged_world_updates[index].clone();
+                let staged = self.staged_world_updates[index].clone();
                 // A staged update keeps the machine that sent it (FIX 11709).
-                let own_device = self.own_device_import(from);
-                self.import_accepted_window_update_with_evidence(
-                    key.as_str(),
+                let own_device = self.own_device_import(staged.from);
+                self.import_accepted_window_update_with_copies(
+                    staged.key.as_str(),
                     &live,
-                    &bytes,
+                    &staged.bytes,
                     &evidence,
                     own_device.as_ref(),
+                    &staged.copies,
                 )?;
                 // The pass goes on in arrival order: a ready update never
                 // waits on an unresolved one staged before it, and one an
                 // import resolved is taken on the next pass of this drain,
                 // its deadline (FIX 8863).
                 self.staged_world_updates.remove(index);
-                healed.push(key);
+                healed.push((staged.key, staged.copies));
                 progressed = true;
             }
             if !progressed {
                 break;
             }
         }
-        for key in healed {
+        for (key, copies) in healed {
             let live = self.ensure_window(key.as_str())?;
-            crate::sync::window::forward_rematerialize(
+            super::super::home_claim_copies::with_home_claim_copies(
                 &self.vault,
-                &live.doc,
-                self.manager.materializer(),
                 &key,
+                &copies,
+                || {
+                    crate::sync::window::forward_rematerialize(
+                        &self.vault,
+                        &live.doc,
+                        self.manager.materializer(),
+                        &key,
+                    )
+                },
             )
             .map_err(|error| TransportError::Storage(format!("heal staged world edge: {error}")))?;
         }
@@ -529,7 +536,7 @@ impl SyncClient {
     /// [`Self::import_accepted_window_update`] with `evidence`, staged world
     /// rows, and under `own_device`, the proof an own machine sent `payload`
     /// (FIX 11709).
-    pub(in crate::sync::client) fn import_accepted_window_update_with_evidence(
+    pub(in crate::sync::client) fn land_accepted_window_update_with_evidence(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,
@@ -611,13 +618,42 @@ impl SyncClient {
             // FIX 11709: the MESSAGE rows an own machine's proven connection sent
             // take the own-device lane in the doors this import and its retained
             // world pass run, and no others.
-            crate::sync::ingest::with_own_device_import(
+            let landed = crate::sync::ingest::with_record_document_import(
                 &self.vault,
                 own_device,
-                (&key, &window.doc),
+                &key,
+                &window.doc,
                 payload,
-                || self.land_window_update(window, &key, payload),
-            )?;
+                || {
+                    crate::sync::ingest::with_own_device_import(
+                        &self.vault,
+                        own_device,
+                        (&key, &window.doc),
+                        payload,
+                        || self.land_window_update(window, &key, payload),
+                    )
+                },
+            );
+            let captured = match landed {
+                Ok((landed, captured)) => {
+                    landed?;
+                    captured
+                }
+                Err(error) => {
+                    self.manager.discard_window(&key);
+                    return Err(TransportError::Storage(format!(
+                        "materialize record document update: {error}"
+                    )));
+                }
+            };
+            let persist = |update: Option<&[u8]>| {
+                crate::sync::ingest::persist_record_document_update(
+                    &self.vault,
+                    &key,
+                    update,
+                    captured.as_ref(),
+                )
+            };
             if let Some(positions) = positions.as_ref()
                 && let Err(error) = positions.finish(&self.vault, &window.doc)
             {
@@ -650,6 +686,12 @@ impl SyncClient {
                 let live_vv = window.doc.oplog_vv();
                 let durable_vv = durable_doc.oplog_vv();
                 if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                    if let Err(error) = persist(None) {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "persist accepted record source: {error}"
+                        )));
+                    }
                     return Ok(());
                 }
                 let fr_key = format!("fr:w:{window_key}");
@@ -679,7 +721,7 @@ impl SyncClient {
                 // Its pads persist by reference where custody here holds them
                 // (FIX 7107).
                 let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
-                if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                if let Err(e) = persist(Some(&missing)) {
                     self.manager.discard_window(&key);
                     return Err(TransportError::Storage(format!(
                         "persist live durable delta: {e}"
@@ -693,7 +735,7 @@ impl SyncClient {
             // from the doc on restart. Its pads persist by reference where
             // custody here holds them (FIX 7107).
             let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
-            if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
+            if let Err(e) = persist(Some(&persisted)) {
                 // Never leave RAM ahead of durable state on a FAILED persist
                 // (client analog of the ONE-1129 server evict-on-persist-failure):
                 // the import advanced this doc's version vector, so keeping the

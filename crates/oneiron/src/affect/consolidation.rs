@@ -50,6 +50,16 @@ impl Vault {
         self.get_entity_vad_annotation(turn_id, ENTITY_TYPE_TURN)
     }
 
+    /// [`Vault::get_turn_vad_annotation`] in `txn`, so a door that admits
+    /// the turn reads its annotation in the same snapshot (FIX 10782).
+    pub fn get_turn_vad_annotation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn_id: &EntityId,
+    ) -> Result<Option<VadAnnotation>> {
+        self.get_entity_vad_annotation_in_txn(txn, turn_id, ENTITY_TYPE_TURN)
+    }
+
     /// [`Vault::get_turn_vad_annotation`] for a reader that folds it in: an
     /// annotation whose owner confirmation is outstanding reads as absent.
     pub(super) fn turn_vad_annotation_for_consolidation(
@@ -83,6 +93,17 @@ impl Vault {
         message_id: &EntityId,
     ) -> Result<Option<VadAnnotation>> {
         self.get_entity_vad_annotation(message_id, ENTITY_TYPE_MESSAGE)
+    }
+
+    /// [`Vault::get_message_vad_annotation`] in `txn`, so a door that admits
+    /// the message's turn reads its annotation in the same snapshot (FIX
+    /// 10782).
+    pub fn get_message_vad_annotation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message_id: &EntityId,
+    ) -> Result<Option<VadAnnotation>> {
+        self.get_entity_vad_annotation_in_txn(txn, message_id, ENTITY_TYPE_MESSAGE)
     }
 
     /// Consolidates turn-level VAD evidence attached to `claim_id` into

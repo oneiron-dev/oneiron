@@ -265,7 +265,7 @@ impl SyncConnection {
                             // earlier frame waits on the socket.
                             for resp in responses
                                 .into_iter()
-                                .filter(|frame| !client.frame_withheld(frame))
+                                .filter(|frame| !client.frame_withheld(frame.for_policy()))
                             {
                                 self.send_document_response(write, client, resp)
                                     .await

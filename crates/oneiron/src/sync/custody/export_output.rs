@@ -73,10 +73,25 @@ pub(super) fn admit_export_output(
     row_key: &str,
     bytes: &[u8],
 ) -> Result<()> {
+    admit_export_output_with_txn(vault, key, row_key, bytes, None)
+}
+
+/// [`admit_export_output`] over an optional caller-supplied reader: `Some`
+/// reuses it at the folded-result reader point below, `None` opens the
+/// original independent reader at the original point with the original error
+/// mapping. Bounds, filing and window checks never read and are unchanged;
+/// part rows judge through the parts twin with the same reader.
+pub(super) fn admit_export_output_with_txn(
+    vault: &Vault,
+    key: Option<&WindowKey>,
+    row_key: &str,
+    bytes: &[u8],
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<()> {
     if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
         return Err(refused("export secret supplement past one row's bound"));
     }
-    if let Some(admitted) = parts::admit_part(vault, key, row_key, bytes) {
+    if let Some(admitted) = parts::admit_part_with_txn(vault, key, row_key, bytes, txn) {
         return admitted;
     }
     let kept = KeptExportOutput::decode(bytes)
@@ -93,9 +108,16 @@ pub(super) fn admit_export_output(
     }
     // Reading this vault's own authority is the store's work: its fault is
     // this machine's, never the peer's refused update (FIX 5925).
-    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let owned;
+    let rtxn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(admission_read_fault)?;
+            &owned
+        }
+    };
     let fold = vault
-        .authority_view_readonly_in_txn(&rtxn)
+        .authority_view_readonly_in_txn(rtxn)
         .map_err(admission_read_fault)?;
     if !kept.named_by(&fold) {
         // Admitted, never kept: the keep path judges it against the result,

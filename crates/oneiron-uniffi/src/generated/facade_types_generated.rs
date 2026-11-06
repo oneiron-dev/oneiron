@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4580 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
+// UniFFI census: 1267 facade rows, 4591 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1219.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -22303,12 +22303,16 @@ pub struct SharedMemberAddRequest {
     pub member: String,
     #[serde(rename = "role", default, skip_serializing_if = "Option::is_none")]
     pub role: Option<FederationGrantRole>,
-    #[serde(
-        rename = "holder_key",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub holder_key: Option<String>,
+}
+
+/// `oneiron::verbs::shared_members::InvitationSlipRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InvitationSlipRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "invitation")]
+    pub invitation: String,
 }
 
 /// `oneiron::verbs::shared::InvitationSlip`.
@@ -22322,31 +22326,25 @@ pub struct InvitationSlip {
     pub expires_at: u64,
 }
 
-/// `oneiron::verbs::shared::SharedMemberInvited`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SharedMemberInvited {
-    #[serde(rename = "receipt")]
-    pub receipt: SharedActExecutionReceipt,
-    #[serde(
-        rename = "credential",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub credential: Option<InvitationSlip>,
-}
-
-/// `oneiron::verbs::shared_members::InvitationSlipRequest`.
+/// `oneiron::verbs::shared_members::InvitationCodeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct InvitationSlipRequest {
+pub struct InvitationCodeRequest {
     #[serde(rename = "vault_id")]
     pub vault_id: String,
     #[serde(rename = "member")]
     pub member: String,
     #[serde(rename = "invitation")]
     pub invitation: String,
-    #[serde(rename = "holder_key")]
-    pub holder_key: String,
+}
+
+/// `oneiron::verbs::shared_members::InvitationCode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InvitationCode {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
 }
 
 /// `oneiron::verbs::shared::SharedMemberRoleRequest`.
@@ -22417,6 +22415,38 @@ pub struct SharedInvitationRequest {
     pub vault_id: String,
     #[serde(rename = "invitation")]
     pub invitation: String,
+}
+
+/// `oneiron::verbs::shared_members::SharedInvitationAcceptWithCredentialRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInvitationAcceptWithCredentialRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "invitation")]
+    pub invitation: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+}
+
+/// `oneiron::verbs::shared::MemberSlip`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemberSlip {
+    #[serde(rename = "slip_id")]
+    pub slip_id: String,
+    #[serde(rename = "slip")]
+    pub slip: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+}
+
+/// `oneiron::verbs::shared::SharedInvitationAcceptedWithCredential`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SharedInvitationAcceptedWithCredential {
+    #[serde(rename = "receipt")]
+    pub receipt: SharedActExecutionReceipt,
+    #[serde(rename = "credential")]
+    pub credential: MemberSlip,
 }
 
 /// `oneiron::verbs::shared_members::SharedInvitationWithdrawRequest`.
@@ -49899,6 +49929,98 @@ pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
     #[serde(rename = "word")]
     pub word: TaskAskWord,
+}
+
+/// `oneiron::task_verb::ask_forward::AskForwardAct`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AskForwardAct {
+    #[serde(rename = "word")]
+    Word(TaskAskWord),
+    #[serde(rename = "void")]
+    Void,
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardChallengeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardChallengeRequest {
+    #[serde(rename = "handle")]
+    pub handle: TaskAskHandle,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "act")]
+    pub act: AskForwardAct,
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardChallenge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardChallenge {
+    #[serde(rename = "challenge")]
+    pub challenge: String,
+}
+
+/// `oneiron::task_verb::ask_forward::AskForwardHolderProof`.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AskForwardHolderProof {
+    #[serde(rename = "token")]
+    pub token: String,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+impl std::fmt::Debug for AskForwardHolderProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AskForwardHolderProof")
+            .finish_non_exhaustive()
+    }
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardRequest {
+    #[serde(rename = "handle")]
+    pub handle: TaskAskHandle,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "act")]
+    pub act: AskForwardAct,
+    #[serde(rename = "proof")]
+    pub proof: AskForwardHolderProof,
+}
+
+/// `oneiron::task_verb::ask_forward::AskForwardReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum AskForwardReceipt {
+    #[serde(rename = "pending")]
+    Pending {
+        #[serde(rename = "intent_ref")]
+        intent_ref: String,
+    },
+    #[serde(rename = "answered")]
+    Answered {
+        #[serde(rename = "intent_ref")]
+        intent_ref: String,
+        #[serde(rename = "answer")]
+        answer: TaskAskAnswer,
+    },
+    #[serde(rename = "voided")]
+    Voided {
+        #[serde(rename = "intent_ref")]
+        intent_ref: String,
+        #[serde(rename = "generation")]
+        generation: u64,
+    },
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardStatusRequest {
+    #[serde(rename = "intent_ref")]
+    pub intent_ref: String,
 }
 
 /// `oneiron_store::model_decision::questions::records::OutcomeLabel`.

@@ -1,12 +1,9 @@
 //! Ordered NOTE command release; the durable queue retains the logical command.
 
-use futures_util::SinkExt;
-use tokio_tungstenite::tungstenite::Message;
-
 use super::session::WsSink;
 use super::{LoopExit, SyncConnection};
 use crate::side_table::HexId;
-use crate::sync::client::SyncClient;
+use crate::sync::client::{PreparedSyncFrame, SyncClient};
 use crate::sync::documents::DS_E;
 use crate::sync::transport::{self, document_sub_tags};
 
@@ -15,16 +12,18 @@ impl SyncConnection {
         &self,
         write: &mut WsSink,
         client: &SyncClient,
-        frame: Vec<u8>,
+        frame: impl Into<PreparedSyncFrame>,
     ) -> Result<(), LoopExit> {
-        if frame.first() != Some(&transport::TAG_DOCUMENT)
-            || frame.len() <= transport::MAX_DECODED_PAYLOAD_BYTES
+        let frame = frame.into();
+        if frame.for_policy().first() != Some(&transport::TAG_DOCUMENT)
+            || frame.for_policy().len() <= transport::MAX_DECODED_PAYLOAD_BYTES
         {
-            if client.frame_withheld(&frame) {
+            if client.frame_withheld(frame.for_policy()) {
                 return Ok(());
             }
             return self.send_response_frame(write, frame).await;
         }
+        let frame = frame.into_bytes();
         let command = transport::decode_unsplit_document(&frame[1..])
             .map_err(|error| LoopExit::Disconnected(error.to_string()))?;
         if !matches!(
@@ -54,7 +53,7 @@ impl SyncConnection {
                     Ok(())
                 };
             }
-            self.send_response_frame(write, part).await?;
+            self.send_response_frame(write, part.into()).await?;
             sent = true;
         }
         Ok(())
@@ -63,13 +62,13 @@ impl SyncConnection {
     async fn send_response_frame(
         &self,
         write: &mut WsSink,
-        frame: Vec<u8>,
+        frame: PreparedSyncFrame,
     ) -> Result<(), LoopExit> {
         let mut left = self.left.subscribe();
         tokio::select! {
             biased;
             _ = left.wait_for(|left| *left) => Err(LoopExit::Shutdown),
-            sent = write.send(Message::Binary(frame.into())) => {
+            sent = write.send_prepared(frame) => {
                 sent.map_err(|error| LoopExit::Disconnected(error.to_string()))
             }
         }

@@ -33,7 +33,7 @@ pub(super) async fn handle_window_sync(
     window_key: &str,
     sub_tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     conn_state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {

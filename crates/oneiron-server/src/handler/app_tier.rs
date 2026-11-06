@@ -26,7 +26,7 @@ pub(super) async fn handle_sync_message(
     server: &SyncServer,
     conn_id: u32,
     msg: SyncMessage,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     conn_state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {
@@ -295,13 +295,14 @@ pub(super) enum VerbCall {
         conn: u32,
     },
     Residence(crate::livequery::ResidenceWorkCall),
+    AskOptionLink(crate::livequery::ask_option_link::AskOptionLinkCall),
 }
 
 impl VerbCall {
     pub(super) async fn answer(
         self,
         server: std::sync::Arc<SyncServer>,
-        direct_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        direct_tx: crate::handler::DirectSender,
     ) -> Result<(), ProtocolError> {
         let (auth, request, context, conn) = match self {
             Self::Verb {
@@ -311,14 +312,9 @@ impl VerbCall {
                 conn,
             } => (auth, request, context, conn),
             Self::Residence(call) => return call.answer(server, direct_tx).await,
+            Self::AskOptionLink(call) => return call.answer(server, direct_tx).await,
         };
-        let reply = crate::livequery::rpc_reply(&server, &auth, request, context).await?;
-        for frame in reply.queued(conn) {
-            direct_tx
-                .send(frame)
-                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
-        }
-        Ok(())
+        crate::livequery::rpc_reply_to(&server, &auth, request, context, conn, &direct_tx).await
     }
 }
 
@@ -331,7 +327,7 @@ pub(super) fn handle_app_message_with_connection(
     state: &mut ConnState,
     tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     connection: Option<&mut crate::livequery::connection::Connection>,
 ) -> Result<Option<VerbCall>, ProtocolError> {
     let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
@@ -390,7 +386,7 @@ fn answer_app_message(
     state: &mut ConnState,
     tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     connection: Option<&mut crate::livequery::connection::Connection>,
 ) -> Result<Option<VerbCall>, ProtocolError> {
     if state.protocol_version < protocol::APP_TIER_PROTOCOL_VERSION_VERSION {
@@ -453,6 +449,31 @@ fn answer_app_message(
                     .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
             }
             return Ok(None);
+        }
+        // This bearer lane is independent of any bound actor. The proof
+        // names its carrying machine; the original link methods admit it.
+        if request.method == "residence.ask.option_link" {
+            if context.is_some() {
+                return Err(ProtocolError::InvalidPayload(
+                    "a call context rides only a facade verb RPC",
+                ));
+            }
+            let peer = state.peer_machine(&server.vault);
+            let actor = match &peer {
+                oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
+                oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
+            };
+            let _ = server.wire_telemetry.record(
+                &request.method,
+                &actor,
+                oneiron_vault_contract::now_ts(),
+            );
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            return Ok(Some(VerbCall::AskOptionLink(
+                crate::livequery::ask_option_link::AskOptionLinkCall::new(peer, request, conn),
+            )));
         }
         // Home handoff and exact pad calls can run without a bound actor,
         // under the owner-grade upgrade and the machine it proves now.
@@ -541,6 +562,29 @@ fn answer_app_message(
                         state.residence_work.attachment(),
                     ),
                 )));
+            }
+            if request.method == "residence.promote" {
+                crate::livequery::residence_promote_to(
+                    server, &bound, peer, request, conn, direct_tx,
+                )?;
+                return Ok(None);
+            }
+            if matches!(
+                request.method.as_str(),
+                "residence.bundle.list" | "residence.bundle.get"
+            ) {
+                crate::livequery::residence_rpc_to(
+                    server,
+                    &bound,
+                    peer,
+                    request,
+                    &mut state.residence_index,
+                    &mut state.authority_append_stage,
+                    &mut state.residence_touch,
+                    conn,
+                    direct_tx,
+                )?;
+                return Ok(None);
             }
             crate::livequery::residence_rpc(
                 server,

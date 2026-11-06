@@ -42,12 +42,14 @@
 //!   loading the window doc.
 
 mod artifacts;
+mod ask_forward;
 mod base;
 mod connect;
 mod documents;
 mod endpoint;
 mod federated;
 mod federation_replay;
+mod home_claim_copies;
 mod inbound;
 mod leaf_keys;
 mod lfs;
@@ -75,7 +77,7 @@ pub use self::residence::kit_fetch::fetch_custody_with_kit;
 pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
     ResidenceSearchPage, SealedBundleRelay, SealedBundleRelayObservation, SearchSource, ThinItem,
-    fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit,
+    fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit, request_ask_option_link,
     sealed_bundle_relay_observation,
 };
 pub(crate) use self::residence::{
@@ -89,7 +91,8 @@ pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
     SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
-
+pub use self::window_pads::PreparedSyncFrame;
+pub(crate) use self::window_pads::WindowClaimCopyRelease;
 #[cfg(test)]
 mod tests;
 

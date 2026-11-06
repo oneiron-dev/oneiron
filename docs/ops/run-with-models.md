@@ -530,6 +530,14 @@ file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
 no voice loop, logged once with the reason `voice_socket_missing`; live voice
 sessions still run.
 
+An own-device sync connection can also copy settled default CLAIM vectors from
+its reachable home during scheduled housekeeping, even when this server has no
+ready embedder. This uses the existing pass budget and write admission. The
+current source, embedding model, transform, provenance and world route must
+match; another worker's active matching lease is left alone. A miss keeps the
+pending job for a later pass or the normal model worker. This is scheduled
+catch-up, not an offline vector carrier or an immediate fill at import.
+
 A managed vault reports how it came up on every ctl `Ping`, as `readiness`
 (contract v3): `{"state":"ready"}`, or `{"state":"degraded","missing":[...]}`
 naming each signing facility it serves without, as `{"facility","reason"}`:
@@ -1034,6 +1042,29 @@ in. The rows name no handle, binding, epoch or conversation, cover only the
 vault the server has mounted, and are non-additive facts: they neither
 alter the worker's own row nor any quota or admission, and a row's bytes
 mix device pages with host snapshots.
+
+### Failure healers for agent runs
+
+Served resident, TASK-backed and tree agent runs keep their human-only failure
+policy unless the operator selects a healer in the config file or settings file:
+
+```toml
+[self_heal]
+agent_failure_healer = "Coach"
+```
+
+This routes eligible failure cases to the existing Coach heal queue. Configure
+its models and wording separately. The native `AgentDef` slot is also accepted:
+`agent_failure_healer = { AgentDef = { agent_def_ref = "<hex EntityId>" } }`.
+The referenced live definition still passes the existing dispatchability and
+propose-only ceiling checks. `"Reserved"` explicitly restores human-only routing,
+including over a lower config layer that selected a healer. With no setting,
+the previous Human/Reserved policy remains unchanged.
+
+The choice does not change retry limits, evidence, checkpoint or Q&A references,
+provider-outage and payer parks, read authority, or proposal approval. It creates
+no Q&A messages and applies no repair. Saved workflow steps keep their existing
+human-only failure policy; this setting does not route those steps to a healer.
 
 ## 5. Saved workflows
 

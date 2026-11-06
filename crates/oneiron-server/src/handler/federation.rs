@@ -14,7 +14,7 @@ use loro::ExportMode;
 use oneiron::sync::federation_burst::{
     FederationBurstDecision, prepare_selector_fetch, replay_selector_fetch,
 };
-use oneiron::sync::{WindowKey, filtered_window_doc_for_peer};
+use oneiron::sync::{WindowKey, filtered_window_doc_for_peer_in_scope};
 
 /// `Break` when `session_gone` finds the socket's caller gone once the window
 /// has loaded (FIX 6313): nothing is sent or completed for it, and the
@@ -24,7 +24,7 @@ pub(super) async fn handle_selector_fetch(
     key: &WindowKey,
     sub_tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {
@@ -42,6 +42,7 @@ pub(super) async fn handle_selector_fetch(
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,
     )
     .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    let credential_scope = auth.verified_slip().map(|slip| slip.scope().clone());
     let (retry, request) = if sub_tag == window_sub_tags::SELECTOR_RETRY {
         let id: [u8; 32] = payload
             .get(..32)
@@ -103,13 +104,14 @@ pub(super) async fn handle_selector_fetch(
         return Ok(ControlFlow::Break(()));
     }
     let doc = window.doc.clone();
-    let filtered = filtered_window_doc_for_peer(
+    let filtered = filtered_window_doc_for_peer_in_scope(
         server.vault.as_ref(),
         &doc,
         key,
         selector_grant_scope(),
         &prepared.selector,
         state.peer_machine(server.vault()),
+        credential_scope.as_ref(),
     )
     .map_err(map_selector_filter_err)?;
     let delta = filtered
@@ -128,7 +130,7 @@ pub(super) async fn handle_selector_fetch(
 }
 
 fn send(
-    tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    tx: &crate::handler::DirectSender,
     key: &WindowKey,
     tag: u8,
     payload: &[u8],

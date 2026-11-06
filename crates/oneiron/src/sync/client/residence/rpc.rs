@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
@@ -52,6 +52,43 @@ struct ReplyEnvelope {
     seq: u64,
     last: bool,
     payload: rmpv::Value,
+    #[serde(default)]
+    home_claim_copies: Option<rmpv::Value>,
+}
+
+struct RpcChunks {
+    chunks: std::vec::IntoIter<Vec<u8>>,
+    current: Option<std::io::Cursor<Vec<u8>>>,
+}
+
+impl RpcChunks {
+    fn new(chunks: Vec<Vec<u8>>) -> Self {
+        Self {
+            chunks: chunks.into_iter(),
+            current: None,
+        }
+    }
+}
+
+impl std::io::Read for RpcChunks {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if let Some(cursor) = self.current.as_mut() {
+                let n = std::io::Read::read(cursor, buf)?;
+                if n != 0 {
+                    return Ok(n);
+                }
+                self.current = None;
+            }
+            self.current = Some(std::io::Cursor::new(match self.chunks.next() {
+                Some(chunk) => chunk,
+                None => return Ok(0),
+            }));
+        }
+    }
 }
 
 /// The home answered a residence RPC and refused it (FIX 3353), apart from a
@@ -75,9 +112,14 @@ pub(super) struct ResidenceRpc {
     /// Opened as this machine alone, with no actor bound (FIX 6458): its
     /// replies come after the sync frames the home opens each socket with.
     unbound: bool,
+    promotion_copies: Vec<u8>,
 }
 
 impl ResidenceRpc {
+    pub(super) fn promotion_copies(&self) -> &[u8] {
+        &self.promotion_copies
+    }
+
     /// `None` is only a transport outage. A refused bind or malformed reply
     /// is an error, not permission to label the search local-only.
     pub(super) async fn connect(
@@ -122,6 +164,7 @@ impl ResidenceRpc {
                         home,
                         address,
                         unbound: false,
+                        promotion_copies: Vec::new(),
                     }));
                 }
                 Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,
@@ -154,6 +197,7 @@ impl ResidenceRpc {
                 home,
                 address,
                 unbound: true,
+                promotion_copies: Vec::new(),
             }))
     }
 
@@ -235,6 +279,30 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
     ) -> Result<Result<Value, HomeRefused>, TransportError> {
+        self.call_inner(method, params, None).await
+    }
+
+    /// A bearer leaves only for the exact issuing machine, rejudged after
+    /// the actual socket's ready and immediately before its start_send.
+    pub(super) async fn request_for_machine(
+        &mut self,
+        vault: &crate::Vault,
+        machine: crate::EntityId,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, TransportError> {
+        self.call_inner(method, params, Some((vault, machine)))
+            .await?
+            .map_err(|_| TransportError::InvalidPayload("admitting machine refused bearer RPC"))
+    }
+
+    async fn call_inner(
+        &mut self,
+        method: &str,
+        params: Value,
+        machine: Option<(&crate::Vault, crate::EntityId)>,
+    ) -> Result<Result<Value, HomeRefused>, TransportError> {
+        self.promotion_copies.clear();
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).ok_or_else(refused)?;
         let request = RequestEnvelope {
@@ -251,11 +319,39 @@ impl ResidenceRpc {
         let mut frame = vec![TAG_RPC];
         frame.extend(bytes);
         let deadline = tokio::time::Instant::now() + self.timeout;
-        tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
+        if let Some((vault, machine)) = machine {
+            tokio::time::timeout_at(
+                deadline,
+                futures_util::future::poll_fn(|cx| {
+                    std::pin::Pin::new(&mut self.socket).poll_ready(cx)
+                }),
+            )
             .await
             .map_err(|_| refused())?
             .map_err(|_| refused())?;
-        let mut assembled = Vec::new();
+            if !matches!(
+                vault.peer_machine_stands(self.home),
+                crate::authority::PeerMachine::Proven { machine: proven, .. } if proven == machine
+            ) {
+                return Err(TransportError::InvalidPayload(
+                    "the option link's admitting machine did not prove this socket",
+                ));
+            }
+            std::pin::Pin::new(&mut self.socket)
+                .start_send(Message::Binary(frame.into()))
+                .map_err(|_| refused())?;
+            tokio::time::timeout_at(deadline, self.socket.flush())
+                .await
+                .map_err(|_| refused())?
+                .map_err(|_| refused())?;
+        } else {
+            tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
+                .await
+                .map_err(|_| refused())?
+                .map_err(|_| refused())?;
+        }
+        let mut chunks = Vec::new();
+        let mut received = 0usize;
         for seq in 0..512u64 {
             let frame = loop {
                 // A ready stream of opening frames must not outrun the same
@@ -302,15 +398,24 @@ impl ResidenceRpc {
             if reply.kind != "rpc.res" {
                 return Err(refused());
             }
-            let chunk = reply.payload.as_slice().ok_or_else(refused)?;
-            if assembled.len().saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
+            let chunk = match reply.payload {
+                rmpv::Value::Binary(bytes) => bytes,
+                rmpv::Value::String(text) => text.into_bytes(),
+                _ => return Err(refused()),
+            };
+            if received.saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
                 return Err(refused());
             }
-            assembled.extend_from_slice(chunk);
+            received += chunk.len();
+            chunks.push(chunk);
             if reply.last {
-                return rmp_serde::from_slice(&assembled)
-                    .map(Ok)
-                    .map_err(|_| refused());
+                let value = rmp_serde::from_read(RpcChunks::new(chunks)).map_err(|_| refused())?;
+                if method == "residence.promote"
+                    && let Some(rmpv::Value::Binary(bytes)) = reply.home_claim_copies
+                {
+                    self.promotion_copies = bytes;
+                }
+                return Ok(Ok(value));
             }
         }
         Err(refused())

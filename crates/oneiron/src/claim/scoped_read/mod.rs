@@ -150,6 +150,9 @@ pub struct ScopedRead<'a> {
     judged_at: Option<u64>,
 }
 
+mod owned;
+pub use owned::OwnedScopedRead;
+
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
@@ -157,6 +160,7 @@ pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 mod retrieval_loop;
 mod search;
+pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;
 

@@ -111,8 +111,12 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
-    /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
-    /// written, and nothing its landing discharges is discharged, until the body comes.
+    /// The real native record result survived this row's final caller checks.
+    /// Its enclosing materializer still owns the outer commit or retry.
+    NativeRecordApplied(crate::batch::AppliedRecordDocument),
+    /// The carrier's row is not ready to land, including a missing referenced
+    /// body or an unmerged native document. Nothing its landing discharges is
+    /// discharged while it remains pending.
     Pending,
     /// A delete-protected engine row passed its door (and was written when `wrote`). Its `dt:`
     /// poison is neutralized and every tombstone naming it is refused into `x:` in the same
@@ -125,6 +129,7 @@ impl EntityStep {
     pub(in crate::sync) fn written(&self) -> Option<EntityId> {
         match self {
             Self::Materialized(id) | Self::Protected { id, wrote: true } => Some(*id),
+            Self::NativeRecordApplied(applied) => Some(applied.entity()),
             _ => None,
         }
     }
@@ -280,6 +285,16 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
                 value.unwrap_or_default(),
             )?;
         }
+        if !matches!(step, EntityStep::Pending)
+            && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
+        {
+            crate::embed::home_vectors::copy_scope::retain_copies_in_txn(
+                ctx.vault,
+                &mut savepoint,
+                ctx.window_key,
+                &id,
+            );
+        }
         savepoint.commit()?;
     }
     Ok(step)
@@ -412,8 +427,10 @@ fn admit(
         // revive a remote detector's local observations.
         return Ok(EntityStep::Skip);
     }
-    // Byte-identical replay is an idempotent skip. The immutable kinds decide it inside their
-    // own door instead: a REDACTION_AUDIT receipt beside its lease verification, a type-76
+    // Byte-identical replay skips unless this import selects its native record document:
+    // a sidecar can change while the physical pointer stays the same. It still runs every
+    // ordinary gate below. The immutable kinds decide inside their own door instead:
+    // a REDACTION_AUDIT receipt beside its lease verification, a type-76
     // event beside its divergence and seq-clock checks, and an AUTHORITY_LOG row (ONE-1604-D5)
     // because an exact match must still reach its `dt:` neutralization.
     if !matches!(
@@ -434,12 +451,15 @@ fn admit(
             // A pad row rests as a reference to custody, its pad beside it (KS-5).
             || crate::world_keys::pad_echo_equal(&vault.store, &local, blob)
         {
-            // FIX 5500: the replay stays a skip, but a row already here with these bytes still
-            // records the origin its window carries for them, as the write below does.
+            // Record the exact carried origin before selecting a native continuation, too:
+            // a relayed peer row must keep the original echo instead of taking that lane.
             if let Some(doc) = ctx.carrier_doc() {
                 super::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
             }
-            return Ok(EntityStep::Skip);
+            if super::own_device::record_document::selected_in_txn(ctx, wtxn, &id, blob)?.is_none()
+            {
+                return Ok(EntityStep::Skip);
+            }
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header
         // shell and writes NO CRDT record (contracts.ts deleteReasons user_delete; cross-device
@@ -602,17 +622,37 @@ fn admit(
         return asset_ref::land(ctx, wtxn, id, header, body);
     }
     let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
-    if let Err(err) = applied {
-        if let Some(quota_debit) = quota_debit {
-            quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+    let (written, native_record) = match applied {
+        Ok(crate::batch::IngestedPutOutcome::Applied) => (id, None),
+        Ok(crate::batch::IngestedPutOutcome::NativeRecordApplied(applied)) => {
+            (applied.entity(), Some(applied))
         }
-        return Err(err);
-    }
+        Ok(crate::batch::IngestedPutOutcome::DocumentStands(stand)) => {
+            if let Some(quota_debit) = quota_debit {
+                quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+            }
+            return match stand {
+                crate::entity_doc::RecordDocumentStand::Conflict => Ok(EntityStep::Pending),
+                crate::entity_doc::RecordDocumentStand::Refused(reason) => Err(Error::Artifact(
+                    crate::error::ArtifactError::InvalidSkillBody(reason),
+                )),
+            };
+        }
+        Err(err) => {
+            if let Some(quota_debit) = quota_debit {
+                quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+            }
+            return Err(err);
+        }
+    };
     if delete_protected {
         refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
         return Ok(EntityStep::Protected { id, wrote: true });
     }
-    Ok(EntityStep::Materialized(id))
+    Ok(match native_record {
+        Some(applied) => EntityStep::NativeRecordApplied(applied),
+        None => EntityStep::Materialized(written),
+    })
 }
 
 /// Delete wins over a lingering entities-map body.

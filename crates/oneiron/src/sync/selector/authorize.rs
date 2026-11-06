@@ -298,6 +298,7 @@ fn authorized_base_edge_endpoints(
     selector: &SyncSelector,
     position: &Position,
     withhold: Withhold<'_>,
+    credential_scope: Option<&crate::federation::Scope>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -337,7 +338,7 @@ fn authorized_base_edge_endpoints(
             };
             reverse_rematerialize_with(vault, &base, &base_key, withhold)?;
             // Read only for what it selects: no birth is copied.
-            let selected = filter_window_doc(
+            let selected = filter_window_doc_in_scope(
                 vault,
                 &base,
                 &base_key,
@@ -345,6 +346,7 @@ fn authorized_base_edge_endpoints(
                 position,
                 withhold,
                 BirthReach::OtherVault(&WithheldKey::fresh()),
+                credential_scope,
             )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
@@ -359,5 +361,10 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
+mod bootstrap_check;
 mod filter;
-pub(super) use filter::filter_window_doc;
+mod projection;
+mod projection_history;
+mod selection;
+pub(in crate::sync) use bootstrap_check::check_bootstrap_sources;
+pub(super) use filter::{filter_window_doc, filter_window_doc_in_scope};

@@ -65,6 +65,171 @@ pub(super) fn packed(value: &impl Serialize) -> Result<Vec<u8>, ProtocolError> {
     Ok(writer.0)
 }
 
+/// An owned RPC value whose packed size and digest are known before its receipt.
+pub(super) struct PreparedResult {
+    value: Value,
+    bytes: usize,
+    pub(super) digest: String,
+}
+
+struct ResultMeasure {
+    bytes: usize,
+    digest: blake3::Hasher,
+}
+
+impl Write for ResultMeasure {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.saturating_add(bytes.len()) > MAX_RESULT_BYTES {
+            return Err(std::io::Error::other("app result too large"));
+        }
+        self.bytes += bytes.len();
+        self.digest.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(super) fn prepare_result(value: Value) -> Result<PreparedResult, ProtocolError> {
+    let mut measure = ResultMeasure {
+        bytes: 0,
+        digest: blake3::Hasher::new(),
+    };
+    value
+        .serialize(&mut rmp_serde::Serializer::new(&mut measure).with_struct_map())
+        .map_err(|_| ProtocolError::FrameTooLarge {
+            size: MAX_RESULT_BYTES + 1,
+            max: MAX_RESULT_BYTES,
+        })?;
+    Ok(PreparedResult {
+        value,
+        bytes: measure.bytes,
+        digest: measure.digest.finalize().to_hex().to_string(),
+    })
+}
+
+/// What `write_prepared_result` reports: an encoding failure under the original
+/// over-limit mapping, or the send callback's own delivery failure, retained
+/// unchanged so a closed channel is never confused with too-large bytes.
+pub(super) enum ResultFramesError {
+    Encoding(ProtocolError),
+    Delivery(ProtocolError),
+}
+
+struct ResultFrames<'a> {
+    id: u64,
+    stamp: &'a CallStamp,
+    chunk: Vec<u8>,
+    seq: u64,
+    send: &'a mut (dyn FnMut(Vec<u8>) -> Result<(), ProtocolError> + Send),
+    error: Option<ResultFramesError>,
+}
+
+impl ResultFrames<'_> {
+    fn push_chunk(&mut self, last: bool) -> std::io::Result<()> {
+        let frame = match stamped_frame(
+            TAG_RPC,
+            "rpc.res",
+            self.id,
+            self.seq,
+            last,
+            serde_bytes::Bytes::new(&self.chunk),
+            self.stamp,
+        ) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.error.get_or_insert(ResultFramesError::Encoding(error));
+                return Err(std::io::Error::other("app result frame too large"));
+            }
+        };
+        if let Err(error) = (self.send)(frame) {
+            self.error.get_or_insert(ResultFramesError::Delivery(error));
+            return Err(std::io::Error::other("app result frame too large"));
+        }
+        self.seq += 1;
+        self.chunk.clear();
+        Ok(())
+    }
+}
+
+impl Write for ResultFrames<'_> {
+    fn write(&mut self, mut bytes: &[u8]) -> std::io::Result<usize> {
+        let written = bytes.len();
+        while !bytes.is_empty() {
+            if self.chunk.len() == CHUNK_BYTES {
+                self.push_chunk(false)?;
+            }
+            let take = bytes.len().min(CHUNK_BYTES - self.chunk.len());
+            self.chunk.extend_from_slice(&bytes[..take]);
+            bytes = &bytes[take..];
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Re-encode the same immutable JSON value directly into its stamped frames,
+/// handing each completed frame to `send` in seq order instead of collecting
+/// them. Only one raw chunk plus one in-progress frame is retained. The prepared
+/// result is borrowed so the same value can be framed again unchanged.
+pub(super) fn write_prepared_result(
+    id: u64,
+    result: &PreparedResult,
+    stamp: &CallStamp,
+    send: &mut (dyn FnMut(Vec<u8>) -> Result<(), ProtocolError> + Send),
+) -> Result<(), ResultFramesError> {
+    let mut writer = ResultFrames {
+        id,
+        stamp,
+        chunk: Vec::with_capacity(result.bytes.min(CHUNK_BYTES)),
+        seq: 0,
+        send,
+        error: None,
+    };
+    let encoded = result
+        .value
+        .serialize(&mut rmp_serde::Serializer::new(&mut writer).with_struct_map());
+    encoded.map_err(|_| match writer.error.take() {
+        Some(ResultFramesError::Delivery(error)) => ResultFramesError::Delivery(error),
+        _ => ResultFramesError::Encoding(ProtocolError::FrameTooLarge {
+            size: MAX_RESULT_BYTES + 1,
+            max: MAX_RESULT_BYTES,
+        }),
+    })?;
+    writer
+        .push_chunk(true)
+        .map_err(|_| match writer.error.take() {
+            Some(ResultFramesError::Delivery(error)) => ResultFramesError::Delivery(error),
+            _ => ResultFramesError::Encoding(ProtocolError::FrameTooLarge {
+                size: MAX_RESULT_BYTES + 1,
+                max: MAX_RESULT_BYTES,
+            }),
+        })
+}
+
+/// Re-encode the same immutable JSON value directly into its stamped frames.
+/// Only one raw chunk is retained; the completed frames are still queued together.
+pub(super) fn prepared_result_chunks(
+    id: u64,
+    result: PreparedResult,
+    stamp: &CallStamp,
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    let mut frames = Vec::new();
+    let mut collect = |frame: Vec<u8>| -> Result<(), ProtocolError> {
+        frames.push(frame);
+        Ok(())
+    };
+    write_prepared_result(id, &result, stamp, &mut collect).map_err(|error| match error {
+        ResultFramesError::Encoding(error) | ResultFramesError::Delivery(error) => error,
+    })?;
+    Ok(frames)
+}
+
 pub(super) fn decode<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<Envelope<T>, ProtocolError> {
@@ -127,6 +292,43 @@ pub(super) fn stamped_frame<T: Serialize>(
         });
     }
     Ok(bytes)
+}
+
+/// Adds optional promotion metadata only in the spare bytes of the existing
+/// last result chunk. The packed result and every receipt field stay unchanged.
+pub(super) fn promotion_copy_frame(frame: &[u8], copies: &[u8]) -> Option<Vec<u8>> {
+    if frame.first() != Some(&TAG_RPC) || copies.is_empty() {
+        return None;
+    }
+    let mut envelope: rmpv::Value = rmp_serde::from_slice(&frame[1..]).ok()?;
+    let rmpv::Value::Map(fields) = &mut envelope else {
+        return None;
+    };
+    let field = |name| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    if field("type")?.as_str() != Some("rpc.res") || field("last")?.as_bool() != Some(true) {
+        return None;
+    }
+    let rmpv::Value::Binary(payload) = field("payload")? else {
+        return None;
+    };
+    let spare = CHUNK_BYTES.checked_sub(payload.len())?;
+    fields.push((
+        rmpv::Value::from("home_claim_copies"),
+        rmpv::Value::Binary(copies.to_vec()),
+    ));
+    let mut extended = vec![TAG_RPC];
+    extended.extend(packed(&envelope).ok()?);
+    if extended.len().saturating_sub(frame.len()) > spare
+        || extended.len() - 1 > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    {
+        return None;
+    }
+    Some(extended)
 }
 
 #[derive(Deserialize)]

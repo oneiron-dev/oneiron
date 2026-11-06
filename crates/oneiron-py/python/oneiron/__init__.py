@@ -870,7 +870,7 @@ class Oneiron:
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
             return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
-            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
+            """Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
         def remember(self, input: dict[str, Any]) -> Any:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
@@ -2664,11 +2664,14 @@ class Oneiron:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
             return json.loads(_translate(lambda: self._client.vault_members_projection(json.dumps(spec))))
         def add(self, spec):
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
         def invitation_slip(self, spec):
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
             return json.loads(_translate(lambda: self._client.vault_members_invitation_slip(json.dumps(spec))))
+        def invitation_code(self, spec):
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
+            return json.loads(_translate(lambda: self._client.vault_members_invitation_code(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
             return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
@@ -2684,6 +2687,9 @@ class Oneiron:
         def accept(self, spec):
             """The invitee accepts their own invitation and joins the shared vault at its role."""
             return json.loads(_translate(lambda: self._client.vault_members_accept(json.dumps(spec))))
+        def accept_with_credential(self, spec):
+            """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_members_accept_with_credential(json.dumps(spec))))
         def decline(self, spec):
             """The invitee declines their own invitation; nothing is granted."""
             return json.loads(_translate(lambda: self._client.vault_members_decline(json.dumps(spec))))
@@ -6400,15 +6406,36 @@ class Oneiron:
         def redo(self, spec):
             """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
             return json.loads(_translate(lambda: self._client.tasks_redo(json.dumps(spec))))
-        def answer(self, handle, word):
-            """Admits one person's word on an ask; the word is evidence, never approval."""
-            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        @property
+        def answer(self) -> "Oneiron._TasksAnswerVerbs":
+            return Oneiron._TasksAnswerVerbs(self._client)
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
+    class _TasksAnswerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle, word):
+            """Admits one person's word on an ask; the word is evidence, never approval."""
+            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        @property
+        def forward(self) -> "Oneiron._TasksAnswerForwardVerbs":
+            return Oneiron._TasksAnswerForwardVerbs(self._client)
+    class _TasksAnswerForwardVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle, intent_key, act, proof):
+            """Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward(json.dumps({"handle": handle, "intent_key": intent_key, "act": act, "proof": proof}))))
+        def challenge(self, handle, intent_key, act):
+            """The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward_challenge(json.dumps({"handle": handle, "intent_key": intent_key, "act": act}))))
+        def status(self, intent_ref):
+            """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward_status(json.dumps({"intent_ref": intent_ref}))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -347,11 +347,13 @@ pub enum AgentVerb {
     VaultMembersProjection,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
+    VaultMembersInvitationCode,
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
     VaultMembersInvitations,
     VaultMembersAccept,
+    VaultMembersAcceptWithCredential,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultSharedObject,
@@ -833,6 +835,9 @@ pub enum AgentVerb {
     Ask,
     Wait,
     TasksAnswer,
+    TasksAnswerForwardChallenge,
+    TasksAnswerForward,
+    TasksAnswerForwardStatus,
     TasksOutcomes,
     VaultRoomsList,
     VaultRoomsMessages,
@@ -1634,11 +1639,13 @@ impl AgentVerb {
         Self::VaultMembersProjection,
         Self::VaultMembersAdd,
         Self::VaultMembersInvitationSlip,
+        Self::VaultMembersInvitationCode,
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
         Self::VaultMembersInvitations,
         Self::VaultMembersAccept,
+        Self::VaultMembersAcceptWithCredential,
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
         Self::VaultSharedObject,
@@ -2120,6 +2127,9 @@ impl AgentVerb {
         Self::Ask,
         Self::Wait,
         Self::TasksAnswer,
+        Self::TasksAnswerForwardChallenge,
+        Self::TasksAnswerForward,
+        Self::TasksAnswerForwardStatus,
         Self::TasksOutcomes,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
@@ -2926,11 +2936,13 @@ impl AgentVerb {
             Self::VaultMembersProjection => "vault.members.projection",
             Self::VaultMembersAdd => "vault.members.add",
             Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
+            Self::VaultMembersInvitationCode => "vault.members.invitation_code",
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
             Self::VaultMembersInvitations => "vault.members.invitations",
             Self::VaultMembersAccept => "vault.members.accept",
+            Self::VaultMembersAcceptWithCredential => "vault.members.accept_with_credential",
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultSharedObject => "vault.shared.object",
@@ -3434,6 +3446,9 @@ impl AgentVerb {
             Self::Ask => "ask",
             Self::Wait => "wait",
             Self::TasksAnswer => "tasks.answer",
+            Self::TasksAnswerForwardChallenge => "tasks.answer.forward.challenge",
+            Self::TasksAnswerForward => "tasks.answer.forward",
+            Self::TasksAnswerForwardStatus => "tasks.answer.forward.status",
             Self::TasksOutcomes => "tasks.outcomes",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
@@ -4247,11 +4262,13 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -4733,6 +4750,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -5563,11 +5583,13 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -6049,6 +6071,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -7029,11 +7054,13 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -7483,6 +7510,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -8097,10 +8127,12 @@ impl AgentVerb {
                 | Self::VaultMembersDelegate
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -8396,6 +8428,7 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForward
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
@@ -8673,7 +8706,10 @@ impl AgentVerb {
         )
     }
     pub const fn is_task_work(self) -> bool {
-        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+        matches!(
+            self,
+            Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer | Self::TasksAnswerForward
+        )
     }
     pub const fn takes_task_decisions(self) -> bool {
         matches!(
@@ -9046,11 +9082,13 @@ impl AgentVerb {
             Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
+            Self::VaultMembersInvitationCode => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
             Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultSharedObject => &["spec"],
@@ -9532,6 +9570,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
@@ -10334,11 +10375,13 @@ impl AgentVerb {
             Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
+            Self::VaultMembersInvitationCode => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
             Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultSharedObject => &["spec"],
@@ -10820,6 +10863,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
@@ -12292,10 +12338,13 @@ impl AgentVerb {
                 "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."
             }
             Self::VaultMembersAdd => {
-                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
+                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."
             }
             Self::VaultMembersInvitationSlip => {
-                "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."
+                "The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."
+            }
+            Self::VaultMembersInvitationCode => {
+                "The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."
@@ -12309,6 +12358,9 @@ impl AgentVerb {
             }
             Self::VaultMembersAccept => {
                 "The invitee accepts their own invitation and joins the shared vault at its role."
+            }
+            Self::VaultMembersAcceptWithCredential => {
+                "The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."
             }
             Self::VaultMembersDecline => {
                 "The invitee declines their own invitation; nothing is granted."
@@ -13723,6 +13775,15 @@ impl AgentVerb {
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."
             }
+            Self::TasksAnswerForwardChallenge => {
+                "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."
+            }
+            Self::TasksAnswerForward => {
+                "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."
+            }
+            Self::TasksAnswerForwardStatus => {
+                "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."
+            }
             Self::TasksOutcomes => {
                 "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
             }
@@ -14218,7 +14279,7 @@ impl AgentVerb {
                 "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
+                "Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."

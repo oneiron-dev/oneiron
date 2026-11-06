@@ -165,19 +165,24 @@ impl Vault {
                 "commit tree could not be read",
             ))
         })?;
-        // A run keeps the namespace its existing repository admission names.
-        let repo_path = if select.is_some() {
-            std::fs::canonicalize(&config.repo_path)
-        } else {
-            // Commit-only imports also work when the checkout is unavailable.
-            std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
-                .or_else(|_| std::fs::canonicalize(repo.path()))
-        }
-        .map_err(|_| {
+        let invalid_repo_path = |_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "repo_path must be a canonicalizable local path",
             ))
-        })?;
+        };
+        // Absolute custody declarations follow the commit tree's actual root.
+        // Commit-only imports also work when the checkout is unavailable.
+        let custody_path = std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
+            .or_else(|_| std::fs::canonicalize(repo.path()))
+            .map_err(invalid_repo_path)?;
+        // A run keeps the namespace its existing repository admission names.
+        let repo_path = if select.is_some() {
+            std::fs::canonicalize(&config.repo_path).map_err(invalid_repo_path)?
+        } else {
+            custody_path.clone()
+        };
+        let custody_path = custody_path.to_string_lossy();
+        let custody_root = Some(custody_path.trim_end_matches('/'));
         let repo_ref = RepoRef::LocalFolder {
             path: repo_path.to_string_lossy().into_owned(),
             commit: commit_hash.clone(),
@@ -204,7 +209,7 @@ impl Vault {
                 .map(|index| blobs[index].data.clone())
         };
         let rtxn = self.store.env.read_txn()?;
-        self.apply_custody_to_snapshot(&rtxn, &snapshot, &contents)?;
+        self.apply_custody_to_snapshot(&rtxn, &snapshot, custody_root, &contents)?;
         drop(rtxn);
         after_first_pass()?;
         // Keep main's vault-scoped, test-only writer rendezvous: a registration
@@ -230,6 +235,7 @@ impl Vault {
             &commit_hash,
             occurred,
             learned_at,
+            custody_root,
             &contents,
             admit,
         )
@@ -274,6 +280,7 @@ impl Vault {
         commit_hash: &str,
         occurred: TimeRange,
         learned_at: u64,
+        custody_root: Option<&str>,
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
@@ -287,7 +294,7 @@ impl Vault {
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
             let (files, custody_report) =
-                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, contents)?;
+                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, custody_root, contents)?;
             let filtered_snapshot = CodebaseSnapshot::new(
                 snapshot.project_id.clone(),
                 snapshot.repo_ref.clone(),
@@ -376,19 +383,22 @@ impl Vault {
                     .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
             )?;
             // Each source names the file document its symbols are spans on,
-            // as this writer reads it (FIX 7809).
+            // as this writer reads it (FIX 7809), under the repository
+            // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
+            let identity = crate::codebase::resolve_repo_identity_in_txn(self, read, repo_ref)?;
             let symbol_sources = symbol_texts
                 .iter()
                 .map(|(path, text)| {
                     Ok(CodeSymbolSource::new(path, text).with_document(
-                        code_symbol_document_in_txn(&self.store, read, repo_ref, path)?,
+                        code_symbol_document_in_txn(&self.store, read, &identity, path)?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
+                identity,
                 Some(commit_hash.to_owned()),
                 symbol_sources,
             )?;
