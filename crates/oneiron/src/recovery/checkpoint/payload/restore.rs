@@ -222,26 +222,38 @@ impl OpenedPayload {
     }
 
     /// The entity rows the opened entity bundles land, in key order, that
-    /// no unopened owner holds up: a restore checks each as it checks the
-    /// image's, and stages its type index.
-    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
+    /// no unopened owner holds up: each exact row, and each actor-keyed one
+    /// (an author carrier, FIX 17143) whose actor opened. A restore checks
+    /// each as it checks the image's, and stages its type index.
+    ///
+    /// # Errors
+    ///
+    /// An actor part that does not read as the row it names.
+    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut rows = Vec::new();
+        let entities = self
             .bundles
             .iter()
-            .filter(|(role, _)| *role == BundleRole::Content(Getter::Entities))
-            .flat_map(|(_, opened)| {
-                opened.rows.iter().filter_map(|part| match part {
-                    RowPart::Exact { at, value }
-                        if at.db == RowDb::Entities && !held_up(opened, at) =>
-                    {
-                        Some((at.key.clone(), value.clone()))
+            .filter(|(role, _)| *role == BundleRole::Content(Getter::Entities));
+        for (_, opened) in entities {
+            for part in &opened.rows {
+                let at = part.at();
+                if at.db != RowDb::Entities || held_up(opened, at) {
+                    continue;
+                }
+                match part {
+                    RowPart::Exact { value, .. } => rows.push((at.key.clone(), value.clone())),
+                    RowPart::ActorKeyed { .. } => {
+                        if let Some((row, value)) = opened.actor_keyed_row(at)? {
+                            rows.push((row.key, value));
+                        }
                     }
-                    _ => None,
-                })
-            })
-            .collect();
+                    RowPart::NoActor { .. } => {}
+                }
+            }
+        }
         rows.sort();
-        rows
+        Ok(rows)
     }
 
     /// `erased`, the ids a restore's source erased, with every entity
