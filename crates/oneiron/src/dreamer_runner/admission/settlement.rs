@@ -188,6 +188,9 @@ impl DreamerRunnerStore<'_> {
                     actual.actual_units,
                     native,
                 );
+                super::native_call::record_native_aggregate_observations_in_txn(
+                    self.vault, wtxn, &input, actual, native,
+                );
             }
             if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
                 && let Some(net) = net
@@ -272,6 +275,9 @@ impl DreamerRunnerStore<'_> {
                     &input,
                     actual.actual_units,
                     native,
+                );
+                super::native_call::record_native_aggregate_observations_in_txn(
+                    self.vault, wtxn, &input, actual, native,
                 );
             }
             if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
