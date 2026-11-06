@@ -36,6 +36,8 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use crate::decision_verdict::model_call_context;
+
 use super::AiHandle;
 
 /// The role whose seat answers.
@@ -102,7 +104,8 @@ impl LocalVisionModel {
         self.locality
     }
 
-    /// The last call's spend and finish, or its failure; none before one ran.
+    /// The last recorded call's spend and finish, or its failure; private
+    /// calls leave this observation unchanged.
     pub(crate) fn last_call(&self) -> Option<VisionCall> {
         self.last
             .lock()
@@ -216,28 +219,60 @@ impl DecisionModel for LocalVisionModel {
             Some(run) => run.sourced(Some(call.evidence.to_vec())),
             None => self.run.sourced(Some(call.evidence.to_vec())),
         };
-        // Cooling waits also keep the vault's limit; sends keep the full work time.
-        let wait_budget = admitted.ladder.cooling_wait_budget(time_left);
-        let response = self.runtime.block_on(async {
-            tokio::time::timeout(
-                time_left,
-                admitted.ladder.generate_within(
-                    &run,
-                    admitted.request,
-                    None,
-                    &|| true,
-                    wait_budget,
-                ),
-            )
-            .await
-            .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+        let unrecorded = run.is_unrecorded();
+        let ladder = admitted.ladder.for_run(&run);
+        let caller = (!unrecorded).then(model_call_context).flatten();
+        let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
+            self.vault
+                .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
-        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+        let record_request = admitted.request.clone();
+        // Cooling waits also keep the vault's limit; sends keep the full work time.
+        let wait_budget = ladder.cooling_wait_budget(time_left);
+        let response = crate::decision_host::run_native_read(&run, || {
+            self.runtime.block_on(async {
+                tokio::time::timeout(
+                    time_left,
+                    ladder.generate_recorded_by(
+                        &run,
+                        admitted.request,
+                        None,
+                        &|| run.may_send(),
+                        wait_budget,
+                    ),
+                )
+                .await
+                .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            })
+        });
+        let response = response.map(|(response, binding)| {
+            if let Some(caller) = caller {
+                let no_record = no_record_at_arrival
+                    || self.vault.model_call_keeps_no_record_for(
+                        caller.session.as_deref(),
+                        Some(caller.principal),
+                    );
+                let evidence = run.initiated_by(Some(caller.principal));
+                crate::api::record_raw_response(
+                    &self.vault,
+                    &ladder,
+                    &evidence,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+            }
             response
-                .as_ref()
-                .map(|response| (response.usage.clone(), response.finish_reason.clone()))
-                .map_err(Clone::clone),
-        );
+        });
+        if !unrecorded {
+            *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+                response
+                    .as_ref()
+                    .map(|response| (response.usage.clone(), response.finish_reason.clone()))
+                    .map_err(Clone::clone),
+            );
+        }
         let response =
             response.map_err(|error| failed(&format!("local vision call failed: {error}")))?;
         let text = response

@@ -38,6 +38,7 @@ mod updates;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
 // FIX 14975: the drafter evaluator's op, and the chat body split it sends.
 pub(super) use evaluator_ops::{
     advertised as evaluator_advertised, evaluate as evaluator_generate,
@@ -60,8 +61,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, SchedulingReceipt,
-    SegmentManifest, WorkerFailure,
+    DispatchRelease, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
+    SchedulingReceipt, SegmentManifest, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
 use oneiron_llm_openai::{
@@ -131,29 +132,43 @@ impl NativeExl3Transport {
 /// serves is one HTTP send, as before.
 impl oneiron::llm::SingleSend for NativeExl3Transport {}
 
-impl OpenAiCompatTransport for NativeExl3Transport {
-    fn execute<'a>(
+impl NativeExl3Transport {
+    fn execute_with_release<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
     ) -> OpenAiCompatFuture<'a> {
         let Some(route) = self.route(&request.body) else {
             let tie = self.http_tie(&request.body);
-            return self.http.execute_with_tie(request, lease, tie);
+            return match release {
+                Some(release) => {
+                    self.http
+                        .execute_with_tie_release(request, lease, tie, Some(release))
+                }
+                None => self.http.execute_with_tie(request, lease, tie),
+            };
         };
-        self.shaping.execute(route, request, lease)
+        self.shaping.execute(route, request, lease, release)
     }
 
-    fn stream<'a>(
+    fn stream_with_release<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let Some(route) = self.route(&request.body) else {
             let tie = self.http_tie(&request.body);
-            return self.http.stream_with_tie(request, lease, tie);
+            return match release {
+                Some(release) => {
+                    self.http
+                        .stream_with_tie_release(request, lease, tie, Some(release))
+                }
+                None => self.http.stream_with_tie(request, lease, tie),
+            };
         };
-        Ok(self.shaping.stream(route, request, lease))
+        Ok(self.shaping.stream(route, request, lease, release))
     }
 }
 
@@ -202,12 +217,21 @@ impl NativeShaping {
         route: NativeRoute,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
     ) -> OpenAiCompatFuture<'a> {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
         let context = lease.work_context().unwrap_or_default();
         let engine_model = self.engine_model(&body);
-        Box::pin(execute(route, body, segments, context, lease, engine_model))
+        Box::pin(execute(
+            route,
+            body,
+            segments,
+            context,
+            lease,
+            engine_model,
+            release,
+        ))
     }
 
     /// A streamed call over `route`, shaped as HTTP would send it.
@@ -216,6 +240,7 @@ impl NativeShaping {
         route: NativeRoute,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
     ) -> OpenAiCompatProviderStream<'a> {
         let segments = request.host_segments;
         let body = self.shaped(request.body);
@@ -229,6 +254,7 @@ impl NativeShaping {
                 context,
                 lease: lease.clone(),
                 engine_model,
+                release,
             },
             Streaming::step,
         ))
@@ -270,13 +296,35 @@ impl NativeLocalTransport {
 impl oneiron::llm::SingleSend for NativeLocalTransport {}
 
 impl OpenAiCompatTransport for NativeLocalTransport {
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> OpenAiCompatFuture<'a> {
+        match self.route(&request.body) {
+            Ok(route) => self.shaping.execute(route, request, lease, Some(release)),
+            Err(error) => Box::pin(async move { Err::<OpenAiCompatHttpResponse, _>(error) }),
+        }
+    }
+
+    fn stream_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        let route = self.route(&request.body)?;
+        Ok(self.shaping.stream(route, request, lease, Some(release)))
+    }
+
     fn execute<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
         lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
         match self.route(&request.body) {
-            Ok(route) => self.shaping.execute(route, request, lease),
+            Ok(route) => self.shaping.execute(route, request, lease, None),
             Err(error) => Box::pin(async move { Err::<OpenAiCompatHttpResponse, _>(error) }),
         }
     }
@@ -287,7 +335,43 @@ impl OpenAiCompatTransport for NativeLocalTransport {
         lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let route = self.route(&request.body)?;
-        Ok(self.shaping.stream(route, request, lease))
+        Ok(self.shaping.stream(route, request, lease, None))
+    }
+}
+
+impl OpenAiCompatTransport for NativeExl3Transport {
+    fn execute<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> OpenAiCompatFuture<'a> {
+        self.execute_with_release(request, lease, None)
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        self.stream_with_release(request, lease, None)
+    }
+
+    fn execute_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> OpenAiCompatFuture<'a> {
+        self.execute_with_release(request, lease, Some(release))
+    }
+
+    fn stream_released<'a>(
+        &'a self,
+        request: OpenAiCompatHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        self.stream_with_release(request, lease, Some(release))
     }
 }
 
@@ -324,6 +408,7 @@ async fn begin(
     stream: bool,
     segments: Option<&SegmentManifest>,
     context: WorkContext,
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
 ) -> Result<Begun, OpenAiCompatTransportError> {
     // The ticket precedes demand; an early exit cancels it without touching
     // the worker. Foreground arrival yields only update-capable background
@@ -382,8 +467,8 @@ async fn begin(
     let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
-        Some(manifest) => {
-            worker_host::open_turn(
+        Some(manifest) => match release {
+            Some(release) => worker_host::open_turn_with_release(
                 route,
                 &launch,
                 &epoch,
@@ -391,15 +476,29 @@ async fn begin(
                 manifest,
                 &conversation,
                 &params,
+                Some(release),
             )
             .await
-        }
+            .map_err(OpenAiCompatTransportError::Release)?,
+            None => {
+                worker_host::open_turn(
+                    route,
+                    &launch,
+                    &epoch,
+                    lease.observed(),
+                    manifest,
+                    &conversation,
+                    &params,
+                )
+                .await
+            }
+        },
         None => None,
     };
     let plain = session.is_some().then(|| params.clone());
     // A plain retry after a refused session is the same call: it reuses the
     // ticket, grant, class, priority and deadline.
-    let mut started = Call::start(
+    let mut started = Call::start_with_release(
         &launch,
         &epoch,
         &conversation,
@@ -409,6 +508,7 @@ async fn begin(
         session,
         Some(&schedule),
         Some(&route.worker),
+        release,
     )
     .await;
     let refused = matches!(
@@ -421,7 +521,7 @@ async fn begin(
             .acquire()
             .await
             .map_err(|_| OpenAiCompatTransportError::Connection)?;
-        started = Call::start(
+        started = Call::start_with_release(
             &launch,
             &epoch,
             &conversation,
@@ -431,6 +531,7 @@ async fn begin(
             None,
             Some(&schedule),
             Some(&route.worker),
+            release,
         )
         .await;
     }
@@ -487,6 +588,7 @@ async fn execute(
     context: WorkContext,
     lease: &BudgetLease,
     engine_model: Option<ModelId>,
+    release: Option<DispatchRelease<'_>>,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
@@ -499,7 +601,16 @@ async fn execute(
     // the wait below surfaces at the next wire event.
     let device_cancel = context.cancel.shared();
     let device_cancel_wake = context.cancel.shared_notify();
-    let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
+    let mut sent = match begin(
+        &route,
+        &body,
+        false,
+        segments.as_deref(),
+        context,
+        release.map(|release| (release, lease)),
+    )
+    .await?
+    {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
@@ -842,7 +953,7 @@ pub(super) async fn qualify(
 type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
 /// A streamed call over the native route.
-enum Streaming {
+enum Streaming<'a> {
     Start {
         route: NativeRoute,
         body: JsonValue,
@@ -850,6 +961,7 @@ enum Streaming {
         context: WorkContext,
         lease: BudgetLease,
         engine_model: Option<ModelId>,
+        release: Option<DispatchRelease<'a>>,
     },
     Live(Box<Live>),
     Done,
@@ -871,7 +983,7 @@ struct Live {
     finished: bool,
 }
 
-impl Streaming {
+impl Streaming<'_> {
     async fn step(self) -> Option<(Frame, Self)> {
         match self {
             Self::Start {
@@ -881,12 +993,22 @@ impl Streaming {
                 context,
                 lease,
                 engine_model,
+                release,
             } => {
                 let target = body
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(&route, &body, true, segments.as_deref(), context).await {
+                match begin(
+                    &route,
+                    &body,
+                    true,
+                    segments.as_deref(),
+                    context,
+                    release.map(|release| (release, &lease)),
+                )
+                .await
+                {
                     Ok(Begun::Sent(sent)) => {
                         // One physical request, observed from its send (FIX 9297).
                         let publisher = InferencePublisher::begin(&lease);
@@ -945,7 +1067,7 @@ impl Live {
         self.chunk(JsonValue::Object(delta), JsonValue::Null)
     }
 
-    async fn next(mut self: Box<Self>) -> Option<(Frame, Streaming)> {
+    async fn next<'a>(mut self: Box<Self>) -> Option<(Frame, Streaming<'a>)> {
         loop {
             if let Some(frame) = self.pending.pop_front() {
                 return Some((frame, Streaming::Live(self)));

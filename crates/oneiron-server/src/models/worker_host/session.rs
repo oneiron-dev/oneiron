@@ -73,7 +73,7 @@ pub(super) use prepare::{set_policy as set_prepare_policy, status as prepared_ta
 #[cfg(unix)]
 pub(super) use registry::Registry;
 #[cfg(unix)]
-pub(in crate::models) use turn::open_turn;
+pub(in crate::models) use turn::{open_turn, open_turn_with_release};
 
 /// What a turn's canonical path was admitted under, held by the turn and
 /// rechecked before its successor is published, and before a snapshot of

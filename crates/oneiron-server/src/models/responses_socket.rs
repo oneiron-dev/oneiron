@@ -568,7 +568,6 @@ impl OpenAiSessions {
             }
         })
     }
-
 }
 
 impl LlmBackend for OpenAiSessions {
@@ -633,7 +632,6 @@ impl LlmBackend for OpenAiSessions {
 /// socket opens; neither is sent twice, save a chained turn the socket
 /// refused before generating, which goes again whole on that socket.
 impl SingleRouteBackend for OpenAiSessions {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,

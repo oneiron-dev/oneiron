@@ -36,6 +36,7 @@ mod account_park;
 mod offer_core;
 mod quota_queue;
 mod reply_budgets;
+mod unrecorded;
 mod world_hold;
 
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
@@ -276,6 +277,9 @@ pub(super) struct Asked<'a> {
 /// hands its call on, and the next call starts fresh.
 pub struct OfferCooldowns {
     vault: Option<Arc<Vault>>,
+    /// Limit and account rests owned only by an unrecorded call. The same
+    /// vault still supplies its clock, world and configured fallbacks.
+    local_rests: Option<Mutex<BTreeMap<String, Rest>>>,
     /// The configured models a parked offer may fall back to.
     fallbacks: RwLock<Vec<FallbackRung>>,
     /// Each offer whose provider was down and has not stably recovered,
@@ -305,6 +309,7 @@ impl OfferCooldowns {
     pub fn unkept() -> Arc<Self> {
         Arc::new(Self {
             vault: None,
+            local_rests: None,
             fallbacks: RwLock::default(),
             health: Mutex::default(),
             probes: AtomicU64::new(0),

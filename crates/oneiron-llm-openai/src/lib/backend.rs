@@ -4,6 +4,7 @@ use super::{
     OpenAiCompatLlmStream, OpenAiCompatTransport, OpenAiProviderOptions, build_openai_chat_request,
     classify_openai_status, parse_openai_chat_response,
 };
+use oneiron::llm::DispatchRelease;
 use oneiron::{
     BudgetLease, ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry,
     LlmGenerateFuture, LlmMessage, LlmRequest, LlmResult, LlmStream, LlmStreamResult, ModelId,
@@ -112,45 +113,48 @@ impl<T> oneiron::llm::SingleRouteBackend for OpenAiCompatBackend<T>
 where
     T: OpenAiCompatTransport + oneiron::llm::SingleSend,
 {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,
         lease: &'a BudgetLease,
         _digest: &'a str,
     ) -> LlmGenerateFuture<'a> {
-        self.generate_borrowed(request, lease)
+        self.generate_borrowed_with_release(request, lease, None)
+    }
+
+    fn generate_borrowed_bound_released<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &'a str,
+        release: DispatchRelease<'a>,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_borrowed_with_release(request, lease, Some(release))
     }
 
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         build_openai_chat_request(&self.config, request, stream).map(drop)
     }
-}
 
-impl<T: OpenAiCompatTransport> OpenAiCompatBackend<T> {
-    fn generate_borrowed<'a>(
+    fn generate_bound_released<'a>(
         &'a self,
-        request: &'a LlmRequest,
+        request: LlmRequest,
         lease: &'a BudgetLease,
+        _digest: &str,
+        release: DispatchRelease<'a>,
     ) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            let wire_request = build_openai_chat_request(&self.config, request, false)?;
-            let response = self.transport.execute(wire_request, lease).await?;
-            if !(200..=299).contains(&response.status) {
-                return Err(classify_openai_status(
-                    response.status,
-                    &response.headers,
-                    &response.body,
-                ));
-            }
-            // The answer's inference receipts name the model this call was
-            // admitted for (FIX 8314); a worker's wire names none.
-            let mut answer = parse_openai_chat_response(&response.body)?;
-            answer.usage.bind_inference_model(&request.model);
-            Ok(answer)
-        })
+        self.generate_with_release(request, lease, Some(release))
     }
 
+    fn stream_bound_released<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+        release: DispatchRelease<'a>,
+    ) -> LlmStreamResult<'a> {
+        self.stream_with_release(request, lease, Some(release))
+    }
 }
 
 impl<T> LlmBackend for OpenAiCompatBackend<T>
@@ -167,12 +171,74 @@ where
         request: LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        Box::pin(async move { self.generate_borrowed(&request, lease).await })
+        self.generate_with_release(request, lease, None)
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        self.stream_with_release(request, lease, None)
+    }
+}
+
+impl<T> OpenAiCompatBackend<T>
+where
+    T: OpenAiCompatTransport,
+{
+    fn generate_with_release<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            self.generate_borrowed_with_release(&request, lease, release)
+                .await
+        })
+    }
+
+    fn generate_borrowed_with_release<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let wire_request = build_openai_chat_request(&self.config, request, false)?;
+            let response = match release {
+                Some(release) => {
+                    self.transport
+                        .execute_released(wire_request, lease, release)
+                        .await?
+                }
+                None => self.transport.execute(wire_request, lease).await?,
+            };
+            if !(200..=299).contains(&response.status) {
+                return Err(classify_openai_status(
+                    response.status,
+                    &response.headers,
+                    &response.body,
+                ));
+            }
+            // The answer's inference receipts name the model this call was
+            // admitted for (FIX 8314); a worker's wire names none.
+            let mut answer = parse_openai_chat_response(&response.body)?;
+            answer.usage.bind_inference_model(&request.model);
+            Ok(answer)
+        })
+    }
+
+    fn stream_with_release<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> LlmStreamResult<'a> {
         let wire_request = build_openai_chat_request(&self.config, &request, true)?;
-        let provider_stream = self.transport.stream(wire_request, lease)?;
+        let provider_stream = match release {
+            Some(release) => self
+                .transport
+                .stream_released(wire_request, lease, release)?,
+            None => self.transport.stream(wire_request, lease)?,
+        };
         Ok(LlmStream::new(
             OpenAiCompatLlmStream::new(provider_stream).bound_to(request.model),
         ))

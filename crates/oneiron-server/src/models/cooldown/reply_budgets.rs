@@ -16,6 +16,7 @@ impl super::OfferCooldowns {
     pub(crate) fn in_vault_with(vault: Arc<Vault>, budgets: ModelHostBudgets) -> Arc<Self> {
         Arc::new(Self {
             vault: Some(vault),
+            local_rests: None,
             fallbacks: RwLock::default(),
             health: Mutex::default(),
             probes: AtomicU64::new(0),

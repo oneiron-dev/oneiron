@@ -111,7 +111,6 @@ impl RemoteLlmClient {
                 .map_err(|_| LlmError::from(RetryableLlmError::StreamCut))?
         })
     }
-
 }
 
 impl OwnServerTransport for RemoteLlmClient {
@@ -120,7 +119,10 @@ impl OwnServerTransport for RemoteLlmClient {
         request: &'a LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        self.generate_on_thread(RemoteGeneration::Prepared(self.remote.prepare_llm_post(request)), lease)
+        self.generate_on_thread(
+            RemoteGeneration::Prepared(self.remote.prepare_llm_post(request)),
+            lease,
+        )
     }
 
     fn generate<'a>(

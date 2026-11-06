@@ -64,6 +64,7 @@ mod ladder;
 pub(crate) mod launch_price;
 mod llama_identity;
 mod media;
+pub(crate) mod native_call_capture;
 #[cfg(unix)]
 mod native_exl3;
 mod offer;
@@ -111,7 +112,7 @@ pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
-pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
+pub(crate) use raw::{InjectedRuns, RawInference, funded_run, unrecorded_run};
 pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};

@@ -26,6 +26,8 @@ use crate::byte_line::ByteLine;
 use crate::config::LimitsConfig;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
+mod unrecorded;
+
 /// One vault's model byte budgets. Clones share them.
 #[derive(Clone)]
 pub(crate) struct ModelHostBudgets {
@@ -37,7 +39,7 @@ pub(crate) struct ModelHostBudgets {
 
 /// A reply line and where its row asks.
 pub(in crate::models) struct ReplyLine {
-    pub(in crate::models) line: ByteLine,
+    pub(in crate::models) line: Arc<ByteLine>,
     pub(in crate::models) questions: Arc<LimitQuestions>,
 }
 
@@ -48,7 +50,10 @@ impl ModelHostBudgets {
     pub(crate) fn new(limits: &LimitsConfig, questions: Arc<LimitQuestions>) -> Self {
         let line = |row, total: u64| {
             Arc::new(ReplyLine {
-                line: ByteLine::new(row, usize::try_from(total).unwrap_or(usize::MAX)),
+                line: Arc::new(ByteLine::new(
+                    row,
+                    usize::try_from(total).unwrap_or(usize::MAX),
+                )),
                 questions: Arc::clone(&questions),
             })
         };

@@ -7,6 +7,7 @@ use super::super::{
     InferenceCallReceipt, ModelLocality, PinnedConfigViolation,
 };
 use super::admission::{CallOrigin, RunCall, RunDenied, RunInner};
+use super::capture::SettlementCapture;
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
     AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
@@ -40,6 +41,7 @@ pub struct RunPermit {
     /// The host stays awake from admission until the call settles (FIX 506).
     _awake: RunAwake,
     settled: bool,
+    pub(super) capture: SettlementCapture,
 }
 
 /// A permit's hold on the host's wake assertion, if the host set one.
@@ -306,6 +308,7 @@ impl RunInner {
             rates: offer.rates.clone(),
             _awake: RunAwake::hold(),
             settled: false,
+            capture: SettlementCapture::default(),
         })
     }
 
@@ -410,6 +413,7 @@ impl RunInner {
             rates: connector.rates.clone(),
             _awake: RunAwake::hold(),
             settled: false,
+            capture: SettlementCapture::default(),
         })
     }
 

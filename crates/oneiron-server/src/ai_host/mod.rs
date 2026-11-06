@@ -69,6 +69,7 @@ pub mod shadow_runner;
 mod skill_author;
 mod skill_discovery;
 mod status;
+mod model_call_capture;
 mod step;
 mod step_failure;
 mod stewardship;

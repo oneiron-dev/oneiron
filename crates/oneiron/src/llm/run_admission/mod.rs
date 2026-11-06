@@ -32,7 +32,7 @@ mod work_context;
 pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
 };
-pub use capture::{capture_settlements, captured_sink};
+pub use capture::{capture_settlements, capture_settlements_shared};
 pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };
@@ -52,7 +52,7 @@ pub use person_billing::{
     BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
 };
 pub use receipt::{
-    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunOverageSource, RunReceipt,
+    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunNativeQuantity, RunOverageSource, RunReceipt,
     RunReceiptSink, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
 };
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};

@@ -11,8 +11,8 @@
 //! optional browser planner unbound leaves it unseated, as no rung does.
 use std::sync::Arc;
 
-use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::{ExtractionEgressPredicate, HostInferenceContext};
 use oneiron::{LlmRequest, ModelId, ModelLocality, ModelTierRef, Vault};
 
 use super::{ModelRuntime, OfferLadder, Seat};
@@ -175,7 +175,29 @@ impl ModelRuntime {
         &self,
         vault: &Vault,
         role: ModelRole,
+        request: LlmRequest,
+    ) -> Result<(RoleCall, Option<String>), RoleRefusal> {
+        self.admit_role_receipted_with_egress(vault, role, request, None)
+    }
+
+    /// The same role admission with the prepared call's host egress predicate.
+    pub(crate) fn admit_role_with_egress(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: LlmRequest,
+        extraction_egress: Option<&dyn ExtractionEgressPredicate>,
+    ) -> Result<RoleCall, RoleRefusal> {
+        self.admit_role_receipted_with_egress(vault, role, request, extraction_egress)
+            .map(|(call, _)| call)
+    }
+
+    fn admit_role_receipted_with_egress(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
         mut request: LlmRequest,
+        extraction_egress: Option<&dyn ExtractionEgressPredicate>,
     ) -> Result<(RoleCall, Option<String>), RoleRefusal> {
         let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
         let route = self.route_role(vault, role, seat)?;
@@ -198,7 +220,7 @@ impl ModelRuntime {
                     binding: route
                         .ladder
                         .host_binding(route.model, route.locality, false),
-                    extraction_egress: None,
+                    extraction_egress,
                 },
             )
             .map_err(RoleRefusal::refused)?;

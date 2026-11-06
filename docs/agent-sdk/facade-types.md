@@ -3832,7 +3832,7 @@ export type EvidenceVersion = { id: string; body_hash: string }
 /** `oneiron_store::model_decision::types::PairedReading` */
 export type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number }
 /** `oneiron_store::model_decision::types::StopCause` */
-export type StopCause = "done" | "deadline" | "provider_failure"
+export type StopCause = "done" | "deadline" | "generation_allowance" | "capture_unsupported" | "provider_failure"
 /** `oneiron_store::model_decision::types::ReasoningCause` */
 export type ReasoningCause = "paired_high" | "small_margin" | "second_measurement"
 /** `oneiron_store::model_decision::types::Reasoning` */
@@ -4192,7 +4192,7 @@ export type ImagePoint = { x: number; y: number }
 /** `oneiron_store::model_decision::types::DecisionAnswer` */
 export type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" }
 /** `oneiron_store::model_decision::types::HumanAskReason` */
-export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget"
+export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "generation_allowance" | "capture_unsupported" | "exploration_budget"
 /** `oneiron::llm::decision::types::TypedDecision` */
 export type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null }
 /** `oneiron::policy_model::verdict::PolicyReadError` */

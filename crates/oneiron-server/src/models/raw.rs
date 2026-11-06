@@ -248,6 +248,21 @@ pub(crate) fn funded_run(
     let declaration = RunDeclaration::undeclared(line);
     // Inside a hook's verdict its settlements are also kept for its record
     // (FIX 10075); the host's sink gets every receipt unchanged either way.
-    let receipts = oneiron::llm::run_admission::captured_sink(receipts);
-    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer)
+    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer).capturing_settlements()
+}
+
+/// An undeclared run on the caller's actual meter with no retained run receipts.
+/// Offer state and backend captures must also use unrecorded paths.
+pub(crate) fn unrecorded_run(
+    run: impl Into<String>,
+    meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
+    payer: Option<PayerPerson>,
+) -> RunAdmission {
+    let line = BudgetLine {
+        limit_units: meter.read().limit_units,
+        reserve_units: meter.reserve_units(),
+        unit: LeaseUnit::tokens(),
+    };
+    RunAdmission::with_unrecorded_meter(run, RunDeclaration::undeclared(line), meter, host, payer)
 }
