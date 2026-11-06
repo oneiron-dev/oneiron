@@ -10,6 +10,7 @@
 //! Every time here is unix milliseconds on one clock: the parent's cutoff,
 //! fixed in its parent row at its first spawn.
 
+mod coverage;
 mod origins;
 
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
+pub(crate) use self::coverage::{merge_ranges, subtract_ranges};
 pub(crate) use self::origins::OriginsUnion;
 pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 

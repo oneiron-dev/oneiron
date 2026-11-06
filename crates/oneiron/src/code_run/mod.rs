@@ -247,8 +247,9 @@ pub use self::reader::{
     summary_token_budget,
 };
 pub(crate) use self::reader::{
-    OriginsUnion, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
-    reduce_task_wait_set, summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
+    OriginsUnion, merge_ranges, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    reduce_task_wait_set, subtract_ranges, summary_memo_key, summary_task_id, valid_reader_key,
+    vault_ref,
 };
 pub use self::reader_brief::reader_task_brief;
 pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};
