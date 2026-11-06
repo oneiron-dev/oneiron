@@ -263,14 +263,27 @@ impl Store {
             memory.materialized(0, bytes);
         }
         if let Some(memory) = replay_inputs_memory.as_mut() {
+            let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
+                entries.iter().fold(
+                    (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
+                        super::types::RetrievalScoreBreakdown,
+                    >() as u64),
+                    |bytes, entry| {
+                        bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
+                            std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
+                        ))
+                    },
+                )
+            };
             let bytes = (record.signals.capacity() as u64)
                 .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
                 .saturating_add(
                     (record.result_ids.capacity() as u64)
                         .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
                 )
-                .saturating_add((record.score_breakdown.capacity() as u64).saturating_mul(
-                    std::mem::size_of::<super::types::RetrievalScoreBreakdown>() as u64,
+                .saturating_add(score_breakdown_bytes(&record.score_breakdown))
+                .saturating_add((record.degradation.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
                 ));
             let bytes = [
                 record.query_expander_id.as_ref(),
@@ -280,6 +293,25 @@ impl Store {
             .flatten()
             .fold(bytes, |bytes, value| {
                 bytes.saturating_add(value.capacity() as u64)
+            });
+            let bytes = record.trace.as_ref().map_or(bytes, |trace| {
+                let bytes =
+                    bytes.saturating_add((trace.per_channel.capacity() as u64).saturating_mul(
+                        std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
+                    ));
+                let bytes = trace.per_channel.iter().fold(bytes, |bytes, channel| {
+                    bytes.saturating_add(score_breakdown_bytes(&channel.candidates))
+                });
+                [
+                    &trace.fused,
+                    &trace.blended,
+                    &trace.reranked,
+                    &trace.final_stage,
+                ]
+                .into_iter()
+                .fold(bytes, |bytes, stage| {
+                    bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
+                })
             });
             memory.materialized(0, bytes);
         }
