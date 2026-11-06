@@ -5,8 +5,7 @@ use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
     protocol::{
-        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session,
-        Snapshot,
+        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot,
     },
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
@@ -122,6 +121,26 @@ impl<T: Read + Write> State<T> {
             Err(_) => {
                 self.poisoned = true;
                 Ok(Err("file proposal transport failed".into()))
+            }
+        }
+    }
+
+    fn output(
+        &mut self,
+        send: impl FnOnce(&mut Session<T>) -> Result<Reply>,
+    ) -> wasmtime::Result<Reply> {
+        if self.poisoned {
+            return Err(wasmtime::Error::msg("guest host transport failed"));
+        }
+        match send(&mut self.session) {
+            Ok(Ok(len)) => Ok(Ok(len)),
+            Ok(Err(reason)) => {
+                self.poisoned = true;
+                Ok(Err(reason))
+            }
+            Err(_) => {
+                self.poisoned = true;
+                Ok(Err("output transport failed".into()))
             }
         }
     }
@@ -324,13 +343,10 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
         |mut context: StoreContextMut<'_, State<T>>, (path,): (String,)| {
             let state = context.data_mut();
             state.count_call()?;
-            let result = match state.workspace.read(&path) {
-                Ok(bytes) => {
-                    state.count_bytes(bytes.len())?;
-                    Ok(bytes)
-                }
-                Err(_) => Err(String::from("workspace read refused")),
-            };
+            let result = state
+                .workspace
+                .read(&path)
+                .map_err(|_| String::from("workspace read refused"));
             Ok((result,))
         },
     )?;
@@ -373,24 +389,32 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
             Ok((context.data_mut().close_file(id)?,))
         },
     )?;
-    // The step's streamed result. This lane keeps no step result, as it
-    // keeps none of the returned one: frames are taken and dropped.
     linker.root().func_wrap(
         "output-text",
-        |_: StoreContextMut<'_, State<T>>, (_, _, frame): (String, bool, String)| {
-            Ok((Ok::<u64, String>(frame.len() as u64),))
+        |mut context: StoreContextMut<'_, State<T>>,
+         (target, start, frame): (String, bool, String)| {
+            if !matches!(target.as_str(), "console" | "finish" | "store") {
+                return Err(wasmtime::Error::msg("unknown streamed output target"));
+            }
+            Ok((context
+                .data_mut()
+                .output(|session| session.output_text(&target, start, &frame))?,))
         },
     )?;
     linker.root().func_wrap(
         "output-bytes",
-        |_: StoreContextMut<'_, State<T>>, (_, frame): (String, Vec<u8>)| {
-            Ok((Ok::<u64, String>(frame.len() as u64),))
+        |mut context: StoreContextMut<'_, State<T>>, (path, frame): (String, Vec<u8>)| {
+            Ok((context
+                .data_mut()
+                .output(|session| session.output_bytes(&path, &frame))?,))
         },
     )?;
     linker.root().func_wrap(
         "store-bytes",
-        |_: StoreContextMut<'_, State<T>>, (_, frame): (bool, Vec<u8>)| {
-            Ok((Ok::<u64, String>(frame.len() as u64),))
+        |mut context: StoreContextMut<'_, State<T>>, (start, frame): (bool, Vec<u8>)| {
+            Ok((context
+                .data_mut()
+                .output(|session| session.store_bytes(start, &frame))?,))
         },
     )?;
     linker.root().func_wrap(
