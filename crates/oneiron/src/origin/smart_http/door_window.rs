@@ -30,7 +30,8 @@ use crate::receive_scan::PushedBlob;
 use crate::store::code_snapshot::RepoRef;
 
 mod blob_header;
-use blob_header::{decode_tip_path, parse_blob_record_header};
+pub(super) use blob_header::decode_tip_path;
+use blob_header::parse_blob_record_header;
 
 /// What the door answered while the objects were quarantined.
 #[derive(Debug, Clone, PartialEq, Eq)]

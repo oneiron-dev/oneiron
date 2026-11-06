@@ -60,9 +60,9 @@ fn path_label(path: &[u8]) -> Result<String> {
     Ok(label)
 }
 
-/// Decode a TIP-stream label for LFS attribution only. History labels never
-/// reach this door; the scanner keeps the textual label it received.
-pub(super) fn decode_tip_path(path: &str) -> Result<Vec<u8>> {
+/// Decode a TIP-stream label for LFS attribution and receive marks. History
+/// labels never reach this door; the scanner keeps its textual label.
+pub(in crate::origin::smart_http) fn decode_tip_path(path: &str) -> Result<Vec<u8>> {
     decode_tip_path_bytes(path.as_bytes())
 }
 
