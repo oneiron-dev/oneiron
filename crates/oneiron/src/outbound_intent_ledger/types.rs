@@ -554,6 +554,22 @@ pub(crate) trait OutboundSender {
 
 pub(crate) use crate::consent::approval_proof::AdmittedApproval;
 
+/// What a call's ledger row keeps outside the call's checkpoint compartment
+/// (KS7-5, FIX 12117): its budget marker, recorded outcome, sticky delivery
+/// uncertainty, state and clocks, the record's own entries for them. A
+/// restore that cannot open the call keeps this, never its request, server,
+/// tool, binding or proof, so the call is known as admitted and is never
+/// asked or paid for again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallAccounting {
+    pub(crate) budget_accounting: BudgetChargeMarker,
+    pub(crate) recorded_outcome: Option<RecordedOutboundOutcome>,
+    pub(crate) delivery_uncertain: bool,
+    pub(crate) state: IntentState,
+    pub(crate) created_ms: u64,
+    pub(crate) updated_ms: u64,
+}
+
 /// Device-local durable record and audit receipt for one effectful call.
 #[derive(Clone, PartialEq, Eq)]
 pub struct IntentLedgerRecord {

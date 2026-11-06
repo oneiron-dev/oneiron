@@ -21,7 +21,7 @@ mod validate;
 
 pub(crate) use self::remote_task::defer_record;
 pub(crate) use self::validate::hash_frozen_payload;
-pub(super) use self::validate::validate_record;
+pub(super) use self::validate::{validate_accounting, validate_record};
 
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
 /// Key: hash32 (the intent id).
@@ -396,6 +396,16 @@ fn insert_intent_in_txn(
     {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound attempt already has an admitted binding",
+        ));
+    }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of was
+    // admitted before the restore and its compartment did not open. It is
+    // never asked or paid for again; this writer, and its budget debit, ends.
+    if checkpoint::call_accounting_in_txn(vault, wtxn, pending.attempt_id, pending.call_seq)?
+        .is_some()
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "a call a restore kept only the accounting of is not admitted again",
         ));
     }
     if LEDGER.contains(&vault.store, wtxn, &pending.id)? {
