@@ -213,6 +213,9 @@ fn answer(
         OutboundDispatchOutcome::Ambiguous => ConnectorReplyStage::Ambiguous,
     };
     result.outcome = Some(dispatched.outcome.as_str().to_owned());
+    if dispatched.outcome == OutboundDispatchOutcome::Deferred {
+        owe(result, "reply: deferred".to_owned());
+    }
     result.gate_reason_codes = dispatched.gate_reason_codes;
     // FIX 11026: a requeue waits for the edge the receipt names.
     result.retry_at = dispatched

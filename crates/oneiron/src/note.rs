@@ -270,7 +270,7 @@ mod kind_contract;
 mod live_body_tests;
 pub(crate) use delete::delete_document_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use local_discard::discard_workflow_in_txn;
+pub(crate) use local_discard::{discard_bundle_explainers_in_txn, discard_workflow_in_txn};
 mod id_codec;
 pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
