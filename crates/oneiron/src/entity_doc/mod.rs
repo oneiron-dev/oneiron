@@ -30,6 +30,7 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+pub(crate) use quote_citation::{source_texts_at_in_txn, span_in_masked_sight};
 mod recovery;
 mod registry;
 mod summary;
