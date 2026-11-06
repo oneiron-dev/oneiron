@@ -7,7 +7,9 @@
 //! names no one. Any other kind, an unregistered one, a NOTE pointer or a
 //! spelling the core does not give back, two kinds in one history, a commit
 //! message and an operation outside the document's record and text fields
-//! keep the whole document under the vault-wide seal, its reason named.
+//! keep the whole document under the vault-wide seal, its reason named. An
+//! author carrier's document is not split here at all: the getter places it
+//! whole as its actor's actor-keyed row ([`check_carrier`], FIX 17143).
 //!
 //! No public revision ref changes (lead pick (b)). A ref hashed over its
 //! retained frontier stays, as the split keeps every operation. A ref hashed

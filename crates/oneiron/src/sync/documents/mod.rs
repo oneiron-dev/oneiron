@@ -625,13 +625,13 @@ impl EntityDocument {
                 Some(head) => note_state::payload(&self.vault, txn, self.id, head, &bytes)?,
                 None => bytes,
             };
-            encode_document(
-                copy.as_ref().map_or(self.id, |copy| copy.key),
-                kind,
-                &payload,
-            )
-            .into_result()
-            .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
+            let entity = copy.as_ref().map_or(self.id, |copy| copy.key);
+            let encoded = if note_head.is_some() {
+                crate::sync::transport::encode_unsplit_document(entity, kind, &payload)
+            } else {
+                encode_document(entity, kind, &payload).into_result()
+            };
+            encoded.map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
         })
     }
 
@@ -708,6 +708,55 @@ fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
         peer.partial_cmp(floor),
         Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
     )
+}
+
+/// Whether a TURN's headed message text can leave unchanged under this selector.
+/// This uses the document export's eligibility, read, withhold and copy checks,
+/// without exporting a document or changing its lineage or disclosure floor.
+pub fn turn_member_documents_releasable(
+    vault: &Vault,
+    turn: EntityId,
+    sources: &[(EntityId, [u8; 32])],
+    scope: crate::FederationGrantScope,
+    selector: &super::selector::SyncSelector,
+    withhold: super::window::Withhold<'_>,
+) -> Result<bool> {
+    if sources.iter().all(|(id, _)| *id == turn) {
+        return Ok(true);
+    }
+    let txn = vault.store.env.read_txn()?;
+    let marks =
+        crate::origin::secret_projection::index::RepoIndexMarks::read_scoped_in_txn(vault, &txn)?;
+    for (id, _) in sources {
+        if *id == turn || !crate::entity_doc::has_record_head(&vault.store, &txn, id)? {
+            continue;
+        }
+        let admitted = eligible(vault, &txn, *id)
+            .and_then(|()| destination::admit_document_withhold_in_txn(vault, &txn, *id, withhold))
+            .and_then(|()| {
+                super::selector::admit_document_read_in_txn(vault, &txn, *id, scope, selector)
+            });
+        match admitted {
+            Ok(()) => {}
+            Err(Error::Sync(crate::error::SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::DocumentAdmissionDenied,
+            })) => return Ok(false),
+            Err(other) => return Err(other),
+        }
+        if marks.is_empty() {
+            continue;
+        }
+        let text = entity::document_in(vault, &txn, *id)?
+            .0
+            .get_text("body")
+            .to_string();
+        if super::selector::secret_projection::document_text_would_project_in_txn(
+            vault, &txn, &marks, id, &text,
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<()> {

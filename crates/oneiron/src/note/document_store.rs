@@ -137,13 +137,9 @@ fn persist_structural_with_origin(
     // batches merge. A refused commit leaves the durable document unchanged.
     let markdown = doc.view()?.markdown;
     super::validate_markdown(&markdown)?;
-    // No body length refuses a NOTE (rule 5, FIX 10345). Its snapshot still
-    // goes whole in one STATE document frame, an 18-byte head and the
-    // snapshot within the transport's 8 MiB frame
-    // (`sync::transport::encode_document`); this bound protects that frame.
-    if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
-        return Err(invalid("NOTE snapshot exceeds wire bound"));
-    }
+    // Preserve snapshot validation here; document delivery splits the logical
+    // payload into bounded wire frames (FIX 12244), without a NOTE length cap.
+    let _ = doc.snapshot()?;
     // A masked document is stored without the history that held the value,
     // as a citation scrub stores one.
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, masked)?;
