@@ -103,6 +103,10 @@ string capacities, including the non-serialized emit stamp. The response owns
 these fields before its guard drops. Its Board embedding moves that same
 response; it does not copy a charge onto independently cloned assemblies.
 
+Hydrated context entities move their already-redacted JSON object into the
+response field map. They do not clone that object's strings, arrays or nested
+objects before collecting its same entries. Redaction and wire fields stay the same.
+
 HTTP context-pack and context-board encode through an owned JSON byte writer.
 Each append records the encoded vector's actual capacity after allocation.
 The transport's shared byte owner keeps that same vector and its lease through
@@ -229,3 +233,29 @@ transport carry it through shared shaping into the existing native wait,
 session, plain-resend and send checks. The native-only path never gains an HTTP
 fallback. Unrecorded capture and settlement behavior from the shared caller
 remain intact. Other transport-wide release coverage is not claimed here.
+
+
+## Reply prompt buffer custody
+
+`ai.reply` keeps a separate lease on the server's same physical-memory line for
+its owned route-prompt fingerprint string, taken standing text, assembled prefix,
+compact board JSON, outgoing egress text and the early-system text copy. It records
+each actual string capacity after allocation. Growing the standing prefix records
+only the capacity increase; moving prefix and board into request messages keeps
+their existing charge. It does not treat a move across a module as a drop.
+
+The early layout releases its now-unused prefix and board before returning their
+charges. An omitted whitespace-only stable prefix is dropped in the same way.
+The temporary route prompt drops at its original post-fingerprint removal. The
+outgoing text drops after the original device-local egress check has finished
+reading it. Request message text stays charged until the consuming exact-generation
+await has returned and its original request has dropped, on both success and error.
+The lease is declared before the owning locals and future, so an early return or
+cancellation drops those buffers before their charge.
+
+This is post-allocation custody only. It adds no admission, memory wait, cap or
+refusal. Serialization and string growth can still allocate before capture and
+can temporarily hold old and new backing. The independent dynamic JSON value,
+MEMORIES copies, caller message, message-vector slots, provider/ladder copies,
+configured rung prompt and other request or response allocations are not covered
+by this string lease. They are not charged as if they shared these buffers.

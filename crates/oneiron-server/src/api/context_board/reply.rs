@@ -51,12 +51,19 @@ async fn reply(
     let (locality, configured) = router.served(&model).ok_or_else(unavailable)?;
     // One exact row means its prompt and locality cannot change beneath this
     // assembly through a fallback to another model or another device.
+    // Later locals and the consuming generation future drop their prompt
+    // buffers before this lease, including on errors and cancellation.
+    let mut prompt_storage = server.memory.empty_lease();
     let route_prompt = configured
         .exact_prompt()
         .ok_or_else(|| {
             MemoryError::bad_request("ai.reply requires an exact configured model row, not a seat")
         })?
         .map(str::to_owned);
+    let route_prompt_bytes = route_prompt
+        .as_ref()
+        .map_or(0, |prompt| prompt.capacity() as u64);
+    prompt_storage.materialized(0, route_prompt_bytes);
     let effort = input
         .reasoning_effort
         .as_ref()
@@ -128,6 +135,10 @@ async fn reply(
         .standing
         .as_mut()
         .map(|prefix| std::mem::take(&mut prefix.compiled));
+    let standing_bytes = standing_compiled
+        .as_ref()
+        .map_or(0, |prefix| prefix.capacity() as u64);
+    prompt_storage.materialized(0, standing_bytes);
     if let Some(pack) = context.pack.as_mut() {
         pack.discard_reply_entity_payload();
     }
@@ -151,10 +162,16 @@ async fn reply(
     let mut prefix = standing_compiled.unwrap_or_default();
     prefix.push_str("\n\n");
     prefix.push_str(evidence);
+    let prefix_bytes = prefix.capacity() as u64;
+    prompt_storage.materialized(0, prefix_bytes.saturating_sub(standing_bytes));
     let board = serde_json::to_string(&dynamic).map_err(|_| internal())?;
+    let board_bytes = board.capacity() as u64;
+    prompt_storage.materialized(0, board_bytes);
     // Everything the model reads beside the caller's message, in either
     // layout: what the egress check below reads.
     let outgoing = format!("{prefix}\n\n{board}");
+    let outgoing_bytes = outgoing.capacity() as u64;
+    prompt_storage.materialized(0, outgoing_bytes);
     let prefix_hash = blake3::hash(prefix.as_bytes()).to_hex().to_string();
     // FIX 6676: the standing block and the L2 base stay in the early system
     // text. The standing block holds for its session's epoch; the L2 base is
@@ -165,22 +182,39 @@ async fn reply(
     // caller's message, which is sent as the caller wrote it and retrieval
     // read it. The vault's `[models] prompt_layout` picks the layout, else
     // the host's.
-    request.messages = match server.ai.prompt_layout() {
-        PromptLayout::EarlySystem => vec![
-            text_message(LlmMessageRole::System, outgoing.clone()),
-            text_message(LlmMessageRole::User, input.message),
-        ],
+    let (messages, message_prompt_bytes) = match server.ai.prompt_layout() {
+        PromptLayout::EarlySystem => {
+            let system = outgoing.clone();
+            let system_bytes = system.capacity() as u64;
+            prompt_storage.materialized(0, system_bytes);
+            drop(prefix);
+            drop(board);
+            prompt_storage.shrink(prefix_bytes.saturating_add(board_bytes));
+            (
+                vec![
+                    text_message(LlmMessageRole::System, system),
+                    text_message(LlmMessageRole::User, input.message),
+                ],
+                system_bytes,
+            )
+        }
         PromptLayout::StableHistoryThenTurnContext => {
             let mut messages = Vec::with_capacity(3);
-            if !prefix.trim().is_empty() {
+            let kept_prefix_bytes = if !prefix.trim().is_empty() {
                 messages.push(text_message(LlmMessageRole::System, prefix));
-            }
+                prefix_bytes
+            } else {
+                drop(prefix);
+                prompt_storage.shrink(prefix_bytes);
+                0
+            };
             // Compact JSON object text is nonempty and already trimmed.
             messages.push(text_message(LlmMessageRole::User, board));
             messages.push(text_message(LlmMessageRole::User, input.message));
-            messages
+            (messages, kept_prefix_bytes.saturating_add(board_bytes))
         }
     };
+    request.messages = messages;
     // Fingerprint the route's full input on this owned request, then remove
     // its prompt: the exact ladder prepends that same message for the send.
     let route_prompt_added = route_prompt.is_some();
@@ -200,7 +234,8 @@ async fn reply(
         (request_digest, assembled)
     };
     if route_prompt_added {
-        request.messages.remove(0);
+        drop(request.messages.remove(0));
+        prompt_storage.shrink(route_prompt_bytes);
     }
     let stamp = PromptRecompileStamp {
         schema_version: PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION.to_owned(),
@@ -242,6 +277,8 @@ async fn reply(
             &[],
         ));
     }
+    drop(outgoing);
+    prompt_storage.shrink(outgoing_bytes);
     if !auth.credential_is_live(&server.vault) {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
@@ -253,20 +290,21 @@ async fn reply(
     // permit and metered settlement carry them.
     let read = oneiron::skill_optimize::union_source_rows([Some(rows.as_slice())]);
     let run = run.sourced(read);
-    let response = ladder
-        .generate_exact(&run, request, None)
-        .await
-        .map_err(|error| {
-            MemoryError::new(
-                if matches!(error, oneiron::LlmError::BudgetDenied(_)) {
-                    MEMORY_CODE_BUDGET_SPENT
-                } else {
-                    MEMORY_CODE_MODEL_UNAVAILABLE
-                },
-                format!("ai.reply: {error}"),
-                &[],
-            )
-        })?;
+    let response = ladder.generate_exact(&run, request, None).await;
+    // The exact call has consumed and dropped its original request. Copies
+    // made inside providers are different allocations, not this custody.
+    prompt_storage.shrink(message_prompt_bytes);
+    let response = response.map_err(|error| {
+        MemoryError::new(
+            if matches!(error, oneiron::LlmError::BudgetDenied(_)) {
+                MEMORY_CODE_BUDGET_SPENT
+            } else {
+                MEMORY_CODE_MODEL_UNAVAILABLE
+            },
+            format!("ai.reply: {error}"),
+            &[],
+        )
+    })?;
     if !auth.credential_is_live(&server.vault) {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,

@@ -564,12 +564,10 @@ pub(crate) fn core_context_entity(entity: oneiron::ContextEntity) -> CoreContext
         fields: entity.fields.map(|fields| {
             let mut object = Value::Object(fields.into_iter().collect());
             oneiron::batch::export::redact_credentials(&mut object);
-            object
-                .as_object()
-                .expect("redactor preserves object")
-                .clone()
-                .into_iter()
-                .collect()
+            let Value::Object(fields) = object else {
+                panic!("redactor preserves object");
+            };
+            fields.into_iter().collect()
         }),
         edges: entity
             .edges
