@@ -43,7 +43,7 @@ pub use claim_refinement::{
     LocalClaimRefinement,
 };
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
-pub(crate) use default_hub::MODEL_PACK_SUBTREE;
+pub(crate) use default_hub::{MODEL_PACK_SUBTREE, default_hub_skill_with_source_in_read};
 pub use default_hub::{
     DefaultSkillHub, MODEL_PACK_NAME, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
     default_skill_hub_commit, default_skill_hub_id,

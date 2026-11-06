@@ -155,44 +155,9 @@ impl Vault {
     fn find_structured_skill_entity_in_txn<T>(
         &self,
         rtxn: &heed::RoTxn<'_>,
-        mut find: impl FnMut(EntityId, &SkillRecord) -> Result<Option<T>>,
+        find: impl FnMut(EntityId, &SkillRecord) -> Result<Option<T>>,
     ) -> Result<Option<T>> {
-        for entry in self
-            .store
-            .port_entity_ids_by_type(rtxn, ENTITY_TYPE_SKILL, None)?
-        {
-            let id = entry?;
-            if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, rtxn, &id)?
-                .deleted
-            {
-                continue;
-            }
-            let raw = self
-                .store
-                .port_entity_record(rtxn, &id)?
-                .map(|row| row.encode())
-                .ok_or(Error::CorruptedIndex("skill type index"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_SKILL {
-                return Err(Error::CorruptedIndex("skill type index"));
-            }
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            let record = match decode_skill_record(body) {
-                Ok(record) => record,
-                Err(error)
-                    if error.kind() == ErrorKind::InvalidSkillBody
-                        && crate::skill::is_legacy_opaque_skill_body(body) =>
-                {
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
-            if let Some(found) = find(id, &record)? {
-                return Ok(Some(found));
-            }
-        }
-        Ok(None)
+        find_structured_skill_entity_in_read(&self.store, rtxn, find)
     }
 
     fn active_hub_aliases_on_other_skill_entities_in_txn(
@@ -388,20 +353,9 @@ impl Vault {
         entity: &EntityId,
         predicate: &str,
     ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
-        let mut rows = Vec::new();
-        for id in self.claims_for_subject_in_txn(rtxn, entity)? {
-            let Some(body) = self.get_claim_in_txn(rtxn, &id)? else {
-                continue;
-            };
-            if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
-                let raw = self
-                    .store
-                    .port_entity_record(rtxn, &id)?
-                    .ok_or(Error::CorruptedIndex("claim_of edge"))?;
-                rows.push((id, body, raw.occurred.start));
-            }
-        }
-        Ok(rows)
+        active_claims_for_predicate_in_read(&self.store, rtxn, entity, predicate, |id| {
+            self.get_claim_in_txn(rtxn, id)
+        })
     }
 
     pub(super) fn read_admitted_capability_surface_in_txn(
@@ -434,50 +388,142 @@ impl Vault {
         source: &HubRef,
         name: &str,
     ) -> Result<Option<EntityId>> {
-        self.find_structured_skill_entity_in_txn(txn, |entity, record| {
-            if record.skill_id.as_str() != name {
-                return Ok(None);
-            }
-            if !crate::skill::skill_loadable(record)
-                && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
-            {
-                return Ok(None);
-            }
-            let Some(content_hash) = record.content_hash else {
-                return Ok(None);
-            };
-            let expected = content_hash.to_hex();
-            for (claim_id, body, _) in self.active_claims_for_predicate_in_txn(
-                txn,
-                &entity,
-                PREDICATE_SKILL_HUB_PROVENANCE,
-            )? {
-                let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
-                else {
-                    continue;
-                };
-                if hash_text != expected {
-                    continue;
-                }
-                let Some(ref_value) = map_value(&body.value, "hubRef") else {
-                    continue;
-                };
-                if !same_hub_alias(&HubRef::from_value(ref_value)?, source) {
-                    continue;
-                }
-                if !crate::gate::claim_consolidation_eligible_in_txn(
-                    &self.store,
-                    txn,
-                    &claim_id,
-                    crate::gate::ConsolidationReader::HubDefaultPresence,
-                )? {
-                    continue;
-                }
-                return Ok(Some(entity));
-            }
-            Ok(None)
+        installed_hub_skill_from(&self.store.read(), txn, source, name, |id| {
+            self.get_claim_in_txn(txn, id)
         })
     }
+}
+
+fn find_structured_skill_entity_in_read<T>(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    mut find: impl FnMut(EntityId, &SkillRecord) -> Result<Option<T>>,
+) -> Result<Option<T>> {
+    for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_SKILL, None)? {
+        let id = entry?;
+        if crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, &id)?.deleted {
+            continue;
+        }
+        let raw = store
+            .port_entity_record(rtxn, &id)?
+            .map(|row| row.encode())
+            .ok_or(Error::CorruptedIndex("skill type index"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_SKILL {
+            return Err(Error::CorruptedIndex("skill type index"));
+        }
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let record = match decode_skill_record(body) {
+            Ok(record) => record,
+            Err(error)
+                if error.kind() == ErrorKind::InvalidSkillBody
+                    && crate::skill::is_legacy_opaque_skill_body(body) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(found) = find(id, &record)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
+fn active_claims_for_predicate_in_read(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    predicate: &str,
+    mut read_claim: impl FnMut(&EntityId) -> Result<Option<ClaimBody>>,
+) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+    let mut rows = Vec::new();
+    for id in crate::vault::filtered_edge_peers_in(
+        store,
+        rtxn,
+        crate::ports::EdgeDirection::In,
+        entity,
+        crate::EdgeKind::ClaimOf,
+        Some(crate::registry::ENTITY_TYPE_CLAIM),
+    )? {
+        let Some(body) = read_claim(&id)? else {
+            continue;
+        };
+        if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
+            let raw = store
+                .port_entity_record(rtxn, &id)?
+                .ok_or(Error::CorruptedIndex("claim_of edge"))?;
+            rows.push((id, body, raw.occurred.start));
+        }
+    }
+    Ok(rows)
+}
+
+pub(super) fn installed_hub_skill_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+    source: &HubRef,
+    name: &str,
+) -> Result<Option<EntityId>> {
+    installed_hub_skill_from(read, txn, source, name, |id| {
+        crate::claim::get_claim_in_read(read, txn, id, posture)
+    })
+}
+
+fn installed_hub_skill_from(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    source: &HubRef,
+    name: &str,
+    mut read_claim: impl FnMut(&EntityId) -> Result<Option<ClaimBody>>,
+) -> Result<Option<EntityId>> {
+    find_structured_skill_entity_in_read(read, txn, |entity, record| {
+        if record.skill_id.as_str() != name {
+            return Ok(None);
+        }
+        if !crate::skill::skill_loadable(record)
+            && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
+        {
+            return Ok(None);
+        }
+        let Some(content_hash) = record.content_hash else {
+            return Ok(None);
+        };
+        let expected = content_hash.to_hex();
+        for (claim_id, body, _) in active_claims_for_predicate_in_read(
+            read,
+            txn,
+            &entity,
+            PREDICATE_SKILL_HUB_PROVENANCE,
+            &mut read_claim,
+        )? {
+            let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            if hash_text != expected {
+                continue;
+            }
+            let Some(ref_value) = map_value(&body.value, "hubRef") else {
+                continue;
+            };
+            if !same_hub_alias(&HubRef::from_value(ref_value)?, source) {
+                continue;
+            }
+            if !crate::gate::claim_consolidation_eligible_in_txn(
+                read.base(),
+                txn,
+                &claim_id,
+                crate::gate::ConsolidationReader::HubDefaultPresence,
+            )? {
+                continue;
+            }
+            return Ok(Some(entity));
+        }
+        Ok(None)
+    })
 }
 
 pub(super) fn same_hub_alias(left: &HubRef, right: &HubRef) -> bool {
