@@ -30,8 +30,9 @@ enum Restriction {
     /// A verified `SlipGrantRevoke`: the Grant, in hex as a slip's claims
     /// name it, whose every slip is withdrawn.
     SlipGrantRevoke(String),
-    /// A verified `SlipConsume`: every id its proven branch had burnt, the
-    /// single-use ancestors it spent among them.
+    /// A verified `SlipConsume` or `RemovalArchiveConsume`: every id its
+    /// proven branch had burnt, the single-use ancestors a `SlipConsume`
+    /// spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
     /// A verified machine removal: the removing admitter's chain on the
     /// removal's own branch, whose head is the terminal revision. Only the
@@ -93,7 +94,8 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
         AuthorityOp::RevokeActor { .. }
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::SlipGrantRevoke { .. } => true,
+        | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. } => true,
         op => removes_machine(op),
     }
 }
@@ -232,7 +234,9 @@ impl RevokeFacts {
                 AuthorityOp::SlipGrantRevoke { grant_ref } => {
                     Restriction::SlipGrantRevoke(grant_ref.to_hex())
                 }
-                AuthorityOp::SlipConsume { .. } => Restriction::SlipBurn(BTreeSet::new()),
+                AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
+                    Restriction::SlipBurn(BTreeSet::new())
+                }
                 _ => continue,
             };
             let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, false)
