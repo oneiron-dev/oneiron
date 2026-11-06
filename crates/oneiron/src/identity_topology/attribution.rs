@@ -445,6 +445,7 @@ fn held_decision_digest_in_txn(
         StoredIdentityOpAction::AdmissionDisposition(_)
             | StoredIdentityOpAction::AuthorAttribution { .. }
             | StoredIdentityOpAction::AuthorRedaction { .. }
+            | StoredIdentityOpAction::OperationPart { .. }
     ) {
         return Ok(None);
     }
