@@ -53,7 +53,7 @@ impl StepStateOwners {
         }
     }
 
-    fn ids(&self) -> Vec<EntityId> {
+    pub(super) fn ids(&self) -> Vec<EntityId> {
         [self.actor, self.subject, self.claim]
             .into_iter()
             .flatten()

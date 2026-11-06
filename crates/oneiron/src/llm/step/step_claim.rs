@@ -7,7 +7,8 @@ use super::codec::{
 };
 use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
 use super::step_state::{
-    StepStateDisposition, StepStateOwners, StepStateRow, step_state_put_in_txn, step_state_read,
+    StepStateDisposition, StepStateOwners, StepStateRow, owner_gone_in_txn, step_state_put_in_txn,
+    step_state_read,
 };
 use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
@@ -98,6 +99,7 @@ pub(super) const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     binding: crate::model_step_effect::StepEffectBinding,
+    owners: StepStateOwners,
     request: &LlmRequest,
     response: &LlmResponse,
     payload: &[u8],
@@ -129,6 +131,7 @@ pub(super) fn log_terminal_step(
             // answer came keeps the row's skeleton, and no response, artifact
             // or claim is filed. The batch put hook below indexes the claim
             // in the SAME wtxn, so a death here recovers from either side.
+            let source_gone = owner_gone_in_txn(ctx.vault, &*wtxn, &owners.ids())?;
             let logged = step_state_put_in_txn(
                 ctx.vault,
                 wtxn,
@@ -141,9 +144,9 @@ pub(super) fn log_terminal_step(
                     response_payload: Some(payload.to_vec()),
                     owners: StepStateOwners {
                         claim: Some(claim_id),
-                        ..StepStateOwners::of(ctx)
+                        ..owners
                     },
-                    erased: false,
+                    erased: source_gone,
                 },
             )?;
             if logged == StepStateDisposition::Erased {
