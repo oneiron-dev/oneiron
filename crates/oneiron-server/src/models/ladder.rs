@@ -448,6 +448,21 @@ impl OfferLadder {
         }
     }
 
+    /// The immutable offer held by an exact-model call's single picked rung.
+    /// This is route and price evidence, not availability or run authority.
+    pub(crate) fn exact_offer_binding(&self) -> Option<&OfferBinding> {
+        match self.rungs.as_slice() {
+            [rung]
+                if self.picked
+                    && self.name == rung.model
+                    && rung.model == rung.offer.binding.model =>
+            {
+                Some(&rung.offer.binding)
+            }
+            _ => None,
+        }
+    }
+
     /// The rate this ladder's one picked offer supplies for `unit` when that
     /// offer serves exactly `model` (FIX 3041): `cost` units per `per`
     /// tokens, which a launch's USD quote reads to price a unit other than
@@ -1577,8 +1592,15 @@ impl OfferLadder {
                 Ok(mut response) => {
                     warmth.answered(&self.rests);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
+                    let run_call = serde_json::json!({
+                        "instance": permit.instance().to_hex(),
+                        "lease": permit.lease().id(),
+                    });
                     permit.settle(CallOutcome::Answered(&response.usage))?;
                     response.usage = self.answered(index, walk, response.usage);
+                    if let Some(served) = response.usage.raw_provider.as_object_mut() {
+                        served.insert("run_call".to_owned(), run_call);
+                    }
                     if prompt.noted() {
                         rung.note_answered(call.request);
                     }

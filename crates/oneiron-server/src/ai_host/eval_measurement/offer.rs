@@ -6,11 +6,13 @@
 //! nothing switches the seat.
 
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalAxisPin, EvalMeasurementRequest, HeldOutReplayNotes, JUDGE_SCORE_AXIS,
-    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, OfferCandidate, OfferModelPin,
-    ScoreDirection, TrainingOfferDraft, eval_seat_canary,
+    EvalArmPin, EvalAxisPin, EvalMeasurementRequest, EvalServingOffer, HeldOutReplayNotes,
+    JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, OfferCandidate,
+    OfferModelPin, ScoreDirection, TrainingOfferDraft, eval_seat_canary,
 };
-use oneiron::{Error, Vault};
+use oneiron::{Error, ModelId};
+
+use crate::server::SyncServer;
 
 /// The decision a training offer's measurement waits on.
 const OFFER_DECISION: &str = "training_offer";
@@ -23,6 +25,24 @@ fn arm(pin: &OfferModelPin) -> EvalArmPin {
     }
 }
 
+/// A request-time snapshot of the actual two constructed offers, not a
+/// claim about what a later measurement will serve or permission to switch.
+fn requested_offers(
+    server: &SyncServer,
+    incumbent: &OfferModelPin,
+    candidate: &OfferModelPin,
+) -> Option<[EvalServingOffer; 2]> {
+    let router = server.ai.model_runtime().router()?;
+    let capture = |pin: &OfferModelPin| {
+        let model = ModelId::new(pin.model.clone()).ok()?;
+        let (_, ladder) = router.served(&model)?;
+        ladder
+            .exact_offer_binding()
+            .map(EvalServingOffer::from_binding)
+    };
+    Some([capture(incumbent)?, capture(candidate)?])
+}
+
 /// Asks for the draft's pair's measurement and, when it is Final for that
 /// exact request, puts its card, cohort, rubric revision and exposures
 /// (first) on the draft. A trained candidate has no measurement here: its
@@ -30,10 +50,11 @@ fn arm(pin: &OfferModelPin) -> EvalArmPin {
 /// # Errors
 /// Storage errors.
 pub(in crate::ai_host) fn attach_measured_card(
-    vault: &Vault,
+    server: &SyncServer,
     draft: &mut TrainingOfferDraft,
     now: u64,
 ) -> oneiron::Result<()> {
+    let vault = server.vault();
     let OfferCandidate::Stock { model, .. } = &draft.candidate else {
         return Ok(());
     };
@@ -53,6 +74,11 @@ pub(in crate::ai_host) fn attach_measured_card(
         seat: draft.seat.clone(),
         incumbent: arm(&draft.incumbent),
         candidate: arm(model),
+        requested_offers: if super::native_seat(&draft.seat) {
+            None
+        } else {
+            requested_offers(server, &draft.incumbent, model)
+        },
         cohort: cohort.id,
         membership_digest: cohort.membership_digest,
         rubric_revision: cohort.rubric_revision,

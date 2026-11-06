@@ -20,8 +20,8 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalSeat, EvalTaskInput, HeldOutReplayNotes,
-    MeasurementUnavailable, seat_model_role,
+    EvalArmPin, EvalCallPrice, EvalMeasurement, EvalSeat, EvalServingOffer, EvalTaskInput,
+    HeldOutReplayNotes, MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmError, LlmMessage, LlmMessageRole,
@@ -74,6 +74,8 @@ pub(super) enum Generated {
         text: String,
         /// The provider that answered, as the ladder stamped it.
         served: Option<String>,
+        serving_offer: Option<EvalServingOffer>,
+        call_price: Option<EvalCallPrice>,
     },
     Unavailable(MeasurementUnavailable),
 }
@@ -295,10 +297,15 @@ impl Arms {
         if call.ladder.exact_prompt() != Some(self.prompt.as_deref()) {
             return Generated::Unavailable(MeasurementUnavailable::InstructionDiffers);
         }
+        let binding = call.ladder.exact_offer_binding().cloned();
+        let serving_offer = binding.as_ref().map(EvalServingOffer::from_binding);
         let may_send = || !clock.decision_time_left().is_zero();
         if !may_send() {
             return Generated::Unavailable(MeasurementUnavailable::ClockExhausted);
         }
+        let prices = server
+            .vault_usage()
+            .map(|usage| usage.capture_model_prices(run.instance()));
         let answered =
             tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_within(
                 run,
@@ -307,10 +314,20 @@ impl Arms {
                 &may_send,
                 clock.decision_time_left(),
             ));
+        let call_price = prices.and_then(|capture| {
+            let rows = capture.finish();
+            let [raw] = rows.as_slice() else { return None };
+            let (instance, lease) = answered.as_ref().ok()?.usage.served_run_call()?;
+            crate::usage::UsageLedger::eval_call_price(raw, binding.as_ref()?, instance, lease)
+                .ok()
+                .flatten()
+        });
         match answered {
             Ok(response) => Generated::Answer {
                 text: answer_text(&response),
                 served: response.usage.served_provider().map(str::to_owned),
+                serving_offer,
+                call_price,
             },
             Err(LlmError::BudgetDenied(_)) => {
                 Generated::Unavailable(MeasurementUnavailable::BudgetExhausted)

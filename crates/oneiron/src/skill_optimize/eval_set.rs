@@ -79,10 +79,10 @@ pub use cut_audit::{
     EvalCutAuthor, NearCopyFlag,
 };
 pub use measurement::{
-    EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
-    EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS,
-    MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
-    eval_seat_canary,
+    EstimateGap, EvalArmPin, EvalAxisPin, EvalCallPrice, EvalCaseMeasurement, EvalFamilySummary,
+    EvalLegRecord, EvalMeasurement, EvalMeasurementRequest, EvalMonetaryRates, EvalServingOffer,
+    FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
+    MeasurementUnavailable, ScoreDirection, eval_seat_canary,
 };
 pub use replay_input::EvalTaskInput;
 pub use sufficiency::{
