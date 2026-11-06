@@ -36,6 +36,21 @@ use crate::dto::{
 };
 use crate::error::OneironError;
 
+mod ai_options;
+mod browser_batch;
+mod checkpoints;
+mod claims;
+mod core_write;
+mod diagnostics;
+mod key_value;
+mod lens_actions;
+mod lens_frames;
+mod policy_settings;
+mod proposal_results;
+mod proposals;
+mod skill_callables;
+mod wire_json;
+
 /// Lowers a foreign value into the engine type `T`.
 pub(crate) trait Lower<T> {
     fn lower(self) -> Result<T, OneironError>;
@@ -123,14 +138,6 @@ impl Lower<serde_json::Value> for WireJson {
                 "Send exactly one JSON value as canonical_json.",
             )
         })
-    }
-}
-
-impl Lift<serde_json::Value> for WireJson {
-    fn lift(value: serde_json::Value) -> Result<Self, OneironError> {
-        serde_json::to_string(&value)
-            .map(|canonical_json| Self { canonical_json })
-            .map_err(|error| internal(format!("could not encode a JSON value: {error}")))
     }
 }
 
@@ -1056,7 +1063,7 @@ impl Lift<engine::BlobVersionAppendOutcome> for BlobVersionAppendOutcome {
                 view: BlobVersionView::lift(view)?,
             },
             engine::BlobVersionAppendOutcome::Proposed(proposal) => Self::Proposed {
-                proposal: lift_record("vault.artifacts.append", &proposal)?,
+                proposal: crate::PendingProposalView::lift(proposal)?,
             },
         })
     }

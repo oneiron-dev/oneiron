@@ -582,9 +582,13 @@ impl Vault {
                         {
                             continue;
                         }
-                        expected.push(native_id(&native, id)?);
+                        expected.push((native_id(&native, id)?, block.text.as_str()));
                     }
-                    if session.accepted_id_order() != expected {
+                    let actual = session.accepted_id_order();
+                    if !actual.iter().eq(expected.iter().map(|(id, _)| id))
+                        && !(end == window.len()
+                            && session.terminal_final_delete_matches(&built, &actual, &expected))
+                    {
                         // A normalized final-mark carrier survives physically,
                         // but has no logical id to compare or safely re-address.
                         if session.deleted_final_mark_survives(&built) {
