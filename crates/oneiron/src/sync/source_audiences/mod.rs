@@ -46,8 +46,9 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::source_audience::carried::{
-    Carrier, CarrierKey, carrier, encode_binding, encode_event, encode_policy, encode_withheld,
-    event_key, named, parse_key, policy_key, record_key, withheld_key,
+    Carrier, CarrierKey, carrier, derived_key, derived_prefix, encode_binding, encode_derived,
+    encode_event, encode_policy, encode_withheld, event_key, named, parse_key, policy_key,
+    record_key, withheld_key,
 };
 use crate::source_audience::{
     self, HeldBack, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
@@ -210,7 +211,7 @@ impl AdmissionRows {
                         self.events.insert((policy, revision), joined);
                     }
                 }
-                Ok(Carrier::Withheld { .. }) | Err(_) => {}
+                Ok(Carrier::Withheld { .. } | Carrier::Derived { .. }) | Err(_) => {}
             }
         }
     }
@@ -290,6 +291,9 @@ pub(crate) fn admit_carrier(
         // A marker asserts only that a row left: its holders read it to no
         // one, which no held word contradicts.
         Carrier::Withheld { .. } => {}
+        // A derived row's policies only narrow who reads it, and each set adds
+        // to the others (fix list row 17207): none contradicts another.
+        Carrier::Derived { .. } => {}
     }
     Ok(())
 }
@@ -339,7 +343,9 @@ pub(crate) fn refuse_foreign_map(doc: &LoroDoc) -> Result<()> {
 /// row; a policy key and a receipt key name no row.
 pub(crate) fn record_owner(map_key: &str) -> Option<EntityId> {
     match parse_key(map_key)? {
-        CarrierKey::Record(row) | CarrierKey::Withheld(row) => Some(row),
+        CarrierKey::Record(row) | CarrierKey::Withheld(row) | CarrierKey::Derived(row, _) => {
+            Some(row)
+        }
         CarrierKey::Policy(..) | CarrierKey::Event(..) => None,
     }
 }
@@ -367,7 +373,16 @@ pub(crate) fn mark_withheld(doc: &LoroDoc, rows: &[EntityId], by: Option<&Entity
 /// Whether `doc` carries a binding for `row`, materialized here or not: an
 /// obligation a restricted lane honours (L02 2).
 pub(crate) fn carries_record(doc: &LoroDoc, row: &EntityId) -> bool {
-    map_get_bytes(&doc.get_map(SOURCE_AUDIENCES_MAP), &record_key(row)).is_some()
+    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
+    if map_get_bytes(&map, &record_key(row)).is_some() {
+        return true;
+    }
+    // A derived row's carried policies bind it as a binding does (fix list
+    // row 17207).
+    let prefix = derived_prefix(row);
+    let mut derived = false;
+    map.for_each(|map_key, _| derived |= map_key.starts_with(&prefix));
+    derived
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +465,91 @@ fn published_of(vault: &Vault, rows: &BTreeSet<EntityId>) -> Result<Vec<Publishe
     Ok(published)
 }
 
+/// One derived row as it is published (fix list row 17207): the row, the
+/// policies its lineage reaches, and each one's closure.
+type DerivedPublished = (
+    EntityId,
+    BTreeSet<EntityId>,
+    Vec<(EntityId, SourceAudiencePolicy)>,
+);
+
+/// The derived rows of `rows` that travel with their lineage's policies,
+/// and those policies' closures, read in one snapshot, with this machine's
+/// id. A closure that does not publish refuses, as a bound row's does.
+fn derived_of(
+    vault: &Vault,
+    rows: &BTreeSet<EntityId>,
+) -> Result<(Option<EntityId>, Vec<DerivedPublished>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let me = crate::identity::read_machine_id_in_txn(vault, &rtxn)?;
+    if !source_audience::any_policy_in(vault, &rtxn)? {
+        return Ok((me, Vec::new()));
+    }
+    let mut published = Vec::new();
+    for row in rows {
+        let Some(policies) = source_audience::derived_travel_in(vault, &rtxn, row)? else {
+            continue;
+        };
+        let mut closure = Vec::new();
+        for policy in &policies {
+            match source_audience::policy_closure_in(vault, &rtxn, policy)? {
+                Some(reached) => closure.extend(reached),
+                None => {
+                    return Err(refused(
+                        "a carried derived row whose policy closure does not publish",
+                    ));
+                }
+            }
+        }
+        published.push((*row, policies, closure));
+    }
+    Ok((me, published))
+}
+
+/// Writes into `map` each policy revision `derived` names, and this
+/// machine's (`me`) key of each derived row, its policies added to those the
+/// key held: a machine's key only grows.
+fn write_derived(
+    map: &LoroMap,
+    me: Option<&EntityId>,
+    derived: &[DerivedPublished],
+) -> Result<bool> {
+    let mut wrote = false;
+    for (row, policies, closure) in derived {
+        for (id, held) in closure {
+            wrote |= write_immutable(map, &policy_key(id, held.revision), &encode_policy(held)?)?;
+        }
+        let map_key = derived_key(row, me);
+        let held = map_get_bytes(map, &map_key);
+        let mut all = policies.clone();
+        if let Some(bytes) = &held
+            && let Ok(Carrier::Derived { policies, .. }) = carrier(&map_key, bytes)
+        {
+            all.extend(policies);
+        }
+        let value = encode_derived(&all)?;
+        if held.as_deref() != Some(value.as_slice()) {
+            map_insert_bytes(map, &map_key, &value)?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
+}
+
+/// The policy sets every machine's carrier in `map` names for the derived
+/// row `row`.
+fn derived_carried(map: &LoroMap, row: &EntityId) -> Vec<BTreeSet<EntityId>> {
+    let prefix = derived_prefix(row);
+    entries(map)
+        .into_iter()
+        .filter(|(map_key, _)| map_key.starts_with(&prefix))
+        .filter_map(|(map_key, bytes)| match carrier(&map_key, &bytes?) {
+            Ok(Carrier::Derived { policies, .. }) => Some(policies),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Writes into `map` each binding and policy revision `published` names.
 fn write_published(map: &LoroMap, published: &[Published]) -> Result<bool> {
     let mut wrote = false;
@@ -473,15 +573,24 @@ fn write_published(map: &LoroMap, published: &[Published]) -> Result<bool> {
 ///
 /// Storage and codec failures; a carried binding or revision that differs.
 pub(crate) fn mirror_record(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
-    let published = published_of(vault, &BTreeSet::from([*id]))?;
-    if published.is_empty() {
+    let rows = BTreeSet::from([*id]);
+    let published = published_of(vault, &rows)?;
+    // A derived row rides with its lineage's policies (fix list row 17207).
+    let (me, derived) = derived_of(vault, &rows)?;
+    if published.is_empty() && derived.is_empty() {
         return Ok(false);
     }
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     let mut wrote = write_published(&map, &published)?;
+    wrote |= write_derived(&map, me.as_ref(), &derived)?;
     let policies: BTreeSet<EntityId> = published
         .iter()
         .flat_map(|(_, _, closure)| closure.iter().map(|(policy, _)| *policy))
+        .chain(
+            derived
+                .iter()
+                .flat_map(|(_, _, closure)| closure.iter().map(|(policy, _)| *policy)),
+        )
         .collect();
     wrote |= write_events(vault, &map, &policies)?;
     Ok(wrote)
@@ -572,9 +681,11 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
     let carried = carriers(map);
     let bound: BTreeSet<EntityId> = carried
         .iter()
-        .filter_map(|(_, carried)| match carried {
-            Carrier::Record { policy, .. } => Some(*policy),
-            Carrier::Policy { .. } | Carrier::Withheld { .. } | Carrier::Event { .. } => None,
+        .flat_map(|(_, carried)| match carried {
+            Carrier::Record { policy, .. } => vec![*policy],
+            // A derived row's policies are its bindings (fix list row 17207).
+            Carrier::Derived { policies, .. } => policies.iter().copied().collect(),
+            Carrier::Policy { .. } | Carrier::Withheld { .. } | Carrier::Event { .. } => Vec::new(),
         })
         .collect();
     let mut reached = bound.clone();
@@ -674,7 +785,9 @@ pub(crate) fn refresh_and_scrub(
     super::window::withhold_audience_carriers(vault, doc, pin)?;
     let rows = carried_rows(doc);
     let published = published_of(vault, &rows)?;
-    if published.is_empty() && !holds_map(doc) {
+    // A derived row rides with its lineage's policies (fix list row 17207).
+    let (me, derived) = derived_of(vault, &rows)?;
+    if published.is_empty() && derived.is_empty() && !holds_map(doc) {
         return Ok(false);
     }
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
@@ -685,7 +798,11 @@ pub(crate) fn refresh_and_scrub(
         let me = crate::identity::read_machine_id_in_txn(vault, &rtxn)?;
         for (map_key, carried) in carriers(&map) {
             match carried {
-                Carrier::Record { row, .. } if !rows.contains(&row) => gone.push(map_key),
+                Carrier::Record { row, .. } | Carrier::Derived { row, .. }
+                    if !rows.contains(&row) =>
+                {
+                    gone.push(map_key);
+                }
                 Carrier::Policy { policy, .. }
                     if source_audience::names_erased_actor_in(vault, &rtxn, &policy)? =>
                 {
@@ -715,11 +832,13 @@ pub(crate) fn refresh_and_scrub(
                 Carrier::Record { .. }
                 | Carrier::Policy { .. }
                 | Carrier::Withheld { .. }
-                | Carrier::Event { .. } => {}
+                | Carrier::Event { .. }
+                | Carrier::Derived { .. } => {}
             }
         }
     }
     let mut changed = write_published(&map, &published)?;
+    changed |= write_derived(&map, me.as_ref(), &derived)?;
     changed |= write_current_heads(vault, &map)?;
     for map_key in &lifted {
         map_delete(&map, map_key)?;
@@ -826,6 +945,11 @@ pub(crate) fn apply_record_in_txn(
 ) -> Result<ReplicaMerge> {
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     settle_withheld_in_txn(vault, txn, &map, id)?;
+    // A derived row's carried policies land with it, in its own savepoint,
+    // before it reads to anyone (fix list row 17207).
+    for policies in derived_carried(&map, id) {
+        source_audience::add_derived_policies_in_txn(vault, txn, id, &policies)?;
+    }
     let key = record_key(id);
     let Some(bytes) = map_get_bytes(&map, &key) else {
         return Ok(ReplicaMerge::Held);
@@ -913,11 +1037,15 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
         .iter()
         .filter_map(|(_, carried)| match carried {
             Carrier::Record { row, policy } => Some((*row, *policy)),
-            Carrier::Policy { .. } | Carrier::Withheld { .. } | Carrier::Event { .. } => None,
+            Carrier::Policy { .. }
+            | Carrier::Withheld { .. }
+            | Carrier::Event { .. }
+            | Carrier::Derived { .. } => None,
         })
         .collect();
     let mut markers: Vec<(EntityId, Option<EntityId>)> = Vec::new();
     let mut receipts = Vec::new();
+    let mut derived: Vec<(EntityId, BTreeSet<EntityId>)> = Vec::new();
     for (_, carried) in carried {
         match carried {
             Carrier::Withheld { row, by } => markers.push((row, by)),
@@ -926,10 +1054,16 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
                 revision,
                 event,
             } => receipts.push((policy, revision, event)),
+            Carrier::Derived { row, policies, .. } => derived.push((row, policies)),
             Carrier::Record { .. } | Carrier::Policy { .. } => {}
         }
     }
-    if heads.is_empty() && records.is_empty() && markers.is_empty() && receipts.is_empty() {
+    if heads.is_empty()
+        && records.is_empty()
+        && markers.is_empty()
+        && receipts.is_empty()
+        && derived.is_empty()
+    {
         return Ok(Vec::new());
     }
     let rows = carried_rows(doc);
@@ -958,6 +1092,15 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
         }
         merge_receipts_in_txn(vault, txn, &receipts, &refused_policies)?;
         let mut affected = Vec::new();
+        // A derived row reads under every policy any machine's carrier names
+        // for it, here or arriving later (fix list row 17207).
+        for (row, policies) in &derived {
+            if source_audience::add_derived_policies_in_txn(vault, txn, row, policies)?
+                && crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
+            {
+                affected.push(*row);
+            }
+        }
         // A row another machine withheld after it travelled reads to no one
         // here (REVIEW-5911): its holders are told, not left reading it
         // under the binding it travelled with.

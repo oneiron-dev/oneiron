@@ -286,7 +286,112 @@ pub(crate) fn withheld_by_lineage_in(
         policies: BTreeMap::new(),
         rows: BTreeMap::new(),
     };
-    Ok(!judge.row_readable(*id, None)?)
+    let withheld = !judge.row_readable(*id, None)?;
+    // On the owner's full window a row its lineage would keep home travels
+    // with the policies that lineage reaches, when they publish (fix list
+    // row 17207).
+    if withheld && scope == ReplicationScope::FullOwnerWindow {
+        return Ok(derived_closure_in(vault, txn, id)?.is_none());
+    }
+    Ok(withheld)
+}
+
+/// The policies the row `id` travels under on the owner's full window
+/// beside its own binding, when its lineage would keep it home there (fix
+/// list row 17207): what [`travel_closure_in`] finds, when the full-window
+/// judge withholds the row and the set is not empty. `None` for a row that
+/// travels as it is, or stays home.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(feature = "sync")]
+pub(crate) fn derived_travel_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    if !super::any_policy_in(vault, txn)? || lineage_held_in(vault, txn, id)? {
+        return Ok(None);
+    }
+    let dbs = vault.store.read();
+    let travels_under = match super::binding_in(vault, txn, id)? {
+        Some(policy) if super::replica::publishable_in(vault, txn, &policy)? => Some(policy),
+        _ => None,
+    };
+    let mut judge = Judge {
+        vault,
+        dbs: &dbs,
+        txn,
+        ask: Ask::Travel {
+            under: travels_under,
+            every_support: false,
+        },
+        policies: BTreeMap::new(),
+        rows: BTreeMap::new(),
+    };
+    if judge.row_readable(*id, None)? {
+        return Ok(None);
+    }
+    derived_closure_in(vault, txn, id)
+}
+
+/// [`travel_closure_in`], when it names at least one policy.
+fn derived_closure_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    Ok(travel_closure_in(vault, txn, id)?.filter(|policies| !policies.is_empty()))
+}
+
+/// Every policy the lineage of the row `id` reaches, the row itself
+/// included (fix list row 17207): the binding of each row its words came
+/// from and of every support of a CLAIM (a support alternative counts as
+/// required, so the set reads never wider than the row does), and every
+/// policy a full-window carrier brought for one of them. A row gone from
+/// this view adds its own binding and carried policies and nothing more.
+/// `None` when the lineage cannot travel: a row held back here, a row a
+/// source landed with no binding, or a policy that does not publish.
+fn travel_closure_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    let dbs = vault.store.read();
+    let mut policies = BTreeSet::new();
+    let mut seen = BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(row) = pending.pop() {
+        if super::held_back_in(vault, txn, &row)?.is_some() {
+            return Ok(None);
+        }
+        if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
+            policies.extend(carried);
+        }
+        let binding = super::binding_in(vault, txn, &row)?;
+        if let Some(policy) = binding {
+            policies.insert(policy);
+        }
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &row)? else {
+            continue;
+        };
+        if binding.is_none() && source_marked_in(&dbs, txn, row, &bytes)? {
+            return Ok(None);
+        }
+        let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
+        for source in every.into_iter().chain(supports) {
+            if seen.insert(source) {
+                pending.push(source);
+            }
+        }
+    }
+    for policy in &policies {
+        if !super::replica::publishable_in(vault, txn, policy)? {
+            return Ok(None);
+        }
+    }
+    Ok(Some(policies))
 }
 
 /// Whether every one of `viewers` reads the revision `raw` of `id` under
@@ -482,6 +587,23 @@ impl Judge<'_, '_, '_> {
             && super::held_back_in(self.vault, self.txn, &id)?.is_some()
         {
             return Ok(Opened::Decided(false));
+        }
+        // The policies a full-window carrier brought for a derived row (fix
+        // list row 17207): every one of them reads, whatever the row's own
+        // lineage here says, before anything else; an unknown one reads to
+        // no one. A replication walk ships such a row only with its carried
+        // policies, as its own sets them (`travel_closure_in`).
+        if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
+            match self.ask {
+                Ask::Read(viewers) => {
+                    for policy in policies {
+                        if !self.policy_readable(policy, viewers)? {
+                            return Ok(Opened::Decided(false));
+                        }
+                    }
+                }
+                Ask::Travel { .. } => return Ok(Opened::Decided(false)),
+            }
         }
         let binding = super::binding_in(self.vault, self.txn, &id)?;
         if let Some(policy) = binding {
