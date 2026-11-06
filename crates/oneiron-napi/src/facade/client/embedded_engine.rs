@@ -258,6 +258,63 @@ impl NativeEngine {
     }
 }
 
+#[napi]
+impl NativeEngine {
+    /// Imports the original acceptance into the selected target and opens
+    /// that same target in this engine's current shared-env registry (L14
+    /// S58): the SAME original `Arc` the caller accepted with, a typed
+    /// `SharedEnvConfig` entry, and a target that resolves as `start` does
+    /// for the entry's path, never from the personal vault.
+    ///
+    /// `entry` is one native entry as JSON (`path`, `vault_id` as a number
+    /// or a decimal string, `member`, `home_url`, `credential_file`); another
+    /// shape is refused before anything runs. The credential file must already
+    /// hold the accepting invitee's key.
+    ///
+    /// An outer setup or task failure raises here, with the ORIGINAL native
+    /// `MemoryError` when that is what failed. Once import answers, its
+    /// native result and committed flag stay separate on the returned outcome.
+    /// This call never persists the entry in host configuration.
+    #[napi]
+    pub fn bootstrap_shared_env(
+        &self,
+        acceptance: &super::shared_acceptance::NativeSharedAcceptance,
+        entry: serde_json::Value,
+        dimensions: Option<f64>,
+        config_file: Option<String>,
+    ) -> napi::Result<super::shared_env::NativeSharedBootstrapOutcome> {
+        let entry = super::shared_env::shared_env_entry(entry)?;
+        let dimensions = dimensions
+            .map(dimensions_to_engine)
+            .transpose()
+            .map_err(facade_error)?;
+        let target = embedded_serve_config(
+            &entry.path,
+            dimensions,
+            config_file.as_deref().map(std::path::Path::new),
+        )
+        .map_err(|error| super::shared_env::shared_engine_error(&error))?;
+        let (imported, committed) = self
+            .engine
+            .bootstrap_shared_env(acceptance.inner(), &entry, &target)
+            .map_err(|error| super::shared_env::shared_engine_error(&error))?;
+        Ok(super::shared_env::NativeSharedBootstrapOutcome::from_native(imported, committed))
+    }
+
+    /// Retains one shared-env membership in this engine's own config file
+    /// for its next start (L14 S58): upserts `entry` by `(vault_id, member)`
+    /// under that file's sibling lock. The running registry is unchanged.
+    /// Refused without a config file; a managed engine's supervisor stays the
+    /// writer. A native `MemoryError` raises as the original.
+    #[napi]
+    pub fn retain_shared_env(&self, entry: serde_json::Value) -> napi::Result<()> {
+        let entry = super::shared_env::shared_env_entry(entry)?;
+        self.engine
+            .retain_shared_env(&entry)
+            .map_err(|error| super::shared_env::shared_engine_error(&error))
+    }
+}
+
 /// One connection the app holds to its engine's server: bytes both ways.
 /// The app writes the HTTP/1.1 request and, after a `101`, the upgraded
 /// protocol's frames; it reads what the server writes. Each call blocks the

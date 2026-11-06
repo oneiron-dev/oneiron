@@ -1313,9 +1313,34 @@ selfFocusUnsubscribe(input: unknown): unknown
   /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */
   nativeLimitQuestions(): NativeLimitQuestion[] | null
   retry(pending: unknown, verb: string, input: unknown): unknown
+  /** Original HTTPS acceptance; request vault_id is a decimal string. */
+  acceptSharedInvitationHttps(request: unknown): NativeSharedAcceptance
+  /** Retry under the pending refusal's own invocation with the same request. */
+  retrySharedInvitationHttps(pending: unknown, request: unknown): NativeSharedAcceptance
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
   exportTo(path: string, format: string | undefined): unknown
+}
+
+/** The original HTTPS acceptance, not reconstructible from its JSON readers. */
+export interface NativeSharedAcceptance {
+  homeUrl(): string
+  acceptanceUrl(): string
+  /** Native JSON text; parsing into JS numbers can lose large integers. */
+  requestJson(): string
+  /** Complete receipt and member credential as native JSON text. */
+  replyJson(): string
+  /** Does not consume the acceptance, including when member-client creation fails. */
+  memberClient(): NativeClient
+}
+
+/** Original import result and independent native publication flag; engine builds only. */
+export interface NativeSharedBootstrapOutcome {
+  committed(): boolean
+  /** The actual imported path, or the inner native error; never a synthetic success. */
+  vaultPath(): string
+  /** Complete inner MemoryError as JSON text, or null on success/another error type. */
+  errorJson(): string | null
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
@@ -1359,6 +1384,15 @@ export interface NativeEngineConnection {
 export interface NativeEngine {
   client(key: string): NativeClient
   localClient(): NativeClient
+  /** Imports the original acceptance into this engine's live shared-env registry. */
+  bootstrapSharedEnv(
+    acceptance: NativeSharedAcceptance,
+    entry: unknown,
+    dimensions: number | undefined,
+    configFile: string | undefined,
+  ): NativeSharedBootstrapOutcome
+  /** Explicitly retain the same config entry for this engine's next start. */
+  retainSharedEnv(entry: unknown): void
   request(request: EngineRequest): EngineReply
   requestArtifact(request: EngineRequest): EngineReply
   connect(): NativeEngineConnection
