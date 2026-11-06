@@ -46,7 +46,7 @@ pub(super) fn scope_commitment_mismatches(
                 Err(error) => {
                     tracing::warn!(
                         %error,
-                        pact = %crate::entity_id::bytes_to_hex_lower(*pact_id),
+                        pact = %crate::entity_id::bytes_to_hex_lower(pact_id),
                         "a pact's scope opening did not read; the pact stands as folded"
                     );
                     return None;
@@ -68,7 +68,7 @@ pub(super) fn hold_mismatched_pacts(fold: &mut AuthorityFold, mismatched: &BTree
             pact.status = FederationPactStatus::Suspended;
             pact.erase_scope();
             tracing::warn!(
-                pact = %crate::entity_id::bytes_to_hex_lower(*pact_id),
+                pact = %crate::entity_id::bytes_to_hex_lower(pact_id),
                 reason = "scope_commitment_mismatch",
                 "a pact's folded scope does not match its signed commitment under this install's live opening; the pact is held inactive here"
             );
