@@ -324,6 +324,12 @@ fn lift_record(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
         }
         ENTITY_TYPE_ASSET => {
             mark_file(vault, txn, &id, &header, &raw)?;
+            let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            if let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)?
+                && known_file_residue(vault, txn, &id, bytes, &known)?
+            {
+                return Ok(Done::Propose(LiftCause::File, REASON_KNOWN_VALUE));
+            }
             // A file whose only hit was in its index text reads clean now.
             match raw
                 .get(ENTITY_METADATA_HEADER_LEN..)
