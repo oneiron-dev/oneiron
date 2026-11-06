@@ -52,7 +52,7 @@ pub use surface::{
 /// Env names that would hand the official CLI a credential from OUR process
 /// instead of the login the person made in the CLI's own store. The seat
 /// runs on the person's sign-in, so these never cross into the child.
-const SEAT_ENV_REMOVED: [&str; 5] = [
+pub(super) const SEAT_ENV_REMOVED: [&str; 5] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
@@ -87,6 +87,17 @@ pub struct OfficialCliSeatExecutor {
     /// Raised by the host when the run's claim is lost under it (FIX 9320):
     /// the run's process is to stop. `None` watches nothing.
     pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// The credential-helper environment the host built for the run (FIX
+    /// 10624 step 2): the seat-child slip, its seed, the loopback origin and
+    /// the git configuration that calls the helper. `None` for a run with no
+    /// helper destination.
+    pub helper_env: Option<super::SeatHelperEnv>,
+    /// The model door environment the host built for the run (FIX 15702):
+    /// each offered slot's loopback URL and the run's reference to it, in the
+    /// variables the CLI's SDK reads. Set after the variables the seat
+    /// removes, so the reference is the one key the CLI holds. `None` for a
+    /// run offered no slot.
+    pub model_env: Option<super::SeatModelEnv>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
@@ -95,6 +106,8 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
             .field("workdir", &self.workdir)
             .field("secret_destinations", &self.secret_destinations)
             .field("floor", &self.floor.is_some())
+            .field("helper_env", &self.helper_env)
+            .field("model_env", &self.model_env)
             .finish()
     }
 }
@@ -137,8 +150,14 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         if let Some(destinations) = &self.secret_destinations {
             destinations.apply_env(&mut command);
         }
+        if let Some(helper_env) = &self.helper_env {
+            helper_env.apply(&mut command);
+        }
         for name in SEAT_ENV_REMOVED {
             command.env_remove(name);
+        }
+        if let Some(model_env) = &self.model_env {
+            model_env.apply(&mut command);
         }
         let mut child = command
             .spawn()

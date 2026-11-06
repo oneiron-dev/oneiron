@@ -2560,6 +2560,35 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.drafters.list",
+                crate::code_run::vault_read::request_schema::<crate::drafter::DrafterListRequest>(),
+            ),
+            (
+                "vault.drafters.list_as",
+                crate::code_run::vault_read::request_schema::<crate::drafter::DrafterListRequest>(),
+            ),
+            (
+                "vault.drafters.status",
+                crate::code_run::vault_read::request_schema::<crate::drafter::DrafterStatusRequest>(
+                ),
+            ),
+            (
+                "vault.drafters.policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::drafter::DrafterPolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.drafters.revert",
+                crate::code_run::vault_read::request_schema::<crate::drafter::DrafterRevertRequest>(
+                ),
+            ),
+            (
+                "vault.drafters.revert_as",
+                crate::code_run::vault_read::request_schema::<crate::drafter::DrafterRevertRequest>(
+                ),
+            ),
+            (
                 "vault.research.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchBindWire,
@@ -7577,6 +7606,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
     "vault.coach.training_offers.sources",
+    "vault.drafters.list",
+    "vault.drafters.list_as",
+    "vault.drafters.status",
+    "vault.drafters.policy.set",
+    "vault.drafters.revert",
+    "vault.drafters.revert_as",
     "vault.research.reserve_exploration",
     "vault.research.budget",
     "vault.authority.handoff_alarms",
@@ -9169,6 +9204,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.coach.training_offers.sources" => crate::code_run::vault_read::request_schema::<
             crate::edit_distance::reservoir::ReservoirSourcePreview,
         >(),
+        "vault.drafters.list" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::drafter::DrafterVersionView>>()
+        }
+        "vault.drafters.list_as" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::drafter::DrafterVersionView>>()
+        }
+        "vault.drafters.status" => {
+            crate::code_run::vault_read::request_schema::<crate::drafter::DrafterStatus>()
+        }
+        "vault.drafters.policy.set" => {
+            crate::code_run::vault_read::request_schema::<crate::drafter::DrafterPolicy>()
+        }
+        "vault.drafters.revert" => {
+            crate::code_run::vault_read::request_schema::<crate::drafter::DrafterRevertReceipt>()
+        }
+        "vault.drafters.revert_as" => {
+            crate::code_run::vault_read::request_schema::<crate::drafter::DrafterRevertReceipt>()
+        }
         "vault.research.reserve_exploration" => {
             crate::code_run::vault_read::request_schema::<crate::entity_id::EntityId>()
         }
@@ -14154,6 +14207,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.coach.training_offers.sources" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.drafters.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.drafters.list_as" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.drafters.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.drafters.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.drafters.revert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.drafters.revert_as" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21164,6 +21259,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.coach.training_offers.sources" => {
             let _input: crate::task_verb::sdk::ReservoirSourcesRequest = decode(value.clone())?;
         }
+        "vault.drafters.list" => {
+            let _input: crate::drafter::DrafterListRequest = decode(value.clone())?;
+        }
+        "vault.drafters.list_as" => {
+            let _input: crate::drafter::DrafterListRequest = decode(value.clone())?;
+        }
+        "vault.drafters.status" => {
+            let _input: crate::drafter::DrafterStatusRequest = decode(value.clone())?;
+        }
+        "vault.drafters.policy.set" => {
+            let _input: crate::drafter::DrafterPolicySetRequest = decode(value.clone())?;
+        }
+        "vault.drafters.revert" => {
+            let _input: crate::drafter::DrafterRevertRequest = decode(value.clone())?;
+        }
+        "vault.drafters.revert_as" => {
+            let _input: crate::drafter::DrafterRevertRequest = decode(value.clone())?;
+        }
         "vault.research.bind" => {
             let _input: crate::task_verb::sdk::ResearchBindWire = decode(value.clone())?;
         }
@@ -24926,6 +25039,12 @@ pub fn invoke(
         "vault.coach.training_offers.sources" => {
             encode(vault_coach_training_offers_sources(memory, decode(value)?)?)
         }
+        "vault.drafters.list" => encode(vault_drafters_list(memory, decode(value)?)?),
+        "vault.drafters.list_as" => encode(vault_drafters_list_as(memory, decode(value)?)?),
+        "vault.drafters.status" => encode(vault_drafters_status(memory, decode(value)?)?),
+        "vault.drafters.policy.set" => encode(vault_drafters_policy_set(memory, decode(value)?)?),
+        "vault.drafters.revert" => encode(vault_drafters_revert(memory, decode(value)?)?),
+        "vault.drafters.revert_as" => encode(vault_drafters_revert_as(memory, decode(value)?)?),
         "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
         "vault.research.fork" => encode(vault_research_fork(memory, decode(value)?)?),
         "vault.research.weave" => encode(vault_research_weave(memory, decode(value)?)?),
@@ -30625,6 +30744,62 @@ pub fn vault_coach_training_offers_sources(
         &memory.embedded_owner("vault.coach.training_offers.sources")?,
         input,
     )
+}
+pub fn vault_drafters_list(
+    memory: &Memory<'_>,
+    input: crate::drafter::DrafterListRequest,
+) -> MemoryResult<Vec<crate::drafter::DrafterVersionView>> {
+    crate::drafter::list_drafters_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.drafters.list")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_drafters_list_as(
+    memory: &Memory<'_>,
+    input: crate::drafter::DrafterListRequest,
+) -> MemoryResult<Vec<crate::drafter::DrafterVersionView>> {
+    crate::drafter::list_drafters_as_agent(memory, input)
+}
+pub fn vault_drafters_status(
+    memory: &Memory<'_>,
+    input: crate::drafter::DrafterStatusRequest,
+) -> MemoryResult<crate::drafter::DrafterStatus> {
+    crate::drafter::drafter_status_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.drafters.status")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_drafters_policy_set(
+    memory: &Memory<'_>,
+    input: crate::drafter::DrafterPolicySetRequest,
+) -> MemoryResult<crate::drafter::DrafterPolicy> {
+    crate::drafter::set_drafter_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.drafters.policy.set")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_drafters_revert(
+    memory: &Memory<'_>,
+    input: crate::drafter::DrafterRevertRequest,
+) -> MemoryResult<crate::drafter::DrafterRevertReceipt> {
+    crate::drafter::revert_drafter_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.drafters.revert")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_drafters_revert_as(
+    memory: &Memory<'_>,
+    input: crate::drafter::DrafterRevertRequest,
+) -> MemoryResult<crate::drafter::DrafterRevertReceipt> {
+    crate::drafter::revert_drafter_as_agent(memory, input)
 }
 pub fn vault_research_bind(
     memory: &Memory<'_>,
