@@ -12,8 +12,9 @@
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
 //! retained-parent and workflow checks still run whole. Encoding yields between
-//! top-level named fields and source rows; each scalar and nested row serializer
-//! still runs whole. The envelope checksum and outer canonical digest yield
+//! top-level named fields and source rows, and within entity blob byte arrays.
+//! Other scalar and nested row serializers still run whole. The envelope checksum
+//! and outer canonical digest yield
 //! between BLAKE3 chunks.
 //! NOTE scope and immutable plan lookups yield between source rows; store-bound
 //! workflow checks and the aborted-transaction preflight still run whole. Manifest construction
