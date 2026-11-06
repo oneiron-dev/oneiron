@@ -17,6 +17,8 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod body_admission;
+pub(crate) use body_admission::resolve_record_body_with_utf8_admission;
 mod history;
 mod repo_index;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
@@ -98,7 +100,7 @@ pub(super) fn load(
 ) -> Result<EntityDoc> {
     let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
-        .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        .port_document_row_borrowed(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
     let doc = EntityDoc::from_snapshot(&bytes)?;
     if doc.birth().entity != h.entity {
