@@ -1,5 +1,5 @@
 //! HTML5 DOM merge and safe, deterministic document typography.
-use super::budget::{Budget, ScratchIter, ScratchVec};
+use super::budget::{Budget, ScratchIter, ScratchText, ScratchVec};
 use super::layout::{Flow, Style};
 use super::*;
 use dom_query::{Document, NodeRef};
@@ -132,9 +132,9 @@ fn merge(text: &str, values: &BTreeMap<String, String>, budget: &Budget) -> Resu
     Ok(out)
 }
 struct Rule {
-    selector: String,
+    specificity: (usize, usize),
     matcher: dom_query::Matcher,
-    declarations: String,
+    declarations: ScratchText,
 }
 pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
     let budget = flow.budget.clone();
@@ -167,10 +167,15 @@ pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
                 declarations_apply(declarations, Style::default(), &budget)?;
                 let matcher = dom_query::Matcher::new(selector)
                     .map_err(|_| ContentTemplateError::UnsupportedHtml)?;
+                let mut owned_declarations = ScratchText::new(&budget);
+                owned_declarations.push_str(declarations)?;
                 rules.push(Rule {
-                    selector: selector.into(),
+                    specificity: (
+                        selector.bytes().filter(|b| *b == b'#').count(),
+                        selector.bytes().filter(|b| *b == b'.').count(),
+                    ),
                     matcher,
-                    declarations: declarations.into(),
+                    declarations: owned_declarations,
                 })?;
             }
             rest = remaining;
@@ -373,22 +378,16 @@ fn walk(node: NodeRef<'_>, root: &mut Flow, style: Style, rules: &[Rule]) -> Res
                         matched.push((i, rule))?;
                     }
                 }
-                matched.sort_by_key(|(i, r)| {
-                    (
-                        r.selector.bytes().filter(|b| *b == b'#').count(),
-                        r.selector.bytes().filter(|b| *b == b'.').count(),
-                        *i,
-                    )
-                });
-                let mut css = String::new();
+                matched.sort_by_key(|(i, r)| (r.specificity, *i));
+                let mut css = ScratchText::new(&budget);
                 for (_, rule) in matched {
-                    css.push_str(&rule.declarations);
-                    css.push(';');
+                    css.push_str(rule.declarations.as_str()?)?;
+                    css.push(';')?;
                 }
                 if let Some(inline) = node.attr("style") {
-                    css.push_str(&inline);
+                    css.push_str(&inline)?;
                 }
-                let (style, block) = declarations_apply(&css, style, &budget)?;
+                let (style, block) = declarations_apply(css.as_str()?, style, &budget)?;
                 if block.before {
                     flow.page_break()?;
                 }
