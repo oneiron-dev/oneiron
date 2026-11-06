@@ -2,11 +2,13 @@
 //! Entry: `EngineNativeExecutor::run`.
 //! `EngineNativeExecutor` is defined by `driver`; children own persistence, speech and requests.
 
+mod deadline;
 mod persistence;
 mod request;
 mod speech;
 mod turn;
 
+use self::deadline::{SliceProgram, check_pending_preparation, guest_abi_digest};
 use self::turn::{StepProgram, TurnProgram};
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
@@ -132,21 +134,28 @@ impl EngineNativeExecutor<'_> {
                 ));
             }
 
-            let program = match self
-                .generate_step_program(
-                    config,
-                    &mut record,
-                    &wire_prompt.text,
-                    &wire_prompt.stamp.resolved_fingerprint,
-                    continuation.as_ref(),
-                    completed_steps,
-                )
-                .await?
-            {
-                TurnProgram::Generated(program) => program,
-                TurnProgram::Ended(status) => {
-                    return Ok(self.outcome(status, steps_run, record));
-                }
+            // A step its deadline stopped runs its stored program again,
+            // from the calls it already made, before any new model turn
+            // (FIX 7703).
+            let resumed = self.take_pending_program(config, &mut record, &boundary)?;
+            let (program, pending, replay) = match resumed {
+                Some(resumed) => (resumed.program, Some(resumed.pending), Some(resumed.replay)),
+                None => match self
+                    .generate_step_program(
+                        config,
+                        &mut record,
+                        &wire_prompt.text,
+                        &wire_prompt.stamp.resolved_fingerprint,
+                        continuation.as_ref(),
+                        completed_steps,
+                    )
+                    .await?
+                {
+                    TurnProgram::Generated(program) => (program, None, None),
+                    TurnProgram::Ended(status) => {
+                        return Ok(self.outcome(status, steps_run, record));
+                    }
+                },
             };
             let StepProgram {
                 request_hash,
@@ -158,7 +167,12 @@ impl EngineNativeExecutor<'_> {
             // runs as the JavaScript Oxc prints for it, kept beside the
             // program with its map and Oxc pin; JavaScript runs as written.
             let prepared = prepare_source(&script);
-            record_prepared_source(&self.storage, &mut record, completed_steps, &prepared)?;
+            match &pending {
+                Some(pending) => check_pending_preparation(pending, &prepared)?,
+                None => {
+                    record_prepared_source(&self.storage, &mut record, completed_steps, &prepared)?;
+                }
+            }
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
             // lineage seam. An outbound effect parks its step, so a run that
@@ -180,7 +194,8 @@ impl EngineNativeExecutor<'_> {
             .with_recoverable_outputs(&self.storage, &record, recoverable)?
             .with_skill_executor(&config.model)
             .with_result_share(&self.result_share)
-            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
+            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps))
+            .with_deadline_replay(replay);
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -197,6 +212,25 @@ impl EngineNativeExecutor<'_> {
                 .runtime
                 .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
             self.keep_step_feedback(&checking);
+            let slice = SliceProgram {
+                seq: completed_steps,
+                bridge_start,
+                request_hash,
+                script_blake3: *blake3::hash(script.as_bytes()).as_bytes(),
+                prepared_identity: prepared.transpiled().map(TranspiledSource::identity),
+                guest_abi: guest_abi_digest(&boundary),
+                trailing_speak: trailing_speak.as_deref(),
+                healed,
+                prior: pending.as_ref(),
+                ran: step_outcome.is_ok(),
+                cancelled: cancel.is_cancelled(),
+            };
+            if let Some(status) =
+                self.end_deadline_slice(config, &mut record, expected_generation, &mut host, slice)?
+            {
+                checking.ended(Some(&status));
+                return Ok(self.outcome(status, steps_run, record));
+            }
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
