@@ -41,12 +41,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
 | `src/native/pdf/walk.rs` | src | s | 7 crate-vis | — | Reference chains and the page tree, followed whole (Rule 5) |
 | `src/native/pdf/work.rs` | src | s | 5 crate-vis | — | Shared types for the ported prepare/inspect PDF pipeline (FIX 7980/8157) |
-| `src/native/pdf/work_burn.rs` | src | m | 9 crate-vis | — | Ported field burn-in and annotation-appearance flattening (FIX 7980/8157) |
+| `src/native/pdf/work_burn.rs` | src | L | 9 crate-vis | — | Ported field burn-in and annotation-appearance flattening (FIX 7980/8157) |
 | `src/native/pdf/work_evidence.rs` | src | m | 4 crate-vis | — | Ported certificate/complete-trail PDF appendices (FIX 7980/8157) |
 | `src/native/pdf/work_preflight.rs` | src | L | 2 crate-vis | — | Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157) |
 | `src/native/pdf/work_prepare.rs` | src | m | 4 crate-vis | — | Ported esign PDF preparation orchestration (FIX 7980/8157) |
 | `src/native/pdf/work_present.rs` | src | m | 10 crate-vis | — | Ported page geometry, field marks, and Win1252 text encoding (FIX 7980/8157) |
-| `src/native/pdf/work_source.rs` | src | m | 12 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
+| `src/native/pdf/work_source.rs` | src | L | 12 crate-vis | — | Ported static page-tree and resource-graph admission and copying (FIX 7980/8157) |
 | `src/native/pdf/work_streams.rs` | src | s | 3 crate-vis | — | — |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |

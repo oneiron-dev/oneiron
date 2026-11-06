@@ -359,7 +359,7 @@ fn parse_hex_component(component: &str) -> Result<u64> {
 /// than the single receipt, but bounded to the vault and correct: never a
 /// best-effort skip).
 ///
-/// `blob` is the full stored envelope (25 B header + body): the transcript
+/// `blob` is the full stored envelope (entity metadata header + body): the transcript
 /// binds the entity id and the EXACT header bytes, so a valid receipt
 /// transplanted under another id or a shifted envelope fails step 3.
 pub(super) fn verify_new_receipt_origin_for_vault_in_txn(

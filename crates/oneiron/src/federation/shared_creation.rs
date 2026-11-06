@@ -102,10 +102,12 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 
 impl Vault {
     /// Run once while creating shared membership. Reopening never reapplies defaults.
-    /// No preset means exactly the explicitly supplied roles, without implicit grants.
+    /// No preset means exactly the explicitly supplied roles, without implicit
+    /// grants, except that the vault never commits with no Owner (FIX 8739).
     ///
     /// Only the creator's own row is granted at once: their Owner grant under a
-    /// preset, or the role they name for themselves. Every other founding member
+    /// preset, or the role they name for themselves while that leaves an Owner,
+    /// else Owner. Every other founding member
     /// is invited at their role and joins on acceptance (OF-531, Engine ruling
     /// 2026-10-17), so the creator needs a grant of their own to invite anyone.
     /// A founding co-Owner's invitation names the Owner role (OF-150); until
@@ -148,10 +150,13 @@ impl Vault {
                 return Err(invalid("duplicate initial member"));
             }
         }
-        if !invites.is_empty() && !rows.contains_key(&actor) {
-            return Err(invalid(
-                "founding members are invited by the creator, who needs a grant of their own",
-            ));
+        // A shared vault never commits with no Owner: when no row names one
+        // (no preset, a lesser role the creator names), the creator holds
+        // Owner (FIX 8739; Orchestrator 10-22: a correctness fix, never a
+        // refusal). A founding co-Owner's invitation is no Owner until it is
+        // accepted. The creator so always holds the grant that invites.
+        if !rows.values().any(|role| *role == Role::Owner) {
+            rows.insert(actor, Role::Owner);
         }
         // The setup training question rides this creation write; creation
         // never waits on, asks for or refuses without its answer.
@@ -193,6 +198,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: encode_federation_grant_body(&grant)?,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

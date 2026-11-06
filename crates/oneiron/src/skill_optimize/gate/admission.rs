@@ -12,8 +12,14 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, StagedRow};
 /// virgin create, the create door saw an ordinary candidate, and the record
 /// walked to `active` through the owner's door carrying an id whose gate
 /// history said "accepted". The row itself is inert to every other reader.
-const ORIGIN_MARKER: SideTable<EntityId, Vec<Option<String>>, Raw> =
+const ORIGIN_MARKER: SideTable<EntityId, OriginMarkerRow, Raw> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_ORIGIN_MARKER);
+
+/// One origin-marker row: the seven origin values in the pinned key order
+/// ([`OPTIMIZER_ORIGIN_KEYS`]). Its own type, so its raw codec stays beside
+/// the keys it is checked against while `RawValue` lives in oneiron-store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginMarkerRow(Vec<Option<String>>);
 
 /// Schema version of one origin-marker row. Fail-closed like the verdict row:
 /// an unreadable marker refuses the create rather than admitting it. v3 adds
@@ -483,13 +489,13 @@ fn optimizer_origin_values(record: &SkillRecord) -> Vec<Option<String>> {
         .collect()
 }
 
-impl RawValue for Vec<Option<String>> {
+impl RawValue for OriginMarkerRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_origin_marker(self)?)
+        Ok(encode_origin_marker(&self.0)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_origin_marker(bytes)?)
+        Ok(Self(decode_origin_marker(bytes)?))
     }
 }
 
@@ -588,9 +594,9 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 ) -> Result<Option<StagedRow>> {
     validate_goal_birth_in_txn(store, txn, id, created, replicated)?;
     let origin = optimizer_origin_values(created);
-    let Some(marked) = ORIGIN_MARKER.get(store, txn, id)? else {
+    let Some(OriginMarkerRow(marked)) = ORIGIN_MARKER.get(store, txn, id)? else {
         return if born_on_optimize_road(created) {
-            ORIGIN_MARKER.stage(id, &origin).map(Some)
+            ORIGIN_MARKER.stage(id, &OriginMarkerRow(origin)).map(Some)
         } else {
             Ok(None)
         };
@@ -611,7 +617,7 @@ pub(in crate::skill_optimize) fn retained_optimizer_parent_goal_in_txn(
     txn: &heed::RoTxn<'_>,
     parent: &EntityId,
 ) -> Result<Option<(SkillGoalId, String)>> {
-    let Some(values) = ORIGIN_MARKER.get(store, txn, parent)? else {
+    let Some(OriginMarkerRow(values)) = ORIGIN_MARKER.get(store, txn, parent)? else {
         return Ok(None);
     };
     let corrupt = || Error::CorruptedIndex(ORIGIN_MARKER_LABEL);

@@ -211,9 +211,11 @@ impl OffRecordSessionRegistry {
                 },
             ));
         }
+        let overlay_shell = clock.entity_id()?;
         let record = OffRecordSessionRecord {
             version: OFF_RECORD_SESSION_RECORD_VERSION,
             session_ref: session_ref.to_owned(),
+            instance_ref: overlay_shell,
             mode,
             backend,
             entered_at: clock.now_recorded_at(),
@@ -246,7 +248,7 @@ impl OffRecordSessionRegistry {
                 // room. Allocating it lazily made "one shell per live
                 // session" a property of whoever touched it first; allocating
                 // it here makes it a property of entry.
-                overlay_shell: clock.entity_id()?,
+                overlay_shell,
                 overlay_shell_staged: false,
                 continuation_shell: None,
                 kept_messages: BTreeMap::new(),

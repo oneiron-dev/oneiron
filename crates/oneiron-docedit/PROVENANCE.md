@@ -81,8 +81,8 @@ individually instead of flattening them under one block deletion. Empty,
 numbered, section-bearing and tracked-final paragraphs keep the existing
 validation path, as do moves, replacements and direct edits. The wrapper
 recognizes only its own fully deleted paragraph marks in accepted order;
-imported revisions keep their existing visibility. A surviving physical final
-mark that fails the shared body's order comparison uses the existing
+imported revisions keep their existing visibility. An unwitnessed surviving physical
+final mark that fails the shared body's order comparison uses the existing
 whole-window default-author projection, not a relaxed order check.
 
 The final-carrier section change (2026-11-05, FIX 13798) touches
@@ -92,6 +92,15 @@ clears the copied paragraph section break and section-property revision on that
 carrier. The original predecessor and the document body's final section remain
 unchanged. This prevents a duplicate section boundary and copied revision from
 being serialized on the carrier; no Word-runtime comparison is claimed.
+
+The wrapper's terminal final-deletion change (2026-11-05) preserves sequential
+actor attribution for one last-group paragraph delete when the only extra
+native id is its physical final-mark carrier. The existing snapshot and view
+must show unmoved, unsplit text-only paragraphs with no literal prefixes,
+exact live-id order and accepted text, and one deleted break on the immediate
+physical predecessor. The fork's existing merge concatenates that predecessor
+with the empty carrier without a separator or another block. No fork code or
+revision mark changes; all other shapes retain the existing fallback.
 
 The move-deletion pairing change (2026-11-05, FIX 13294) touches `src/tracked_model.rs`.
 Within one tracked move range, each destination paragraph's inner deletions are
@@ -224,3 +233,14 @@ contract 5 and inner DOCX schema 2 are extended before this same PR lands; this
 is not an old-format reader, default or migration. A later change after they
 land requires fresh current versions. No numeric ceiling, default, dependency,
 error kind, test or runtime/Word proof is added by this extension.
+
+The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
+`src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
+Decoration or comment range/reference marker in one carrier at its original
+inline position and status, instead of consuming it into the old text's deletion.
+Normal markers stay current, and prior inserted/deleted markers keep their own
+revision. Rejection restores the original current range; acceptance collapses removed old
+text before the inserted replacement. No marker identity is duplicated or
+inferred from replacement prose. The same predicate now serves marker presence,
+stripping and this carrier. Native wire/schema versions and marker-free
+replacement semantics are unchanged; no Word-runtime comparison is claimed.

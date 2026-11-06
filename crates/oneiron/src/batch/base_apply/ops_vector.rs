@@ -67,6 +67,12 @@ pub(super) fn apply_media_vector_arm(
     // OF-370: only promotion replays a room's media vector; it lands
     // when base's bindings still take it, else the backfill fills it.
     let vector = Zeroizing::new(vector);
+    // FIX 9398: and only for a live record. A plan cut before the record's
+    // delete or erase, which dropped the room's copies, never writes its
+    // vector back; a record the plan puts is live by now.
+    if !crate::vault::live_entity_row_in_txn(store, wtxn, &id)?.is_live() {
+        return Ok(());
+    }
     crate::embed::replay_media_vector_in_txn(
         store,
         wtxn,

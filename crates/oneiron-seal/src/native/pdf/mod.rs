@@ -43,12 +43,12 @@ mod work_source;
 mod work_streams;
 pub(crate) use self::work::{WorkError, WorkLimits};
 mod work_prepare;
-pub(crate) use self::work::{inspect_in, prepare_in};
-pub(crate) use self::work_prepare::{WorkPrepareRequest, WorkPrepared};
-pub(crate) use self::work_burn::{BurnField, BurnValue, WorkRaster};
-pub(crate) use self::work_evidence::{WorkRecipient, WorkSignature};
-pub(crate) use self::work_present::FieldGeometry;
 pub(crate) use self::revision_facts::{
     RevisionAnalysisError, RevisionFacts, analyze as analyze_revision_facts,
 };
 pub(crate) use self::walk::{catalog, chain, resolve, resolve_id};
+pub(crate) use self::work::{inspect_in, prepare_in};
+pub(crate) use self::work_burn::{BurnField, BurnValue, WorkRaster};
+pub(crate) use self::work_evidence::{WorkRecipient, WorkSignature};
+pub(crate) use self::work_prepare::{WorkPrepareRequest, WorkPrepared};
+pub(crate) use self::work_present::FieldGeometry;
