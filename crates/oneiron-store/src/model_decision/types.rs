@@ -339,6 +339,8 @@ pub enum StopCause {
     Deadline,
     /// The caller allowed no further generation to start.
     GenerationAllowance,
+    /// No remaining provider supports the requested captured read.
+    CaptureUnsupported,
     ProviderFailure,
 }
 
@@ -480,6 +482,8 @@ pub enum HumanAskReason {
     Deadline,
     /// The caller allowed no further generation, and the step cannot take its prior.
     GenerationAllowance,
+    /// No captured read can complete the step, and it cannot take its prior.
+    CaptureUnsupported,
     /// A run would pass its project goal's exploration slice.
     ExplorationBudget,
 }

@@ -1,5 +1,6 @@
 //! Per-question routing after the first read, preserving the last eligible answer.
 
+use super::capture::Capture;
 use super::{
     AskTo, DecisionLadder, DecisionPack, HumanDecisionRequest, Read, Readings, Route, abstained,
     asks_person, millis, step_cause, validate_pin,
@@ -21,6 +22,7 @@ impl DecisionLadder<'_> {
         first: Option<Read>,
         mut readings: Readings,
         run: Option<&RunAdmission>,
+        mut capture: Option<&mut Capture<'_, '_>>,
     ) -> Result<TypedDecision> {
         let Route {
             question,
@@ -57,7 +59,49 @@ impl DecisionLadder<'_> {
         // The think row routes only on a paired reading, so it applies only beside one.
         let think_row = policy.think_threshold().filter(|_| self.paired.is_some());
         while let Some(read) = next_read.take() {
+            let unsupported_started = matches!(&read, Read::Cut(StopCause::CaptureUnsupported));
             let answer = match read {
+                Read::NotStarted(StopCause::CaptureUnsupported)
+                | Read::Cut(StopCause::CaptureUnsupported) => {
+                    match self.next_available(rung, dial.ceiling, question, images, audio) {
+                        Some(next)
+                            if next != DecisionRung::Human && deadline.decision_may_start() =>
+                        {
+                            let questions = [question];
+                            let pack = DecisionPack {
+                                questions: &questions,
+                                evidence,
+                                images,
+                                audio,
+                                state,
+                                deadline,
+                                run,
+                            };
+                            next_read = Some(
+                                self.read(
+                                    next,
+                                    &pack,
+                                    person,
+                                    std::slice::from_mut(&mut readings),
+                                    capture.as_deref_mut(),
+                                )?
+                                .remove(0),
+                            );
+                            rung = next;
+                            continue;
+                        }
+                        Some(next) if next != DecisionRung::Human => stop = StopCause::Deadline,
+                        _ => stop = StopCause::CaptureUnsupported,
+                    }
+                    if let Some(cause) = stepping {
+                        reasoning = if unsupported_started {
+                            Reasoning::Cut(cause)
+                        } else {
+                            Reasoning::Skipped(cause)
+                        };
+                    }
+                    break;
+                }
                 Read::Answer(answer) => answer,
                 Read::NotStarted(cause) => {
                     stop = cause;
@@ -127,8 +171,14 @@ impl DecisionLadder<'_> {
                         run,
                     };
                     next_read = Some(
-                        self.read(next, &pack, person, std::slice::from_mut(&mut readings))?
-                            .remove(0),
+                        self.read(
+                            next,
+                            &pack,
+                            person,
+                            std::slice::from_mut(&mut readings),
+                            capture.as_deref_mut(),
+                        )?
+                        .remove(0),
                     );
                     rung = next;
                     stepping = cause;
@@ -138,17 +188,19 @@ impl DecisionLadder<'_> {
         // At a cut an irreversible step never takes an unfinished answer, and no step
         // takes an answer the call does not have, or one inside its band, enforced or
         // in shadow (packet rule 5: an in-band answer is not eligible).
-        let cut_reason = if stop == StopCause::GenerationAllowance {
-            HumanAskReason::GenerationAllowance
-        } else {
-            HumanAskReason::Deadline
+        let cut_reason = match stop {
+            StopCause::GenerationAllowance => HumanAskReason::GenerationAllowance,
+            StopCause::CaptureUnsupported => HumanAskReason::CaptureUnsupported,
+            _ => HumanAskReason::Deadline,
         };
-        let abstains_at_cut = matches!(stop, StopCause::Deadline | StopCause::GenerationAllowance)
-            && (prior
-                .as_ref()
-                .is_none_or(|prior| prior.answer == DecisionAnswer::Abstain)
-                || reversibility == Reversibility::OutboundEffect
-                || in_band);
+        let abstains_at_cut = matches!(
+            stop,
+            StopCause::Deadline | StopCause::GenerationAllowance | StopCause::CaptureUnsupported
+        ) && (prior
+            .as_ref()
+            .is_none_or(|prior| prior.answer == DecisionAnswer::Abstain)
+            || reversibility == Reversibility::OutboundEffect
+            || in_band);
         if abstains_at_cut && dial.ceiling == DecisionRung::Human {
             rung = DecisionRung::Human;
         }
