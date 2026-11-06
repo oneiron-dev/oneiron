@@ -292,7 +292,9 @@ pub struct ScoredFork<'a> {
 /// The anchor's scorer, lent by the host.
 pub trait ContributionForkScorer {
     /// The candidate's anchor as a frozen case and rubric, resolved before
-    /// either fork is paid for; `None` when it resolves to none.
+    /// either fork is paid for; else why the pair is unavailable now: an
+    /// anchor that resolves to none (`AnchorUnresolved`), or a scorer whose
+    /// judge is not served now (`ModelUnavailable`, FIX 3611).
     ///
     /// # Errors
     ///
@@ -301,7 +303,7 @@ pub trait ContributionForkScorer {
         &self,
         vault: &Vault,
         candidate: &ContributionCandidate,
-    ) -> Result<Option<ReplayAnchor>>;
+    ) -> Result<std::result::Result<ReplayAnchor, ContributionReplayUnavailable>>;
 
     /// Whether `fork` passes `anchor` by the rubric's own pass rule, the same
     /// for both forks; `None` when the scorer did not decide.

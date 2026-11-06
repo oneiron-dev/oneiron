@@ -38,7 +38,7 @@ pub(in crate::ai_host) fn protocol_digest() -> [u8; 32] {
 
 /// Whether `judge` is a different model from `executor`, the one that
 /// produced the result, whatever revision either names.
-pub(super) fn independent(judge: &str, executor: &str) -> bool {
+pub(in crate::ai_host) fn independent(judge: &str, executor: &str) -> bool {
     let model = |id: &str| {
         id.rsplit_once('@')
             .map_or(id, |(model, _)| model)

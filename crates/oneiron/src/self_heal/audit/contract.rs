@@ -14,13 +14,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::AttemptQueue;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::code_run::{CapsuleHost, StepReplayCapsule, step_replay_capsules_in_txn};
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
+use crate::receipt::attempt_pack_receipt_id;
 use crate::{EntityId, Result, Vault};
 
-use super::{ObjectiveFinding, SealCheckKind, SealedAttemptReceipt};
+use super::{ObjectiveFinding, SEALS, SealCheckKind, SealedAttemptReceipt};
 
 /// The checker a host put a seal check to (FIX 3611): the digest of its
 /// protocol and wording, and the role its judge was routed on.
@@ -206,4 +207,61 @@ fn binds_result(capsule: &StepReplayCapsule, generation: u32, result: OutputRef)
         && capsule.content.actor().is_some()
         && capsule.binding.is_some()
         && capsule.answer == Some(result)
+}
+
+/// `attempt`'s frozen random audit, read in `txn` (FIX 3611), while the
+/// capsule it names still binds the seal's result as its answer. A seal with
+/// no frozen audit, an audit no capsule bound, an erased capsule and a
+/// changed answer or result are none.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn bound_random_audit_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<SealedAudit>> {
+    let Some(stored) = SEALS.get(&vault.store, txn, attempt.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(audit) = stored.audit else {
+        return Ok(None);
+    };
+    let Some(answer) = audit.answer else {
+        return Ok(None);
+    };
+    let current = audited_answer_in_txn(vault, txn, &stored.receipt)?;
+    Ok((current == Some(answer)).then_some(audit))
+}
+
+/// The frozen contract of the random audit `outcome_receipt` names, of the
+/// attempt whose terminal pack receipt is `attempt_receipt` (FIX 3611).
+/// `None` when that audit froze no contract.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn audit_contract(
+    vault: &Vault,
+    attempt_receipt: &str,
+    outcome_receipt: &str,
+) -> Result<Option<AuditContract>> {
+    let Some(attempt) = pack_receipt_attempt(attempt_receipt) else {
+        return Ok(None);
+    };
+    let txn = vault.store.env.read_txn()?;
+    Ok(SEALS
+        .get(&vault.store, &txn, attempt.as_bytes())?
+        .and_then(|stored| stored.audit)
+        .map(|audit| audit.contract)
+        .filter(|contract| contract.check == outcome_receipt))
+}
+
+/// The attempt a terminal pack receipt id names, when it is exactly one.
+pub(crate) fn pack_receipt_attempt(receipt: &str) -> Option<AttemptId> {
+    let (_, hex) = receipt.rsplit_once(':')?;
+    let entity = EntityId::from_hex(hex).ok()?;
+    let attempt = AttemptId::from_bytes(entity.as_bytes()).ok()?;
+    (attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
 }

@@ -76,12 +76,14 @@ pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
 pub(crate) use credit_join::{StandingCreditObservation, standing_credit_observation_in_txn};
 mod decay_fit;
 mod late_credit;
+mod outcome_source;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
 pub(crate) use late_credit::late_credit_receipt_in_txn;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };
+pub use outcome_source::{OutcomeWitness, WitnessedPackOutcome, stored_anchored_outcome};
 pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
