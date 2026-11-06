@@ -207,9 +207,34 @@ impl RecordingJsHost<'_, '_> {
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
     /// caller's step goes on. A callable's own call nests inside it: past
     /// the `[limits] callable_nest_depth` row it asks, and the call runs.
-    /// A call that would start below the thread's stack floor answers
-    /// `skills_call_stack_floor` instead.
+    /// Near the stack floor, a supported target lends the call another stack
+    /// segment on this thread. Other targets retain the stack-floor refusal.
     pub(super) fn call_skill(
+        &mut self,
+        seq: u64,
+        started_at_ms: u64,
+        call: &SelfCall,
+        skill: SelfSkillCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        parent: &StepCancellation,
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
+        on_callable_stack(|| {
+            self.call_skill_on_stack(seq, started_at_ms, call, skill, runtime, parent)
+        })
+        .unwrap_or_else(|| {
+            Ok((
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::SkillsCall,
+                    error: "skills_call_stack_floor".to_owned(),
+                    code: None,
+                    disk_floor: None,
+                }),
+                None,
+            ))
+        })
+    }
+
+    fn call_skill_on_stack(
         &mut self,
         seq: u64,
         started_at_ms: u64,
@@ -229,10 +254,6 @@ impl RecordingJsHost<'_, '_> {
                 None,
             )
         };
-        // Each nested level keeps its host loop's frames on this thread.
-        if below_stack_floor() {
-            return Ok(failed("skills_call_stack_floor".to_owned()));
-        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
