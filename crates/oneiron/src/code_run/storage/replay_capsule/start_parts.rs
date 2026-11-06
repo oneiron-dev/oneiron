@@ -61,7 +61,7 @@ const BODY_ROWS: SideTable<(EntityId, EntityId), OwnedBody, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY);
 
 /// Who holds a digest, as an image's raw rows hold it.
-const BODY_DIGEST_ROWS: SideTable<([u8; 32], EntityId), EntityId, Named> =
+pub(super) const BODY_DIGEST_ROWS: SideTable<([u8; 32], EntityId), EntityId, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_DIGEST);
 
 /// The file digests no descriptor holds, as an image's raw rows hold them.

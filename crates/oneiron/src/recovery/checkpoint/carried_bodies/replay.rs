@@ -368,13 +368,15 @@ fn image_row<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]>
 /// helpers that write them: each piece put back inline with its descriptor
 /// and holder row, the manifest under the same occurrence, the capsule's
 /// row, and each instance row the settle marks inline
-/// (`crate::code_run::republish_step_start_lengths_in_rows`). No margin is
-/// added.
+/// (`crate::code_run::republish_step_start_lengths_in_rows`). FIX 4192
+/// review fix: the pieces put back are every content piece the census
+/// carried without its bytes ([`stripped_digests`]), each counted once. No
+/// margin is added.
 ///
 /// # Errors
 ///
-/// A carried start's capsule row the image does not hold, and a row that
-/// does not decode or encode.
+/// A carried start's capsule row the image does not hold, a row that does
+/// not decode or encode, and an occurrence that does not derive.
 pub(in crate::recovery::checkpoint) fn landed_lengths(
     image: &CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
@@ -383,6 +385,7 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
     let Some(rows) = image.databases.get("vault_meta") else {
         return Ok(lengths);
     };
+    let mut stripped = None;
     for (row, destination) in destinations(&image.inline_bodies) {
         let Some((_, rest)) = destination.rest else {
             continue;
@@ -419,8 +422,11 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
                 .iter()
                 .map(|((call, _), _, carried, _)| (*call, !retired.contains(&carried.instance)))
                 .collect();
+            let stripped = stripped.get_or_insert_with(|| {
+                crate::code_run::StrippedPieces::of(rows, &stripped_digests(image, rows))
+            });
             lengths.extend(crate::code_run::republish_step_start_lengths_in_rows(
-                rows, &row, len, &asks,
+                rows, &row, len, &asks, stripped,
             )?);
         } else if let Some(body_row) =
             image_row(rows, &row).and_then(crate::code_run::step_start_body_row)
@@ -430,4 +436,31 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
         }
     }
     Ok(lengths)
+}
+
+/// FIX 11415: the digests of the result body rows among the image's
+/// `vault_meta` `rows` that a restore finds without their bytes before any
+/// body is read: an inline row no carried body fills, or a file row whose
+/// file the image does not carry. A census carries each content piece of a
+/// carried start so (FIX 4192 review fix).
+fn stripped_digests(image: &CheckpointImage, rows: &[(Vec<u8>, Vec<u8>)]) -> BTreeSet<[u8; 32]> {
+    let carried: BTreeSet<&[u8]> = image
+        .inline_bodies
+        .iter()
+        .filter(|carried| carried.database == "vault_meta")
+        .map(|carried| carried.key.as_slice())
+        .collect();
+    let files: BTreeSet<[u8; 32]> = image.bodies.iter().map(|(digest, _)| *digest).collect();
+    rows.iter()
+        .filter_map(|(key, value)| {
+            if let Some((digest, body)) = crate::code_run::code_run_inline_body_of_row(key, value) {
+                let held =
+                    carried.contains(key.as_slice()) || *blake3::hash(body).as_bytes() == digest;
+                return (!held).then_some(digest);
+            }
+            crate::code_run::code_run_body_file_of_row(key, value)
+                .map(|(digest, _)| digest)
+                .filter(|digest| !files.contains(digest))
+        })
+        .collect()
 }
