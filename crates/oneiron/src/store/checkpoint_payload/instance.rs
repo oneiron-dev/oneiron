@@ -50,9 +50,18 @@ pub(crate) enum Lifecycle {
     Erased,
 }
 
+/// A source relationship proved by an actual captured entity body, never erase authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PayloadSource {
+    Unbound,
+    ScopedTouch(EntityId),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InstanceRow {
+    source: PayloadSource,
     generation: u64,
     lifecycle: Lifecycle,
     /// The newest generation a history purge left behind, whose leaf
@@ -129,6 +138,39 @@ pub(crate) fn owner_instances_in_txn(
         .collect())
 }
 
+/// Source relationships still needing an erase, including ordinarily retained owners.
+pub(crate) fn scoped_touch_sources_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<std::collections::BTreeMap<EntityId, EntityId>> {
+    let mut sources = std::collections::BTreeMap::new();
+    if !CHECKPOINT_PAYLOADS_ENABLED {
+        return Ok(sources);
+    }
+    for (item, row) in INSTANCES.scan(dbs, txn)? {
+        if row.lifecycle == Lifecycle::Erased {
+            continue;
+        }
+        let PayloadSource::ScopedTouch(original) = row.source else {
+            continue;
+        };
+        if !matches!(
+            item.subtype(),
+            Subtype::EntityTree | Subtype::AttachmentOccurrence
+        ) {
+            return Err(corrupt());
+        }
+        let entity = EntityId::from_bytes(item.owner()[..16].try_into().map_err(|_| corrupt())?)?;
+        if sources
+            .insert(entity, original)
+            .is_some_and(|known| known != original)
+        {
+            return Err(corrupt());
+        }
+    }
+    Ok(sources)
+}
+
 /// The one active incarnation among `instances`, if any; two are damage.
 fn only_active(instances: Vec<PayloadInstance>) -> Result<Option<PayloadInstance>> {
     let mut active = instances
@@ -176,6 +218,7 @@ pub(crate) fn mint_in_txn(
     wtxn: &mut RwTxn<'_>,
     subtype: Subtype,
     owner: &[u8; OWNER_LEN],
+    source: PayloadSource,
 ) -> Result<PayloadInstance> {
     ensure_enabled()?;
     if instances_in_txn(dbs, wtxn, subtype, owner)?
@@ -193,6 +236,7 @@ pub(crate) fn mint_in_txn(
         return Err(corrupt());
     }
     let row = InstanceRow {
+        source,
         generation: 0,
         lifecycle: Lifecycle::Active,
         purged_through: None,
@@ -209,6 +253,7 @@ pub(crate) fn active_or_mint_in_txn(
     wtxn: &mut RwTxn<'_>,
     subtype: Subtype,
     owner: &[u8; OWNER_LEN],
+    source: PayloadSource,
 ) -> Result<Option<PayloadInstance>> {
     ensure_enabled()?;
     let instances = instances_in_txn(dbs, wtxn, subtype, owner)?;
@@ -219,8 +264,23 @@ pub(crate) fn active_or_mint_in_txn(
         return Ok(None);
     }
     match only_active(instances)? {
-        Some(active) => Ok(Some(active)),
-        None => mint_in_txn(dbs, wtxn, subtype, owner).map(Some),
+        Some(active) => {
+            if let PayloadSource::ScopedTouch(original) = source {
+                let mut row = INSTANCES
+                    .get(dbs, wtxn, &active.item)?
+                    .ok_or_else(corrupt)?;
+                match row.source {
+                    PayloadSource::Unbound => {
+                        row.source = source;
+                        INSTANCES.put(dbs, wtxn, &active.item, &row)?;
+                    }
+                    PayloadSource::ScopedTouch(known) if known != original => return Err(corrupt()),
+                    PayloadSource::ScopedTouch(_) => {}
+                }
+            }
+            Ok(Some(active))
+        }
+        None => mint_in_txn(dbs, wtxn, subtype, owner, source).map(Some),
     }
 }
 
