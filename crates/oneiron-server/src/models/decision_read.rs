@@ -35,7 +35,7 @@ use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnect
 use oneiron::llm::{
     BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
-    LlmUsage, RetryableLlmError,
+    LlmUsage, RetryableLlmError, WorkCancel,
 };
 use oneiron::{ModelId, ModelLocality};
 use oneiron_driver::WorkerLease;
@@ -494,6 +494,49 @@ impl DecisionReader {
         })
     }
 
+    fn read_with_cancellation(
+        &self,
+        request: &LabelReadRequest<'_>,
+        cancel: Option<&WorkCancel>,
+    ) -> LlmResult<LabelReadResponse> {
+        // Before the state renders or the tokenizer and completion are asked.
+        if !self.permitted {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if request.questions.is_empty() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let prompts = request
+            .questions
+            .iter()
+            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(refused)?;
+        let read = async {
+            let _worker = self.hold_worker().await?;
+            self.read_pack(&prompts, request.questions).await
+        };
+        let read = async {
+            match cancel {
+                Some(cancel) => tokio::select! {
+                    biased;
+                    result = read => result,
+                    () = cancel.cancelled() => Err(RetryableLlmError::Timeout.into()),
+                },
+                None => read.await,
+            }
+        };
+        // One bound for the tokenizer and completion waits: the decision's work cutoff.
+        match request.work_until {
+            Some(until) => self.runtime.block_on(async {
+                tokio::time::timeout_at(until.into(), read)
+                    .await
+                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            }),
+            None => self.runtime.block_on(read),
+        }
+    }
+
     /// Waits for the rung's managed worker to be ready and holds it for the
     /// read; `None` for a rung no managed worker serves, whose endpoint this
     /// process never stops. A parked worker fails the read as a server that
@@ -549,32 +592,16 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        // Before the state renders or the tokenizer and completion are asked.
-        if !self.permitted {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        if request.questions.is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let prompts = request
-            .questions
-            .iter()
-            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(refused)?;
-        let read = async {
-            let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions).await
-        };
-        // One bound for the tokenizer and completion waits: the decision's work cutoff.
-        match request.work_until {
-            Some(until) => self.runtime.block_on(async {
-                tokio::time::timeout_at(until.into(), read)
-                    .await
-                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
-            }),
-            None => self.runtime.block_on(read),
-        }
+        self.read_with_cancellation(request, None)
+    }
+
+    fn read_with_cancel(
+        &self,
+        request: &LabelReadRequest<'_>,
+        _lease: &BudgetLease,
+        cancel: &WorkCancel,
+    ) -> LlmResult<LabelReadResponse> {
+        self.read_with_cancellation(request, Some(cancel))
     }
 }
 
