@@ -79,6 +79,9 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         holder: &EntityId,
         sources: &[ExportReceiptSource],
+        mint: Option<&crate::store::BodyMint>,
+        known: Option<std::sync::Arc<crate::store::known_value_index::KnownValues>>,
+        holds: &mut Vec<crate::store::StagedHold>,
     ) -> Result<usize> {
         if sources.is_empty() {
             return Ok(0);
@@ -156,12 +159,10 @@ impl Vault {
             let Some(id) = id else {
                 continue;
             };
-            // Receipt archives remain owning-adapter rows. No file manifest
-            // or persistent instance is introduced: the native stager reads
-            // this one frozen archive back for the ordinary ASSET put.
-            let staged = self.stage_asset_body(bytes.reader(&encoded), None, None, None)?;
+            let staged =
+                self.stage_asset_body(bytes.reader(&encoded), None, known.clone(), mint)?;
             encoded.check_facts(staged.facts())?;
-            self.put_asset_body_in_txn(
+            let put = self.put_asset_body_in_txn(
                 txn,
                 &id,
                 TimeRange {
@@ -170,7 +171,9 @@ impl Vault {
                 },
                 header.learned_at,
                 &staged,
-            )?;
+            );
+            holds.push(staged.into_hold());
+            put?;
         }
         Ok(count)
     }

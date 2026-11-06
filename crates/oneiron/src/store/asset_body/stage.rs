@@ -180,20 +180,25 @@ enum StreamShape {
     /// A MessagePack map or array leads it (a record, or a pack source's
     /// envelope): judged whole before it is a body file (FIX 12150).
     MessagePack,
+    /// A canonical receipt source, whose owning adapter reads the body file.
+    ReceiptArchive,
     /// A body a reader interprets: it stays in its row.
     Row,
 }
 
-/// What a body's `head` shows it: an owning adapter's tag (each names
-/// itself `oneiron.` at the head, one byte in at most) or a ZIP, gzip or
-/// PDF container stays in its row; a MessagePack map or array is judged
-/// whole; any other head is opaque.
+/// What a body's `head` shows it: the native receipt archive magic uses
+/// its file-aware owning adapter; every other owning adapter's tag (each
+/// names itself `oneiron.` at the head, one byte in at most), and a ZIP,
+/// gzip or PDF container, stays in its row. A MessagePack map or array is
+/// judged whole; any other head is opaque.
 fn stream_shape(head: &[u8]) -> StreamShape {
     let Some(&lead) = head.first() else {
         return StreamShape::Row;
     };
     let tagged = |bytes: &[u8]| bytes.starts_with(b"oneiron.");
-    if tagged(head)
+    if crate::store::receipt_identity::is_receipt_archive_source(head) {
+        StreamShape::ReceiptArchive
+    } else if tagged(head)
         || head.get(1..).is_some_and(tagged)
         || crate::batch::secret_scan::is_container(head)
     {
@@ -432,7 +437,9 @@ impl crate::Vault {
     /// body is held whole for its row, as a slice put holds it. `mime`
     /// is the body's media type, kept in its manifest. Each value of `known`
     /// a published file carries is found as it streams, for its put to mark
-    /// (FIX 5395). Nothing is refused for its size (Rule 5).
+    /// (FIX 5395). A native receipt archive uses its file-aware owning
+    /// adapter and retains its canonical bytes; it is not a raw archive
+    /// attachment. Nothing is refused for its size (Rule 5).
     ///
     /// A file is one vault instance (KS-2A), minted from `mint` before the
     /// writer that puts it opens: a stager inside a writer passes the
@@ -517,6 +524,9 @@ impl crate::Vault {
         };
         let kind = match shape {
             StreamShape::Opaque if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Opaque,
+            StreamShape::ReceiptArchive if ASSET_FILE_PLANE && mint.is_some() => {
+                AssetFileKind::ReceiptArchive
+            }
             StreamShape::MessagePack if ASSET_FILE_PLANE && mint.is_some() => {
                 match judge_messagepack(&held, facts.len)
                     .inspect_err(|_| dir.discard(spilled.temp()))?

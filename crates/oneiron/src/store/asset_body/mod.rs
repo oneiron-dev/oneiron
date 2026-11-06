@@ -81,6 +81,8 @@ pub(crate) enum AssetFileKind {
     /// plane, which hands back the same bytes, and the readers of a stored
     /// row read nothing from it, as from its manifest.
     Record,
+    /// A canonical archived receipt source, read through its owning adapter.
+    ReceiptArchive,
 }
 
 impl AssetFileKind {
@@ -89,6 +91,7 @@ impl AssetFileKind {
         match self {
             Self::Opaque => 1,
             Self::Record => 2,
+            Self::ReceiptArchive => 3,
         }
     }
 
@@ -97,6 +100,7 @@ impl AssetFileKind {
         match code {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
+            3 => Some(Self::ReceiptArchive),
             _ => None,
         }
     }
