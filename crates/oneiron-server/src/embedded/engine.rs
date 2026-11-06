@@ -48,6 +48,7 @@ use axum::body::{Body, BodyDataStream, Bytes};
 use futures_util::StreamExt as _;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
+use oneiron_remote::HttpsSharedInvitationAcceptance;
 use oneiron_vault_contract::host::{Host as _, HostLimits};
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, ReadHalf, WriteHalf};
@@ -57,7 +58,7 @@ use zeroize::Zeroizing;
 
 use super::failure::{EngineErrorKind, cause, failure};
 use crate::commands::{OpenedServedVault, open_served_vault_anchored};
-use crate::config::{EmbeddedHolderOverrides, ServeConfig};
+use crate::config::{EmbeddedHolderOverrides, ServeConfig, SharedEnvConfig};
 use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
 
@@ -308,6 +309,40 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// The config the engine serves.
     pub fn config(&self) -> &ServeConfig {
         &self.config
+    }
+
+    /// Imports the caller's accepted shared membership into its dedicated
+    /// target and opens it in this serve run's shared-env registry.
+    ///
+    /// The caller keeps the original acceptance and receipt. As on
+    /// [`crate::server::SyncServer::bootstrap_shared_env`], an outer error
+    /// is setup/task failure; the inner result and committed flag stay
+    /// separate. Wake a stopped engine before joining. No state lock is
+    /// held over the import or registry insertion.
+    pub async fn bootstrap_shared_env(
+        &self,
+        acceptance: &Arc<HttpsSharedInvitationAcceptance>,
+        entry: &SharedEnvConfig,
+        target_serve: &ServeConfig,
+    ) -> anyhow::Result<(anyhow::Result<Arc<oneiron::Vault>>, bool)> {
+        let server = {
+            let state = self.state.lock().await;
+            state
+                .serving
+                .as_ref()
+                .filter(|serving| !serving.stopping && !serving.ended())
+                .and_then(|serving| serving.server.get())
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or_else(|| {
+                    failure(
+                        EngineErrorKind::Stopped,
+                        "the embedded engine is stopped; wake it first",
+                    )
+                })?
+        };
+        server
+            .bootstrap_shared_env(acceptance, entry, target_serve)
+            .await
     }
 
     /// Sends one request over a fresh connection and collects the whole
