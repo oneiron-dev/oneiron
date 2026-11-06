@@ -1,21 +1,25 @@
-//! The served poll of remote MCP tasks (FIX 11023; MCP 2025-11-25 tasks):
-//! one `tasks/get` per Deferred row its pass finds due, in the session the
-//! task was created in, under the row's own frozen endpoint and binding,
-//! with the credential its send presented, through the same door. It never
-//! sends the row's `tools/call` again, and it reads the row again just
-//! before each `tasks/get`, so a row erased or settled since the pass began
-//! sends nothing. A reply counts only when it names the task asked about.
-//! `completed` settles the send Done; `failed` and `cancelled`, and a task
-//! the connector no longer knows (`-32602`), stop it with its delivery
-//! uncertain; `working` and `input_required` poll again later (this host
-//! answers no task input). A `tasks/get` answered HTTP 404 in its session is
-//! the connector ending that session: the poll opens a new one under the
-//! same endpoint, revision and credential, the ledger keeps its id, and the
-//! poll asks again in it (FIX 16028). The session ends only after the ledger
-//! holds the settlement. A session whose handle went before it ended (an
-//! erase took the request) is owed its end: each pass ends those, under the
-//! connector's own endpoint and the credential the polls presented. Only the status word is kept: the reply's other text never
-//! leaves this pass, so nothing it echoes of the credential is stored.
+//! The served poll of remote MCP tasks (FIX 11023; MCP 2025-11-25 tasks): one
+//! `tasks/get` per Deferred row its pass finds due, in the session the task
+//! was created in, under the row's own frozen endpoint and binding, with the
+//! credential its send presented, through the same door. It never sends the
+//! row's `tools/call` again, and it reads the row again just before each
+//! `tasks/get`, so a row erased or settled since the pass began sends nothing.
+//! A reply counts only when it names the task asked about. `completed` settles
+//! the send Done; `failed` and `cancelled`, and a task the connector no longer
+//! knows (`-32602`), stop it with its delivery uncertain; `working` polls
+//! again later. An `input_required` task has its requests read through
+//! `tasks/result` in its session (FIX 16029): nobody is at a deferred call to
+//! answer them, so each is refused as one this client does not serve, and the
+//! result's own answer settles the task; a stream that ends or runs out of
+//! time first polls again later. A `tasks/get` answered HTTP 404 in its
+//! session is the connector ending that session: the poll opens a new one
+//! under the same endpoint, revision and credential, the ledger keeps its id,
+//! and the poll asks again in it (FIX 16028). The session ends only after the
+//! ledger holds the settlement. A session whose handle went before it ended
+//! (an erase took the request) is owed its end: each pass ends those, under
+//! the connector's own endpoint and the credential the polls presented. Only
+//! the status word is kept: the reply's other text never leaves this pass, so
+//! nothing it echoes of the credential is stored.
 
 use oneiron::outbound_consent::{OutboundBindingAuthority, OutboundBindingValidation};
 use oneiron::outbound_intent_ledger::{
@@ -26,6 +30,8 @@ use super::*;
 
 /// The JSON-RPC id of a poll's one request.
 const POLL_ID: u64 = 7;
+/// The JSON-RPC id of the `tasks/result` an `input_required` poll sends.
+const RESULT_ID: u64 = 8;
 /// The most tasks one pass polls.
 const POLLS_PER_PASS: usize = 32;
 /// JSON-RPC "Invalid params": MCP's answer for a task id it does not know,
@@ -294,6 +300,18 @@ impl ServedConnectorCallHost {
             return Err("poll_unanswered");
         };
         Ok(match read_of(&message, &task.task_id)? {
+            // MCP 2025-11-25 tasks: a requestor that meets `input_required`
+            // asks for the result, and the task's requests come before it.
+            Read::Running {
+                status: "input_required",
+                poll_after_ms,
+            } => match answer_task_input(&live, &task.task_id)? {
+                Some(end) => Polled::Ended(end, live),
+                None => Polled::Running {
+                    status: "input_required",
+                    poll_after_ms,
+                },
+            },
             Read::Running {
                 status,
                 poll_after_ms,
@@ -304,6 +322,64 @@ impl ServedConnectorCallHost {
             Read::Ended(end) => Polled::Ended(end, live),
         })
     }
+}
+
+/// Reads the requests a task that needs input sends while its `tasks/result`
+/// is open in `live`, the task's own session (FIX 16029). Nobody is at a
+/// deferred call to answer them: each is refused as one this client does not
+/// serve, so the task goes on or ends at once instead of waiting on input
+/// until its provider drops it. The result's own answer settles the task.
+/// `None` when the stream ends or its time runs out first: the task is polled
+/// again, and leaving the stream does not cancel it. Nothing the requests or
+/// the result carry is kept.
+fn answer_task_input(
+    live: &LiveSession,
+    task_id: &str,
+) -> Result<Option<RemoteTaskEnd>, &'static str> {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": RESULT_ID,
+        "method": "tasks/result",
+        "params": { "taskId": task_id },
+    });
+    // The task's requests wait on the connector already: a short read, so
+    // one task that goes on working after them does not hold the pass.
+    let response = live
+        .post(&request, Some(HANDSHAKE_TIMEOUT))
+        .send()
+        .map_err(|_| "result_unsent")?;
+    if !response.status().is_success() {
+        return Err("result_http_refused");
+    }
+    let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+    let mut stream = match open_reply(response, RESULT_ID, Some(deadline))
+        .map_err(|()| "result_unreadable")?
+    {
+        Reply::Json(found) => return Ok(found.map(|(message, bytes)| settled_by(message, bytes))),
+        Reply::Stream(stream) => stream,
+    };
+    loop {
+        match stream.next(RESULT_ID) {
+            Ok(StreamEvent::Request(request)) => live.refuse(request),
+            Ok(StreamEvent::Answer(message, bytes)) => return Ok(Some(settled_by(message, bytes))),
+            Ok(StreamEvent::End) | Err(()) => return Ok(None),
+        }
+    }
+}
+
+/// What a `tasks/result` answer says of its task: it carries what the task's
+/// `tools/call` would have answered (MCP 2025-11-25 tasks), so a result is a
+/// completed send and an error one whose delivery the connector has not
+/// shown. The answer is wiped here.
+fn settled_by(message: Value, bytes: Vec<u8>) -> RemoteTaskEnd {
+    let end = if message.get("error").is_some() {
+        RemoteTaskEnd::Unconfirmed
+    } else {
+        RemoteTaskEnd::Completed
+    };
+    zeroize_json(message);
+    drop(zeroize::Zeroizing::new(bytes));
+    end
 }
 
 /// A new MCP session in place of the one the connector ended, under
