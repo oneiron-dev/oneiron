@@ -95,6 +95,8 @@ pub(crate) enum WitnessProducer {
     /// A scope summary the run asked for, minted or reused by this Dreamer
     /// attempt; `None` once that attempt's run is erased.
     Summary(Option<AttemptId>),
+    /// A tested queue revision sealed from this run's admitted proposal.
+    QueueSeal,
 }
 
 impl WitnessProducer {
@@ -102,7 +104,7 @@ impl WitnessProducer {
     /// its token held as it was captured, so the edge stays the run's once
     /// the lease has ended.
     const fn lands_late(self) -> bool {
-        matches!(self, Self::Promotion | Self::Summary(_))
+        matches!(self, Self::Promotion | Self::Summary(_) | Self::QueueSeal)
     }
 }
 
