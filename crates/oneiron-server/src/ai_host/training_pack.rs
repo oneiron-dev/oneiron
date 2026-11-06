@@ -10,13 +10,11 @@
 //! never waits on a GPU. The durable `Running` state and its dispatched flag
 //! record the one dispatch, and a lost waiter never sends the run again.
 //!
-//! The one trainer adapter is the question-head worker (FIX 7263,
-//! `trainer`): a local process on this host, on a connector
-//! `[models.training.connectors]` names. It trains a question run on its one
-//! recipe and nothing else; a role run, another recipe or an unnamed
-//! connector holds with `training.no_connector`, as with no connector at
-//! all. A returned question head is scored locally on its held-out rows;
-//! unsupported role recipes still hold with `training.no_evaluator`.
+//! The question-head worker (FIX 7263, `trainer`) and retrieval projection
+//! worker (`role_embedding`) run on explicitly configured local connectors.
+//! Each supports only its named recipe. Returned checkpoints are scored on
+//! their own held-out split; neither adapter deploys a model. An unsupported
+//! target or recipe still has no connector or evaluator here.
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
@@ -32,6 +30,7 @@ use crate::server::SyncServer;
 
 mod parity;
 mod question_evaluation;
+mod role_embedding;
 mod trainer;
 mod wire;
 
@@ -109,37 +108,50 @@ pub(crate) fn trainer_binding(server: &SyncServer, name: &str) -> Option<PaidCon
 }
 
 /// The trainer for `run`, on the connector its compute pinned: the
-/// question-head worker, for a question run on its recipe. Anything else
-/// gets none before any dispatch, so a role run is never sent to it.
+/// question-head worker for its question recipe, or the native embedding
+/// projection worker for its explicit role recipe. Anything else gets none.
 fn training_connector(
     server: &SyncServer,
     run: &TrainingRun,
 ) -> Option<Box<dyn TrainingConnector + Send + Sync>> {
-    if !QuestionHeadTrainer::serves(&run.plan) {
-        return None;
-    }
     let connector = server
         .ai
         .model_runtime()
         .training()
         .connector(&run.compute.connector)?;
-    Some(Box::new(QuestionHeadTrainer::new(
-        Arc::clone(server.vault()),
-        connector.clone(),
-    )))
+    if QuestionHeadTrainer::serves(&run.plan) {
+        return Some(Box::new(QuestionHeadTrainer::new(
+            Arc::clone(server.vault()),
+            connector.clone(),
+        )));
+    }
+    if role_embedding::serves(&run.plan) {
+        let host = server.embedder_slot()?.config().clone();
+        return Some(Box::new(role_embedding::EmbeddingTrainer::new(
+            Arc::clone(server.vault()),
+            connector.clone(),
+            host,
+        )));
+    }
+    None
 }
 
-/// The local held-out evaluator for the question worker's recipe. Role
-/// recipes remain unavailable until their own adapters are implemented.
+/// The local held-out evaluator for either explicit supported recipe.
 fn training_evaluator(server: &SyncServer, run: &TrainingRun) -> Option<TrainingEvaluator> {
-    if !QuestionHeadTrainer::serves(&run.plan) {
-        return None;
-    }
     let vault = Arc::clone(server.vault());
     let run = run.clone();
-    Some(Box::new(move |input| {
-        question_evaluation::evaluate(&vault, &run, input)
-    }))
+    if QuestionHeadTrainer::serves(&run.plan) {
+        return Some(Box::new(move |input| {
+            question_evaluation::evaluate(&vault, &run, input)
+        }));
+    }
+    if role_embedding::serves(&run.plan) {
+        let host = server.embedder_slot()?.config().clone();
+        return Some(Box::new(move |input| {
+            role_embedding::evaluate(&vault, &run, input, &host)
+        }));
+    }
+    None
 }
 
 /// Hands an authorized run to its own thread, or holds it with the reason

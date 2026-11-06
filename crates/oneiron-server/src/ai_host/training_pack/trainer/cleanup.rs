@@ -40,8 +40,8 @@ pub(crate) fn cleanup_training_job_inputs(
         .as_ref()
         .context("the training run has no result")?;
     ensure!(
-        QuestionHeadTrainer::serves(&run.plan),
-        "the local question-head trainer did not run this plan"
+        QuestionHeadTrainer::serves(&run.plan) || super::super::role_embedding::serves(&run.plan),
+        "the local trainer did not run this plan"
     );
     let connector = settings
         .and_then(|settings| settings.connector(&run.compute.connector))
@@ -73,8 +73,15 @@ pub(crate) fn cleanup_training_job_inputs(
                 metadata.file_type().is_dir(),
                 "the staged base is not a directory or is a symbolic link"
             );
-            for (name, _) in BASE_FILES {
-                remove_input(&base.join(name), &mut removed_files)?;
+            if QuestionHeadTrainer::serves(&run.plan) {
+                for (name, _) in BASE_FILES {
+                    remove_input(&base.join(name), &mut removed_files)?;
+                }
+            } else {
+                for file in &run.plan.starting_checkpoint.files {
+                    super::super::role_embedding::check_name(&file.name)?;
+                    remove_input(&base.join(&file.name), &mut removed_files)?;
+                }
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
