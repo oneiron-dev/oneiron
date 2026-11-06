@@ -122,6 +122,8 @@ use oneiron_xlsx_formula::engine::FormualizerEngine;
 use serde::{Deserialize, Serialize};
 
 pub use oneiron_docedit::resource::{RESERVE_STEP, ResourcePort, ResourceRefusal, Resources};
+#[cfg(feature = "sync")]
+pub(crate) use records::joined_office_fork_companion;
 use records::{EXPORT_AUTHORS, EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
     ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor, OfficeBodyExportRecord,

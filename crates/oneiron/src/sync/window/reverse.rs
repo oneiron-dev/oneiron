@@ -226,6 +226,7 @@ fn reverse_rematerialize_scan(
     let mut wrote_any = false;
     let mut mirror_sources = BTreeMap::new();
     let mut messages = Vec::new();
+    let mut typed_bodies = Vec::new();
     let mut code_rows = Vec::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
@@ -528,6 +529,10 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 12470: and its forks, mirrored after this pass commits.
+            if window_key.world().is_none() && map_contains_binary(&entities_map, &hex_id) {
+                typed_bodies.push(*id);
+            }
             // FIX 853: a MESSAGE's document and its quote pins ride beside
             // it, mirrored after this pass commits.
             if window_key.world().is_none()
@@ -684,6 +689,9 @@ fn reverse_rematerialize_scan(
         crate::sync::message_docs::mirror_message_document(vault, doc, id, window_key)?;
         crate::sync::document_pins::mirror_document_pins(vault, doc, id, window_key)?;
     }
+    // FIX 12470: each typed body fork commits on its own, a part to a
+    // commit.
+    crate::sync::typed_body_rows::mirror_typed_body_forks(vault, doc, window_key, &typed_bodies)?;
     crate::sync::repo_manifests::mirror_repo_manifests(vault, doc, &code_rows)?;
     Ok(count)
 }
