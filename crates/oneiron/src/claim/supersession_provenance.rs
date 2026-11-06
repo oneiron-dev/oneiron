@@ -324,13 +324,19 @@ fn landed(
     candidate: &ClaimCandidate,
     envelope: &WriteEnvelope,
 ) -> Result<bool> {
-    let Some(existing) = vault.get_claim_in_txn(txn, id)? else {
+    let Some(mut existing) = vault.get_claim_in_txn(txn, id)? else {
         return Ok(false);
     };
     let candidate = candidate.clone();
     let mut expected = candidate.into_claim_body(envelope, vault.default_facet_in_txn(txn)?)?;
     // Approval is the gate's result, not part of the deterministic candidate.
     expected.approval = existing.approval;
+    // Retained MACHINE signing adds this field after candidate construction.
+    for body in [&mut existing, &mut expected] {
+        if let Some(Value::Map(evidence)) = &mut body.evidence {
+            evidence.retain(|(key, _)| key.as_str() != Some("machine_signature"));
+        }
+    }
     if existing != expected {
         return Err(Error::InvalidClaimBody(
             "supersession companion identity collision",
