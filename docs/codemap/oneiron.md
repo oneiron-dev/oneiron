@@ -1855,7 +1855,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/consult_result.rs` | src | s | 1 enum | ConsultResultPresence | — |
 | `src/context_board/explain.rs` | src | s | 2 struct · 2 fn | GateExplanation, MemoryExplanation | Explain receipts (OF-278): why a memory appeared, and why a write needed approval |
 | `src/context_board/fanout.rs` | src | s | 2 fn | — | The fan-out launches that wait on an approver, as TASKS lead rows (OF-393): a held launch's pause row with… |
-| `src/context_board/frame.rs` | src | L | 13 struct · 5 enum · 24 fn · 7 const · 4 crate-vis | BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame, BoardFrameError, BoardLegend, BoardPart +10 | Board frame — the canonical `<memory surface="board">` envelope over typed sections, plus the adaptive… |
+| `src/context_board/frame.rs` | src | L | 13 struct · 5 enum · 25 fn · 7 const · 4 crate-vis | BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame, BoardFrameError, BoardLegend, BoardPart +10 | Board frame — the canonical `<memory surface="board">` envelope over typed sections, plus the adaptive… |
 | `src/context_board/history/claims.rs` | src | s | 6 crate-vis | — | Reserved board claim shape shared by admission and history reconstruction |
 | `src/context_board/history/ledger.rs` | src | m | 10 fn · 1 crate-vis | — | Board turn anchors reference one CRDT frontier; facts remain CLAIM rows |
 | `src/context_board/history/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Delta-only board claims and exact Loro-frontier reconstruction |
@@ -1870,6 +1870,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/memories_frame.rs` | src | s | 2 fn · 2 crate-vis | — | Connects typed MEMORIES projections to the shared board frame and shed ladder |
 | `src/context_board/memories_projection.rs` | src | m | 2 fn · 5 crate-vis | — | MEMORIES projection with source labels, world fences, and one shared render budget |
 | `src/context_board/memory_pins.rs` | src | m | 3 fn · 2 crate-vis | — | Explicit memory pins bypass query relevance and render shedding, never read authority |
+| `src/context_board/memory_writers.rs` | src | s | 1 fn | — | Who wrote each MEMORIES row (BOARD-LAYOUT add-on 2): the actor a board layout's `who` filter matches a… |
 | `src/context_board/mod.rs` | src | s | 3 mod · 28 re-export · 16 crate-vis | — | Typed Context Board render projections |
 | `src/context_board/notifications.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
@@ -5448,7 +5449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_lifecycle/tests.rs` | test | m | — | — | — |
 | `src/settings.rs` | src | m | 7 struct · 2 enum · 13 fn · 3 const · 1 mod · 6 re-export · 9 crate-vis | AccentLayer, CustomizationLayer, CustomizationLayerValue, CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate, ModeLayer, TypeLayer +1 | Persisted customization settings and client-visible change events |
 | `src/settings/backup.rs` | src | s | 2 fn · 1 re-export | — | Core half of `settings::backup`: its store-layer items live in `oneiron_store::settings::backup` and are… |
-| `src/settings/board_layout.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | BoardLayoutSettings | The owner's board layout settings (BOARD-LAYOUT = A, owner 2026-11-03 20:25: "better to just set the cap and… |
+| `src/settings/board_layout.rs` | src | s | 2 struct · 6 fn · 1 const · 2 crate-vis | AgentBoardLayoutOverride, BoardLayoutSettings | The owner's board layout settings (BOARD-LAYOUT = A, owner 2026-11-03 20:25: "better to just set the cap and… |
 | `src/settings/destination.rs` | src | m | 2 struct · 4 enum · 14 fn · 5 crate-vis | CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold | Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh… |
 | `src/settings/device_local.rs` | src | s | 10 fn · 6 crate-vis | — | Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on… |
 | `src/settings/device_only.rs` | src | m | 8 crate-vis | — | What a world flagged device-only keeps on this device, row by row (DEC-0005) |
