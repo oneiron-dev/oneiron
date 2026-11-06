@@ -25909,6 +25909,53 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostLegalChannel",
+      "HostLegalConnection"
+     ],
+     "path": "src/deletion/legal_hold/clone/auth.rs",
+     "purpose": "The inherited manager-created listener is the native transport authority",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/clone/collector.rs",
+     "purpose": "Streaming ciphertext and exact completion shared by native source families",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/clone/live.rs",
+     "purpose": "Exact HOST order standing for a live entry, independent of any one socket",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/clone/mod.rs",
+     "purpose": "Native source half of an order-scoped legal clone",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25940,7 +25987,7 @@
      "path": "src/deletion/legal_hold/mod.rs",
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 13,
       "re-export": 2
      }
@@ -25991,8 +26038,8 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 43,
-      "re-export": 14
+      "crate-vis": 44,
+      "re-export": 15
      }
     },
     {
@@ -53425,13 +53472,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/live_spill.rs",
+     "purpose": "Frozen native spill bytes for the HOST's exact live-session capture",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/mod.rs",
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -53734,7 +53791,7 @@
      "path": "src/off_record/mod.rs",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 3
      }
@@ -72015,13 +72072,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/frames.rs",
      "purpose": "One body file's envelope (FIX 5348): E0 chunks under the file's own data key",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 38
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/live_spill.rs",
+     "purpose": "Native spill source lifetimes for an admitted exact live-session capture",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -72031,7 +72098,7 @@
      "path": "src/store/body_envelope/mod.rs",
      "purpose": "Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -72061,7 +72128,7 @@
      "path": "src/store/body_envelope/reader.rs",
      "purpose": "An open body file, whichever form it rests in: what every reader of a body file gets in place of a `File`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -73065,7 +73132,17 @@
      "path": "src/store/gate_decision/claim_refs.rs",
      "purpose": "Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/clone_source.rs",
+     "purpose": "Exact source components for a gate-ledger clone",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -73164,7 +73241,7 @@
      "path": "src/store/gate_decision/ledger/held_scrubs.rs",
      "purpose": "What an erase owes a Gate decision a legal hold keeps (FIX 7993, 7994)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -73184,18 +73261,18 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/orcb.rs",
      "purpose": "ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -73236,7 +73313,7 @@
      "path": "src/store/gate_decision/retention_scope.rs",
      "purpose": "Append-time retention scope: a decision keeps its verified ancestry after its claim body or source is removed",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -91966,7 +92043,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 58,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92435,7 +92512,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92862,7 +92939,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 384,
+     "files": 386,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93100,9 +93177,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 173,
+   "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6565,
+   "source_files": 6572,
    "test_files": 895
   },
   "oneiron-android": {
@@ -100662,6 +100739,24 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaptureBinding",
+      "ContentBinding",
+      "ContentSource",
+      "SourceComponent"
+     ],
+     "path": "src/legal_clone.rs",
+     "purpose": "Public-recipient encryption for host-private, per-order legal clones",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 8,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -100669,7 +100764,7 @@
      "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
      "surface": {
       "const": 3,
-      "mod": 2,
+      "mod": 3,
       "re-export": 7
      }
     },
@@ -100841,6 +100936,13 @@
      "layout": "file+dir",
      "purpose": "Key material types"
     },
+    "legal_clone": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Public-recipient encryption for host-private, per-order legal clones"
+    },
     "nonce": {
      "files": 1,
      "impl_vault": false,
@@ -100879,7 +100981,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 23,
+   "source_files": 24,
    "test_files": 8
   },
   "oneiron-delivery-vocabulary": {
@@ -124410,6 +124512,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/host_legal.rs",
+     "purpose": "The manager's inherited legal-copy channel and its joined blocking workers",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -124809,7 +124921,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 15,
       "re-export": 2,
       "struct": 3,
@@ -124868,13 +124980,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/coordinator.rs",
      "purpose": "Supervised vault startup, serving, and shutdown",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/coordinator/ledger_report.rs",
+     "purpose": "Wake-ledger changes reported while the managed vault is serving",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/coordinator/teardown.rs",
+     "purpose": "One retained set of managed workers, drained on startup errors and normal stop",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -129135,7 +129267,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 5
      }
     },
@@ -130968,9 +131100,9 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 104,
+     "files": 107,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -131157,9 +131289,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1659,
+   "source_files": 1662,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -147057,6 +147189,33 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaptureAck",
+      "CaptureDescriptor",
+      "CaptureExtent",
+      "CaptureRequest",
+      "CaptureScope",
+      "CaptureSource",
+      "CaptureSummary",
+      "FrameHeader",
+      "FrameKind",
+      "HostLegalRequest",
+      "LiveSessionTarget",
+      "LiveSpillMetadata",
+      "ReleaseLiveOrder",
+      "SourceHello"
+     ],
+     "path": "src/lib/host_legal.rs",
+     "purpose": "HOST-private legal-clone capture framing",
+     "surface": {
+      "enum": 6,
+      "fn": 16,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -147179,7 +147338,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 21,
+      "mod": 22,
       "re-export": 12
      }
     },
@@ -147648,7 +147807,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 56,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -147657,7 +147816,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 55,
+   "source_files": 56,
    "test_files": 1
   },
   "oneiron-web-fetch": {
