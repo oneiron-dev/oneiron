@@ -374,35 +374,9 @@ fn write_captured_head_in_txn(
     at: u64,
     superseded: impl IntoIterator<Item = EntityId>,
 ) -> Result<()> {
-    write_captured_head_with_setup_owner_in_txn(
+    prepared::write_captured_head_with_setup_owner_in_txn(
         vault, wtxn, claim_id, body, occurred, at, superseded, None,
     )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the captured head retains its native row, supersessions, time and optional setup owner"
-)]
-fn write_captured_head_with_setup_owner_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    claim_id: &EntityId,
-    body: &ClaimBody,
-    occurred: TimeRange,
-    at: u64,
-    superseded: impl IntoIterator<Item = EntityId>,
-    owner: Option<crate::agent_def::PreparedSetupOwner>,
-) -> Result<()> {
-    match owner {
-        Some(owner) => vault.put_reserved_claim_with_setup_owner_in_txn(
-            wtxn, claim_id, body, occurred, at, owner,
-        )?,
-        None => vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?,
-    }
-    for head_id in superseded {
-        vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, at)?;
-    }
-    Ok(())
 }
 
 /// Onboarding may fill an absent anchor, never replace an existing someone.
@@ -805,5 +779,6 @@ fn validate_anchor_entities_in_txn(
 ) -> Result<()> {
     validation::require_anchor_entities_in_txn(&vault.store, txn, &actor, &subject)
 }
+
 #[cfg(test)]
 pub(crate) mod tests;
