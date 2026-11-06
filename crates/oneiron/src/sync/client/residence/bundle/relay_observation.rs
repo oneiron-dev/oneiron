@@ -46,6 +46,9 @@ pub struct UnmergedUpload {
     /// Whether it came back from a committed attempt a later pass found,
     /// rather than from an assembly this process saw.
     pub restored: bool,
+    /// When this install assembled it, as its attempt keeps it; `None` for
+    /// an attempt row written before that was kept.
+    pub assembled_at: Option<u64>,
 }
 
 /// What this process last saw of one machine's sealed bundle upkeep. Each
@@ -113,6 +116,7 @@ pub(super) fn observe_upload(
         generation,
         sections: sections.to_vec(),
         restored: false,
+        assembled_at: Some(vault.store.clock.peek_recorded_at()),
     };
     observed
         .entry(machine)
@@ -125,9 +129,11 @@ pub(super) fn observe_upload(
 /// 19525): after a lost acknowledgement or a restart, the owner still sees
 /// what it carries unmerged. An upload assembled in this process is this
 /// attempt's own or a later one, and stays. One restored from another
-/// attempt gives way when this attempt is the later one: it was sealed on
-/// top of that one's generation, or for a later slot. So the record names
-/// the newest upload whatever order a pass reconciles attempts in.
+/// attempt gives way when this attempt was assembled after it, as both
+/// attempts keep their assembly time; for rows written before that was
+/// kept, when this one was sealed on top of that one's generation or for a
+/// later slot. So the record names the newest upload whatever order a pass
+/// reconciles attempts in.
 pub(super) fn restore_upload(vault: &Vault, attempt: &BundleAttempt) {
     let (Some(machine), Ok(mut observed)) = (local_machine(vault), observations().lock()) else {
         return;
@@ -136,8 +142,15 @@ pub(super) fn restore_upload(vault: &Vault, attempt: &BundleAttempt) {
     let later = uploads.get(&attempt.home).is_none_or(|held| {
         held.restored
             && held.generation != attempt.generation
-            && (attempt.parent == Some(held.generation)
-                || attempt.generation.slot > held.generation.slot)
+            && match (attempt.assembled_at, held.assembled_at) {
+                (Some(attempt_at), Some(held_at)) => attempt_at > held_at,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => {
+                    attempt.parent == Some(held.generation)
+                        || attempt.generation.slot > held.generation.slot
+                }
+            }
     });
     if later {
         uploads.insert(
@@ -147,6 +160,7 @@ pub(super) fn restore_upload(vault: &Vault, attempt: &BundleAttempt) {
                 generation: attempt.generation,
                 sections: attempt.unmerged_sections.clone(),
                 restored: true,
+                assembled_at: attempt.assembled_at,
             },
         );
     }

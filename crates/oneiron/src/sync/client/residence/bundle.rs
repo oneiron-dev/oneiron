@@ -557,6 +557,7 @@ impl SlotRelay<'_> {
                     incomplete_authority: upload.incomplete_authority.clone(),
                     awaiting_reader: awaiting.clone(),
                     unmerged_sections: upload.unmerged_sections.clone(),
+                    assembled_at: Some(vault.store.clock.peek_recorded_at()),
                 };
                 // The exact attempt persists before the first commit send, so
                 // an ack lost on the way resumes, never reuploads.
