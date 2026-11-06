@@ -67,6 +67,16 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// Whether the guest reads again the answer a recorded call got, served
+    /// from `rows` (FIX 7703): a resumed pending step's call, answered from
+    /// its row. The bound door admits the read as it rules now, as at a
+    /// write's kept answer. The answer must also not stay on this device
+    /// for the door's caller now. A refusal of either withholds it.
+    pub(crate) fn releases_recorded_answer(&self, rows: Option<&[EntityId]>) -> bool {
+        admit_recorded_answer(self.agent_verbs.as_deref()).is_ok()
+            && matches!(self.withholds_retained(rows), Ok(false))
+    }
+
     pub(super) fn dispatch_bound(
         &self,
         call: SelfCall,
@@ -141,6 +151,19 @@ impl HostSelfDispatcher<'_> {
             };
             self.dispatch_hooked(call, site, read_as)
         })
+    }
+}
+
+/// Asks `door` whether the run reads back an answer it recorded, as the
+/// door rules now (FIX 7703): a write's kept answer, or the answer of a
+/// call that a resumed pending step's program already made. A run whose
+/// host binds no door reads its own.
+pub(super) fn admit_recorded_answer(
+    door: Option<&dyn crate::code_run::AgentVerbDoor>,
+) -> std::result::Result<(), AgentVerbRefusal> {
+    match door {
+        Some(door) => door.admit_run_call(RunCall::RecordedOutput).map(drop),
+        None => Ok(()),
     }
 }
 
