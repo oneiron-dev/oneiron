@@ -9,7 +9,8 @@
 //! without a turn, never refused and never reported Healthy.
 //!
 //! Artifact validation yields between its ordered groups over one immutable
-//! source; each group's row walks, encoding and hashing still run whole.
+//! source. Window rows and their indexes use the existing row page size;
+//! each row's nested checks, other groups, encoding and hashing still run whole.
 //! Aborted-transaction preflight, the NOTE workflow plan and the final snapshot
 //! comparison also run whole. Recapture yields between structural stages while
 //! retaining one store read view. The
@@ -39,7 +40,7 @@ use crate::{EntityId, Vault};
 /// The phase a recovery stands in, in the order it runs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecoveryPhase {
-    /// The artifact as this vault recovers it, one validation group per turn.
+    /// The artifact as this vault recovers it, one group or window-row page per turn.
     Validate,
     /// The fresh window, a page of rows at a time.
     Rebuild,
@@ -217,7 +218,7 @@ impl RecoveryWork {
                 if !self
                     .validation
                     .get_or_insert_with(CanonicalValidation::default)
-                    .advance(&self.source)?
+                    .advance(&self.source, page)?
                 {
                     return Ok(());
                 }
