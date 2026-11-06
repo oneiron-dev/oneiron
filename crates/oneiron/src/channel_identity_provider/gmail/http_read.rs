@@ -5,15 +5,16 @@
 //! As the send wire: HTTPS only, no redirects, and the Bearer header exists
 //! only inside the door callback, marked sensitive. Only `format=metadata`
 //! is asked for, so no body text is read. The token the door injects is the
-//! bare OAuth access token or JSON carrying `access_token`; refreshing it is
-//! the host's custody job.
+//! bare OAuth access token or JSON carrying `access_token`. A refresh-only
+//! grant carrying its OAuth client is exchanged inside that same callback;
+//! an existing access credential keeps its original behavior.
 
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::Value;
 
-use super::http::{bearer_header, read_bounded_json};
+use super::http::{bearer_header_for_client, read_bounded_json};
 use super::{
     GmailInboxPage, GmailMessageMetadata, GmailReadAuthority, GmailReadWire, HeaderMailbox,
     MAX_GMAIL_MESSAGES_PER_PAGE,
@@ -179,7 +180,7 @@ impl GmailReadWire for HttpGmailReadWire {
     ) -> Result<GmailInboxPage> {
         let mut page = None;
         let _receipt = authority.with_token_at_door(&mut |token: &[u8]| {
-            let auth = bearer_header(token)?;
+            let auth = bearer_header_for_client(&self.client, token)?;
             page = Some(self.read_page(&auth, mailbox_address, policy, cursor)?);
             Ok(())
         })?;
