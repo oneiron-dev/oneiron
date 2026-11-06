@@ -112,6 +112,13 @@ pub(crate) fn attempt_read_context(
                     .cited(true)
             }
         }
+        // The message's TURN and MESSAGE revisions; its source is a pack
+        // row, never an entity (FIX 15414).
+        maintenance::CLAIM_SOURCE_RECHECK_FACET => {
+            maintenance::claim_source_recheck::ClaimSourceRecheckDeclaration::from_input(input)
+                .ok()?
+                .about()
+        }
         feedback::COACH_FEEDBACK_TRIAGE_FACET => {
             let (_, evidence) = feedback::job_target(input).ok()?;
             vec![evidence]
