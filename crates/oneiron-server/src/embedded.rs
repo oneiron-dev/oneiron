@@ -33,6 +33,8 @@
 //! raises as a stable code.
 
 mod blocking;
+#[cfg(feature = "mesh")]
+mod device;
 mod engine;
 mod failure;
 mod process_host;
@@ -56,6 +58,8 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 pub use self::blocking::{BlockingBody, BlockingConnection, BlockingEngine, BlockingReply};
+#[cfg(feature = "mesh")]
+pub use self::device::EmbeddedDeviceSync;
 pub use self::engine::{
     ENGINE_RECEIVE_CHUNK_BYTES, EmbeddedBody, EmbeddedConnection, EmbeddedEngine, EmbeddedReply,
     EmbeddedReplyStream, EmbeddedRequest, embedded_serve_config, ensure_app_thread, host_limits,
@@ -212,6 +216,17 @@ async fn serve_prepared<A: AppHost>(
         // mesh when the home has a paired address there.
         device_sync =
             crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
+        // Dedicated shared environments open beside the personal lane, never
+        // through HOME/XDG discovery (FIX 2051, FIX 11136).
+        let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+            config.shared_env.clone(),
+            &config,
+            config.lease_vault_id,
+            crate::server::admit_every_pass(),
+            None,
+        )
+        .await;
+        mesh_server.install_shared_envs(shared);
         host.ready()?;
         anyhow::Ok(())
     }
@@ -225,6 +240,7 @@ async fn serve_prepared<A: AppHost>(
         if let Some(device_sync) = device_sync {
             device_sync.stop().await;
         }
+        mesh_server.stop_shared_envs().await;
         if let Some(mesh) = mesh {
             mesh.stop().await;
         }
@@ -296,6 +312,7 @@ async fn serve_prepared<A: AppHost>(
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
     }
+    mesh_server.stop_shared_envs().await;
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }
