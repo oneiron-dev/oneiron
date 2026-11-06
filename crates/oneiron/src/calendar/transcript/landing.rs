@@ -12,6 +12,49 @@ pub(super) fn ingest_parsed_transcript_in_txn(
     fail_after_turns: bool,
     source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
 ) -> crate::Result<TranscriptIngestOutcome> {
+    land(
+        vault,
+        wtxn,
+        request,
+        parsed,
+        session_key,
+        fail_after_turns,
+        source_version,
+        None,
+    )
+}
+
+pub(crate) fn ingest_meeting_transcript_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    request: TranscriptFileDropRequest<'_>,
+    parsed: &ParsedTranscript,
+    session_key: crate::session_lifecycle::SessionKey,
+    source_version: &crate::blob_artifact::BlobArtifactVersion,
+    source: &crate::ingest::meeting_audio::MeetingImportProvenance,
+) -> crate::Result<TranscriptIngestOutcome> {
+    land(
+        vault,
+        wtxn,
+        request,
+        parsed,
+        session_key,
+        false,
+        Some(source_version),
+        Some(source),
+    )
+}
+
+fn land(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    request: TranscriptFileDropRequest<'_>,
+    parsed: &ParsedTranscript,
+    session_key: crate::session_lifecycle::SessionKey,
+    fail_after_turns: bool,
+    source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
+    meeting_source: Option<&crate::ingest::meeting_audio::MeetingImportProvenance>,
+) -> crate::Result<TranscriptIngestOutcome> {
     let hint = crate::session_lifecycle::SessionHintTimestamp {
         claimed_ms: parsed.claimed_started_ms,
         arrival_ms: request.arrived_at_ms,
@@ -24,15 +67,27 @@ pub(super) fn ingest_parsed_transcript_in_txn(
             })
         }
         crate::session_lifecycle::SessionMintOutcome::Minted(session_ref) => {
-            let turn_refs = persist_turns(
-                vault,
-                wtxn,
-                request.source_blob_ref,
-                session_ref,
-                &parsed.turns,
-                request.arrived_at_ms,
-                source_version,
-            )?;
+            let turn_refs = match meeting_source {
+                Some(source) => super::persist_turns_with_source(
+                    vault,
+                    wtxn,
+                    request.source_blob_ref,
+                    session_ref,
+                    &parsed.turns,
+                    request.arrived_at_ms,
+                    source_version,
+                    Some(source),
+                ),
+                None => persist_turns(
+                    vault,
+                    wtxn,
+                    request.source_blob_ref,
+                    session_ref,
+                    &parsed.turns,
+                    request.arrived_at_ms,
+                    source_version,
+                ),
+            }?;
             let wake = vault.plan_session_end_wake_in_txn(wtxn, &session_ref)?;
             let wake_turn_refs = wake.planned_turn_ids.clone();
             let end_hint = crate::session_lifecycle::SessionHintTimestamp {
