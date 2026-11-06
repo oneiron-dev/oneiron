@@ -134,6 +134,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_REMOVAL_IMPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_VAULT_INVITATION_KEY, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
     // A Sheets write's invocation claim records a send that left the vault:
     // the live vault's row stands, as a held connector call's does.
