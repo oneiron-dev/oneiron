@@ -17171,6 +17171,24 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.edges.provenance",
+      "description": "Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle.",
+      "input": "crate::memory::EdgeProvenanceRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>",
+      "call": "memory.edge_provenance(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.structural.put",
       "description": "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit.",
       "refs": [
@@ -19706,10 +19724,11 @@
     },
     {
       "name": "vault.notes.author_take",
-      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.",
+      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref.",
       "refs": [
         "/target/subject",
-        "/target/claim"
+        "/target/claim",
+        "/source_ref"
       ],
       "input": "AuthorTakeRequest",
       "output": "crate::memory::EntityRefReceipt",

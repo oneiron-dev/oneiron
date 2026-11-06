@@ -3,6 +3,7 @@
 use super::{
     EdgeRef, PREDICATE_EDGE_PROVENANCE, StoredProvenanceClaim, active_cohort_winner_short_ref_in,
     closed_cohort_head_short_ref_in, decode_edge_provenance_body, resolve_persisted_actor_class,
+    winner_index,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -177,6 +178,59 @@ impl Vault {
     ) -> Result<Vec<StoredProvenanceClaim>> {
         edge_provenance_cohort_in_txn(&self.store, txn, subject, exclude, lifecycles)
     }
+
+    /// The audit cohort of `subject` (FIX 3959): every `edge.provenance`
+    /// Claim for it, live, superseded, retracted and dependency-stale alike,
+    /// each with the [`cohort_lifecycle`] it counts under, and the Claim the
+    /// edge's flags are stamped from. That one is the D14 winner among the
+    /// live Claims that may stamp, as the lifecycle writers choose it (a Claim
+    /// awaiting its owner's answer stamps none); `None` when no live Claim
+    /// may.
+    pub(crate) fn edge_provenance_audit_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EdgeRef,
+    ) -> Result<EdgeProvenanceAudit> {
+        let mut cohort = Vec::new();
+        walk_edge_provenance_cohort_in_txn(
+            &self.store,
+            txn,
+            subject,
+            None,
+            &[
+                ClaimLifecycleStatus::Active,
+                ClaimLifecycleStatus::Superseded,
+                ClaimLifecycleStatus::Retracted,
+            ],
+            |claim, lifecycle| {
+                cohort.push((claim, lifecycle));
+                ControlFlow::Continue(())
+            },
+        )?;
+        let mut stamping = Vec::new();
+        for (claim, lifecycle) in &cohort {
+            if *lifecycle == ClaimLifecycleStatus::Active
+                && crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    txn,
+                    &claim.id,
+                    crate::gate::ConsolidationReader::EdgeProvenance,
+                )?
+            {
+                stamping.push(claim.precedence());
+            }
+        }
+        let winner = winner_index(&stamping).map(|index| stamping[index].claim_id);
+        Ok(EdgeProvenanceAudit { cohort, winner })
+    }
+}
+
+/// One edge's [`Vault::edge_provenance_audit_in_txn`] answer.
+pub(crate) struct EdgeProvenanceAudit {
+    /// Every Claim for the edge with the lifecycle it counts under.
+    pub(crate) cohort: Vec<(StoredProvenanceClaim, ClaimLifecycleStatus)>,
+    /// The Claim the edge's flags are stamped from, when one may stamp.
+    pub(crate) winner: Option<EntityId>,
 }
 
 /// A wrapper's lifecycle as cohort selection reads it. An active wrapper whose

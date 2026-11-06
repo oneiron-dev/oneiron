@@ -1069,6 +1069,7 @@ pub enum AgentVerb {
     VaultSearchTemporal,
     VaultSearchBm25,
     VaultNeighbors,
+    VaultEdgesProvenance,
     VaultStructuralPut,
     VaultHabitsCheckin,
     VaultProductivityCreate,
@@ -2358,6 +2359,7 @@ impl AgentVerb {
         Self::VaultSearchTemporal,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
+        Self::VaultEdgesProvenance,
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
         Self::VaultProductivityCreate,
@@ -3680,6 +3682,7 @@ impl AgentVerb {
             Self::VaultSearchTemporal => "vault.search.temporal",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
+            Self::VaultEdgesProvenance => "vault.edges.provenance",
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultProductivityCreate => "vault.productivity.create",
@@ -4953,6 +4956,7 @@ impl AgentVerb {
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultEdgesProvenance
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -6271,6 +6275,7 @@ impl AgentVerb {
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultEdgesProvenance
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -6693,6 +6698,7 @@ impl AgentVerb {
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultEdgesProvenance
                 | Self::VaultProductivityTree
                 | Self::VaultEsignCreate
                 | Self::VaultEsignGet
@@ -9781,6 +9787,7 @@ impl AgentVerb {
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
+            Self::VaultEdgesProvenance => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
@@ -11071,6 +11078,7 @@ impl AgentVerb {
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
+            Self::VaultEdgesProvenance => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
@@ -14412,6 +14420,9 @@ impl AgentVerb {
             Self::VaultNeighbors => {
                 "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."
             }
+            Self::VaultEdgesProvenance => {
+                "Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle."
+            }
             Self::VaultStructuralPut => {
                 "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."
             }
@@ -14775,7 +14786,7 @@ impl AgentVerb {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."
             }
             Self::VaultNotesAuthorTake => {
-                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."
+                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref."
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."

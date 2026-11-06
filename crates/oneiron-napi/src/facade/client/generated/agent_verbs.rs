@@ -9142,6 +9142,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_edges_provenance(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.edges.provenance", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_structural_put(
         &self,
         input: serde_json::Value,

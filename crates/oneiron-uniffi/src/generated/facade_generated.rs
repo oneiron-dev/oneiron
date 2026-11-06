@@ -5216,6 +5216,11 @@ export_facade! {
     let output = client.vault_neighbors(&input)?;
     Lift::lift(output)
 };
+"vault.edges.provenance" => fn vault_edges_provenance(&self, input: EdgeProvenanceRequest) -> ScopedReadResultEdgeProvenanceViewList = |client| {
+    let input: oneiron::memory::EdgeProvenanceRequest = crate::codec::lower_record("vault.edges.provenance", input)?;
+    let output = client.vault_edges_provenance(&input)?;
+    crate::codec::lift_record("vault.edges.provenance", &output)
+};
 "vault.structural.put" => fn vault_structural_put(&self, input: StructuralPutInput) -> EntityRefReceipt = |client| {
     let input: oneiron::memory::StructuralPutInput = input.lower()?;
     let output = client.vault_structural_put(&input)?;

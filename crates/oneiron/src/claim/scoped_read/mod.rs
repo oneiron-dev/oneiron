@@ -23,6 +23,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 mod claim_admission;
 mod context_pack_filter;
 mod diagnostic_reads;
+mod edge_claims;
 mod facet_gate;
 mod frozen;
 mod graph_reads;

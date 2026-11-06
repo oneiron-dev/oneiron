@@ -1304,6 +1304,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.search.temporal" => a.spec.clone().ok_or_else(invalid),
         "vault.search.bm25" => a.spec.clone().ok_or_else(invalid),
         "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
+        "vault.edges.provenance" => a.spec.clone().ok_or_else(invalid),
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
         "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
         "vault.productivity.create" => a.spec.clone().ok_or_else(invalid),
@@ -4752,6 +4753,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.neighbors" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.edges.provenance" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.structural.put" => {
@@ -23289,6 +23293,14 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::NeighborsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_neighbors(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.edges.provenance" => {
+            let input: oneiron::memory::EdgeProvenanceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_edges_provenance(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

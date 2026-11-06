@@ -1352,6 +1352,8 @@ class Oneiron:
         def neighbors(self, input: Facade.NeighborsRequest) -> Facade.ScopedReadResult[list[Facade.NeighborHit]]:
             """The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."""
         @property
+        def edges(self) -> "Oneiron._VaultEdgesVerbs": ...
+        @property
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
@@ -3922,6 +3924,9 @@ class Oneiron:
     class _VaultVectorsVerbs:
         def put(self, spec: Facade.VectorPutRequest) -> Facade.VectorPutReceipt:
             """Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically."""
+    class _VaultEdgesVerbs:
+        def provenance(self, input: Facade.EdgeProvenanceRequest) -> Facade.ScopedReadResult[list[Facade.EdgeProvenanceView]]:
+            """Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle."""
     class _VaultStructuralVerbs:
         def put(self, input: Facade.StructuralPutInput) -> Facade.EntityRefReceipt:
             """Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."""
@@ -4154,7 +4159,7 @@ class Oneiron:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
         def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:
-            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."""
+            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref."""
         def from_entity(self, input: Facade.CreateNoteFromEntityRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind from an existing entity."""
         def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:
