@@ -174,7 +174,7 @@ pub fn run_ics_property_continuation(
         .map_err(|_| ingest("property continuation names no event"))?;
     // FIX 4797: the vault's one calendar admission turn, from the passport
     // check through the admissions.
-    let _turn = crate::calendar::ingest::admission_turn(vault);
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Ok(());
     }

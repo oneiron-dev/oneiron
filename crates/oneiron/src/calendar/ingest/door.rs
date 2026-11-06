@@ -108,7 +108,7 @@ pub fn import_ics_as_owner(
     input: &CalendarIcsImportRequest,
 ) -> MemoryResult<CalendarIcsImportReceipt> {
     // FIX 4797: the vault's one calendar admission turn, across the diff.
-    let _turn = super::admission_turn(memory.vault());
+    let _turn = super::admission_turn(memory.vault()).map_err(calendar_error)?;
     let (source, feed) = read_upload(
         memory,
         owner,
@@ -137,7 +137,7 @@ pub fn move_instance_as_owner(
 ) -> MemoryResult<CalendarIcsImportReceipt> {
     // FIX 4797: the vault's one calendar admission turn, from the passport
     // checks through the apply.
-    let _turn = super::admission_turn(memory.vault());
+    let _turn = super::admission_turn(memory.vault()).map_err(calendar_error)?;
     let (source, mut feed) = read_upload(
         memory,
         owner,

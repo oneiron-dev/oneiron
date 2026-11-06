@@ -315,28 +315,36 @@ pub fn run_ics_feed_poll_with_screener(
 
     let response = fetcher.fetch(&config.secret_ref, prior_cursor.etag.as_deref())?;
     // FIX 4797: the diff, its writes and the cursor run in the vault's one
-    // calendar admission turn; the fetch above does not hold it.
-    let _turn = super::admission_turn(vault);
+    // calendar admission turn; the fetch above does not hold it. The cursor
+    // is read again under the turn: another poll may have moved it since.
+    let _turn = super::admission_turn(vault)?;
+    let cursor = read_cursor(vault, &cursor_digest)?.unwrap_or_else(|| IcsFeedCursor::new(config));
     match response {
         IcsFetchResponse::NotModified { .. } => {
             // True no-op: no blob, claim, EVENT, passport-presence, status,
             // or index write. The one cursor touch: a provider answer after
             // a pause is the resume signal — the credential works again.
-            if prior_cursor.paused.is_some() {
+            if cursor.paused.is_some() {
                 write_cursor(
                     vault,
                     &cursor_digest,
                     &IcsFeedCursor {
                         paused: None,
-                        ..prior_cursor
+                        ..cursor
                     },
                 )?;
             }
             let next_not_before = reenqueue(vault, config, now, jitter_seed)?;
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
-        IcsFetchResponse::CredentialReset => {
-            pause_feed(vault, config, &cursor_digest, prior_cursor, now)
+        IcsFetchResponse::CredentialReset => pause_feed(vault, config, &cursor_digest, cursor, now),
+        IcsFetchResponse::Complete { .. } if cursor != prior_cursor => {
+            // Another poll moved the cursor after this fetch was sent: this
+            // body may be older than the one that poll applied, and its
+            // absence sweep would undo that poll's events. The next poll
+            // fetches again.
+            let next_not_before = reenqueue(vault, config, now, jitter_seed)?;
+            Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
         IcsFetchResponse::Complete { etag, body } => {
             let blob_ref = archive_raw_feed(vault, config, &body, now)?;
@@ -358,7 +366,7 @@ pub fn run_ics_feed_poll_with_screener(
                 vault,
                 &cursor_digest,
                 &IcsFeedCursor {
-                    etag: etag.or(prior_cursor.etag),
+                    etag: etag.or(cursor.etag),
                     last_complete_at: Some(now),
                     last_screen_verdict: Some(admission.verdict_fold.token().to_owned()),
                     ..IcsFeedCursor::new(config)
