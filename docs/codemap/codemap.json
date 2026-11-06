@@ -88290,7 +88290,7 @@
       "crate-vis": 42,
       "enum": 2,
       "fn": 6,
-      "re-export": 20,
+      "re-export": 21,
       "struct": 6
      }
     },
@@ -88459,6 +88459,20 @@
      "purpose": "Replicated room join, offer and response merging",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomSpeakingClaim"
+     ],
+     "path": "src/workspace_roster/rooms/speaking.rs",
+     "purpose": "Who holds the next turn in a room, as the board's ROOM section renders it (FIX 15646; ARCH-0067 §8: \"the…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -91986,7 +92000,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 126,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92002,7 +92016,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6469,
+   "source_files": 6470,
    "test_files": 895
   },
   "oneiron-android": {
