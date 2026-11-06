@@ -86,6 +86,7 @@ pub use self::creator::OffRecordCreator;
 pub(crate) use self::note_reads::RoomNote;
 pub use self::note_reads::RoomNoteHandle;
 pub(crate) use self::on_record::SaverCheck;
+pub(crate) use self::overlay_writes::PreparedSessionRows;
 pub(crate) use self::registry::OffRecordSessionRegistry;
 pub use self::retained::{RetainedCharge, room_entry_bytes};
 pub use self::room::{SavedTurns, room_session_key};
