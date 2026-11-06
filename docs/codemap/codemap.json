@@ -460,7 +460,7 @@
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
       "crate-vis": 6,
-      "fn": 6
+      "fn": 8
      }
     },
     {
@@ -470,7 +470,7 @@
      "path": "src/affect/consolidation/entity_vad.rs",
      "purpose": "The turn and message VAD annotation door: write, guard and read one entity's annotation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -5479,7 +5479,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AdmittedTaskGrant"
@@ -5487,7 +5487,7 @@
      "path": "src/authority/task_actor.rs",
      "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 3,
       "struct": 1
      }
@@ -14650,7 +14650,8 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 21,
+      "fn": 1
      }
     },
     {
@@ -18060,7 +18061,7 @@
      "path": "src/code_run/storage/read_worlds.rs",
      "purpose": "The worlds of the rows one code run is served (FIX 6130): its ledger in `CODE_RUN_READ_WORLD`, on the run's…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1
      }
     },
@@ -34487,7 +34488,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -40886,7 +40887,7 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 19
      }
     },
@@ -45812,7 +45813,7 @@
      "path": "src/llm/registry/backend.rs",
      "purpose": "Backend-specific serving identities and prices",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -63015,7 +63016,7 @@
      "path": "src/repo_mutation/git.rs",
      "purpose": "Repository identity, Git argument validation and bridged commands",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -64410,7 +64411,7 @@
      "path": "src/runtime_hooks/verb/plain_resume.rs",
      "purpose": "A plain call's resume target (ARCH-0080 §3 Ask): a call no credential came in on, which settlement runs…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -64930,7 +64931,7 @@
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
       "crate-vis": 27,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -83883,8 +83884,8 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 17,
-      "fn": 20,
+      "crate-vis": 16,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -84295,7 +84296,7 @@
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
       "crate-vis": 3,
-      "fn": 28
+      "fn": 29
      }
     },
     {
@@ -113699,7 +113700,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -113787,7 +113788,7 @@
      "path": "src/api/core/query.rs",
      "purpose": "Query/list/capability routes and their paging helpers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -119510,6 +119511,16 @@
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/big_rung/cost.rs",
+     "purpose": "The completed Big reading's catalog price, not the seat's requested route",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -130557,7 +130568,7 @@
      "purpose": "HTTP authentication for log-backed version-two capability slips"
     },
     "big_rung": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -131063,7 +131074,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1656,
+   "source_files": 1657,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134241,7 +134252,7 @@
      "path": "src/git_wire.rs",
      "purpose": "Store-layer modules of core `git_wire`; core re-exports each one at its old path",
      "surface": {
-      "mod": 21
+      "mod": 22
      }
     },
     {
@@ -134251,7 +134262,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -134431,6 +134442,17 @@
       "const": 1,
       "enum": 2,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/path_text.rs",
+     "purpose": "The text form of a Git path (FIX 21326)",
+     "surface": {
+      "const": 1,
+      "fn": 5
      }
     },
     {
@@ -140549,7 +140571,7 @@
      "purpose": "Gate outcomes, stable reason codes, and pure metric classification"
     },
     "git_wire": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -141517,7 +141539,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 632,
+   "source_files": 633,
    "test_files": 4
   },
   "oneiron-uniffi": {
