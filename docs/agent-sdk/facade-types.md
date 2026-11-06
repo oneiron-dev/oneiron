@@ -8740,11 +8740,11 @@ export type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourc
 /** `oneiron::mail_pack::source::MailSourceStatus` */
 export type MailSourceStatus = "active" | "paused" | "disconnected"
 /** `oneiron::mail_pack::source::MailSourceView` */
-export type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number }
+export type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; own_addresses?: string[]; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number }
 /** `oneiron::mail_pack::doors::MailSourceConnectReceipt` */
 export type MailSourceConnectReceipt = { source: MailSourceView; resumed: boolean }
 /** `oneiron::mail_pack::doors::MailSourceSettingsRequest` */
-export type MailSourceSettingsRequest = { source_ref: string; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null; status?: MailSourceStatus | null }
+export type MailSourceSettingsRequest = { source_ref: string; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null; status?: MailSourceStatus | null; own_addresses?: string[] | null }
 /** `oneiron::mail_pack::doors::MailSourceMembersRequest` */
 export type MailSourceMembersRequest = { source_ref: string; members: string[] }
 /** `oneiron::mail_pack::doors::MailSourceRef` */

@@ -233,6 +233,20 @@ pub trait MailProviderWire {
         Ok(None)
     }
 
+    /// The addresses the provider proves the mailbox owns, as it names them
+    /// (fix list row 20400): Gmail's primary and verified send-as addresses,
+    /// Graph's `mail` and SMTP proxy addresses. Never one the mailbox only
+    /// has a right to send as, a delegate's, or a rewritten address. `None`
+    /// by default: a provider that proves none (IMAP, mbox) keeps the
+    /// source's stored set. The importer reads a failure here as `None`.
+    ///
+    /// # Errors
+    ///
+    /// The provider's own failure, a refusal for a missing scope included.
+    fn own_addresses(&self, _source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
+
     /// One attachment's bytes, as a reader opened it; `None` when the
     /// provider no longer has the message or the attachment.
     fn attachment(
