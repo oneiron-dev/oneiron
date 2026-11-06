@@ -158,6 +158,7 @@ mod profile_sources;
 pub(crate) use profile_sources::CompanionProfileSourceJudgement;
 mod retrieval_loop;
 mod search;
+pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;
 

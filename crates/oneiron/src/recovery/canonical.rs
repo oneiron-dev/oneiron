@@ -17,6 +17,7 @@ use crate::{EntityId, Vault};
 mod asset_body_refs;
 mod budget;
 mod capture;
+mod containers;
 mod peer_origins;
 mod rebuild;
 mod row_births;
@@ -33,6 +34,7 @@ pub use capture::capture_canonical_window;
 pub(crate) use capture::{
     CanonicalCapture, capture_canonical_window_within, prepare_artifact_pads,
 };
+pub(super) use containers::ExpectedContainers;
 pub use peer_origins::CanonicalPeerOrigin;
 pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
@@ -137,59 +139,9 @@ impl CanonicalSnapshot {
         self.container_manifests = self.expected_containers();
     }
     pub(super) fn expected_containers(&self) -> Vec<CanonicalContainerManifest> {
-        let mut rows = Vec::new();
-        for name in [
-            "entities",
-            "edges",
-            "tombstones",
-            "retained_claim_worlds",
-            "documents",
-            "entity_documents",
-            "document_heads",
-            "head_move_receipts",
-            "note_forks",
-            "note_proposals",
-            "custody",
-            "room_turns",
-            "room_facts",
-            "document_pins",
-            "peer_origins",
-            "row_births",
-            "withdrawn_cutoffs",
-            "asset_body_refs",
-        ] {
-            rows.push(CanonicalContainerManifest {
-                container_id: name.to_owned(),
-                container_kind: "map".to_owned(),
-                schema_version: 1,
-                source_entity_id: None,
-            });
-        }
-        for doc in &self.entity_documents {
-            for (name, kind) in [("body", "text"), ("meta", "map")] {
-                rows.push(CanonicalContainerManifest {
-                    container_id: format!(
-                        "entity_doc/{}/{name}",
-                        crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
-                    ),
-                    container_kind: kind.to_owned(),
-                    schema_version: 1,
-                    source_entity_id: Some(doc.entity_id),
-                });
-            }
-        }
-        for doc in &self.doc_snapshots {
-            for (name, kind) in [("body", "text"), ("note", "map"), ("authorship", "map")] {
-                rows.push(CanonicalContainerManifest {
-                    container_id: format!("{}/{name}", doc.key()),
-                    container_kind: kind.to_owned(),
-                    schema_version: 1,
-                    source_entity_id: Some(doc.entity_id),
-                });
-            }
-        }
-        rows.sort_by(|a, b| a.container_id.cmp(&b.container_id));
-        rows
+        let mut expected = containers::ExpectedContainers::default();
+        while !expected.advance_row(self) {}
+        expected.into_rows()
     }
 }
 
