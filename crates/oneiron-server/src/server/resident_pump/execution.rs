@@ -634,6 +634,8 @@ fn enter_run(
         model_seat,
         planned,
         status.input.definition.models.clone(),
+        // FIX 17594 D2: the resident entry lends no self-brief port yet.
+        None,
     );
     door.bind_meter(None);
     door.bind_lease(None);
