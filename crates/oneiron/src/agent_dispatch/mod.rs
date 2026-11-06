@@ -80,8 +80,9 @@ mod run_objectives;
 mod run_task;
 pub(crate) use self::run_task::{
     AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN, AgentRunFences, agent_run_fence_permits_effect,
-    fence_agent_run_effect_in_txn, fence_agent_run_step_in_txn, is_agent_run_task_in,
-    renew_agent_run_lease_in_txn, settle_agent_run_task_in_txn,
+    erase_agent_run_tasks_in_txn, fence_agent_run_effect_in_txn, fence_agent_run_settlement_in_txn,
+    fence_agent_run_step_in_txn, is_agent_run_task_in, renew_agent_run_lease_in_txn,
+    settle_agent_run_task_in_txn,
 };
 pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,

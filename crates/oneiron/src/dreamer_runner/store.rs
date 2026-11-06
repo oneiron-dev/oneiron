@@ -889,6 +889,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     "agent retry requires a dispatch attempt",
                 ));
             }
+            // FIX 4747: a stale executor's failure queues no retry; the run
+            // is another machine's.
+            crate::agent_dispatch::fence_agent_run_settlement_in_txn(self.vault, &*txn, source.id)?;
             // OF-220: the TASK requeues before its try's lease clears.
             crate::task_verb::highway_runner::report_leased_task_in_txn(
                 self.vault,

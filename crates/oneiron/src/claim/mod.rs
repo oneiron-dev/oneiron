@@ -136,7 +136,8 @@ pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scop
 pub use scoped_read::*;
 pub(crate) use scoped_read::{
     Admitted, ClaimReadStatusExt, SearchPlan, claim_access_axes,
-    invalidate_weave_digest_source_in_txn, scrub_saved_weave_loop_reasons_in_txn,
+    invalidate_weave_digest_source_in_txn, saved_weave_loop_reason_decisions_in_txn,
+    scrub_saved_weave_loop_reasons_in_txn,
 };
 pub use source_trust::*;
 pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker};

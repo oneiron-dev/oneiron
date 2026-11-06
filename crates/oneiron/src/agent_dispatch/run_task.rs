@@ -9,18 +9,26 @@
 //! and holds an [`AgentRunExecutorLease`] for this machine. The agent pump's
 //! claim takes or renews that lease in its write; the claim's
 //! [`AgentRunFence`] guards every step commit and outbound effect of the
-//! run; the attempt's terminal settlement sets the TASK's outcome in the
-//! same write, only while this machine holds the run. A closing process
-//! releases the leases it holds, and takes and renews none after
+//! run, and every write that settles it: the result it publishes, the report
+//! on the TASK it realizes, and the terminal door, which sets the run TASK's
+//! outcome in the same write. A write that meets a moved or unreadable run
+//! TASK aborts, and the try ends unrun. A closing process releases the
+//! leases it holds, and takes and renews none after
 //! (`Vault::executor_leases_released`).
 //!
 //! On one machine the lease is always its own, so nothing new refuses: a
-//! run with no run TASK (dispatched before this change) runs as before.
+//! run with no run TASK (dispatched before this change) runs as before. A
+//! run whose run TASK stands but does not read is not one with none: it does
+//! not run here.
+//! A hard erase that takes an erased actor's text out of a run's queue
+//! payload takes its run TASK, which froze a copy, in the same transaction
+//! (`erase_agent_run_tasks_in_txn`, REVIEW-6615). The run then has none: it
+//! stays on this machine and runs as before.
 //! The handover to another machine, the reaper and the re-creation of the
 //! queue row there, is `super::run_handover` (slice 6).
 //! Entry: `mint_agent_run_task_in_txn`, `take_agent_run_lease_in_txn`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
@@ -33,8 +41,9 @@ use crate::entity_id::derived_domains::AGENT_RUN_TASK;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, RecordError, Result};
 use crate::federation::record_scope::{BirthPosition, stamp_task_birth};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
 
@@ -70,6 +79,19 @@ pub(crate) const AGENT_RUN_EXECUTOR_MOVED: &str = "agent_run_executor_moved";
 /// The typed cause a local try ends with when another machine already
 /// settled its run (FIX 4747): this machine's row is stale.
 pub(crate) const AGENT_RUN_SETTLED_ELSEWHERE: &str = "agent_run_settled_elsewhere";
+
+/// The typed cause a local try ends with when an entity stands under its run
+/// TASK's id that this version does not read as an agent-run TASK body (FIX
+/// 4747): a body of another version or subkind, or no TASK. Another machine
+/// may run it, so this machine does not run it unfenced.
+pub(crate) const AGENT_RUN_TASK_UNREADABLE: &str = "agent_run_task_unreadable";
+
+/// Every typed cause a local try ends with unrun, its run TASK unchanged.
+const AGENT_RUN_UNRUN_CAUSES: [&str; 3] = [
+    AGENT_RUN_EXECUTOR_MOVED,
+    AGENT_RUN_SETTLED_ELSEWHERE,
+    AGENT_RUN_TASK_UNREADABLE,
+];
 
 /// The receipt field an outbound effect the run fence stood down carries,
 /// valued [`AGENT_RUN_STOOD_DOWN`] (FIX 4747).
@@ -146,7 +168,8 @@ impl AgentRunFence {
 /// 4747).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentRunLeaseTake {
-    /// The row has no run TASK: it runs as before, unfenced.
+    /// No entity stands under the run TASK id of the row, or of any try it
+    /// retries: it runs as before, unfenced.
     NoRunTask,
     /// This machine holds the lease; the run goes under this fence.
     Taken(AgentRunFence),
@@ -154,6 +177,9 @@ pub(crate) enum AgentRunLeaseTake {
     HeldElsewhere,
     /// Another machine settled the run: the local row is stale.
     Settled,
+    /// An entity stands under the run TASK id that this version does not
+    /// read as an agent-run TASK body: this machine does not run it.
+    Unreadable,
     /// This process released its leases as it closes: it claims nothing,
     /// and the row stays queued for the next process or machine.
     Closing,
@@ -162,12 +188,14 @@ pub(crate) enum AgentRunLeaseTake {
 /// What the run TASK says of a claim by this machine (FIX 4747).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ClaimStanding {
-    /// The run is this machine's to run.
-    Own,
+    /// The run is this machine's to run, under the lease the TASK holds.
+    Own(AgentRunExecutorLease),
     /// Another machine holds the run.
     HeldElsewhere,
     /// Another machine settled the run.
     Settled,
+    /// The run TASK does not read.
+    Unreadable,
 }
 
 /// What a writer read of the run TASK a fence names (FIX 4747).
@@ -292,9 +320,35 @@ fn own_expired_agent_run_lease_retaken(
 /// reaper (`super::run_handover`) hands it over.
 fn claim_standing(body: &AgentRunTaskBody, node_id: u64) -> ClaimStanding {
     match (body.executor.node_id == node_id, body.outcome) {
-        (true, _) => ClaimStanding::Own,
+        (true, _) => ClaimStanding::Own(body.executor),
         (false, Some(_)) => ClaimStanding::Settled,
         (false, None) => ClaimStanding::HeldElsewhere,
+    }
+}
+
+/// [`claim_standing`] of the run TASK `task_ref`, which stands in `txn`
+/// (FIX 4747). Engine call (CALLS): a body this version cannot read (another
+/// version, another subkind, or no TASK) is logged and stands the claim
+/// down, as a run another machine holds does: it is never read as no run
+/// TASK, which would run it unfenced.
+fn claim_standing_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    node_id: u64,
+) -> Result<ClaimStanding> {
+    match agent_run_task_body_in(vault, txn, task_ref) {
+        Ok(Some(body)) => Ok(claim_standing(&body, node_id)),
+        // `task_ref` names an entity this read found standing.
+        Ok(None) | Err(Error::Record(_)) => {
+            tracing::warn!(
+                reason = AGENT_RUN_TASK_UNREADABLE,
+                task = %task_ref.to_hex(),
+                "an agent run's TASK does not read; this machine does not run it"
+            );
+            Ok(ClaimStanding::Unreadable)
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -443,8 +497,9 @@ fn put_agent_run_task_in_txn(
 /// write (FIX 4747): this machine's lease stays its own at its generation,
 /// renewed when less than half a hold is left; an expired one of its own is
 /// taken again at the next generation; a run this machine settled reopens
-/// for its later try (`claim_standing`). Another machine's lease, or another
-/// machine's settlement, is left as it is. A closing process takes none.
+/// for its later try (`claim_standing`). Another machine's lease, another
+/// machine's settlement, or a run TASK this version does not read is left as
+/// it is. A closing process takes none.
 pub(crate) fn take_agent_run_lease_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -458,14 +513,11 @@ pub(crate) fn take_agent_run_lease_in_txn(
         return Ok(AgentRunLeaseTake::Closing);
     }
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
-    let Some(body) = readable_body_in(vault, &*wtxn, task_ref)? else {
-        return Ok(AgentRunLeaseTake::NoRunTask);
-    };
-    match claim_standing(&body, node_id) {
+    match claim_standing_in(vault, &*wtxn, task_ref, node_id)? {
         ClaimStanding::HeldElsewhere => Ok(AgentRunLeaseTake::HeldElsewhere),
         ClaimStanding::Settled => Ok(AgentRunLeaseTake::Settled),
-        ClaimStanding::Own => {
-            let held = body.executor;
+        ClaimStanding::Unreadable => Ok(AgentRunLeaseTake::Unreadable),
+        ClaimStanding::Own(held) => {
             let lease =
                 own_expired_agent_run_lease_retaken(held, now).unwrap_or(AgentRunExecutorLease {
                     held_until: agent_run_lease_renewal(held.held_until, now)
@@ -491,9 +543,9 @@ pub(crate) fn take_agent_run_lease_in_txn(
 }
 
 /// The typed cause a queued `row` ends with unrun, judged in `wtxn` (FIX
-/// 4747): another machine holds its run, or settled it. `None` for a row
-/// this machine may run, one with no run TASK, and any row while this
-/// process closes.
+/// 4747): another machine holds its run, or settled it, or its run TASK
+/// stands but does not read. `None` for a row this machine may run, one with
+/// no run TASK, and any row while this process closes.
 pub(crate) fn agent_run_unrun_cause_in(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -506,13 +558,11 @@ pub(crate) fn agent_run_unrun_cause_in(
         return Ok(None);
     }
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
-    let Some(body) = readable_body_in(vault, &*wtxn, task_ref)? else {
-        return Ok(None);
-    };
-    Ok(match claim_standing(&body, node_id) {
-        ClaimStanding::Own => None,
+    Ok(match claim_standing_in(vault, &*wtxn, task_ref, node_id)? {
+        ClaimStanding::Own(_) => None,
         ClaimStanding::HeldElsewhere => Some(AGENT_RUN_EXECUTOR_MOVED),
         ClaimStanding::Settled => Some(AGENT_RUN_SETTLED_ELSEWHERE),
+        ClaimStanding::Unreadable => Some(AGENT_RUN_TASK_UNREADABLE),
     })
 }
 
@@ -522,24 +572,61 @@ pub(crate) fn agent_run_unrun_cause_in(
 /// hold ends the walk at the run TASK its own id names: a try a handover
 /// queued here links the run's original try, which another machine ran
 /// (FIX 4747 slice 6). `None` for a row with none.
+/// Any entity that stands under a run TASK id is that run's TASK, whether or
+/// not this version reads its body: only no entity there is no run TASK. A
+/// run TASK a hard erase took is none either (REVIEW-6615): the run runs
+/// here as one with no run TASK, never as one whose TASK does not read.
 pub(super) fn agent_run_task_ref_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
 ) -> Result<Option<EntityId>> {
-    let queue = AttemptQueue::new(vault);
-    let (mut id, mut retry_of) = (row.id, row.retry_of);
+    Ok(
+        agent_run_task_slot_in(&vault.store, txn, row.id, row.retry_of)?
+            .and_then(|(task_ref, erased)| (!erased).then_some(task_ref)),
+    )
+}
+
+/// Whether a hard erase took the run TASK `task_ref`: its permanent
+/// hard-delete marker stands (REVIEW-6615).
+fn agent_run_task_erased_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<bool> {
+    store.port_deletion_marked(txn, DeletionMarker::HardDelete, &task_ref)
+}
+
+/// The run TASK id the try `attempt`, retrying `retry_of`, shares, read in
+/// `txn`: the first id along its `retry_of` chain at which a run TASK stands
+/// or a hard erase took one, with whether one was taken.
+fn agent_run_task_slot_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    retry_of: Option<AttemptId>,
+) -> Result<Option<(EntityId, bool)>> {
+    let queue = AttemptQueue::from_store(store);
+    let (mut id, mut retry_of) = (attempt, retry_of);
     for _ in 0..AGENT_RUN_RETRY_CHAIN_WALK {
         let task_ref = agent_run_task_id(id)?;
-        if is_agent_run_task_in(vault, txn, task_ref)? {
-            return Ok(Some(task_ref));
+        let erased = agent_run_task_erased_in(store, txn, task_ref)?;
+        if erased || store.port_entity_record(txn, &task_ref)?.is_some() {
+            return Ok(Some((task_ref, erased)));
         }
         let Some(parent) = retry_of else {
             return Ok(None);
         };
+        // A try this queue does not hold (a handover queued this try after
+        // another machine ran that one) ends the walk at its own run TASK id
+        // (FIX 4747 slice 6).
         let Some(parent_row) = queue.get_in_txn(txn, parent)? else {
             let task_ref = agent_run_task_id(parent)?;
-            return Ok(is_agent_run_task_in(vault, txn, task_ref)?.then_some(task_ref));
+            let erased = agent_run_task_erased_in(store, txn, task_ref)?;
+            return Ok(
+                (erased || store.port_entity_record(txn, &task_ref)?.is_some())
+                    .then_some((task_ref, erased)),
+            );
         };
         (id, retry_of) = (parent_row.id, parent_row.retry_of);
     }
@@ -595,36 +682,22 @@ fn decode_agent_run_task_body(entity_type: u8, body: &[u8]) -> Result<AgentRunTa
     Ok(body)
 }
 
-/// The stored run TASK body, read in `txn`; `None` while none stands.
+/// The stored run TASK body, read in `txn`; `None` while none stands, and
+/// for a run TASK a hard erase took (REVIEW-6615), so each fence and the
+/// settlement read that run as one with no run TASK.
 pub(super) fn agent_run_task_body_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
 ) -> Result<Option<AgentRunTaskBody>> {
+    if agent_run_task_erased_in(&vault.store, txn, task_ref)? {
+        return Ok(None);
+    }
     vault
         .store
         .port_entity_record(txn, &task_ref)?
         .map(|raw| decode_agent_run_task_body(raw.entity_type, &raw.body))
         .transpose()
-}
-
-/// [`agent_run_task_body_in`] for a claim: a body this version cannot read
-/// is logged and read as no run TASK, so the row runs as before.
-fn readable_body_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    task_ref: EntityId,
-) -> Result<Option<AgentRunTaskBody>> {
-    match agent_run_task_body_in(vault, txn, task_ref) {
-        Err(Error::Record(_)) => {
-            tracing::warn!(
-                task = %task_ref.to_hex(),
-                "an agent run's TASK does not read; its row runs as before"
-            );
-            Ok(None)
-        }
-        read => read,
-    }
 }
 
 /// Read-modify-write of one run TASK body in the caller's write; a no-op
@@ -785,14 +858,46 @@ pub(crate) fn fence_agent_run_effect_in_txn(
     let Some(fence) = vault.agent_run_fence(attempt) else {
         return Ok(());
     };
-    match agent_run_fence_standing_in(vault, txn, &fence) {
+    require_agent_run_fence_in(vault, txn, &fence)
+}
+
+/// The fence each write that settles `attempt`'s run meets in that write
+/// (FIX 4747): the write that publishes the run's result
+/// (`AttemptQueue::set_result_in_txn`, and the attribution output), the one
+/// that reports the TASK the run realizes (`report_leased_task_in_txn`), and
+/// the one that retries its try each go only while the run TASK names the
+/// fence's holder at its generation. A stale executor's settling write aborts
+/// with [`Error::AgentRunExecutorMoved`], and its try ends unrun. The
+/// terminal door meets the same fence in [`settle_agent_run_task_in_txn`]. An
+/// attempt no claim fenced settles as before.
+pub(crate) fn fence_agent_run_settlement_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<()> {
+    let Some(fence) = vault.agent_run_fence(attempt) else {
+        return Ok(());
+    };
+    require_agent_run_fence_in(vault, txn, &fence)
+}
+
+/// The fence check one write makes, read in its `txn` (FIX 4747): `Ok` while
+/// the run TASK names `fence`'s holder at its generation, or no run TASK
+/// stands; [`Error::AgentRunExecutorMoved`], with its one log line, while it
+/// names another holding or does not read.
+fn require_agent_run_fence_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fence: &AgentRunFence,
+) -> Result<()> {
+    match agent_run_fence_standing_in(vault, txn, fence) {
         Ok(FenceStanding::Holds(_) | FenceStanding::Absent) => Ok(()),
         Ok(FenceStanding::Moved(held)) => {
-            log_agent_run_stand_down(&fence, Some(held));
+            log_agent_run_stand_down(fence, Some(held));
             Err(Error::AgentRunExecutorMoved)
         }
         Err(Error::Record(_)) => {
-            log_agent_run_stand_down(&fence, None);
+            log_agent_run_stand_down(fence, None);
             Err(Error::AgentRunExecutorMoved)
         }
         Err(error) => Err(error),
@@ -854,11 +959,18 @@ pub(crate) fn agent_run_moved_in(
 /// good, in the write that settles it (FIX 4747): completed, failed or
 /// abandoned, or cancelled. Only while this machine holds the run: the
 /// holding its claim fenced, or, for a try no claim of this process fenced
-/// (a workflow leaf, a resident's run, a queued try ended unrun), a lease
-/// that names this machine. A run another machine holds, or one already
-/// settled, is left as it is; a retry or a landing handoff settles no run,
-/// as its later try carries it on. A body that does not read is passed
-/// over, so the settlement never fails on it.
+/// (a workflow leaf, a resident's run), a lease that names this machine.
+///
+/// The settlement fence: a try this process's claim fenced completes, fails
+/// or is abandoned only while its run TASK names the holding the claim took.
+/// A run TASK that names another holding, or does not read, aborts the write
+/// that settles it with [`Error::AgentRunExecutorMoved`], and the try ends
+/// unrun. A cancellation is another actor's door (the owner's, an erasure's,
+/// a lease expiry's): it ends the local try and leaves a run TASK that moved
+/// as it is. A try ended unrun (its cause one of `AGENT_RUN_UNRUN_CAUSES`)
+/// leaves its run TASK as it is. A run already settled is left as it is; a
+/// retry or a landing handoff settles no run, as its later try carries it
+/// on. For an unfenced try, a body that does not read is passed over.
 pub(crate) fn settle_agent_run_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -876,6 +988,20 @@ pub(crate) fn settle_agent_run_task_in_txn(
     {
         return Ok(());
     }
+    if record.state == AttemptState::Failed
+        && record
+            .last_error
+            .as_deref()
+            .is_some_and(|cause| AGENT_RUN_UNRUN_CAUSES.contains(&cause))
+    {
+        return Ok(());
+    }
+    let fence = vault.agent_run_fence(record.id);
+    if let Some(fence) = &fence
+        && record.state != AttemptState::Cancelled
+    {
+        require_agent_run_fence_in(vault, &*wtxn, fence)?;
+    }
     let Some(task_ref) = agent_run_task_ref_in(vault, &*wtxn, record)? else {
         return Ok(());
     };
@@ -890,7 +1016,7 @@ pub(crate) fn settle_agent_run_task_in_txn(
     if body.outcome.is_some() {
         return Ok(());
     }
-    let holds = match vault.agent_run_fence(record.id) {
+    let holds = match fence {
         Some(fence) if fence.task_ref == task_ref => fence.holds(body.executor),
         _ => body.executor.node_id == node_id,
     };
@@ -906,6 +1032,86 @@ pub(crate) fn settle_agent_run_task_in_txn(
         body.queue_payload.clear();
         Ok(())
     })
+}
+
+/// Hard-erases the run TASK of each try in `rows`, each a try's id and the
+/// try it retries, in the hard erase that just took an erased actor's text
+/// out of those tries' queue payloads (REVIEW-6615): the run TASK froze a
+/// copy of that payload, and its body names the run's agent and requester.
+/// Each is found by its try's derived id, following `retry_of` as a claim
+/// does, and goes by the engine row's hard erase in this transaction, as an
+/// erased participant's connector reply body goes in the same pass: its
+/// provenance, indexes and row, its permanent `dt:` marker, and its `pt:`
+/// tombstone in the window of its learned time, which that window's next
+/// load publishes. The marker puts it among the erased ids the erasure sweep
+/// takes out of every window it compacts, so the sweep the erase queues cuts
+/// the TASK's history with the erased actor's. A run whose TASK went has
+/// none: it stays on this machine and runs as before. A TASK a legal hold
+/// keeps stays whole, with a warning.
+///
+/// # Errors
+///
+/// Storage errors, and a tear that fails.
+pub(crate) fn erase_agent_run_tasks_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    rows: &[(AttemptId, Option<AttemptId>)],
+) -> Result<()> {
+    let mut tasks = BTreeSet::new();
+    for (attempt, retry_of) in rows {
+        if let Some((task_ref, _)) =
+            agent_run_task_slot_in(write.store, &*wtxn, *attempt, *retry_of)?
+        {
+            tasks.insert(task_ref);
+        }
+    }
+    for task_ref in tasks {
+        hard_erase_agent_run_task_in_txn(write, wtxn, &task_ref)?;
+    }
+    Ok(())
+}
+
+/// [`erase_agent_run_tasks_in_txn`] for one run TASK; one no row stands
+/// under is gone already.
+fn hard_erase_agent_run_task_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: &EntityId,
+) -> Result<()> {
+    let store = write.store;
+    let Some(learned_at) = store
+        .port_entity_record(&*wtxn, task_ref)?
+        .map(|row| row.learned_at)
+    else {
+        return Ok(());
+    };
+    if let Err(error) = store.reject_legal_hold_in_txn(&*wtxn, task_ref.as_bytes()) {
+        if !crate::store::legal_hold::held_in_txn(store, &*wtxn, task_ref.as_bytes())? {
+            return Err(error);
+        }
+        tracing::warn!(
+            task = %task_ref.to_hex(),
+            "agent run TASK erase: a hold or selected storage-only restriction keeps the run TASK"
+        );
+        return Ok(());
+    }
+    crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
+        write, wtxn, task_ref, true,
+    )?;
+    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, wtxn, task_ref)?;
+    crate::ppr::invalidate_ppr_for_delete(store, wtxn, task_ref, &neighbors)?;
+    if graph {
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
+    }
+    if vector {
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
+    }
+    let value = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
+        request_id: *task_ref.as_bytes(),
+    };
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(store, wtxn, task_ref, learned_at, &value)
 }
 
 /// Every live agent-run TASK and the lease it holds, read in `txn` (FIX
@@ -934,6 +1140,11 @@ pub(super) fn open_agent_runs_in(
         .port_entity_ids_by_type(txn, ENTITY_TYPE_TASK, None)?
     {
         let task_ref = task_ref?;
+        // A run TASK a hard erase took is no run to release or hand over
+        // (REVIEW-6615).
+        if agent_run_task_erased_in(&vault.store, txn, task_ref)? {
+            continue;
+        }
         let Some(raw) = vault.store.port_entity_record(txn, &task_ref)? else {
             continue;
         };

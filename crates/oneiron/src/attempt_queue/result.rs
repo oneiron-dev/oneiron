@@ -78,6 +78,13 @@ impl AttemptQueue<'_> {
                     input.attempt_count,
                     "set_result",
                 )?;
+                // FIX 4747: an agent run's result is published only while its
+                // run TASK names the holding its claim took.
+                if let Some(vault) = self.vault {
+                    crate::agent_dispatch::fence_agent_run_settlement_in_txn(
+                        vault, &*wtxn, record.id,
+                    )?;
+                }
                 record.result_ref = Some(input.result_ref);
                 // A landing has one bounded lease window, and attaching an
                 // artifact must not silently extend it (the same rule the
