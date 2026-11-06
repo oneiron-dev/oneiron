@@ -24,7 +24,7 @@ use super::types::{
     OwedWakeHold, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
     TurnProgramAdmissionRecord, TurnProgramWake, run_id,
 };
-use super::{ADMISSION, ARM, WAKE};
+use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
 const NOT_TRIGGERED: &str = "the landed turn does not match the program's trigger";
@@ -110,6 +110,19 @@ pub(super) fn admit_in_txn(
         WAKE.delete(vault, txn, &wake.key())?;
         super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(WakeAdmission::Decided(existing.receipt(false)));
+    }
+    // A wake decided on another machine (an imported `Admitted` row), or one
+    // whose owed row went meanwhile, is admitted by nothing here: a drain's
+    // copy read before the import is stale (FIX 5266).
+    if DECIDED.get(vault, &*txn, &wake.key())? == Some(admission) {
+        if WAKE.contains(vault, &*txn, &wake.key())? {
+            WAKE.delete(vault, txn, &wake.key())?;
+            super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
+        }
+        return Ok(WakeAdmission::Held);
+    }
+    if !WAKE.contains(vault, &*txn, &wake.key())? {
+        return Ok(WakeAdmission::Held);
     }
     // A riding wake is the elected home's to admit, through every door into
     // this writer (FIX 5266): elsewhere its row stays owed as it stands, and

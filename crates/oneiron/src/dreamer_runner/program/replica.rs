@@ -502,6 +502,50 @@ pub(crate) fn turn_wake_rows_in_txn(
     Ok(rows)
 }
 
+/// The `Admitted` rows TURN `turn` owes the window from this machine's own
+/// decisions (FIX 5266): each riding wake of the turn this machine admitted,
+/// whether or not a machine carried it as owed (the home admits its own
+/// turns' wakes, which no `Owed` row ever carried), and each decision it
+/// imported. A machine elected home later then holds every decision, and no
+/// landing of the turn there wakes the program again.
+pub(crate) fn turn_decided_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut rows = Vec::new();
+    for row in super::index::TURN_ADMISSION.iter_from(vault, txn, turn.as_bytes())? {
+        let ((_, admission), ()) = row?;
+        let Some(record) = ADMISSION.get(vault, txn, &admission)? else {
+            continue;
+        };
+        if !record.wake.authority.rides_to_home() {
+            continue;
+        }
+        let (turn, registration) = record.wake.key();
+        rows.push((
+            wake_key((turn, registration)),
+            encode(&WakeRow::Admitted {
+                turn,
+                registration,
+                admission,
+            })?,
+        ));
+    }
+    for row in DECIDED.iter_from(vault, txn, turn.as_bytes())? {
+        let ((turn, registration), admission) = row?;
+        rows.push((
+            wake_key((turn, registration)),
+            encode(&WakeRow::Admitted {
+                turn,
+                registration,
+                admission,
+            })?,
+        ));
+    }
+    Ok(rows)
+}
+
 /// Whether the carried wake row `bytes` is decided, so no machine writes
 /// its wake over it.
 pub(crate) fn wake_row_decided(bytes: &[u8]) -> bool {

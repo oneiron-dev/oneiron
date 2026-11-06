@@ -257,6 +257,18 @@ pub(crate) fn mirror_turn_program_wakes(
                 rows.push((map_key.clone(), decided));
             }
         }
+        // Each decision this machine holds for the turn goes to the window,
+        // with no carried `Owed` row too (FIX 5266).
+        for (map_key, decided) in replica::turn_decided_rows_in_txn(vault, &rtxn, turn)? {
+            if carried
+                .get(&map_key)
+                .is_some_and(|carried| replica::wake_row_decided(carried))
+            {
+                continue;
+            }
+            rows.retain(|(written, _)| *written != map_key);
+            rows.push((map_key, decided));
+        }
         rows
     };
     if rows.is_empty() {
