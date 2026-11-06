@@ -3,8 +3,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use futures_util::stream::{SplitSink, SplitStream};
-use tokio_tungstenite::tungstenite::Message;
+pub(super) use super::socket::{WsSink, WsSource};
 
 use crate::sync::client::SyncClient;
 use crate::sync::loro_support::doc_version_vector;
@@ -52,12 +51,6 @@ pub(super) const MACHINE_HISTORY_RETRY_INTERVAL_SECS: u64 = 300;
 /// How many owed-history rounds a lane runs at once; each takes every owed
 /// target. CALLS: "FIX 3820 machine history tasks".
 pub(super) const MACHINE_HISTORY_FETCH_TASKS: usize = 1;
-
-pub(super) type WsSink = SplitSink<WsStream, Message>;
-
-pub(super) type WsSource = SplitStream<WsStream>;
-
-type WsStream = crate::sync::carrier::SyncSocket;
 
 /// Read-budget for one server-frame pump: how long to wait for the first
 /// frame, how long a quiet gap ends the pump, and a frame cap.

@@ -43,6 +43,7 @@ mod note_reads;
 mod residence_mode;
 mod server_close;
 mod session;
+mod socket;
 mod steady;
 mod topology;
 
