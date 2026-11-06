@@ -15,7 +15,7 @@ import time
 import uuid
 
 CODE_FILES = {"meeting-audio-worker.py", "meeting-audio-native.py", "meeting_audio_runtime.py", "meeting_audio_process.py", "meeting_audio_ctc.py"}
-PROTOCOL = "oneiron.meeting_audio.host.v2"
+PROTOCOL = "oneiron.meeting_audio.host.v3"
 # No request, reply, audio, code file or profile is refused by its size (Rule 5).
 # How often a port call still within its profile's bound tells its bridge so,
 # which the host reads as progress (CALLS, FIX 3765). The port's own bound,
@@ -173,14 +173,18 @@ def _relay_exchange(command, request, idle, error, environment, progress, units,
 
                 def checked_unit(obj):
                     unit = obj.get("unit")
-                    if (not isinstance(unit, dict) or set(unit) != {"kind", "index", "audio_ms"}
+                    if (not isinstance(unit, dict) or set(unit) != {"kind", "index", "audio_ms", "model"}
                             or unit["kind"] not in allowed
                             or type(unit["index"]) is not int or type(unit["audio_ms"]) is not int
+                            or not isinstance(unit.get("model"), str) or not unit["model"]
                             or unit["index"] < 0 or unit["audio_ms"] < 0
                             or unit["index"] != worker_seq.get(unit["kind"], 0)):
                         raise error("InvalidProcessFrame")
+                    mid, sep, dg = unit["model"].rpartition("@")
+                    if not sep or not mid or len(dg) != 64 or any(c not in "0123456789abcdef" for c in dg):
+                        raise error("InvalidProcessFrame")
                     worker_seq[unit["kind"]] = unit["index"] + 1
-                    return unit["kind"], unit["audio_ms"]
+                    return unit["kind"], unit["audio_ms"], unit["model"]
 
                 def answer_worker(admitted):
                     line = b'{"admitted":true}\n' if admitted else b'{"admitted":false}\n'
@@ -234,9 +238,9 @@ def _relay_exchange(command, request, idle, error, environment, progress, units,
                             raise error("InvalidProcessFrame")
                         progress_fn()
                     elif name == "unit":
-                        kind, audio_ms = checked_unit(obj)
+                        kind, audio_ms, model = checked_unit(obj)
                         try:
-                            units.run(kind, audio_ms, relay_unit, usage=None)
+                            units.run(kind, audio_ms, relay_unit, usage=None, model=model)
                         except _WorkerUnitFailed:
                             pass
                         except error as refused:
