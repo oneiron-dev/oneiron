@@ -56,6 +56,12 @@ selfFocusWakes(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
+selfBoardLayout(input: unknown): unknown
+selfBoardFold(input: unknown): unknown
+selfBoardUnfold(input: unknown): unknown
+selfBoardSize(input: unknown): unknown
+selfBoardFilter(input: unknown): unknown
+selfBoardReplace(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -247,6 +253,7 @@ vaultWeaveSettingChangesUndo(input: unknown): unknown
 vaultWeaveDigestFeedbackPut(input: unknown): unknown
 vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
+vaultProactivityDigest(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown
 vaultInboxGroups(input: unknown): unknown
 vaultInboxGroupsResolve(input: unknown): unknown
@@ -506,6 +513,12 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultDraftersList(input: unknown): unknown
+vaultDraftersListAs(input: unknown): unknown
+vaultDraftersStatus(input: unknown): unknown
+vaultDraftersPolicySet(input: unknown): unknown
+vaultDraftersRevert(input: unknown): unknown
+vaultDraftersRevertAs(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
@@ -1068,6 +1081,8 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultProductivityCreate(input: unknown): unknown
 vaultProductivityTree(input: unknown): unknown
+vaultIngestAgUiImport(input: unknown): unknown
+vaultIngestAgUiRead(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown

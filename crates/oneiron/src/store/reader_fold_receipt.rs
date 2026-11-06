@@ -37,7 +37,8 @@ pub(crate) struct ReceiptSource {
 }
 
 /// One reader job a fold named: its task, its finding (none for a job that
-/// left none), its state, why it settled short, and the range it read.
+/// left none), its state, why it settled short, and its delegated primary range.
+/// A scoped finding alone does not establish byte coverage of that range.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReceiptFinding {
     pub(crate) task: EntityId,

@@ -17,6 +17,7 @@ pub mod coach_diagnostic;
 mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
+mod coach_prompt_repair;
 mod coach_repair;
 mod coach_research;
 mod coach_resolution;
@@ -38,6 +39,7 @@ pub mod fork_promote;
 pub mod honesty;
 pub mod identity;
 pub mod judge_label_rechecks;
+mod layout_suggestions;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;
@@ -278,6 +280,9 @@ pub(crate) fn execute(
         }
         coach::COACH_FOLD_SUGGESTIONS_FACET => {
             fold_suggestions::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_LAYOUT_SUGGESTIONS_FACET => {
+            layout_suggestions::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
