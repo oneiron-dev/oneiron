@@ -137,6 +137,37 @@ pub(super) fn mcp_pinned_memories(
         .map_err(super::mcp_api_error)
 }
 
+/// The working set's pins (FIX 17594, WORKING SET A) for this connector's
+/// `describe(self)`: the pins its keyframe's MEMORIES carries now, read by
+/// its board's own rules: the hook blocks [`mcp_hook_pins`] keeps to the
+/// connector's scope, and the manifest's pins only for a connector neither
+/// narrowed nor record-restricted ([`mcp_pinned_memories`]), in the room
+/// [`mcp_bound_room`] admits, each with the revision it served. Nothing is
+/// recorded: the receipt and the hook deliveries stay with a board that
+/// goes out. A read that fails logs and leaves the family `None`
+/// (unavailable).
+pub(crate) fn mcp_brief_pins(
+    server: &SyncServer,
+    actor: &McpCallContext,
+) -> Option<Vec<oneiron::context_board::BriefWorkingHandle>> {
+    let projected = mcp_hook_pins(server, actor).and_then(|pins| {
+        let room = mcp_bound_room(server, actor).map(|room| room.room);
+        mcp_pinned_memories(server, actor, &pins, room)
+    });
+    match projected {
+        Ok(pins) => {
+            crate::api::context_board::brief_pins_family(pins.as_ref().map(|pins| &pins.section))
+        }
+        Err(error) => {
+            tracing::warn!(
+                kind = error.kind,
+                "a connector's self brief pins did not read; the brief names them unavailable"
+            );
+            None
+        }
+    }
+}
+
 /// ROOM (FIX 1051): the room the caller's authenticated request binds, its
 /// room turn, read fresh through the caller's own facade handle as the HTTP
 /// board reads one. No room turn, or a room the caller cannot read, renders

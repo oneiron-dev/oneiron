@@ -42,7 +42,10 @@ impl RunHostDoor {
                     );
                 })
                 .ok()
-                .map(|read_key| oneiron::context_board::brief_credential_ceiling(proof, &read_key))
+                // A door's call arrives on no registered MCP connector.
+                .map(|read_key| {
+                    oneiron::context_board::brief_credential_ceiling(proof, &read_key, None)
+                })
         });
         BriefHostFacts {
             run_ceiling,

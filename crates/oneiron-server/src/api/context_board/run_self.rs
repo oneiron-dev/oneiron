@@ -337,9 +337,8 @@ pub(super) fn resolved_state(
     })
 }
 
-/// The vault's people as the agent's own lane on this device reads them,
-/// each `about` the stored line of the highest band that lane reads, and
-/// the names it may be told disclosed.
+/// The vault's people as the agent's own lane on this device reads them
+/// ([`read_people`]).
 fn run_people(
     server: &SyncServer,
     actor: oneiron::WriteActor,
@@ -352,6 +351,16 @@ fn run_people(
     let read = server
         .vault
         .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice));
+    read_people(server, &read)
+}
+
+/// The vault's people as `read` reads them, each `about` the stored line of
+/// the highest band that read reads, and the names it may be told
+/// disclosed.
+pub(super) fn read_people(
+    server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
+) -> MemoryResult<oneiron::context_board::People> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| {
