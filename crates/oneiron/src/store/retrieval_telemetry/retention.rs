@@ -208,7 +208,7 @@ pub(super) fn delete_retrieval_age(
     delete_retrieval_age_with_memory(target, txn, id, None)
 }
 
-fn delete_retrieval_age_with_memory(
+pub(super) fn delete_retrieval_age_with_memory(
     target: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     id: RetrievalRunId,
