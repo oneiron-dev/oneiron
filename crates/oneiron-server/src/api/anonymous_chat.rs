@@ -40,6 +40,8 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::models::ServedOffer;
 use crate::server::SyncServer;
 
+mod private_policy;
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/v1/ai/anonymous-chat", post(chat))

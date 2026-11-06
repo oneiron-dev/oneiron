@@ -28,6 +28,7 @@ use oneiron_model::llm::{
 };
 
 mod checked;
+mod run;
 use checked::{CheckedReplies, answer_tokens};
 
 use super::binding::PolicyContentBinding;
@@ -121,17 +122,6 @@ impl PolicyDecisions {
             budget,
             run: None,
         })
-    }
-
-    /// This question snapshot on the caller's existing run.
-    /// Provider admission and settlement stay on that run; the ladder's
-    /// retention and capture behavior are unchanged.
-    #[must_use]
-    pub fn for_run(&self, run: RunAdmission) -> Self {
-        Self {
-            run: Some(run),
-            ..self.clone()
-        }
     }
 
     /// A cached verdict cannot survive a change to this plane's ladder.
