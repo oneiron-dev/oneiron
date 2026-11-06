@@ -597,9 +597,18 @@ impl Vault {
                     Some(source) if source.files().iter().any(|file| file.path == body_path) => {
                         source
                     }
-                    _ => self
-                        .pack_source_in_txn(&txn, &row.source)?
-                        .ok_or(Error::EntityNotFound)?,
+                    current => {
+                        let previous = self
+                            .pack_source_in_txn(&txn, &row.source)?
+                            .ok_or(Error::EntityNotFound)?;
+                        match current {
+                            Some(source) => source
+                                .with_restored_hook(&previous, &row.hook)
+                                // Keep the original restoration if the combined tree is invalid.
+                                .unwrap_or(previous),
+                            None => previous,
+                        }
+                    }
                 };
                 let base = installed.map(|receipt| receipt.content_hash);
                 (candidate, body_path, base, source)

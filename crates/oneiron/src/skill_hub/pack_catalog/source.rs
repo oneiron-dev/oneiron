@@ -151,6 +151,49 @@ impl PackSource {
     pub fn entity_id(&self) -> Result<crate::EntityId> {
         super::codec::source_id(self)
     }
+    /// Restores one hook folder without replacing the current pack's other files.
+    pub(crate) fn with_restored_hook(&self, previous: &Self, hook: &str) -> Result<Self> {
+        let folder = format!("hooks/{hook}/");
+        let mut files = self.files.clone();
+        files.extend(
+            previous
+                .files
+                .iter()
+                .filter(|file| file.path.starts_with(&folder))
+                .cloned(),
+        );
+        let mut hooks = self.manifest.hooks.clone();
+        hooks.insert(hook.to_owned());
+        let value =
+            serde_json::to_string(&hooks).map_err(|_| invalid("hook list encoding failed"))?;
+        let manifest = files
+            .iter_mut()
+            .find(|file| file.path == "PACK.md")
+            .ok_or_else(|| invalid("pack requires PACK.md"))?;
+        let mut text = std::str::from_utf8(&manifest.content)
+            .map_err(|_| invalid("PACK.md is not UTF-8"))?
+            .to_owned();
+        let front = super::super::folder::source_frontmatter(&text)?
+            .ok_or_else(|| invalid("PACK.md requires frontmatter"))?;
+        let end = "---\n".len() + front.len();
+        let mut offset = "---\n".len();
+        let mut field = None;
+        for line in front.split_inclusive('\n') {
+            if line.split_once(':').is_some_and(|(key, _)| key == "hooks") {
+                field = Some(offset..offset + line.trim_end_matches(['\r', '\n']).len());
+                break;
+            }
+            offset += line.len();
+        }
+        if let Some(field) = field {
+            text.replace_range(field, &format!("hooks: {value}"));
+        } else {
+            text.insert_str(end, &format!("\nhooks: {value}"));
+        }
+        manifest.content = text.into_bytes();
+        Self::from_files(files)
+    }
+
     pub fn files(&self) -> &[HubFile] {
         &self.files
     }
