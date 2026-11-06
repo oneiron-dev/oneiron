@@ -807,6 +807,11 @@ impl PassExecutorFactory for ObservedFactory {
                 .get()
                 .and_then(std::sync::Weak::upgrade)
                 .and_then(super::coach_heal::WakeExecutor::for_server),
+            coach_host: self
+                .question_timer
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .and_then(super::coach_host::WakeExecutor::for_server),
         })
     }
 
@@ -823,6 +828,11 @@ impl PassExecutorFactory for ObservedFactory {
             .get()
             .and_then(std::sync::Weak::upgrade)
             .and_then(super::coach_heal::WakeExecutor::for_server);
+        let coach_host = self
+            .question_timer
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .and_then(super::coach_host::WakeExecutor::for_server);
         let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
             (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
@@ -873,6 +883,7 @@ impl PassExecutorFactory for ObservedFactory {
                         check,
                         decisions,
                         coach_heal: coach_heal.clone(),
+                        coach_host: coach_host.clone(),
                     })
                     .collect()
             })
@@ -1096,6 +1107,7 @@ struct ObservedExecutor<'p, E> {
     /// The server's decision host, which judges a completed TASK try's Done.
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
     coach_heal: Option<super::coach_heal::WakeExecutor>,
+    coach_host: Option<super::coach_host::WakeExecutor>,
 }
 
 /// The host's loan to a Dreamer-lane TASK's realization: the pass's route
@@ -1440,7 +1452,7 @@ pub(super) fn served_slot_model(
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
     fn runs_coach_host_jobs(&self) -> bool {
-        self.inner.runs_coach_host_jobs()
+        self.coach_host.is_some() || self.inner.runs_coach_host_jobs()
     }
 
     fn runs_coach_heals(&self) -> bool {
@@ -1464,6 +1476,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         let outcome = if attempt.status.attempt.kind
             == oneiron::dreamer_runner::COACH_HEAL_ATTEMPT_KIND
             && let Some(coach) = &self.coach_heal
+        {
+            coach.execute(attempt, ctx.now_ms / 1_000).await
+        } else if attempt.status.attempt.kind
+            == oneiron::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND
+            && let Some(coach) = &self.coach_host
         {
             coach.execute(attempt, ctx.now_ms / 1_000).await
         } else if attempt.status.payload.attempt_type
