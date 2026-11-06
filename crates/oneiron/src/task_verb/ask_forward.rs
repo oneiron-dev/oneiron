@@ -13,7 +13,8 @@
 //! intent is not an answer: the replica reports it pending until that result
 //! reads there. A hard erase of the holder retires their intents and those
 //! intents' results, or owes a pair a legal hold keeps its retirement until
-//! the hold lifts (`erase`, FIX 20468).
+//! the hold lifts (`erase`, FIX 20468). An intent or result that lands after
+//! that erase retires, or is owed its retirement, at its put (FIX 7494).
 //!
 //! Entry: [`Memory::tasks_answer_forward`] on the replica;
 //! [`drain_ask_forward_intents`] at the admitting node.
@@ -425,8 +426,10 @@ fn with_arrivals<T>(vault: &Vault, act: impl FnOnce(&mut AskForwardArrivals) -> 
 /// with no result yet, is noted for [`drain_ask_forward_intents`]. An intent
 /// with a result delivers it to the code runs parked on the intent, whether
 /// the result or the park came last. A result is accepted only once its
-/// intent is here: without it, the result waits as a pending dependency.
-/// Every other TASK row passes untouched.
+/// intent is here: without it, the result waits as a pending dependency. An
+/// intent or result whose holder this node hard-erased, which the erase never
+/// met, retires in this writer instead (`erase`). Every other TASK row passes
+/// untouched.
 pub(super) fn note_put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -449,6 +452,10 @@ pub(super) fn note_put_in_txn(
         }
         return Err(Error::Record(RecordError::AskDependencyPending));
     };
+    // FIX 7494: the holder's `dt:` marker, as sync ingest reads it.
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &stored.holder)? {
+        return erase::retire_erased_holder_pair_in_txn(vault, txn, stored.holder, intent);
+    }
     if let Some(result) = read_result(vault, txn, intent, &stored)? {
         return deliver_result_in_txn(vault, txn, intent, &result);
     }

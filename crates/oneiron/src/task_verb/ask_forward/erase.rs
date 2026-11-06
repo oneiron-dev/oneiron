@@ -17,6 +17,12 @@
 //! records, in its writer, that it owes the pair their retirement, and it is
 //! not complete while it does. Each due legal-hold pass retires every owed
 //! pair that no hold keeps any more, as the erase retires an unheld pair.
+//!
+//! A replica can take an intent before it learns of the erase, so the
+//! intent, or its result, can land here after it (FIX 7494). The erase never
+//! met that pair. Its put admits it, and the same writer retires it as that
+//! pass retires an owed pair, or owes it its retirement while a hold keeps
+//! it.
 
 use super::*;
 use crate::deletion::ActorErasureWriter;
@@ -83,19 +89,66 @@ pub(crate) fn settle_held_ask_forward_rows_in_txn(
         if pair_held_in_txn(vault, wtxn, intent, result)? {
             continue;
         }
-        if let Some(intent_at) = held_pair_time_in_txn(vault, wtxn, intent, result)? {
-            let fenced_at = retire_pair_in_txn(vault, wtxn, intent, result, intent_at)?;
-            vault.scrub_removal_exports_in_txn(wtxn, &[intent, result])?;
-            #[cfg(feature = "sync")]
-            owe_window_compactions_in_txn(vault, wtxn, fenced_at)?;
-            #[cfg(not(feature = "sync"))]
-            let _ = fenced_at;
-        }
-        crate::deletion::clear_held_ask_forward_intent_in_txn(vault, wtxn, &holder, &intent)?;
+        retire_pair_after_erase_in_txn(vault, wtxn, holder, intent, result)?;
         settled.extend([intent, result]);
     }
     drop_arrivals(vault, &settled);
     Ok(())
+}
+
+/// Retires, in the writer that puts it, a relayed intent or its result that
+/// lands after the hard erase of `holder` here, and the other row of the pair
+/// (FIX 7494). `intent` names the pair. The pair retires as a due legal-hold
+/// pass retires an owed pair, and the intent leaves the arrivals: it is
+/// never consumed, and its result is never delivered. A pair a legal hold
+/// keeps stays, and the erase of `holder` owes it its retirement, with the
+/// record its erase makes for a held pair (FIX 20468). A repeated arrival
+/// meets its row's `dt:` fence, or finds that record already made.
+///
+/// # Errors
+/// A storage error; the writer then commits nothing.
+pub(super) fn retire_erased_holder_pair_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    holder: EntityId,
+    intent: EntityId,
+) -> Result<()> {
+    let result = result_id(intent)?;
+    if pair_held_in_txn(vault, wtxn, intent, result)? {
+        return crate::deletion::owe_held_ask_forward_intents_in_txn(
+            vault,
+            wtxn,
+            &holder,
+            &BTreeSet::from([intent]),
+        );
+    }
+    retire_pair_after_erase_in_txn(vault, wtxn, holder, intent, result)?;
+    drop_arrivals(vault, &BTreeSet::from([intent, result]));
+    Ok(())
+}
+
+/// Retires a pair after the writer of its holder's erase: through
+/// [`retire_pair_in_txn`], when a row of it is here, and then as that
+/// erase's receipt scope retires its ids, since that receipt never changes.
+/// The archives kept for removed Owners lose both rows, and the sweep is owed
+/// the compaction of each row's window. Last, `holder`'s record that the
+/// pair is owed its retirement goes, if it has one (FIX 20468).
+fn retire_pair_after_erase_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    holder: EntityId,
+    intent: EntityId,
+    result: EntityId,
+) -> Result<()> {
+    if let Some(intent_at) = held_pair_time_in_txn(vault, wtxn, intent, result)? {
+        let fenced_at = retire_pair_in_txn(vault, wtxn, intent, result, intent_at)?;
+        vault.scrub_removal_exports_in_txn(wtxn, &[intent, result])?;
+        #[cfg(feature = "sync")]
+        owe_window_compactions_in_txn(vault, wtxn, fenced_at)?;
+        #[cfg(not(feature = "sync"))]
+        let _ = fenced_at;
+    }
+    crate::deletion::clear_held_ask_forward_intent_in_txn(vault, wtxn, &holder, &intent)
 }
 
 /// The intents stored here whose holder is `holder`, each with its time: one
