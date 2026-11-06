@@ -14,7 +14,12 @@
 //! revisions and snapshots, code memory, receipt archive, birth custody, hub
 //! packages and refinements), gate decisions, task mirror, scope stamp, VAD
 //! metadata and project-room indexes stay in place, and promotion brings its
-//! rows back beside them.
+//! rows back beside them. The owner's discard of a world copy
+//! ([`KeepControls::release_local_members`], FIX 14534) also takes each
+//! removed member's owned payload: its entity document and typed body, a
+//! NOTE's text slots, review workflow and deck outline, a BLOB_ARTIFACT's
+//! retained edit proposals, a CLAIM's Gate decisions (to their skeletons)
+//! and tray row, and its read caches (`member_removal::discard_owned_payload`).
 //! [`purge_left_shared_env_in_txn`] empties a left shared vault's whole
 //! environment the same way (OF-158).
 //!
@@ -31,9 +36,11 @@
 mod left_env;
 mod member_removal;
 
+pub(crate) use member_removal::discard_bundle_payload_in_txn;
+
 #[allow(unused_imports, reason = "L03's OF-158 leave calls these")]
 pub(crate) use left_env::{LEFT_ENV_KEPT_SAMPLE, LeftEnvPurge, purge_left_shared_env_in_txn};
-use member_removal::remove_member;
+use member_removal::{discard_owned_payload, remove_member, shared_carriers};
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Bound;
@@ -47,8 +54,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{
-    EdgeDirection, EdgeStoreRead, EntityStoreRead, TimelineQuery, WindowAddress,
-    WindowDeletionRows,
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, TimelineQuery, WindowAddress, WindowDeletionRows,
 };
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
@@ -123,8 +129,13 @@ pub(crate) struct KeepControls {
     /// NOTE requests, with that work and every edge they touch: the owner's
     /// discard of a world copy (FIX 14534, Engine 11-06 08:34). A pending
     /// tombstone, or a delete this vault's markers record, still keeps its
-    /// member, and every other keep rule holds.
+    /// member, and every other keep rule holds. Each member it removes takes
+    /// its document payload with it (call 4 = A).
     pub(crate) release_local_members: bool,
+    /// Keep each removed member's own `FacetOf` edge, the birth facet its
+    /// retained scope stamp names, so the row is admitted again against that
+    /// stamp when its world comes back (FIX 14534).
+    pub(crate) keep_birth_facets: bool,
     /// Most entity rows one call removes.
     pub(crate) max_removals: usize,
 }
@@ -138,6 +149,7 @@ impl Default for KeepControls {
             defer_on_queued_writes: true,
             defer_on_local_members: false,
             release_local_members: false,
+            keep_birth_facets: false,
             max_removals: 1024,
         }
     }
@@ -168,6 +180,10 @@ pub(crate) enum KeepReason {
     /// legal hold still needs, which no kept turn's text can take over: its
     /// tag set is that entity's only readable source here.
     ProvisionalOrigin,
+    /// A content-addressed byte carrier ASSET whose bytes a holder this call
+    /// does not remove still reads, for a caller that releases members (FIX
+    /// 14534): the bytes stay while it does.
+    SharedBytes,
 }
 
 /// What one call removed and kept, for the caller's log.
@@ -317,15 +333,26 @@ fn tear_members(
     crate::world_keys::unland_window_in_txn(store, txn, window)?;
     report.remaining = removable.len().saturating_sub(keep.max_removals);
     let batch = &removable[..removable.len().min(keep.max_removals)];
-    let removal = Removal::plan(store, txn, batch, report)?;
+    let removal = Removal::plan(store, txn, batch, keep.release_local_members, report)?;
     super::turn_missing::record_in_txn(store, txn, &removal.missing)?;
     // The leaves read the removed rows, their edges and other turns' sets.
     crate::tagging::demote_tags_in_txn(store, txn, &removal.gone, &removal.partial)?;
     crate::dreamer_wake::demote_in_txn(store, txn, &removal.gone)?;
     let edges = doc.get_map("edges");
+    if keep.release_local_members {
+        discard_owned_payload(store, txn, &removal.order)?;
+    }
     for id in &removal.order {
         let released = members.released.contains(id);
-        remove_member(store, txn, &edges, id, released, report)?;
+        remove_member(
+            store,
+            txn,
+            &edges,
+            id,
+            released,
+            keep.keep_birth_facets,
+            report,
+        )?;
         if released {
             release_local_work(store, txn, window, id)?;
         }
@@ -372,6 +399,18 @@ fn persisted_window_doc(store: &Store, txn: &RoTxn<'_>, window: &WindowKey) -> R
         row??;
     }
     Ok(doc)
+}
+
+/// Whether a hold stands on BLOB_ARTIFACT `id`, stored as `raw`, or on a
+/// claim or the bytes of any of its versions.
+fn artifact_payload_held(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let hashes = crate::blob_artifact::held_content_hashes_in_txn(store, txn, id, raw)?;
+    crate::blob_artifact::artifact_payload_held_in_txn(store, txn, id, &hashes)
 }
 
 /// One pass's keep rules over the window's members.
@@ -515,7 +554,13 @@ impl<'a> Census<'a> {
             KeepReason::LegalHold
         } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
             || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+            || (self.keep.release_local_members
+                && kind == registry::ENTITY_TYPE_BLOB_ARTIFACT
+                && artifact_payload_held(self.store, txn, id, raw)?)
         {
+            // The owner's discard takes an artifact's version chain with it:
+            // a hold on any of its versions' claims or bytes keeps the
+            // artifact, and so its byte carriers (FIX 14534).
             KeepReason::Guarded
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
@@ -528,10 +573,21 @@ impl<'a> Census<'a> {
             // the member, so a later call keeps it the same (FIX 14534).
             KeepReason::Tombstoned
         } else if crate::store::ASSET_FILE_PLANE
-            && crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?.is_some()
+            && let Some(manifest) =
+                crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?
+            && !(self.keep.release_local_members
+                && crate::sync::asset_body::home_proof::received_from_home_in(
+                    self.store,
+                    txn,
+                    *id,
+                    &manifest.facts.blake3,
+                    manifest.facts.len,
+                )?)
         {
             // A file-plane ASSET's body moves outside Loro; the home's
-            // window ack does not durably hold the body (FIX 5393).
+            // window ack does not durably hold the body (FIX 5393). The
+            // owner's discard lets go of one whose body this machine took
+            // from its home (FIX 14534, Engine 11-06 19:59 call).
             KeepReason::NotCarried
         } else if !self.keep.release_local_members
             && !map_contains_binary(&self.entities, &id.to_hex())
@@ -601,14 +657,31 @@ struct Removal {
 impl Removal {
     /// Plans `batch`, the census's removable members this call takes. A TURN
     /// a provisional entity still needs as its origin stays whole, and the
-    /// rest is planned again without it, until no such turn is left.
+    /// rest is planned again without it, until no such turn is left. A caller
+    /// that releases members (`release`) keeps each byte carrier a holder it
+    /// does not remove still reads ([`shared_carriers`]).
     fn plan(
         store: &Store,
         txn: &RoTxn<'_>,
         batch: &[EntityId],
+        release: bool,
         report: &mut RemovedReplica,
     ) -> Result<Self> {
         let mut order = batch.to_vec();
+        // A kept carrier can hold another carrier's bytes in turn: to a
+        // fixed point.
+        if release {
+            loop {
+                let shared = shared_carriers(store, txn, &order)?;
+                if shared.is_empty() {
+                    break;
+                }
+                order.retain(|id| !shared.contains(id));
+                for id in shared {
+                    report.kept.push((id, KeepReason::SharedBytes));
+                }
+            }
+        }
         loop {
             let gone: BTreeSet<EntityId> = order.iter().copied().collect();
             let missing = partial_turns(store, txn, &gone)?;
