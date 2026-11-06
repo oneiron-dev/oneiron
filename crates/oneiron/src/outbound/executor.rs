@@ -279,6 +279,7 @@ impl Vault {
             // looked up first, and the owner's resend goes once unlooked.
             request.engine_send_id = Some(taken.engine_send_id.clone());
             request.owner_released_resend = taken.owner_released_resend;
+            request.send_approved_at = Some(task.occurred_at);
             request.earlier_send_lookup =
                 !taken.owner_released_resend && earlier_executor_may_have_sent(&taken);
             let receipt_id = request.receipt_id.clone();
