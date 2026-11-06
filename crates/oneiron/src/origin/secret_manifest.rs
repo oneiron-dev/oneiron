@@ -30,9 +30,6 @@ use crate::store::code_snapshot::RepoRef;
 /// ignore templates leave it out of commits; a manifest must be committed.
 pub const SECRET_MANIFEST_PATH: &str = ".oneiron/secret-manifest.toml";
 
-/// The largest manifest read: names and paths, far below this.
-const MANIFEST_LIMIT: usize = 256 * 1024;
-
 /// A manifest read from one published commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OriginSecretManifest {
@@ -285,9 +282,6 @@ fn manifest_bytes(
     // fails as a whole, and that is no answer to give the owner.
     match wire.object_size(repo, &oid)? {
         None => Ok(None),
-        Some(size) if size > MANIFEST_LIMIT as u64 => Err(Error::Secret(
-            SecretError::InvalidSecretCustodyBody("secret manifest is larger than 256 KiB"),
-        )),
         Some(_) => Ok(Some(wire.read_object(repo, &oid)?)),
     }
 }

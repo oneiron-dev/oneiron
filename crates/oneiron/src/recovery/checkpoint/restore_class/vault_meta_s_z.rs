@@ -72,6 +72,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SESSION_TURN_MEMBERSHIP, CONTENT),
     (&t::SESSION_TURNS, CONTENT),
     (&t::BACKUP_POLICY, LIVE),
+    (&t::BOARD_LAYOUT_SETTINGS, LIVE),
     (&t::CUSTOMIZATION_EVENT, LIVE),
     (&t::CUSTOMIZATION_EVENT_SEQUENCE, LIVE),
     (&t::CUSTOMIZATION_SETTINGS, LIVE),
@@ -134,6 +135,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SHORT_ID_KIND_COUNTER, CONTENT),
     (&t::SKILL_CALLABLE_CASE, CONTENT),
     (&t::SKILL_CALLABLE_CASE_INDEX, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
@@ -239,6 +241,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE, CONTENT),
     (&t::SKILL_RELIABILITY_OUTCOME, CONTENT),
     (&t::SKILL_RELIABILITY_PAIRED_OUTCOME, CONTENT),
+    // A change to a source's readers is history, restored with the rows it
+    // admitted; the policy itself is live authority: a restore never gives
+    // back a reader removed since, or takes away one added (FIX 12559).
+    (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
+    (&t::SOURCE_AUDIENCE_POLICY, LIVE),
+    // A row's birth binding stands with the row as the image holds it.
+    (&t::SOURCE_AUDIENCE_RECORD, CONTENT),
+    (&t::SOURCE_AUDIENCE_THREAD, CONTENT),
     (&t::SPAWN_PLANNED_INTENT, LIVE),
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
@@ -372,6 +382,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
     (&t::WEB_CONNECTOR_SETTING, CONTENT),
     (&t::WEB_CONNECTOR_USAGE, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT, CONTENT),
+    (&t::WORKFLOW_TOOL_CHECKPOINT_FENCE, CONTENT),
     (&t::WORKSPACE_ROSTER_COMPANION_PRINCIPAL, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER, CONTENT),
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),

@@ -41,6 +41,7 @@ use std::sync::Arc;
         (status = 400, description = "Malformed context-pack request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or the vault's inference policy refuses a media query's ai.embed call.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 408, description = "The explicit signals_deadline_ms expired; no signal page or advanced cursor was published.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -79,6 +80,14 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
+    oneiron::memory::caps::check_deadline_ms(req.signals_deadline_ms)
+        .map_err(|error| ApiError::bad_request(error.to_string(), Some("signals_deadline_ms")))?;
+    if req.signals_deadline_ms.is_some() && req.signals_since.is_none() {
+        return Err(ApiError::bad_request(
+            "signals_since is required for reaction signals",
+            Some("signals_since"),
+        ));
+    }
     // Every ref the request names resolves under the caller's own read: a
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
@@ -163,8 +172,20 @@ pub(crate) async fn run_context_pack(
     let (mut media_memory, media) = (server.memory.empty_lease(), media);
     media_memory.materialized(
         0,
-        (media.capacity() as u64)
-            .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+        media.iter().fold(
+            (media.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+            |bytes, seed| {
+                let vector_bytes = (seed.vector.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<f32>() as u64);
+                let kind_bytes = (seed.kinds.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64);
+                bytes
+                    .saturating_add(seed.space.capacity() as u64)
+                    .saturating_add(vector_bytes)
+                    .saturating_add(kind_bytes)
+            },
+        ),
     );
 
     let mut builder = server
@@ -583,6 +604,7 @@ fn read_reaction_signals(
         if req.signals_after.is_some()
             || req.signals_limit.is_some()
             || req.signals_person.is_some()
+            || req.signals_deadline_ms.is_some()
         {
             return Err(ApiError::bad_request(
                 "signals_since is required for reaction signals",
@@ -607,10 +629,28 @@ fn read_reaction_signals(
         .as_deref()
         .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
         .transpose()?;
+    let deadline = req
+        .signals_deadline_ms
+        .map(|ms| oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms)));
+    let signal_error = |error: oneiron::Error| match &error {
+        oneiron::Error::Io(error)
+            if error.get_ref().is_some_and(|source| {
+                source.is::<oneiron::reaction::ReactionSignalDeadlineExceeded>()
+            }) =>
+        {
+            ApiError::deadline_exceeded("signals_deadline_ms")
+        }
+        _ => core_engine_error("reaction signal read failed", error),
+    };
+    let checkpoint = || {
+        deadline.as_ref().map_or(Ok(()), |deadline| {
+            oneiron::reaction::check_reaction_signal_deadline(deadline).map_err(signal_error)
+        })
+    };
     let signals = server
         .vault
-        .reactions_since(person, since)
-        .map_err(|e| core_engine_error("reaction signal read failed", e))?;
+        .reactions_since_with_deadline(person, since, deadline.as_ref())
+        .map_err(signal_error)?;
     // A credential reads each signal under its own key, as the pack does, so
     // a full-scope slip that is not the owner's hears of nothing its key
     // withholds. Only an owner-grade caller with no slip keeps the raw feed
@@ -624,6 +664,7 @@ fn read_reaction_signals(
         || req.interlocutors.is_some();
     let mut kept = Vec::new();
     for signal in signals {
+        checkpoint()?;
         if scoped
             && !scoped_read
                 .is_reaction_signal_readable_under(&signal, disclosure)
@@ -648,6 +689,7 @@ fn read_reaction_signals(
         }
         kept.push(signal);
     }
+    checkpoint()?;
     let page = oneiron::reaction::page_reaction_signals(
         kept,
         req.signals_after.as_deref(),
@@ -655,8 +697,8 @@ fn read_reaction_signals(
             .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
     )
     .map_err(|e| core_engine_error("reaction signal page failed", e))?;
-    response.signals_next = page.next;
-    response.signals = page
+    checkpoint()?;
+    let signals = page
         .signals
         .into_iter()
         .map(|signal| CoreReactionSignal {
@@ -669,5 +711,8 @@ fn read_reaction_signals(
             recorded_at: signal.recorded_at,
         })
         .collect();
+    checkpoint()?;
+    response.signals_next = page.next;
+    response.signals = signals;
     Ok(())
 }
