@@ -51,7 +51,7 @@ use super::coach_heal::HealRoute;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::step_replay::StepReplayCapsule;
 use crate::failure_signals::{
-    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplay, ExactReplayRequest,
+    CandidateFix, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplayRequest,
     FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage,
     ReplayFidelity, SealedCodeFix, Sealing, ShadowRun, code_fix_source_snapshot,
 };
@@ -532,9 +532,9 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
-        // An erased capsule's call is never replayed, rebuilt or not (FIX
-        // 6251): nothing is classed or drafted for it.
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        // An erased capsule's call, or one whose route prompt is unavailable,
+        // is never replayed (FIX 6251, 6255): nothing is classed or drafted.
+        if snapshot.replay.exact.runs_none() {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::ReplayUnavailable,
@@ -658,7 +658,7 @@ impl Vault {
             Ok(snapshot) => snapshot,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
-        if matches!(snapshot.replay.exact, ExactReplay::Erased) {
+        if snapshot.replay.exact.runs_none() {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
         let candidates = missing.to_vec();
