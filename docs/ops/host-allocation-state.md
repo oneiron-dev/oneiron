@@ -89,12 +89,32 @@ the vault writer. This is memory custody, not durable terminal crash recovery.
 The server must retain the selected backend and invoke this drain from its
 existing usage lifecycle when it installs the concrete producer.
 
-This is not server activation. The server still needs an `AllocationProducer`
-that freezes its original `AdmittedCall` under its actual custody/erase contract,
-preserves service-cost updates, and stages the original event into the existing
-usage.pending pipeline. A receipt sink is an observer on the native path, not
-that producer. Crash recovery and accepted-terminal reconciliation remain open;
-a false dispatch observation is never permission to release an old hold.
+This is not server activation. `VaultUsage::allocation_producer` now creates
+`NativeUsageProducer` from the original usage ledger and its same vault. Its
+freeze callback stores the one original `AdmittedCall`, not a second field list
+or a fake settled usage event. The separate `USAGE_ADMITTED_CALL` family is LIVE
+and not imaged into checkpoint payloads. Native source/actor erasure removes
+nullable source and actor associations while preserving the original owner,
+rates, service cost and pending allocation custody. Writes check the same
+writer's hard-erasure markers. A later terminal reads those stored facts, never
+an old memory snapshot that could restore erased attribution.
+
+The producer's typed `record_service_cost` updates that original admitted row
+for a service call. A model call's frozen rate snapshot is unchanged. The actual
+native service consumers must be wired to this typed path before activation;
+the existing ordinary memory service-cost method is unchanged. Terminal staging
+uses the existing pure event builder and `UsageLedger` pending pipeline in the
+hold's writer, then removes the admission in that same commit. An undispatched
+terminal removes its admission without creating served usage.
+
+Optional model-call evidence and its NoRecord checks remain separate. This
+producer does not capture a prompt, response or credential, and does not change
+the existing usage path's billing or suppress settlement because an evidence
+write is absent. The actual server still needs to select the persistent backend,
+bind native service-cost failures and retry lifetime, and choose receipt sinks
+that only observe rather than independently bill the same call. Crash recovery
+and accepted-terminal reconciliation remain open; a false dispatch observation
+is never permission to release an old hold.
 
 Cloud accepted-terminal identity, serving-retirement reconciliation and backing
 return remain the hosted control plane's responsibility. Native revisions,
