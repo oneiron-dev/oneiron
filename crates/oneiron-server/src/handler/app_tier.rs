@@ -536,6 +536,23 @@ fn answer_app_message(
                     ),
                 )));
             }
+            if matches!(
+                request.method.as_str(),
+                "residence.bundle.list" | "residence.bundle.get"
+            ) {
+                crate::livequery::residence_rpc_to(
+                    server,
+                    &bound,
+                    peer,
+                    request,
+                    &mut state.residence_index,
+                    &mut state.authority_append_stage,
+                    &mut state.residence_touch,
+                    conn,
+                    direct_tx,
+                )?;
+                return Ok(None);
+            }
             crate::livequery::residence_rpc(
                 server,
                 &bound,

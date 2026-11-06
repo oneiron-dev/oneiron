@@ -431,6 +431,36 @@ pub(crate) fn residence_rpc(
     )
 }
 
+/// Routes and queues a bundle reply one frame at a time on the socket's owner loop.
+/// The eager residence answer keeps its original encoding and receipt behavior.
+pub(crate) fn residence_rpc_to(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    peer: oneiron::authority::PeerMachine,
+    request: RpcRequest,
+    index_cache: &mut Option<ResidenceIndexCache>,
+    append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
+    touch_stage: &mut Option<ResidenceTouchStage>,
+    conn: u32,
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    let reply = residence::run(
+        server,
+        auth,
+        peer,
+        request,
+        index_cache,
+        append_stage,
+        touch_stage,
+    )?;
+    for frame in reply.queued_frames(conn) {
+        direct_tx
+            .send(frame)
+            .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+    }
+    Ok(())
+}
+
 /// Whether `method` is a home handoff or exact pad call that a socket may
 /// make with its machine proof and no bound actor.
 pub(crate) fn machine_handoff_method(method: &str) -> bool {
