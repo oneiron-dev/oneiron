@@ -4085,7 +4085,7 @@ declare namespace Sdk {
   type Landing = "merge" | "switch";
   type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
-  type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null };
+  type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null; graphics?: GraphicLimits | null };
   type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null; reconciliation?: VersionReconciliation | null };
   type DeckGateRequest = { profile?: string | null };
   type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";

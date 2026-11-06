@@ -137,3 +137,13 @@ handoff hash and settlement replay. The asset identity/hash checks, factual-use
 and provenance rules, resource admission, capacity errors, candidate part-diff
 checks, and reports are unchanged. Native deck creation and live export retain
 their existing defaults; this is only the transaction slice of FIX 10653.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+The live deck export profile accepts optional `GraphicLimits`. The projector resolves
+those settings once and passes them to both new-picture creation and bound-picture
+replacement. Existing held-media paths do not re-admit their bytes. Omitting the
+settings keeps the existing numeric defaults and the old profile/key serialization.
+An explicit setting is part of `ExportKey`, so a memo for another setting cannot
+stand in for it. The projector signature and export gate remain unchanged.

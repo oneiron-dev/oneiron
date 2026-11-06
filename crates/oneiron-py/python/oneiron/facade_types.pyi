@@ -20727,6 +20727,7 @@ class DeckExportRequest(TypedDict):
     artifact_ref: str
     run_ref: str
     made_by: NotRequired[Any | None]
+    graphics: NotRequired[GraphicLimits | None]
 class DeckExportView(TypedDict):
     frontier: list[int]
     profile: str

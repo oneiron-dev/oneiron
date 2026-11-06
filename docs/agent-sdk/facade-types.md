@@ -7950,7 +7950,7 @@ export type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; rev
 /** `oneiron_docedit::live::pptx::LandingReceipt` */
 export type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] }
 /** `oneiron::office_body::pptx::verbs::DeckExportRequest` */
-export type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null }
+export type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null; graphics?: GraphicLimits | null }
 /** `oneiron::office_body::pptx::verbs::DeckExportView` */
 export type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null; reconciliation?: VersionReconciliation | null }
 /** `oneiron::office_body::pptx::verbs::DeckGateRequest` */
