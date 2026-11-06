@@ -266,21 +266,8 @@ impl TaggingReconciler {
         Ok(None)
     }
 
-    /// The class the marker of row `id`, read as `payload`, is owed at as
-    /// the row stands in `txn`: a live write may have promoted it since it
-    /// was read. A row gone or unreadable since keeps the class `payload`
-    /// carries.
-    fn persisted_work_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: AttemptId,
-        payload: &MarkerPayload,
-    ) -> Result<ExtractionWork> {
-        let persisted = self.persisted_payload_in_txn(txn, id)?;
-        let payload = persisted.as_ref().unwrap_or(payload);
-        Ok(payload.effective_work(&self.vault))
-    }
-
+    /// The marker's current payload, including promotions and caller
+    /// contexts added since preparation. An absent or unreadable row is None.
     pub(super) fn persisted_payload_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -322,9 +309,12 @@ impl TaggingReconciler {
             trace.outcome = TaggingOutcome::Rekeyed;
             self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let now = self.stamp_in_txn(txn)?;
-                let work = self.persisted_work_in_txn(txn, record.id, &payload)?;
-                let hint_read = self
-                    .persisted_payload_in_txn(txn, record.id)?
+                let persisted = self.persisted_payload_in_txn(txn, record.id)?;
+                let work = persisted
+                    .as_ref()
+                    .unwrap_or(&payload)
+                    .effective_work(&self.vault);
+                let hint_read = persisted
                     .map(|payload| payload.hint_read)
                     .unwrap_or(QueuedHintRead::caller(None));
                 enqueue_marker_with_hint_read_in_txn(
