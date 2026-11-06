@@ -30,7 +30,8 @@ use crate::temporal::TimeRange;
 /// kept deck outline, the born-with prose a copy carried and its own derived
 /// index copy, the recognition prints enrolled for it, a BLOB_ARTIFACT's
 /// deck creation record, retained edit proposals, version chain, byte holds
-/// and its exports' shown author and adaptation lines, an ASSET's hold on
+/// and its exports' shown author and adaptation lines, the quotes its
+/// Unattached comments keep of their spots, an ASSET's hold on
 /// the blob it names, a CLAIM's Gate decisions (left as their retention
 /// skeletons) and pending Gate tray row, the bodies each one owns (a last
 /// holder's file goes to the local collector) and its fetched read caches.
@@ -81,6 +82,7 @@ pub(super) fn discard_owned_payload(
         crate::edit_settle::purge_artifact_retention_in_txn(store, txn, artifact)?;
         crate::blob_artifact::discard_local_copy_in_txn(store, txn, artifact)?;
         crate::office_body::discard_export_payload_in_txn(store, txn, artifact)?;
+        crate::anchored_annotation::discard_snapshot_payload_in_txn(store, txn, artifact)?;
     }
     // An ASSET's body is read for the blob it names while its descriptor
     // still stands; the descriptors go after.
