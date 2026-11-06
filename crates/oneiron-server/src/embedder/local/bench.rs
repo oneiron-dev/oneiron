@@ -181,9 +181,7 @@ fn bench_query_latency_under_bulk() {
     let started = Instant::now();
     let mut busy = Vec::new();
     std::thread::scope(|scope| {
-        let filling = crate::engine_thread("embedder-bench-fill".into())
-            .spawn_scoped(scope, || fill(&embedder, &docs))
-            .expect("failed to spawn thread");
+        let filling = scope.spawn(|| fill(&embedder, &docs));
         for query in queries[20..].iter().cycle() {
             if filling.is_finished() {
                 break;
