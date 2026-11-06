@@ -684,12 +684,16 @@ fn insert_ready_row<R: Read + Seek>(
             } else {
                 Vec::new()
             };
-            // FIX 8741 review: a text whose archived sources are all placed
-            // ASSETs here is restored through facet rule C's birth door, so
-            // its put is stamped with its sources' facet and the archived
-            // FacetOf edge then reads as that birth. A source this vault
-            // does not hold keeps today's put beside the archived edges.
+            // FIX 8741 review: a text the archive carries with a birth
+            // FacetOf stamp, whose archived sources are all placed ASSETs
+            // here, is restored through facet rule C's birth door, so its put
+            // is stamped with its sources' facet and the archived FacetOf
+            // edge then reads as that birth. A text the archive carries with
+            // no birth stamp was never placed and stays unplaced (round 2:
+            // placing it would widen who may read it), and a source this
+            // vault does not hold keeps today's put beside the archived edges.
             let placed = !sources.is_empty()
+                && archived_birth_facet(&archive, &id)?.is_some()
                 && sources.iter().try_fold(true, |all, source| {
                     Ok::<_, Error>(all && stored_asset_in_txn(vault, wtxn, source)?)
                 })?;
