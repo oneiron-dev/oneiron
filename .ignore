@@ -1,4 +1,3 @@
 # Generator output: rg and fd skip it by default; `rg -u` reads it.
 crates/**/generated/**
-# The decision ladder's generated-read module is hand-written.
-!crates/oneiron/src/llm/decision/generated/**
+# Hand-written decision reads live in generated_read/, outside this pattern.
