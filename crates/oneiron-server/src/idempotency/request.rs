@@ -113,7 +113,10 @@ async fn idempotent(
     // Each keyed admission reclaims one page of expired entries (FIX 5951).
     state.store.reclaim_expired_page().await;
     let _guard = state.store.lock_for(&store_key).await;
-    match state.store.lookup(&store_key, &target, &request_body) {
+    match state
+        .store
+        .lookup(&store_key, &target, &request_body, &state.server.memory)
+    {
         Ok(IdempotencyLookup::Replay(response)) => {
             // A legacy route's caller keys its partition alone; its replay
             // stays the legacy one.

@@ -421,3 +421,36 @@ This covers only the final frozen receipt tuple after allocation. Its temporary
 system-message JSON, prompt stamp, hash serialization, later receipt-map copies,
 record text and request-digest copies remain separate storage. No memory wait,
 admission, cap, deadline, refusal, policy, schema or caller behavior changes.
+
+## Escaping board row-ID buffer custody
+
+Each final `ServedRows` row, replay-admission and source vector has its own
+immutable payload owner. The owner records the actual vector capacity on the
+producer's original server memory line after construction. Its vector drops
+before its holder. An empty default has no backing or holder.
+
+The keyed response still clones the entire extension and moves the same three
+fields into its cached response. Each cloned vector receives a fresh holder for
+its own actual capacity on the original memory line. No lease or source byte
+count is copied to a different allocation. Replay still reads the same slices,
+and a cached response reconstructed from storage captures its newly decoded
+row vectors and moved source vector on that request's server memory line.
+
+Both chat board paths move the row owner, not a naked vector. The live-turn
+admission clone owns its separate row buffer. The queued-action path returns the
+same owner to its existing caller, which reads the same source slice. The
+admission and device-local release decisions are unchanged.
+
+Converting a cached response to a stored entry still stringifies its rows and
+admission list and moves its original source vector into the source stamps.
+The local source owner keeps the holder while the stored entry is built. The
+completed stored-entry wrapper owns that holder after its entry field, so the
+source vector remains charged through the original synchronous settlement call
+and drops before the holder on its return, error or unwind. The durable entry
+and replay formats are unchanged.
+
+These holders cover only the final row-ID vector backing after allocation.
+Producer growth, temporary overlap, encoded and decoded entry buffers, newly
+stringified row/admission lists, cached body/header copies, source-set copies,
+allocation peaks and retained-input FIFO progress remain separate work. No
+memory wait, admission, cap, deadline, refusal, policy or format changes here.

@@ -894,11 +894,12 @@ async fn hydrate_inner(
     // retires the kept response.
     served.extend(standing_claims.iter().copied());
     Ok((
-        axum::Extension(crate::idempotency::ServedRows {
-            rows: served,
-            admit: Some(admit),
-            sources: standing_claims,
-        }),
+        axum::Extension(crate::idempotency::ServedRows::new(
+            served,
+            Some(admit),
+            standing_claims,
+            &server.memory,
+        )),
         Json(response),
         rider_key.map(|key| ChatRiderAck {
             key,
@@ -1030,7 +1031,7 @@ pub(crate) struct ChatBoard {
     /// The one board frame, fenced and attributed by its renderer.
     pub(crate) block: String,
     /// Every row the board served.
-    pub(crate) rows: Vec<oneiron::EntityId>,
+    pub(crate) rows: crate::idempotency::RetainedRowIds,
     /// What the turn's context records keep of it (FIX 6921); `None` when
     /// its MEMORIES did not match its settled render.
     pub(crate) context: Option<ChatContextCapture>,
