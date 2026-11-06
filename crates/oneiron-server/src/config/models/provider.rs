@@ -334,7 +334,10 @@ pub struct ProviderConfig {
     pub family: Option<String>,
     /// One wire model's own family, in place of `family`.
     pub model_families: BTreeMap<String, String>,
-    /// Where calls to this provider run, for the engine's route checks.
+    /// Where calls to this provider's endpoint run, for the engine's route
+    /// checks. Never on device: a managed EXL3 worker's native channel is a
+    /// separate on-device offer the server derives (I2-LOCAL), and this is
+    /// the locality of every call that may reach the endpoint.
     pub locality: ModelLocality,
     /// Revision stamped on every engine model id from this provider, so a
     /// change of served weights can be recorded as a new identity.
@@ -454,9 +457,13 @@ impl ProviderFile {
                 "models.providers.{name}.response_format applies to OpenAI-compatible providers only"
             );
         }
+        // On device is a property of a transport, never of an endpoint: an
+        // in-process runtime, or the native channel to a managed worker this
+        // server supervises (I2-LOCAL), which the server derives itself. A
+        // provider row names an HTTP endpoint, so it cannot assert it.
         if self.locality == Some(ModelLocality::OnDevice) {
             anyhow::bail!(
-                "models.providers.{name}.locality: on_device names an in-process runtime; a model server reached over HTTP, even on this machine, is own_server"
+                "models.providers.{name}.locality: on_device is derived, never configured: an in-process runtime, or the authenticated native channel to a managed worker this server supervises; a model server reached over HTTP, even on this machine, is own_server"
             );
         }
         let revision = self.revision.unwrap_or_else(|| "live".to_owned());
