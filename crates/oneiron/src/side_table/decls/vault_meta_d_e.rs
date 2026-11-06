@@ -121,6 +121,8 @@ side_tables! {
     /// Named token-budget counter row (total/remaining/reserved units) keyed by budget id. Key:
     /// string.
     DREAMER_BUDGET: VaultMeta b"dreamer:budget:" Raw;
+    /// Original native NET call admission, invoice and atomic paid fact. Key: id16 + u32be + u64be + u32be.
+    DREAMER_BUDGET_NATIVE_CALL: VaultMeta b"dreamer:budget_native_call:" Named;
     /// Reservation of budget units against one child attempt, keyed by (budget id, attempt id). Key:
     /// u16be + string + id16.
     DREAMER_BUDGET_RESERVATION: VaultMeta b"dreamer:budget_reservation:" Raw;
