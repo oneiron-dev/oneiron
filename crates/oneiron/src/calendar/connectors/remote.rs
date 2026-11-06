@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::inbound::read_event_name;
 use super::outbound::{
-    CalendarRemoteObjectRow, CalendarWriteOutboxRow, LOCAL_UID_DOMAIN, OUTBOX, OUTBOX_ROW_TAG,
-    ingest_error, read_outbox_row, read_remote_object,
+    CalendarRemoteObjectObservation, CalendarRemoteObjectRow, CalendarWriteOutboxRow,
+    LOCAL_UID_DOMAIN, OUTBOX, OUTBOX_ROW_TAG, ingest_error, read_outbox_row, read_remote_object,
 };
 use super::seat::CalendarConnectorError;
 
@@ -58,6 +58,19 @@ pub enum RemoteCalendarChange {
         /// The VEVENT UID that resource carried.
         uid: String,
     },
+    /// A full listing of the collection no longer carries the object (fix
+    /// list row 19192): removed remotely, provided this seat's remote object
+    /// row is still the one `observation` saw before the listing and no
+    /// write of the UID is in flight. Its admission checks both, and fails
+    /// the sync for a retry rather than skip it.
+    Omitted {
+        /// Provider-side resource path.
+        href: String,
+        /// The VEVENT UID that resource carried.
+        uid: String,
+        /// The remote object row as the listing's snapshot read it.
+        observation: CalendarRemoteObjectObservation,
+    },
 }
 
 impl RemoteCalendarChange {
@@ -66,7 +79,7 @@ impl RemoteCalendarChange {
     pub fn uid(&self) -> &str {
         match self {
             Self::Upsert(object) => object.uid.as_str(),
-            Self::Delete { uid, .. } => uid.as_str(),
+            Self::Delete { uid, .. } | Self::Omitted { uid, .. } => uid.as_str(),
         }
     }
 
@@ -75,7 +88,7 @@ impl RemoteCalendarChange {
     pub fn href(&self) -> &str {
         match self {
             Self::Upsert(object) => object.href.as_str(),
-            Self::Delete { href, .. } => href.as_str(),
+            Self::Delete { href, .. } | Self::Omitted { href, .. } => href.as_str(),
         }
     }
 }
@@ -142,6 +155,23 @@ pub trait CalendarRemoteTransport {
         cursor: Option<&str>,
     ) -> Result<RemoteSyncBatch, CalendarConnectorError>;
 
+    /// The zone the remote collection names its own, which places the
+    /// all-day days of the resources it carries that name none (fix list row
+    /// 19192). A write renders it into the resource before the resource's
+    /// hashes are staged, so the bytes it sends are the ones the next pull
+    /// reads. `Ok(None)`, the default, when the provider names none.
+    ///
+    /// # Errors
+    ///
+    /// Same contract as [`Self::pull`].
+    fn resource_calendar_timezone(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+    ) -> Result<Option<String>, CalendarConnectorError> {
+        Ok(None)
+    }
+
     /// Conditionally stores one VEVENT resource.
     ///
     /// # Errors
@@ -198,7 +228,9 @@ pub fn classify_remote_change(
     change: &RemoteCalendarChange,
 ) -> EchoDisposition {
     let object = match change {
-        RemoteCalendarChange::Delete { .. } => return EchoDisposition::ApplyRemoteDeletion,
+        RemoteCalendarChange::Delete { .. } | RemoteCalendarChange::Omitted { .. } => {
+            return EchoDisposition::ApplyRemoteDeletion;
+        }
         RemoteCalendarChange::Upsert(object) => object,
     };
     let Some(passport) = passport else {
@@ -297,7 +329,9 @@ pub(super) fn ics_content_hash(ics: &[u8], uid: &str) -> Result<[u8; 32], Calend
 }
 
 /// Renders the owner-calendar `VCALENDAR` document for one EVENT, over the
-/// archived `source` the resource was last read from when there is one.
+/// archived `source` the resource was last read from when there is one, its
+/// all-day days placed by `collection_zone` when the source names no zone
+/// (fix list row 19192).
 ///
 /// Private on purpose: CAL-04 owns the universal invite-out emit half in
 /// [`super::ics`]. This is the minimum a conditional own-calendar PUT needs, and
@@ -310,8 +344,17 @@ pub(super) fn render_owner_vevent(
     sequence: u32,
     now: u64,
     source: Option<&[u8]>,
+    collection_zone: Option<&str>,
 ) -> Result<super::resource::RenderedResource, CalendarConnectorError> {
-    super::resource::render(vault, event_ref, uid, sequence, now, source)
+    super::resource::render(
+        vault,
+        event_ref,
+        uid,
+        sequence,
+        now,
+        source,
+        collection_zone,
+    )
 }
 
 pub(super) fn render_component(

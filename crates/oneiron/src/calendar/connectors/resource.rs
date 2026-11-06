@@ -98,6 +98,12 @@ pub(super) struct RenderedResource {
 /// the render does not own (`OWNED_PROPERTIES`): DESCRIPTION, LOCATION,
 /// ORGANIZER, `X-*` fields and alarms survive a write-back unchanged, and only
 /// the owned fields are replaced from the claims.
+///
+/// `collection_zone` is the zone the seat's remote collection names its own
+/// (fix list row 19192). It heads a resource whose source names no plain
+/// zone, a locally created one included, before the hashes are read back,
+/// so the hashes the outbox stages are those of the bytes the write sends
+/// and the next pull reads.
 pub(super) fn render(
     vault: &Vault,
     master: &EntityId,
@@ -105,6 +111,7 @@ pub(super) fn render(
     sequence: u32,
     now: u64,
     source: Option<&[u8]>,
+    collection_zone: Option<&str>,
 ) -> Result<RenderedResource, CalendarConnectorError> {
     let member_ids = members(vault, *master, uid)?;
     let sources = match source {
@@ -116,9 +123,14 @@ pub(super) fn render(
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
     // The source's zone heads the resource again, so its all-day events keep
     // their days through a write-back and its reading back (fix list row
-    // 17868).
-    if let Some(zone) =
-        source.and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid))
+    // 17868); else the collection's own zone does (fix list row 19192).
+    if let Some(zone) = source
+        .and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid))
+        .or_else(|| {
+            collection_zone
+                .and_then(crate::calendar::ics::plain_zone_name)
+                .map(str::to_owned)
+        })
     {
         out.push_str("X-WR-TIMEZONE:");
         out.push_str(&zone);
@@ -482,7 +494,10 @@ pub(super) fn archived_source(
 
 /// Reads the blob version a `hex#vN` reference names; `None` for any other
 /// shape or a version that is not stored.
-fn read_blob_ref(vault: &Vault, blob_ref: &str) -> Result<Option<Vec<u8>>, CalendarConnectorError> {
+pub(super) fn read_blob_ref(
+    vault: &Vault,
+    blob_ref: &str,
+) -> Result<Option<Vec<u8>>, CalendarConnectorError> {
     let Some((hex, version)) = blob_ref.split_once("#v") else {
         return Ok(None);
     };

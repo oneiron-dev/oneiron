@@ -193,7 +193,8 @@ impl From<crate::Error> for CalendarError {
 }
 
 pub use caldav::{
-    CALDAV_PROVIDER_KEY, CalDavConnector, CalDavDiscovery, CalDavWire, caldav_write_status_error,
+    CALDAV_PROVIDER_KEY, CalDavConnector, CalDavDiscovery, CalDavWire, caldav_collection_timezone,
+    caldav_write_status_error,
 };
 pub use claims::{
     CALENDAR_CLAIM_PREDICATES, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,

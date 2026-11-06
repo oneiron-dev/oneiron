@@ -120,22 +120,31 @@ const MAX_CALENDAR_ZONE_BYTES: usize = 64;
 
 /// The zone a VCALENDAR names its own (`X-WR-TIMEZONE`, under any
 /// spelling), which places its all-day days (fix list row 17868), when it
-/// is a plain zone name: ASCII letters, digits, spaces and `/_+-.`, at most
-/// 64 bytes. So the name can head a rendered resource again as it is.
-/// `None` when it names none, or anything else.
-fn calendar_timezone<'c>(calendar: &'c icalendar::parser::Component<'_>) -> Option<&'c str> {
+/// is a plain zone name ([`plain_zone_name`]). So the name can head a
+/// rendered resource again as it is. `None` when it names none, or
+/// anything else.
+pub(super) fn calendar_timezone<'c>(
+    calendar: &'c icalendar::parser::Component<'_>,
+) -> Option<&'c str> {
     calendar
         .properties
         .iter()
         .find(|prop| prop.name.as_str().eq_ignore_ascii_case("X-WR-TIMEZONE"))
-        .map(|prop| prop.val.as_str().trim())
-        .filter(|zone| {
-            !zone.is_empty()
-                && zone.len() <= MAX_CALENDAR_ZONE_BYTES
-                && zone
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-. ".contains(&byte))
-        })
+        .and_then(|prop| plain_zone_name(prop.val.as_str()))
+}
+
+/// `zone`, trimmed, when it is a plain zone name: ASCII letters, digits,
+/// spaces and `/_+-.`, at most 64 bytes. The one rule every calendar zone
+/// name crosses, whether a VCALENDAR or a CalDAV collection gives it (fix
+/// list rows 17868 and 19192). `None` for anything else.
+pub(crate) fn plain_zone_name(zone: &str) -> Option<&str> {
+    let zone = zone.trim();
+    (!zone.is_empty()
+        && zone.len() <= MAX_CALENDAR_ZONE_BYTES
+        && zone
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-. ".contains(&byte)))
+    .then_some(zone)
 }
 
 /// The zone the VCALENDAR in `input` that carries the VEVENT `uid` names
@@ -164,7 +173,7 @@ pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
 
 /// Whether `component` is named `name` under any ASCII spelling (RFC 5545
 /// names are case-insensitive).
-fn is_named(component: &icalendar::parser::Component<'_>, name: &str) -> bool {
+pub(super) fn is_named(component: &icalendar::parser::Component<'_>, name: &str) -> bool {
     component.name.as_str().eq_ignore_ascii_case(name)
 }
 
