@@ -21,6 +21,11 @@ use crate::error::Result;
 /// newly staged archive digest is pushed before the staging calls can fail;
 /// each final digest is retained immediately after staging, before occurrence
 /// validation, for the import's post-error cleanup (FIX 588).
+///
+/// FIX 6648: `known` holds one instance, reserved before this writer opened,
+/// for each occurrence staged here. So a masked copy goes in even when the
+/// scan makes it longer than the inline bound. A body with a secret the wall
+/// cannot place still keeps its archived bytes (CALLS C5718-22).
 pub(super) fn put_run_results_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -78,7 +83,8 @@ pub(super) fn put_run_results_in_txn<R: Read + Seek>(
                 "raw output path",
             )?;
             // Masked at write as a run's reply body is (FIX 5718 part 3).
-            let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
+            // FIX 6648: this occurrence has its own reserved instance, so
+            // the masked copy may spill even when the scan makes it longer.
             let body = archive.files.read_file(blake3)?;
             let body = vault.admit_imported_result_in_txn(
                 wtxn,
@@ -86,7 +92,7 @@ pub(super) fn put_run_results_in_txn<R: Read + Seek>(
                 &output.path,
                 body,
                 swept.as_ref(),
-                may_spill,
+                true,
             )?;
             let finished = vault.stage_code_run_output_from(
                 output.path.clone(),
