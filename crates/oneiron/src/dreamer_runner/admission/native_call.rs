@@ -210,6 +210,43 @@ pub(crate) fn invoice_native_call_in_txn(
 }
 
 impl DreamerRunnerStore<'_> {
+    /// Native response totals from the already selected original House admission.
+    /// This reads evidence only, never a payment, terminal alias or meter balance.
+    pub(crate) fn native_house_terminal_usage(
+        &self,
+        origin: AdmittedCallId,
+        boot: [u8; 16],
+        line: &str,
+        lease: &str,
+    ) -> Result<Option<oneiron_model::llm::LlmUsage>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let Some(row) = CALLS.get(&self.vault.store, &rtxn, &origin)? else {
+            return Ok(None);
+        };
+        if row.boot != boot || row.line != line || row.lease != lease {
+            return Err(invalid_dreamer_runner(
+                "native House original admission differs",
+            ));
+        }
+        let units = match row.invoice {
+            NativeCallInvoice::Admitted => return Ok(None),
+            NativeCallInvoice::Invoiced { units } | NativeCallInvoice::Paid { units, .. } => units,
+        };
+        let Some(usage) = row
+            .house_completions
+            .as_deref()
+            .and_then(crate::dreamer_wake::DecisionCompletionObservation::terminal_usage)
+        else {
+            return Ok(None);
+        };
+        if usage.input.total.checked_add(usage.output.total) != Some(units) {
+            return Err(invalid_dreamer_runner(
+                "native House terminal quantity differs",
+            ));
+        }
+        Ok(Some(usage))
+    }
+
     /// Pay one native NET invoice from its original retained line, regardless
     /// of a later generation's reservation. This primitive is not called by
     /// the aggregate driver: that caller must first retain exact coverage of
