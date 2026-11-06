@@ -553,6 +553,7 @@ pub fn promotion_covers_full_window_for(
             super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,
+            super::ingest::MESSAGE_WRITER_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
         }
