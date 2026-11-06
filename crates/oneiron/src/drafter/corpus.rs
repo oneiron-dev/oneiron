@@ -313,7 +313,7 @@ fn text_only(request: &LlmRequest) -> bool {
 /// text or a tool call.
 fn holds_generated_tokens(generated: &LlmMessage) -> bool {
     generated.content.iter().any(|part| match part {
-        ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => !text.is_empty(),
+        ContentPart::Text { text, .. } | ContentPart::Reasoning { text, .. } => !text.is_empty(),
         ContentPart::ToolCall { .. } => true,
         _ => false,
     })

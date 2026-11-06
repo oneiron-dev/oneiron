@@ -85,6 +85,7 @@ fn sent_request(request: &LlmRequest, binding: &ModelCallBinding) -> LlmRequest 
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: prompt.clone(),
+                    signature: None,
                 }],
             },
         );
