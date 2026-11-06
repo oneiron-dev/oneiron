@@ -48,7 +48,10 @@ pub const MAX_BLOB_BASE64_LEN: usize = MAX_BLOB_CONTENT_BYTES / 3 * 4 + 4;
 /// the largest legal blob (32 MiB) once base64 and JSON framing are paid for.
 pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 
-/// Maximum remote SUCCESS body read, in bytes: 64 MiB.
+/// A remote success body, in bytes: 64 MiB. The SDK client no longer reads
+/// its replies under it: it decodes each from the wire whatever its length
+/// (ABC transport row T19). A device's own sync reads (renewal, removal
+/// delivery) and the residence row read still take it as their bound.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Rejects an over-long query before it reaches retrieval.
