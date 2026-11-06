@@ -599,6 +599,7 @@ impl DreamerRunnerStore<'_> {
             let reservation = DreamerBudgetReservation {
                 budget_id: input.budget_id,
                 attempt_id: attempt.id,
+                birth_generation: Some(attempt.attempt_count),
                 reserved_units: input.reserve_units,
                 owed_units: 0,
                 created_at: input.now,
@@ -679,6 +680,7 @@ impl DreamerRunnerStore<'_> {
         let reservation = DreamerBudgetReservation {
             budget_id: input.budget_id,
             attempt_id: input.child_attempt,
+            birth_generation: None,
             reserved_units: input.reserve_units,
             owed_units: 0,
             created_at: input.now,

@@ -57,6 +57,16 @@ model lease; schema corrections keep that invocation and use their existing call
 ordinal. Transport retries keep the same coordinate. A fresh guard's public lease
 id is not a substitute for this original coordinate.
 
+The reservation created by that claiming admission also retains its actual birth
+lease generation. Reusing or topping up the same reservation keeps this original
+value; it is not replaced with the later live queue generation. A new explicit
+`reserve_budget` call has no claimed admission and records unknown without adding
+a queue lookup or changing its existing outcome. The private reservation encoding
+is version 3 with a mandatory `birth_generation` key; nil means this genuine
+unknown source, not an accepted older format. The consumed reservation remains
+available in the existing settlement result. This field changes no money and is
+not by itself aggregate coverage, an exclusion record or permission to pay.
+
 The existing owed-call row retains this coordinate beside the original line and
 lease. It still coalesces by attempt and logical step, and ordinary settlement
 still retires the attempt's rows. This extra provenance does not make that row an
