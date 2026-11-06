@@ -46,8 +46,7 @@ pub(crate) fn stamp_put(
         birth_facet: *facet.as_bytes(),
         scope,
     };
-    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
-    crate::agent_def::setup_trace::observe_position(store, id, stamp.scope);
+    put_stamp(store, txn, &id, &stamp)?;
     Ok(())
 }
 
@@ -91,7 +90,7 @@ pub(crate) fn stage_session_position(
         birth_facet: *facet.as_bytes(),
         scope,
     };
-    SCOPE_RECORD.put(view, txn, &id, &stamp)
+    put_stamp(view, txn, &id, &stamp)
 }
 
 /// Takes the position [`stage_session_position`] staged beside `id`, a row
@@ -167,7 +166,7 @@ pub(crate) fn settle_epoch_birth(
     scope.worlds = singleton(ScopeId(world));
     scope.facets = singleton(ScopeId(facet));
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(
+    put_stamp(
         store,
         txn,
         &id,
@@ -213,7 +212,7 @@ pub(crate) fn settle_source_birth(
     let mut scope = birth;
     scope.facets = singleton(ScopeId(facet));
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(
+    put_stamp(
         store,
         txn,
         &id,
@@ -245,8 +244,7 @@ pub(crate) fn restrict_stamp_in_txn(
     }
     stamp.scope.sensitivity = SensitivityCeiling::AtMost(band);
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
-    crate::agent_def::setup_trace::observe_position(store, id, stamp.scope);
+    put_stamp(store, txn, &id, &stamp)?;
     Ok(())
 }
 
@@ -292,7 +290,7 @@ pub(crate) fn stamp_task_birth(
         }
     }
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(
+    put_stamp(
         store,
         txn,
         &id,
@@ -392,7 +390,7 @@ pub(crate) fn stamp_leader_project(
         return Ok(());
     }
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(
+    put_stamp(
         store,
         txn,
         &id,
@@ -491,7 +489,7 @@ pub(crate) fn stamp_blob_project(
         }
     }
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(
+    put_stamp(
         store,
         txn,
         &id,
@@ -554,7 +552,7 @@ pub(crate) fn stamp_queue_check_exhaust_birth(
         return Ok(());
     }
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(
+    put_stamp(
         store,
         txn,
         &id,

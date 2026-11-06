@@ -12,6 +12,7 @@ use crate::store::key_custody::PrivateCustodyPublications;
 /// writer. Dropping this value aborts the child and discards private resources.
 pub(super) struct ExecutedAgentSetup<'vault, 'write> {
     child: heed::RwTxn<'write>,
+    store: &'vault crate::store::Store,
     publications: PrivateCustodyPublications<'vault>,
     mutations: ObservedSetupMutations,
 }
@@ -32,6 +33,7 @@ impl<'vault, 'write> ExecutedAgentSetup<'vault, 'write> {
         let mutations = trace.finish()?;
         Ok(Self {
             child,
+            store: &vault.store,
             publications,
             mutations,
         })
@@ -48,10 +50,12 @@ impl<'vault, 'write> ExecutedAgentSetup<'vault, 'write> {
     pub(super) fn merge_after_allow(self) -> Result<ObservedSetupMutations> {
         let Self {
             child,
+            store,
             publications,
             mutations,
         } = self;
         child.commit()?;
+        super::setup_trace::observe_merged_child(store, &mutations);
         publications.publish()?;
         Ok(mutations)
     }

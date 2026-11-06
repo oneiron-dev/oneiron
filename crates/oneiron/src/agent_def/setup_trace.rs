@@ -14,6 +14,7 @@ thread_local! {
     static TRACES: RefCell<Vec<Rc<RefCell<Trace>>>> = const { RefCell::new(Vec::new()) };
 }
 
+#[derive(Clone)]
 struct Position {
     id: EntityId,
     scope: Option<Scope>,
@@ -25,6 +26,7 @@ struct Trace {
     positions: Vec<Position>,
     mutated: BTreeSet<EntityId>,
     retired_positions: BTreeMap<EntityId, Option<Scope>>,
+    position_resets: BTreeSet<EntityId>,
 }
 
 fn active(store: &impl ManifestDbs) -> Option<Rc<RefCell<Trace>>> {
@@ -56,6 +58,7 @@ impl<'store> SetupMutationTrace<'store> {
             positions: Vec::new(),
             mutated: BTreeSet::new(),
             retired_positions: BTreeMap::new(),
+            position_resets: BTreeSet::new(),
         }));
         TRACES.with(|traces| traces.borrow_mut().push(Rc::clone(&state)));
         Self {
@@ -92,11 +95,10 @@ impl<'store> SetupMutationTrace<'store> {
         let blast_radius = u64::try_from(trace.mutated.len())
             .map_err(|_| Error::ArithmeticOverflow("agent setup entity count"))?;
         Ok(ObservedSetupMutations {
-            positions: positions
-                .into_iter()
-                .map(|position| (position.id, position.scope))
-                .collect(),
+            positions,
             entities: std::mem::take(&mut trace.mutated),
+            retired_positions: std::mem::take(&mut trace.retired_positions),
+            position_resets: std::mem::take(&mut trace.position_resets),
             blast_radius,
         })
     }
@@ -109,8 +111,10 @@ impl Drop for SetupMutationTrace<'_> {
 }
 
 pub(crate) struct ObservedSetupMutations {
-    positions: Vec<(EntityId, Option<Scope>)>,
+    positions: Vec<Position>,
     entities: BTreeSet<EntityId>,
+    retired_positions: BTreeMap<EntityId, Option<Scope>>,
+    position_resets: BTreeSet<EntityId>,
     blast_radius: u64,
 }
 
@@ -118,7 +122,7 @@ impl ObservedSetupMutations {
     pub(crate) fn positions(&self) -> impl Iterator<Item = (EntityId, Option<&Scope>)> {
         self.positions
             .iter()
-            .map(|(id, scope)| (*id, scope.as_ref()))
+            .map(|position| (position.id, position.scope.as_ref()))
     }
 
     pub(crate) fn entities(&self) -> impl Iterator<Item = EntityId> + '_ {
@@ -128,6 +132,29 @@ impl ObservedSetupMutations {
     pub(crate) fn blast_radius(&self) -> u64 {
         self.blast_radius
     }
+}
+
+/// A nested setup contributes only once its actual child has committed into
+/// the parent. An aborted child never contributes its provisional mutations.
+pub(super) fn observe_merged_child(store: &impl ManifestDbs, child: &ObservedSetupMutations) {
+    let Some(parent) = active(store) else {
+        return;
+    };
+    let mut parent = parent.borrow_mut();
+    parent.mutated.extend(child.entities.iter().copied());
+    parent.positions.extend(child.positions.iter().cloned());
+    for id in &child.position_resets {
+        parent.retired_positions.remove(id);
+    }
+    parent
+        .position_resets
+        .extend(child.position_resets.iter().copied());
+    parent.retired_positions.extend(
+        child
+            .retired_positions
+            .iter()
+            .map(|(id, scope)| (*id, scope.clone())),
+    );
 }
 
 fn stored_position(
@@ -145,12 +172,23 @@ fn stored_position(
     let header = EntityMetadataHeader::parse(&row).ok_or(Error::CorruptedIndex("entity header"))?;
     let mut scope =
         crate::federation::record_scope::setup_stored_position(store, txn, id, header.entity_type)?;
-    if scope.is_none()
-        && let Some(trace) = active(store)
-    {
-        // The native deindex may retire a stamp before removing its body or
-        // edges. Keep that SAME execution's observed pre-retirement position.
-        scope = trace.borrow().retired_positions.get(&id).cloned().flatten();
+    if scope.is_none() {
+        // A nested child can still see the body whose stamp its parent retired.
+        // Read that actual execution history, without changing the parent.
+        let owner = std::ptr::from_ref(store.key_custody()) as usize;
+        scope = TRACES.with(|traces| {
+            traces
+                .borrow()
+                .iter()
+                .rev()
+                .find_map(|trace| {
+                    let trace = trace.borrow();
+                    (trace.owner == owner)
+                        .then(|| trace.retired_positions.get(&id).cloned())
+                        .flatten()
+                })
+                .flatten()
+        });
     }
     Ok(Position {
         id,
@@ -223,14 +261,15 @@ pub(crate) fn observe_edge(
     Ok(())
 }
 
-pub(crate) fn observe_position(store: &impl ManifestDbs, id: EntityId, scope: Scope) {
+pub(crate) fn observe_position(store: &impl ManifestDbs, id: EntityId, scope: &Scope) {
     if let Some(trace) = active(store) {
         let mut trace = trace.borrow_mut();
         trace.mutated.insert(id);
         trace.retired_positions.remove(&id);
+        trace.position_resets.insert(id);
         trace.positions.push(Position {
             id,
-            scope: Some(scope),
+            scope: Some(scope.clone()),
             unborn: false,
         });
     }
