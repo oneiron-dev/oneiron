@@ -172,6 +172,7 @@ pub(super) struct CounterpartyContactScalarHeads {
     created_at: Option<std::result::Result<u64, ()>>,
     updated_at: Option<std::result::Result<u64, ()>>,
     revoked_at: Option<std::result::Result<Option<u64>, ()>>,
+    opt_out: Option<std::result::Result<Option<CounterpartyOptOut>, ()>>,
     promo_consent: Option<std::result::Result<bool, ()>>,
 }
 
@@ -184,6 +185,7 @@ impl CounterpartyContactScalarHeads {
             KEY_CREATED_AT => self.created_at = Some(decode_timestamp(value).map_err(|_| ())),
             KEY_UPDATED_AT => self.updated_at = Some(decode_timestamp(value).map_err(|_| ())),
             KEY_REVOKED_AT => self.revoked_at = Some(decode_revoked_at(value).map_err(|_| ())),
+            KEY_OPT_OUT => self.opt_out = Some(decode_opt_out(value).map_err(|_| ())),
             KEY_PROMO_CONSENT => {
                 self.promo_consent = Some(decode_promo_consent(value).map_err(|_| ()))
             }
@@ -224,7 +226,10 @@ impl CounterpartyContactScalarHeads {
             .revoked_at
             .expect("complete contact scalar heads")
             .map_err(|()| invalid_contact())?;
-        let opt_out = decode_opt_out(field(KEY_OPT_OUT)?)?;
+        let opt_out = self
+            .opt_out
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
         let promo_consent = self
             .promo_consent
             .expect("complete contact scalar heads")
@@ -522,8 +527,8 @@ fn decode_entity_ref(value: &Value) -> Result<EntityId> {
     EntityId::from_hex(hex).map_err(|_| invalid_contact())
 }
 
-fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
+fn validate_keys<const N: usize>(entries: &[(Value, Value)], keys: &[&str; N]) -> Result<()> {
+    let mut seen = [false; N];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_contact)?;
         let Some(index) = keys.iter().position(|known| *known == key) else {
