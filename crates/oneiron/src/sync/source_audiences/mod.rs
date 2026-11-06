@@ -43,6 +43,7 @@ use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::source_audience::carried::{
@@ -53,6 +54,7 @@ use crate::source_audience::carried::{
 use crate::source_audience::{
     self, HeldBack, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
 };
+use crate::store::source_audience_obligation::SourceAudienceObligation;
 
 pub(crate) use erased::{erase_carriers_in_txn, history_names_erased_actor_in};
 
@@ -172,6 +174,43 @@ pub(crate) struct AdmissionRows {
     /// The policies every derived carrier met in the range names, by row,
     /// the sets written over included (fix list row 17207).
     derived: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// The rows a binding the window's held map carries names: each states
+    /// the source-audience obligation (fix list row 16256).
+    held_bound: BTreeSet<EntityId>,
+    /// What the versions of each row the range carries state about the
+    /// source-audience obligation, by row (fix list row 16256).
+    obligations: BTreeMap<EntityId, RowObligations>,
+}
+
+/// What the versions of one row state about the source-audience obligation
+/// (fix list row 16256).
+#[derive(Debug, Default, Clone, Copy)]
+struct RowObligations {
+    /// The first stamp a version names, in any shape.
+    stamp: Option<SourceAudienceObligation>,
+    /// A later stamp differs from the first.
+    differs: bool,
+    /// A version that keeps words names none.
+    unstamped: bool,
+}
+
+impl RowObligations {
+    /// Notes one version's word.
+    fn note(&mut self, stated: SourceAudienceObligation) {
+        if !stated.is_present() {
+            self.unstamped = true;
+            return;
+        }
+        match self.stamp {
+            None => self.stamp = Some(stated),
+            Some(first) => self.differs |= first != stated,
+        }
+    }
+
+    /// Whether a row once stamped meets a version that drops or changes it.
+    const fn dropped(&self) -> bool {
+        self.stamp.is_some() && (self.differs || self.unstamped)
+    }
 }
 
 impl AdmissionRows {
@@ -204,6 +243,7 @@ impl AdmissionRows {
             match carrier(&map_key, &bytes) {
                 Ok(Carrier::Record { row, policy }) => {
                     self.bindings.entry(row).or_insert(policy);
+                    self.held_bound.insert(row);
                 }
                 Ok(Carrier::Policy { id, policy }) => {
                     self.versions.entry((id, policy.revision)).or_insert(bytes);
@@ -226,6 +266,75 @@ impl AdmissionRows {
                 Ok(Carrier::Withheld { .. } | Carrier::Derived { .. }) | Err(_) => {}
             }
         }
+    }
+
+    /// Notes one version of the row under `map_key` the range carries, its
+    /// entity blob `blob`: a snapshot's live or root value, or a retained
+    /// insert (fix list row 16256). A bodiless shell keeps no words and
+    /// states nothing.
+    pub(crate) fn note_row(&mut self, map_key: &str, blob: &[u8]) {
+        let Ok(id) = EntityId::from_hex(map_key) else {
+            return;
+        };
+        if blob.len() <= ENTITY_METADATA_HEADER_LEN {
+            return;
+        }
+        self.obligations
+            .entry(id)
+            .or_default()
+            .note(source_audience::row_obligation(blob));
+    }
+
+    /// Refuses the range when a row it carries meets a version that drops
+    /// the source-audience obligation or states it otherwise, against every
+    /// version the range carries and what is held for the row: the window's
+    /// held row and binding and, with `vault`, its stored row and binding
+    /// (fix list row 16256). Order plays no part: a stamped version before
+    /// an unstamped one refuses as one after it does.
+    ///
+    /// # Errors
+    ///
+    /// The refusal; storage failures.
+    pub(crate) fn refuse_dropped_obligations(
+        &self,
+        vault: Option<&Vault>,
+        held: &LoroDoc,
+    ) -> Result<()> {
+        if self.obligations.is_empty() {
+            return Ok(());
+        }
+        let entities = held.get_map("entities");
+        let rtxn = vault.map(|vault| vault.store.env.read_txn()).transpose()?;
+        for (id, carried) in &self.obligations {
+            let mut seen = *carried;
+            let mut known = |stated: SourceAudienceObligation| {
+                if stated.is_present() {
+                    seen.note(stated);
+                }
+            };
+            if let Some(blob) = map_get_bytes(&entities, &id.to_hex()) {
+                known(source_audience::row_obligation(&blob));
+            }
+            if self.held_bound.contains(id) {
+                known(SourceAudienceObligation::Required);
+            }
+            if let (Some(vault), Some(rtxn)) = (vault, rtxn.as_ref()) {
+                if let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, rtxn, id)?
+                {
+                    known(source_audience::row_obligation(&raw));
+                }
+                if source_audience::binding_in(vault, rtxn, id)?.is_some() {
+                    known(SourceAudienceObligation::Required);
+                }
+            }
+            if seen.dropped() {
+                return Err(refused(
+                    "a row drops or changes the source_audience_required it carries",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
