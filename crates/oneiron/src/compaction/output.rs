@@ -204,21 +204,29 @@ impl OutputWorkingContext {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<Vec<OutputContextView>> {
-        self.assemble_with(turn, policy, |source| {
-            restore_output(vault, source).map(Some)
-        })
+        self.assemble_with(
+            turn,
+            policy,
+            |source| restore_output(vault, source).map(Some),
+            |source| output_clean(vault, source),
+        )
     }
 
-    /// Assemble through the owner's own routed raw-output store. The callback
-    /// is invoked for full views only; overview and stub never read raw bytes.
+    /// Assemble through the owner's own routed raw-output store. `restore`
+    /// is invoked for full views only; overview and stub never read raw
+    /// bytes.
     ///
     /// `restore` returns `None` for a Full body the caller will not hold in
     /// memory; that entry's view is its stub, which reads it by reference.
+    /// `clean` judges an Overview's source as the Full read judges its body:
+    /// an overview is made from the output, so one whose output may not enter
+    /// model context as it stands shows the withheld mark (FIX 9735).
     pub fn assemble_with(
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
         mut restore: impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
+        mut clean: impl FnMut(OutputRef) -> Result<bool>,
     ) -> Result<Vec<OutputContextView>> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -232,7 +240,7 @@ impl OutputWorkingContext {
                 if item.recoverable_only {
                     Ok(item.entry.stub_view())
                 } else {
-                    item.entry.view_with(turn, policy, &mut restore)
+                    item.entry.view_with(turn, policy, &mut restore, &mut clean)
                 }
             })
             .collect()
@@ -299,9 +307,12 @@ impl OutputContextEntry {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<OutputContextView> {
-        self.view_with(turn, policy, &mut |source| {
-            restore_output(vault, source).map(Some)
-        })
+        self.view_with(
+            turn,
+            policy,
+            &mut |source| restore_output(vault, source).map(Some),
+            &mut |source| output_clean(vault, source),
+        )
     }
 
     fn view_with(
@@ -309,6 +320,7 @@ impl OutputContextEntry {
         turn: u64,
         policy: OutputDecayPolicy,
         restore: &mut impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
+        clean: &mut impl FnMut(OutputRef) -> Result<bool>,
     ) -> Result<OutputContextView> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -319,7 +331,14 @@ impl OutputContextEntry {
         let (tier, bytes) = if age >= policy.stub_after_turns {
             (OutputTier::Stub, Vec::new())
         } else if age >= policy.overview_after_turns {
-            (OutputTier::Overview, self.overview.as_bytes().to_vec())
+            let overview = if clean(self.source)? {
+                self.overview.as_bytes().to_vec()
+            } else {
+                crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                    .as_bytes()
+                    .to_vec()
+            };
+            (OutputTier::Overview, overview)
         } else {
             let Some(bytes) = restore(self.source)? else {
                 return Ok(self.stub_view());
