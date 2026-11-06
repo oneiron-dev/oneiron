@@ -185,7 +185,7 @@ impl LinuxTpmKeystore {
             return Err(KeystoreError::Corrupt("the slot file is open to others"));
         }
         let mut sealed = Vec::new();
-        file.by_ref()
+        Read::by_ref(&mut file)
             .take(SEALED_MAX as u64 + 1)
             .read_to_end(&mut sealed)
             .map_err(io)?;
