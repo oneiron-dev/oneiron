@@ -42,7 +42,7 @@ mod runtime;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -117,11 +117,11 @@ pub async fn serve_embedded<A: AppHost + 'static>(
     );
     let owner_host = owner_host(&config);
     let Some(workers) = runtime::worker_cap(host.limits()) else {
-        return serve_prepared(host, vault, config, artifacts, owner_host).await;
+        return serve_prepared(host, vault, config, artifacts, owner_host, None).await;
     };
     let _stop = runtime::StopOnDrop(host.stop_handle());
     let done = runtime::spawn_serving(Some(workers), move || {
-        serve_prepared(host, vault, config, artifacts, owner_host)
+        serve_prepared(host, vault, config, artifacts, owner_host, None)
     })?;
     runtime::served(done).await
 }
@@ -135,6 +135,7 @@ async fn serve_prepared<A: AppHost>(
     mut config: ServeConfig,
     artifacts: Option<mpsc::Receiver<DuplexStream>>,
     owner_host: crate::owner::schedule::OwnerHost,
+    server: Option<Arc<OnceLock<Weak<crate::server::SyncServer>>>>,
 ) -> anyhow::Result<()> {
     // The app's keychain, when config and environment name no secret.
     if config.auth_secret.is_none()
@@ -227,6 +228,9 @@ async fn serve_prepared<A: AppHost>(
         )
         .await;
         mesh_server.install_shared_envs(shared);
+        if let Some(server) = server {
+            let _ = server.set(Arc::downgrade(&mesh_server));
+        }
         host.ready()?;
         anyhow::Ok(())
     }

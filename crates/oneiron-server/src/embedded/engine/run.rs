@@ -4,7 +4,7 @@
 //! and a stopping one until its drain ends, so no stop, close or wake
 //! dropped midway leaves a run nobody joins.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::DuplexStream;
@@ -14,6 +14,7 @@ use super::super::failure::{EngineErrorKind, cause, failure};
 use super::{ENGINE_CONNECTION_BACKLOG, Readied};
 use crate::config::ServeConfig;
 use crate::owner::schedule::OwnerHost;
+use crate::server::SyncServer;
 
 /// One run of the serve body, from its start until it returns.
 pub(super) struct Serving {
@@ -22,6 +23,9 @@ pub(super) struct Serving {
     pub(super) artifacts: mpsc::Sender<DuplexStream>,
     pub(super) wake: Arc<Notify>,
     pub(super) stop: Arc<Notify>,
+    /// Published by this run after its shared-env registry is installed.
+    /// A stopped run is never kept alive by this access slot.
+    pub(super) server: Arc<OnceLock<Weak<SyncServer>>>,
     done: oneshot::Receiver<anyhow::Result<()>>,
     /// Asked to stop: it is draining, takes no new connection, and the next
     /// stop, close or wake joins it rather than start another (FIX 9484).
@@ -80,14 +84,24 @@ pub(super) fn spawn_run<A: AppHost + 'static>(
     // The artifact origin's channel, served beside the API's for this run.
     let (artifacts, artifact_streams) = mpsc::channel(ENGINE_CONNECTION_BACKLOG);
     let (wake, stop) = (host.wake_handle(), host.stop_handle());
+    let server = Arc::new(OnceLock::new());
+    let published = Arc::clone(&server);
     let done = super::super::runtime::spawn_serving(serve_workers, move || {
-        super::super::serve_prepared(host, vault, config, Some(artifact_streams), owner_host)
+        super::super::serve_prepared(
+            host,
+            vault,
+            config,
+            Some(artifact_streams),
+            owner_host,
+            Some(published),
+        )
     })?;
     Ok(Serving {
         connector,
         artifacts,
         wake,
         stop,
+        server,
         done,
         stopping: false,
     })
