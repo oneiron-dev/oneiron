@@ -370,8 +370,9 @@ serializer still supplies the same inherited and own namespace declarations,
 run properties and escaped retained text. XML parsing rejects U+000B in text
 nodes, so a partial ordinary run's retained text produces one run, not multiple
 break-separated wrappers. A source run intersecting both retained intervals
-keeps the previous static wrappers; arbitrary identity attributes are not copied
-twice or assigned to a guessed side. The whole-run raw path, fields and their
+keeps its own wrapper on the head containing its original start, as described
+below; the tail stays static, so those attributes are not copied twice.
+The whole-run raw path, fields and their
 receipts, breaks, empty/opaque segments, gaps, added-paragraph and replacement
 templates, and retained-mapping selection are unchanged. This is source-only
 retention work, not full table-cell fallback, OF-509/OF-510 or Office fidelity
@@ -394,7 +395,7 @@ Replaced CDATA and entity text uses the native helper's escaped text spelling.
 The prior static serializer still succeeds first, keeping its property/error
 selection. A native helper that cannot produce the text splice keeps the
 previous static attribute path; the extended text shapes are described below.
-Runs contributing to both retained intervals, fields, breaks, whole-run raw
+The dual-piece extension is described below. Fields, breaks, whole-run raw
 copies, empty/opaque segments, gaps, templates, matching and receipts are
 unchanged. This is source retention work, not full table-cell fallback,
 OF-509/OF-510, runtime or Office fidelity proof.
@@ -417,8 +418,8 @@ text attributes, wrappers, unknown child XML, comments, processing instructions
 and gaps once under the same ancestors. Changed character data still uses the
 native helper's escaped text spelling and first-character-data placement.
 The prior serializer still succeeds first; a failed native text splice keeps
-the same static attribute path. Runs intersecting both retained pieces, fields,
-breaks, templates, matching and receipts are unchanged. This remains source-only
+the same static attribute path. The dual-piece extension is described below;
+fields, breaks, templates, matching and receipts are unchanged. This remains source-only
 preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity proof.
 
 
@@ -426,8 +427,8 @@ preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity pro
 
 The fallback records original identity source intervals from successful
 field-free styled output: retained edge clusters, whole unchanged paragraphs,
-wholly retained nonempty ordinary runs or direct breaks, and single-retained-piece
-ordinary runs whose native `partial_run` preserves the original XML. Native text
+wholly retained nonempty ordinary runs or direct breaks, and owning partial
+ordinary-run pieces whose native `partial_run` preserves the original XML. Native text
 splices change only character data, leaving original identity attribute spans
 unchanged. Retained-loop source ranges stay local until both retained intervals
 and the replacement succeed; a
@@ -473,8 +474,9 @@ prefix/suffix selection and actual paragraph selection still emit each such
 original span at most once. A successful single-piece native partial run owns
 its unchanged identity attributes in the same way; the prior serializer still
 succeeds first, and unsupported native edits keep the same static attribute path.
-A run spanning both retained pieces keeps its previous wrappers, with no guessed
-identity side. In a field-free paragraph, a successful raw copy of a zero-text
+A run spanning both retained pieces owns its original wrapper on the head
+containing its original start; the tail stays static, as described below.
+In a field-free paragraph, a successful raw copy of a zero-text
 child strictly inside a retained interval also owns its original property identities.
 A wholly retained opaque child owns the identities of its nested properties: its
 original bytes stay intact, apart from the existing insertion of inherited namespace
@@ -526,3 +528,30 @@ gap ownership from this change. Their static conversion, field-removal receipts,
 selection and error paths remain unchanged. Failed styled attempts still publish
 nothing. This is the excluded field cohort of the same source-only identity work,
 not full table-cell, compiler, runtime or Office fidelity proof.
+
+
+## Source-start wrapper of a dual-piece native table run
+
+A field-free ordinary run spanning both common retained intervals now keeps its
+original wrapper once on the head piece containing that run's original start.
+The tail keeps the existing static style wrapper. For `ABCD` changed to `ABQD`,
+the original wrapper owns `AB`, the replacement keeps the existing template for
+`Q`, and the tail remains a static `D` with the original run's style. This also
+applies when another paragraph's partial field edit forced whole-body fallback.
+
+The existing native partial-run serializer still runs only after static rendering
+succeeds. Its successful head preserves original wrapper attributes, unknown
+children, text-element attributes and gaps once, while trimming each text slot
+to the head interval. Only native success records that original run span for the
+existing second-pass property-copy identity handling. If native trimming cannot
+produce the splice, the head instead uses the old own-attribute insertion path;
+it does not claim that the original property subtree survived. The tail never
+copies the original wrapper attributes or unknown children, so it cannot duplicate
+that wrapper's XML identity. Fresh property identities still use the existing
+same-source original/fresh-copy ledger.
+
+Single-piece native and attribute-only fallback paths are unchanged. Paragraph
+and run selection, text, style templates, namespaces, fields and their removal
+receipts, errors, gaps and other retained-source classes keep their prior paths.
+This is source-only work in the existing 17480/18510 pack, not full table-cell
+fallback, OF-509/OF-510, compiler, runtime or Office fidelity proof.
