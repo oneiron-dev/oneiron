@@ -399,6 +399,8 @@ vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
 vaultSyncQuarantineHeldEdits(input: unknown): unknown
+vaultSyncDocumentsCopyEditReview(input: unknown): unknown
+vaultSyncDocumentsCopyEditSettle(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown

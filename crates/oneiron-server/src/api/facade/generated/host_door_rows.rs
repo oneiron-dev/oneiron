@@ -38,6 +38,8 @@
 //! - `vault.outbox.diverged.answer`
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
+//! - `vault.sync.documents.copy_edit.review`
+//! - `vault.sync.documents.copy_edit.settle`
 //! - `vault.trusted_contacts.concern.deliver`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
