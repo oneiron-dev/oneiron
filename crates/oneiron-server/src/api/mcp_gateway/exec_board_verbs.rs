@@ -774,7 +774,7 @@ pub(crate) async fn drop_run_board(
         .self_brief_sessions
         .lock()
         .await
-        .remove(&(actor.entity_ref(), connection.0.clone()));
+        .close_any_owner(&(actor.entity_ref(), connection.0.clone()));
 }
 
 /// A keyframe of the board just went back with its actor's layout batch:

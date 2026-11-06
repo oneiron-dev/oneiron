@@ -167,8 +167,8 @@ pub(crate) async fn describe_self_for_run(
         .self_brief_sessions
         .lock()
         .await
-        .get(&(actor.entity_ref(), connection.0.clone()))
-        .map(|run| run.state.clone());
+        .state(&(actor.entity_ref(), connection.0.clone()))
+        .cloned();
     let state = match installed {
         Some(state) => state,
         None => resolved_state(server, actor, line, &reads, host)?,

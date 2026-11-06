@@ -52,6 +52,7 @@ use crate::auth::CoreScope;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
+use crate::server::self_brief_custody::{BriefAcknowledgment, BriefPreparation};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
@@ -687,9 +688,10 @@ async fn hydrate_inner(
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
     // never filled with fabricated grant or budget data.
-    // Stage prefix bytes and epoch under one session lock. The response may
-    // still fail the full token-budget check below; on failure neither moves.
-    let mut runs = server.self_brief_sessions.lock().await;
+    // Stage the boundary's prefix under one custody lock. The response may
+    // still fail the full token-budget check below; on failure the staged
+    // candidate is dropped unacknowledged and nothing moves.
+    let mut briefs = server.self_brief_sessions.lock().await;
     let mut staged_prefix = None;
     let self_brief = if let (Some(actor_ref), Some(session_id)) = (
         auth.principal_ref()
@@ -700,31 +702,27 @@ async fn hydrate_inner(
             crate::error::ApiError::bad_request("invalid agent actor", Some("session"))
         })?;
         let key = (actor, session_id.to_owned());
-        if let Some(run) = runs.get_mut(&key) {
-            if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
-                let mut candidate = run.render.clone();
-                // The prefix roster re-lays out only here, at an epoch
-                // boundary: the `people` share of the agent's layout.
-                candidate.set_people_budget_tok(layout.layout.share_tok("people", cap_tok));
-                let card = if run.emitted_epoch.is_none() {
-                    candidate.turn_one(&server.vault, &run.state, &observed_reads, Some(&people))
-                } else {
-                    candidate.fold(&server.vault, &run.state, &observed_reads, Some(&people))
-                }
-                .map_err(|error| super::core_engine_error("self brief failed", error))?;
-                staged_prefix = Some((key, candidate, run.epoch));
-                Some(card)
-            } else if req.describe_self {
-                Some(
-                    run.render
-                        .describe_self(&server.vault, &run.state, &observed_reads, Some(&people))
-                        .map_err(|error| super::core_engine_error("self brief failed", error))?,
-                )
-            } else {
-                None
+        // The prefix roster re-lays out only at an epoch boundary: the
+        // `people` share of the agent's layout.
+        match briefs
+            .prepare(
+                &key,
+                &server.vault,
+                &observed_reads,
+                Some(&people),
+                layout.layout.share_tok("people", cap_tok),
+            )
+            .map_err(|error| super::core_engine_error("self brief failed", error))?
+        {
+            Some(BriefPreparation::Staged { placed, candidate }) => {
+                staged_prefix = Some(candidate);
+                Some(placed)
             }
-        } else {
-            None
+            Some(BriefPreparation::Emitted { .. }) if req.describe_self => briefs
+                .tail(&key, &server.vault, &observed_reads, Some(&people))
+                .transpose()
+                .map_err(|error| super::core_engine_error("self brief failed", error))?,
+            Some(BriefPreparation::Emitted { .. }) | None => None,
         }
     } else {
         None
@@ -781,15 +779,12 @@ async fn hydrate_inner(
     if let Err(error) = server.vault.record_board_hook_deliveries(&hook_blocks) {
         tracing::warn!(kind = ?error.kind(), "board hook delivery record failed");
     }
-    let prefix_committed = staged_prefix.is_some();
-    if let Some((key, render, epoch)) = staged_prefix {
-        let run = runs
-            .get_mut(&key)
-            .expect("run remains locked through response validation");
-        run.render = render;
-        run.emitted_epoch = Some(epoch);
-    }
-    drop(runs);
+    // The response is final: the staged prefix and its roster become the
+    // session's custody, its boundary emitted. The lock held since staging
+    // keeps the candidate current.
+    let prefix_committed = staged_prefix
+        .is_some_and(|candidate| briefs.acknowledge(candidate) == BriefAcknowledgment::Committed);
+    drop(briefs);
     // Every row the board delivered: its MEMORIES rows (pins included), its
     // capability hits, and the task intents, worlds, room and project it named.
     let mut delivered: Vec<_> = response
@@ -967,13 +962,16 @@ pub(crate) async fn describe_self_for_auth(
         .await
         .session_reads(&actor.to_hex(), Some(session_id))
         .clone();
-    let mut runs = server.self_brief_sessions.lock().await;
-    let (tail, sources) = match runs.get_mut(&(actor, session_id.to_owned())) {
-        Some(run) => {
-            let (card, sources) = run
-                .render
-                .describe_self_listing(&server.vault, &run.state, &read_set, Some(&people))
-                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+    let briefs = server.self_brief_sessions.lock().await;
+    let (tail, sources) = match briefs.tail_listing(
+        &(actor, session_id.to_owned()),
+        &server.vault,
+        &read_set,
+        Some(&people),
+    ) {
+        Some(listing) => {
+            let (card, sources) =
+                listing.map_err(|error| super::core_engine_error("self brief failed", error))?;
             let tail = card.tail.ok_or_else(|| {
                 crate::error::ApiError::internal_server_error("self brief tail is missing")
             })?;
