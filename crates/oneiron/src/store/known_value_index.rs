@@ -223,7 +223,7 @@ pub(crate) struct KnownSpan<'k> {
     pub(crate) handle: &'k str,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ValueOrigin {
     Custody(EntityId),
     Person,
@@ -771,10 +771,14 @@ impl Vault {
         Ok(Some(KnownSource { ids, handles }))
     }
 
-    /// Runs `read` with the values custody knows now (FIX 8966): one pass of
-    /// [`Self::known_source`], its matcher built for this read alone under
-    /// the custody read guard and wiped when `read` returns; `None` when
-    /// custody knows no value. Call it outside any write transaction.
+    /// Runs `read` with the values custody knows now (FIX 8966): a matcher
+    /// built from one snapshot taken under the custody read guard, its ids
+    /// and entries read together, so no value committed before it is left
+    /// out; the guard is held and the snapshot is dropped before `read`
+    /// runs, and the matcher is wiped when it returns. `None` when custody
+    /// knows no value. Call it outside any write transaction. A read whose
+    /// own bytes come from a snapshot it opens takes
+    /// [`Self::with_known_snapshot`] instead.
     ///
     /// # Errors
     /// The pass's own, or `read`'s.
@@ -782,10 +786,49 @@ impl Vault {
         &self,
         read: impl FnOnce(Option<&KnownValues>) -> Result<T>,
     ) -> Result<T> {
-        match self.known_source()? {
-            Some(source) => source.pass(read)?,
-            None => read(None),
-        }
+        let snapshot = self.store.custody_snapshot()?;
+        let known = {
+            let txn: &RoTxn<'_> = &snapshot;
+            self.known_values_in_snapshot(txn)?
+        };
+        let (guard, txn) = snapshot.into_parts();
+        drop(txn);
+        let result = read(known.as_ref());
+        drop(known);
+        drop(guard);
+        result
+    }
+
+    /// [`Self::with_known_values`], with `read` given the very snapshot the
+    /// matcher was built from (FIX 8966): bytes read in it and the values
+    /// matched against them are one state, so no value committed before the
+    /// read's bytes is missing from its matcher. Keep `read` short; the
+    /// snapshot is held until it returns.
+    ///
+    /// # Errors
+    /// The pass's own, or `read`'s.
+    pub(crate) fn with_known_snapshot<T>(
+        &self,
+        read: impl FnOnce(Option<&KnownValues>, &RoTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let snapshot = self.store.custody_snapshot()?;
+        let txn: &RoTxn<'_> = &snapshot;
+        let known = self.known_values_in_snapshot(txn)?;
+        read(known.as_ref(), txn)
+    }
+
+    /// The matcher of the history `txn` holds, a snapshot taken under the
+    /// custody read guard: each holder with a handle, as a pass reads them.
+    fn known_values_in_snapshot(&self, txn: &RoTxn<'_>) -> Result<Option<KnownValues>> {
+        let Some(history) = self.store.known_history_in_snapshot(txn)? else {
+            return Ok(None);
+        };
+        KnownValues::of(&history, |holder| {
+            Ok(self
+                .store
+                .port_short_id_reference(txn, holder)?
+                .map(|(handle, _)| handle))
+        })
     }
 }
 

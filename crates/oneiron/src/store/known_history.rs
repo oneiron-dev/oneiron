@@ -492,6 +492,26 @@ impl Store {
         }))
     }
 
+    /// The history the index holds in `txn`, a snapshot taken under the
+    /// custody read guard ([`Store::custody_snapshot`]), its ids and its
+    /// entries read in that one snapshot (FIX 8966): no value committed
+    /// before it is left out. `None` while the index keys no value or no
+    /// entry is live.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under an id, and storage faults.
+    pub(crate) fn known_history_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Option<KnownHistory>> {
+        let Some(ids) = self.known_history_ids_in_txn(txn)? else {
+            return Ok(None);
+        };
+        let history = ids.read_in_snapshot(txn, &OverlayDb::canonical(self.core.raw.vault_meta))?;
+        Ok((!history.holders.is_empty()).then_some(history))
+    }
+
     /// The erase of the custody record `holder`, in `wtxn`, its purge's own
     /// transaction (KS-3): its committed known-value history goes, and one
     /// [`RetireCause::Erase`] intent is staged through the newest slot its

@@ -117,9 +117,8 @@ where
     }
     let bytes = read_exact()?;
     let masked = |bytes: Vec<u8>| -> Result<RepoBodyProjection> {
-        vault.with_known_values(|known| {
-            let txn = vault.store.env.read_txn()?;
-            project_repo_bytes_in_txn(vault, &txn, marks, bytes, known)
+        vault.with_known_snapshot(|known, txn| {
+            project_repo_bytes_in_txn(vault, txn, marks, bytes, known)
         })
     };
     let raw_blake3 = *blake3::hash(&bytes).as_bytes();
@@ -133,10 +132,13 @@ where
         return Ok(read);
     }
     let target = RepoFileRevealTarget::new(original, &asker);
-    // The grant must cover each value custody knows in the bytes too.
-    let keys = vault.with_known_values(|known| {
-        let txn = vault.store.env.read_txn()?;
-        repo_file_keys_in_txn(vault, &txn, marks, &bytes, known)
+    // The grant must cover each value custody knows in the bytes too, as
+    // custody knew them in the snapshot the keys were read in (FIX 8966).
+    let (keys, witness) = vault.with_known_snapshot(|known, txn| {
+        Ok((
+            repo_file_keys_in_txn(vault, txn, marks, &bytes, known)?,
+            vault.store.known_history_witness_in_txn(txn)?,
+        ))
     })?;
     let delivery = match vault.repo_file_sight(&asker, &target, &raw_blake3, &keys, &why)? {
         RepoFileSight::Delivered(delivery) => delivery,
@@ -145,6 +147,16 @@ where
     // The receipts are committed: the door's pins stand again before a
     // byte goes out, and the proof must name the very blob read.
     readmit()?;
+    // FIX 8966: a value custody learned after the keys were read was judged
+    // by no grant; the authorization writer may have seen it, so the bytes
+    // read masked and the committed delivery releases none of them.
+    let current = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.known_history_witness_in_txn(&txn)?
+    };
+    if current != witness {
+        return masked(bytes).map(RepoFileRevealRead::projected);
+    }
     let proof = RepoGrantedFileProof::from_delivery(&delivery)?;
     let projection = project_repo_blob(
         vault,
