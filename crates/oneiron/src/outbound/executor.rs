@@ -256,6 +256,21 @@ impl Vault {
                     complete_connector_task_attempt(self, &attempt, now)?;
                     continue;
                 }
+                // This process is closing: the attempt stays pending, re-armed
+                // as a retry, so the send is neither sent nor lost (review
+                // #6574).
+                SendExecutorLeaseTake::Closing => {
+                    retry_connector_task_attempt(
+                        self,
+                        &queue,
+                        &attempt,
+                        task_ref,
+                        now,
+                        "send_executor_closing",
+                        None,
+                    )?;
+                    continue;
+                }
             };
             // FIX 4747: a send that may have gone out, which no lookup could
             // settle, sends nothing until the owner answers its ask. The
