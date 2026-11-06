@@ -493,6 +493,7 @@ impl VaultWaveTaskPort<'_> {
                     ttl: None,
                     spec,
                     type_ref: crate::task_type::TaskTypeRef::seeded_root(),
+                    type_parents: None,
                 };
                 super::rate_limit::record_task_create(
                     self.vault,

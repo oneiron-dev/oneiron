@@ -29,6 +29,40 @@ existing owner/invite/share and revocation handling. The stdio fields of
 `SessionTransport` are unchanged. On Linux its existing `SessionLease` exposes
 the same independent stream capability after `GuestSession::into_transport`.
 Backends without that capability answer `Unsupported`; they do not silently
-reuse stdio or fall back to host TCP. A Firecracker host still needs a separate
-host-to-guest stream transport and matching guest integration; its keepalive
-and Fetch channels do not implement this ingress API.
+reuse stdio or fall back to host TCP.
+
+## Native Firecracker sessions
+
+A native OCI session's lease connects to its own retained jail directory's
+base `vsock.sock`, sends `CONNECT 55\n`, and reads exactly the VMM's
+`OK <host-port>\n` line before sending the session request. Ports 52 (stdio),
+53 (control) and 54 (egress) retain their original roles. Trusted guest PID 1
+binds port 55 before spawning the native command. It admits only host CID 2
+and the same session's existing 32-byte bridge token, then calls the same
+`NativeFenceGuard::connect_loopback` registry and ticket path. This token
+identifies the private session channel; it is not an engine read key or grant.
+
+Firecracker treats a host Unix-socket EOF as shutdown of both vsock directions.
+The separate ingress channel therefore frames each direction: a big-endian
+32-bit length precedes each data chunk (at most 32 KiB); zero means directional
+EOF; `u32::MAX` means full close. A write-half-close leaves the reverse stream
+open. A full close or session cancellation closes both. These are transport
+frame values, not a total byte allowance or a new policy limit. IO checks
+session/caller cancellation at the existing loopback 250 ms cadence; no
+opening deadline is added.
+
+Before creating any host socket, the original relay floor admits the three
+host descriptors and two bridge workers. The returned stream retains its
+one-descriptor permit. The bridge retains the other two descriptors' and both
+workers' permit until both workers finish. A lease drop clears the original
+session-alive flag; pending connects and active workers observe it and close
+their sockets. Guest workers are inside the VM, not host-floor worker claims.
+The guest fence stays held across command exit and stdout drain until the
+host ends VM custody, as before.
+
+This source requires a matching rebuilt guest binary/rootfs and updated
+artifact/release pins when adopted. It does not rebuild or deploy them,
+change the kernel bytes, repin an older recipe, or change the generic guest
+protocol version. An older guest image without port 55 does not gain this
+capability merely because the host source changed. Source qualification is
+not a compiler, boot, runtime or end-to-end certificate.
