@@ -8,9 +8,12 @@
 //! - `policy/<policy>/<revision>`: one revision of a policy, the revision
 //!   spelled in sixteen hex digits;
 //! - `withheld/<row>`: the row left the window after it travelled, and the
-//!   machine that withheld it (none for a vault's founding install).
+//!   machine that withheld it (none for a vault's founding install);
+//! - `event/<policy>/<revision>`: the receipt of the change that made that
+//!   revision of the policy (fix list row 17205), the revision spelled as a
+//!   policy key spells it.
 
-use super::{SourceAudienceKind, SourceAudiencePolicy};
+use super::{SourceAudienceEvent, SourceAudienceKind, SourceAudiencePolicy};
 use crate::EntityId;
 use crate::error::{Error, Result};
 
@@ -20,6 +23,8 @@ const RECORD: &str = "record/";
 const POLICY: &str = "policy/";
 /// A row withheld after it travelled: `withheld/<row>`.
 const WITHHELD: &str = "withheld/";
+/// The receipt of one change to a policy: `event/<policy>/<revision>`.
+const EVENT: &str = "event/";
 /// The hex digits a revision is spelled in.
 const REVISION_DIGITS: usize = 16;
 
@@ -33,6 +38,7 @@ pub(crate) enum CarrierKey {
     Record(EntityId),
     Policy(EntityId, u64),
     Withheld(EntityId),
+    Event(EntityId, u64),
 }
 
 /// `hex` as an id, when it is the id's canonical spelling.
@@ -48,7 +54,18 @@ pub(crate) fn parse_key(map_key: &str) -> Option<CarrierKey> {
     if let Some(row) = map_key.strip_prefix(WITHHELD) {
         return named(row).map(CarrierKey::Withheld);
     }
-    let (policy, revision) = map_key.strip_prefix(POLICY)?.split_once('/')?;
+    if let Some(rest) = map_key.strip_prefix(EVENT) {
+        let (policy, revision) = revision_of(rest)?;
+        return Some(CarrierKey::Event(policy, revision));
+    }
+    let (policy, revision) = revision_of(map_key.strip_prefix(POLICY)?)?;
+    Some(CarrierKey::Policy(policy, revision))
+}
+
+/// The policy and the revision `rest` spells, `<policy>/<revision>`, when
+/// both are in their canonical spelling.
+fn revision_of(rest: &str) -> Option<(EntityId, u64)> {
+    let (policy, revision) = rest.split_once('/')?;
     if revision.len() != REVISION_DIGITS
         || !revision
             .bytes()
@@ -57,7 +74,7 @@ pub(crate) fn parse_key(map_key: &str) -> Option<CarrierKey> {
         return None;
     }
     let revision = u64::from_str_radix(revision, 16).ok()?;
-    Some(CarrierKey::Policy(named(policy)?, revision))
+    Some((named(policy)?, revision))
 }
 
 /// The key of `row`'s binding.
@@ -80,6 +97,12 @@ pub(crate) fn policy_prefix(policy: &EntityId) -> String {
     format!("{POLICY}{}/", policy.to_hex())
 }
 
+/// The key of the receipt of the change that made revision `revision` of
+/// `policy`.
+pub(crate) fn event_key(policy: &EntityId, revision: u64) -> String {
+    format!("{EVENT}{}/{revision:016x}", policy.to_hex())
+}
+
 /// A binding's carried bytes.
 pub(crate) fn encode_binding(policy: &EntityId) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(policy).map_err(|_| refused("a binding does not encode"))
@@ -93,6 +116,11 @@ pub(crate) fn encode_policy(policy: &SourceAudiencePolicy) -> Result<Vec<u8>> {
 /// A withholding marker's carried bytes: the machine that withheld the row.
 pub(crate) fn encode_withheld(by: Option<&EntityId>) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(&by).map_err(|_| refused("a withholding marker does not encode"))
+}
+
+/// A change receipt's carried bytes.
+pub(crate) fn encode_event(event: &SourceAudienceEvent) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(event).map_err(|_| refused("a change receipt does not encode"))
 }
 
 /// One carried entry, decoded.
@@ -112,6 +140,13 @@ pub(crate) enum Carrier {
     Withheld {
         row: EntityId,
         by: Option<EntityId>,
+    },
+    /// The receipt of the change that made revision `revision` of `policy`:
+    /// it rides beside the policy, so a replica knows who shared a thread.
+    Event {
+        policy: EntityId,
+        revision: u64,
+        event: SourceAudienceEvent,
     },
 }
 
@@ -149,6 +184,18 @@ pub(crate) fn carrier(map_key: &str, bytes: &[u8]) -> Result<Carrier> {
                 return Err(refused("a withholding marker not in its canonical form"));
             }
             Ok(Carrier::Withheld { row, by })
+        }
+        CarrierKey::Event(policy, revision) => {
+            let event: SourceAudienceEvent = rmp_serde::from_slice(bytes)
+                .map_err(|_| refused("a change receipt does not decode"))?;
+            if encode_event(&event)? != bytes {
+                return Err(refused("a change receipt not in its canonical form"));
+            }
+            Ok(Carrier::Event {
+                policy,
+                revision,
+                event,
+            })
         }
     }
 }

@@ -1,6 +1,7 @@
 //! A source audience carrier in a checkpoint (SYNC-3 §5): a binding and a
 //! withholding marker ride with the row their key names; a policy revision
-//! names the people who read under it and is no entity of its own. None is
+//! names the people who read under it, and a change receipt who made the
+//! change and whom it named, and neither is an entity of its own. None is
 //! split here, so each stays unclassified under the vault-wide seal, named
 //! as such.
 #![allow(
@@ -18,6 +19,8 @@ const BINDING_UNSPLIT: &str = "a source audience binding is not split from its p
 const POLICY_ACTORS: &str = "a source audience policy names the people who read under it";
 /// A withholding marker names the machine that withheld its row.
 const MARKER_UNSPLIT: &str = "a source audience withholding marker names the machine that set it";
+/// A change receipt names who made the change and the person it named.
+const RECEIPT_ACTORS: &str = "a source audience change receipt names who made the change";
 
 /// Where the carrier under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
@@ -29,6 +32,9 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         Ok(Carrier::Policy { .. }) => {
             Placement::unclassified(None, SyncUnclassified::ActorSplit(POLICY_ACTORS))
         }
+        Ok(Carrier::Event { .. }) => {
+            Placement::unclassified(None, SyncUnclassified::ActorSplit(RECEIPT_ACTORS))
+        }
         Ok(Carrier::Withheld { row, .. }) => Placement::unclassified(
             Some(OwnerRef::entity(&row)),
             SyncUnclassified::ActorSplit(MARKER_UNSPLIT),
@@ -37,8 +43,9 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     }
 }
 
-/// What a key spells: a row's id, or a policy's id and a revision, both
-/// opaque; any other spelling is payload.
+/// What a key spells: a row's id, or a policy's id and a revision (a
+/// revision's key and a receipt's), both opaque; any other spelling is
+/// payload.
 pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
     if parse_key(key).is_some() {
         KeyClass::Opaque
