@@ -427,6 +427,37 @@ impl Vault {
         self.member_bounded_slip_view_in_txn(txn, verified)
     }
 
+    /// A contact-bound slip verified in `txn` (FIX 4325): its naming still
+    /// stands. No guest narrowing applies: the binding names no grant.
+    pub(super) fn admitted_trusted_contact_view_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        credential: TrustedContactCredential,
+        now: u64,
+    ) -> Result<TrustedContactCredential> {
+        self.require_live_slip_refs_in_txn(txn, credential.claims(), now)?;
+        Ok(credential)
+    }
+
+    /// Whether a contact credential verified earlier still holds in `txn`
+    /// (FIX 4325): its slip live on this vault's clock and fold, its naming
+    /// still standing. The contact's own doors recheck it in their acting
+    /// transaction, as an owner act rechecks its proof.
+    pub(crate) fn trusted_contact_holds_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        credential: &TrustedContactCredential,
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let claims = credential.claims();
+        Ok(now >= claims.issued_at
+            && now < claims.expires_at
+            && fold.vault_id == Some(claims.vault_id)
+            && fold.slip_is_live(&claims.slip_id)
+            && self.slip_refs_stand_in_txn(txn, claims, now)?)
+    }
+
     /// Whether a guest grant reaches TASK `task` (FIX 7928, 7929): an Ask
     /// guest's its own ask's member TASKs and its disclosed facts, a Connect
     /// guest's a TASK whose position stands inside its current effective

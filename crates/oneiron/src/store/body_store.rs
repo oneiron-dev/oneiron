@@ -31,7 +31,7 @@ use rustix::fs::{
 use rustix::io::Errno;
 
 use super::Store;
-use crate::store::known_value_index::{KnownSource, KnownSweep, KnownValues};
+use crate::store::known_value_index::{KnownSource, KnownSweep, KnownValues, RunKnownSource};
 use crate::{Error, Result};
 
 mod finish_pinned;
@@ -598,6 +598,12 @@ impl BodySink {
     /// write transaction: each frame takes the custody read guard.
     pub(crate) fn sweeping(mut self, known: Option<KnownSource>) -> Self {
         self.sweep = known.map(KnownSweep::new);
+        self
+    }
+
+    /// A bound run's custody and PERSON output sweep, fed outside any writer.
+    pub(crate) fn sweeping_run(mut self, source: RunKnownSource) -> Self {
+        self.sweep = Some(KnownSweep::for_run(source));
         self
     }
 

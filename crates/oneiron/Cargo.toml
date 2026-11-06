@@ -73,6 +73,7 @@ rand_core = { workspace = true }
 rand = "0.8"
 rand_distr = "0.4"
 thiserror = { workspace = true }
+rmp = "0.8"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
@@ -115,7 +116,7 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
-loro = "1.10"
+loro = { workspace = true }
 tokio = { version = "1", features = ["net", "sync", "time"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 base64 = "0.22"
@@ -142,7 +143,7 @@ whichlang = "0.1.1"
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico"] }
 
 # CAL-01's UTC/IANA border uses embedded 2026c TZif data, including the
 # BC permanent-UTC-7 rule. The parser and database stay private to calendar/tz.
@@ -181,6 +182,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "deflate",
     "gzip",
     "json",
+    "http2",
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
@@ -222,7 +224,7 @@ libc = "0.2"
 rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [features]
 default = ["sync"]
@@ -255,7 +257,7 @@ sync = [
 # mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
-test-hooks = ["oneiron-model/test-hooks"]
+test-hooks = ["oneiron-model/test-hooks", "oneiron-store/test-hooks"]
 # Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
 # without seeding the default policy manifest (the effect-spine oracle needs
 # it). Enabled only via the self dev-dependency below. Even under

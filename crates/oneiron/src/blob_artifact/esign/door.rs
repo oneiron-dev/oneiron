@@ -371,22 +371,23 @@ impl Memory<'_> {
         let caller = self.signing_caller();
         let vault = self.vault();
         let verified_actor = Some(self.actor());
+        let (ip, user_agent) = self.signing_request_transport();
         Ok(match self.esign_scope()? {
             EsignScope::Unrestricted => vault.execute_signing_action_as(
                 &token,
                 &input.action,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
             )?,
             EsignScope::Credential(lane) => vault.execute_signing_action_within(
                 &token,
                 &input.action,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
                     lane_scope::reaches(&lane, txn, document)
                 },
@@ -409,6 +410,7 @@ impl Memory<'_> {
         let token = super::EsignCapability::parse(&input.token)?;
         let caller = self.signing_caller();
         let verified_actor = Some(self.actor());
+        let (ip, user_agent) = self.signing_request_transport();
         let vault = self.vault();
         let bytes = match self.esign_scope()? {
             EsignScope::Unrestricted => vault.esign_pdf_for_capability_as(
@@ -416,16 +418,16 @@ impl Memory<'_> {
                 input.item,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
             )?,
             EsignScope::Credential(lane) => vault.esign_pdf_for_capability_within(
                 &token,
                 input.item,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
                     lane_scope::reaches(&lane, txn, document)
                 },

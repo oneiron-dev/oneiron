@@ -125,8 +125,12 @@ impl StoreDeleteGuards for EngineDeleteGuards {
         store: &Store,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<(bool, bool, Vec<EntityId>)> {
-        crate::workspace_roster::deindex_project_room(store, txn, id)
+        crate::workspace_roster::deindex_project_room(store, txn, id, deindex)
     }
 }
 
@@ -599,20 +603,20 @@ pub(crate) struct EngineAttemptOperations;
 impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
     fn erase_attempt_payload_actor_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, actor)
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(write, txn, actor)
     }
 
     fn erase_attempt_payload_actors_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actors: &BTreeSet<EntityId>,
     ) -> Result<()> {
-        crate::attempt_queue::erase_attempt_payload_actors_in_txn(store, txn, actors)
+        crate::attempt_queue::erase_attempt_payload_actors_in_txn(write, txn, actors)
     }
 
     fn erase_model_step_failure_reasons_in_txn(
@@ -859,9 +863,16 @@ impl StoreGateHooks for EngineGateHooks {
         store: &Store,
         txn: &RoTxn<'_>,
         machine: EntityId,
+        authored_by: Option<EntityId>,
         body: &[u8],
     ) -> Result<()> {
-        crate::gate::validate_own_device_witness_message_body(store, txn, machine, body)
+        crate::gate::validate_own_device_witness_message_body(
+            store,
+            txn,
+            machine,
+            authored_by,
+            body,
+        )
     }
 
     fn claim_consolidation_eligible_in_txn(
@@ -927,6 +938,16 @@ impl StoreGateHooks for EngineGateHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn campaign_compliance_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+        now_utc: u64,
+    ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>> {
+        crate::campaign::compliance::campaign_compliance_gate(store, txn, effect, now_utc)
     }
 }
 

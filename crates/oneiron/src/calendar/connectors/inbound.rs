@@ -14,7 +14,7 @@ use super::seat::{
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
-use crate::calendar::ingest::admit_calendar_import_claim;
+use crate::calendar::ingest::{admit_calendar_import_claim, admit_calendar_import_claim_in_txn};
 use crate::calendar::passport::live_passport_for;
 use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
@@ -107,6 +107,9 @@ fn apply_remote_change(
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
     let system = seat.config.system.as_str();
+    // FIX 4797: the vault's one calendar admission turn, from the echo
+    // classification through the sweep and the remote object row.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
     match change {
         RemoteCalendarChange::Upsert(object) => {
             let feed = super::remote::parse_remote_resource(object)?;
@@ -289,6 +292,31 @@ pub(super) fn admit_screened(
 ) -> Result<EntityId, CalendarConnectorError> {
     let screened = screen_then_claim(false, None, body, |_request| {
         admit_calendar_import_claim(vault, &event_ref, predicate, value, source_record_id, now)
+    })
+    .map_err(CalendarError::from)?;
+    Ok(screened.value)
+}
+
+pub(super) fn admit_screened_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event_ref: EntityId,
+    body: &CalendarInboundBody,
+    source_record_id: &str,
+    predicate: &str,
+    value: rmpv::Value,
+    now: u64,
+) -> Result<EntityId, CalendarConnectorError> {
+    let screened = screen_then_claim(false, None, body, |_request| {
+        admit_calendar_import_claim_in_txn(
+            vault,
+            txn,
+            &event_ref,
+            predicate,
+            value,
+            source_record_id,
+            now,
+        )
     })
     .map_err(CalendarError::from)?;
     Ok(screened.value)

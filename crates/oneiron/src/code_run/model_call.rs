@@ -519,6 +519,17 @@ pub(crate) fn erase_model_call_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
+    erase_model_call_actor_as_in_txn(vault, wtxn, actor, None)
+}
+
+/// Carries the live actor scrub's custody revokes under the erase's actual owner act.
+/// The declared scrub and restore/replay paths retain the local-only wrapper.
+pub(crate) fn erase_model_call_actor_as_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
     if crate::deletion::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
@@ -543,7 +554,7 @@ pub(crate) fn erase_model_call_actor_in_txn(
         let place = format!("side:{}", MODEL_CALLS.decl().name);
         let origin =
             crate::batch::secret_scan::side_row_origin(&place, &MODEL_CALLS.key_bytes(&key))?;
-        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
         MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
     Ok(())

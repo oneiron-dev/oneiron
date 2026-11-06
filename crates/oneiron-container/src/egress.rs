@@ -17,7 +17,8 @@ pub struct HttpRequest {
 pub struct HttpResponse {
     pub url: String,
     pub status: u16,
-    pub headers: Vec<(String, String)>,
+    /// HTTP field values as received, without UTF-8 decoding.
+    pub headers: Vec<(String, Vec<u8>)>,
     #[serde(
         serialize_with = "serialize_response_body",
         deserialize_with = "deserialize_response_body"
@@ -79,11 +80,77 @@ pub trait EgressRelay: Send + Sync + 'static {
     fn record_refusal(&self, _refusal: &LoopbackRefusal) -> io::Result<()> {
         Ok(())
     }
+    /// Records one credential forwarding/resolution decision as metadata
+    /// only. A relay that keeps no receipts records nothing; a record that
+    /// fails never changes what the guest is answered.
+    fn record_credential(&self, _record: &CredentialEgressRecord) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// One credential forwarding/resolution decision, as metadata only.
+///
+/// Plain owned descriptor: the actual VM id, the opaque handle ref, the
+/// actual operation/effect when known, the normalized destination
+/// scheme/bare host when known, the outcome status, and the material byte
+/// count on success only. No raw args, credential material, resolver or
+/// transport error text, HTTP body, final URL, or content hash claim.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CredentialEgressRecord {
+    pub vm_id: String,
+    pub handle_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub status: CredentialEgressStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material_bytes: Option<usize>,
+}
+
+/// How one credential forwarding/resolution decision ended.
+///
+/// `Forwarded` means the transport read returned `Ok`; `Resolved` means
+/// inject only resolved, measured and scrubbed, never a transport
+/// injection or HTTP response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialEgressStatus {
+    Forwarded,
+    Resolved,
+    InvalidDestination,
+    Unarmed,
+    AllowlistDenied,
+    ResolverFailed,
+    EmptyMaterial,
+    TransportFailed,
+    TransportUnavailable,
+}
+
+impl CredentialEgressStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Forwarded => "forwarded",
+            Self::Resolved => "resolved",
+            Self::InvalidDestination => "invalid_destination",
+            Self::Unarmed => "unarmed",
+            Self::AllowlistDenied => "allowlist_denied",
+            Self::ResolverFailed => "resolver_failed",
+            Self::EmptyMaterial => "empty_material",
+            Self::TransportFailed => "transport_failed",
+            Self::TransportUnavailable => "transport_unavailable",
+        }
+    }
 }
 
 /// A guest call the fence refused because only the guest's own loopback
-/// (127.0.0.0/8 and ::1) holds listeners, inside its own session. The guest
-/// is answered an errno; the host records this.
+/// (127.0.0.0/8, its IPv4-mapped form, and ::1) holds listeners, inside its
+/// own session. The guest is answered an errno; the host records this.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LoopbackRefusal {
     pub operation: LoopbackOperation,
@@ -121,10 +188,8 @@ pub enum LoopbackRefusalReason {
     /// The unspecified address (0.0.0.0, ::), or a listen with no bind
     /// before it, which would take it.
     Wildcard,
-    /// Neither 127.0.0.0/8 nor ::1.
+    /// Neither 127.0.0.0/8 (an IPv4-mapped form included) nor ::1.
     NotLoopback,
-    /// An IPv4-mapped IPv6 address (::ffff:a.b.c.d).
-    MappedAddress,
     /// A datagram socket: the fence keeps stream listeners only.
     Datagram,
     /// An accept on a socket that is not listening.
@@ -139,7 +204,6 @@ impl LoopbackRefusalReason {
         match self {
             Self::Wildcard => "wildcard",
             Self::NotLoopback => "not_loopback",
-            Self::MappedAddress => "mapped_address",
             Self::Datagram => "datagram",
             Self::NotListening => "not_listening",
             Self::NoListener => "no_listener",

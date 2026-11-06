@@ -142,6 +142,17 @@ args = ["--spec-type", "draft-simple", "--spec-draft-n-max", "8",
         "--flash-attn", "on", "--jinja", "--reasoning-format", "deepseek"]
 ```
 
+An external EXL3 row may pin the manifest its operator's server was started
+with (FIX 9296): `launch_manifest_sha256` is the SHA-256 of the exact bytes
+of that `--launch-manifest` file (`sha256sum` of the file the server was
+given; the file's digest, not the `expected.runtime` build digest it
+names). An answer that echoes the pinned digest beside the epoch the row's
+worker qualified with keeps a verified-artifacts claim; a missing pin, a
+missing echo, or an epoch the worker did not qualify with leaves the
+receipt's build unknown. The calls still flow either way: the pin checks
+what an answer echoes, and proves nothing about which binary runs on the
+operator's machine.
+
 Only plain and embedded `serve` launch managed workers; a managed per-vault
 process shows its rows unchecked and calls its providers as before. Never
 run a managed row and its systemd unit at once: one supervisor owns a

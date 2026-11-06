@@ -1,5 +1,8 @@
 //! Project attributed skill outcomes into the shared learning.reliability cells.
 
+mod actor_displacement;
+pub(crate) use actor_displacement::reconcile_displaced_actor_credit_in_txn;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Vault;
@@ -15,8 +18,8 @@ use crate::learning::LearningCell;
 use crate::learning::evidence::cells_for_subject_in_txn;
 use crate::learning::project::project_cell_in_txn;
 use crate::receipt::ReceiptRecord;
-use crate::skill_attribution::LateCreditReceipt;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
+use crate::skill_attribution::{LateCreditReceipt, StandingCreditObservation};
 use crate::temporal::TimeRange;
 
 use super::amended::amended_receipt_shares_in_txn;
@@ -128,9 +131,12 @@ fn recomputed_person_observation(
     attempt: &str,
     restated: EntityId,
     exclude: Option<&EntityId>,
-) -> Result<Option<(bool, f64)>> {
-    let mut subjects =
-        crate::skill_attribution::effective_credit_subjects_in_txn(&vault.store, txn, credit)?;
+) -> Result<StandingCreditObservation> {
+    let Some(mut subjects) =
+        crate::skill_attribution::effective_credit_subjects_in_txn(&vault.store, txn, credit)?
+    else {
+        return Ok(StandingCreditObservation::Unknown);
+    };
     if Some(&restated) != exclude && !subjects.contains(&restated) {
         subjects.push(restated);
         subjects.sort();
@@ -147,13 +153,22 @@ fn recomputed_person_observation(
         let candidate = if let Some(share) = shares.get(attempt) {
             Some((false, f64::from(*share)))
         } else {
-            crate::skill_attribution::standing_credit_observation_in_txn(
+            match crate::skill_attribution::standing_credit_observation_in_txn(
                 vault, txn, credit, &subject,
-            )?
+            )? {
+                StandingCreditObservation::Credited(success, weight) => Some((success, weight)),
+                StandingCreditObservation::Uncredited => None,
+                StandingCreditObservation::Unknown => {
+                    return Ok(StandingCreditObservation::Unknown);
+                }
+            }
         };
         best = combine_person_observation(best, candidate);
     }
-    Ok(best)
+    Ok(match best {
+        Some((success, weight)) => StandingCreditObservation::Credited(success, weight),
+        None => StandingCreditObservation::Uncredited,
+    })
 }
 
 /// Whether the person row already folds `observation` (REVIEW-4322 P1):
@@ -695,13 +710,23 @@ pub(super) fn project_in_txn(
                     &parents,
                     crate::learning::EstimateForm::Beta,
                 )?;
-                if let Some(credit) = crate::skill_attribution::late_credit_receipt_in_txn(
+                let observation = match crate::skill_attribution::late_credit_receipt_in_txn(
                     vault,
                     txn,
                     &evidence.receipt,
-                )? && let Some(observation) =
-                    recomputed_person_observation(vault, txn, &credit, attempt, *skill, None)?
-                {
+                )? {
+                    Some(credit) => match recomputed_person_observation(
+                        vault, txn, &credit, attempt, *skill, None,
+                    )? {
+                        StandingCreditObservation::Credited(success, weight) => {
+                            Some((success, weight))
+                        }
+                        StandingCreditObservation::Uncredited => None,
+                        StandingCreditObservation::Unknown => continue,
+                    },
+                    None => None,
+                };
+                if let Some(observation) = observation {
                     record_recomputed_person_evidence_in_txn(
                         vault,
                         txn,
@@ -779,17 +804,26 @@ pub(super) fn project_in_txn(
             &query.type_parents,
             crate::learning::EstimateForm::Beta,
         )?;
-        if let Some(credit) =
-            crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &evidence.receipt)?
-            && let Some(observation) = recomputed_person_observation(
+        let observation = match crate::skill_attribution::late_credit_receipt_in_txn(
+            vault,
+            txn,
+            &evidence.receipt,
+        )? {
+            Some(credit) => match recomputed_person_observation(
                 vault,
                 txn,
                 &credit,
                 &attempt_ref,
                 held.subject,
                 None,
-            )?
-        {
+            )? {
+                StandingCreditObservation::Credited(success, weight) => Some((success, weight)),
+                StandingCreditObservation::Uncredited => None,
+                StandingCreditObservation::Unknown => continue,
+            },
+            None => None,
+        };
+        if let Some(observation) = observation {
             record_recomputed_person_evidence_in_txn(
                 vault,
                 txn,
@@ -834,17 +868,23 @@ pub(super) fn project_in_txn(
         let Some(person_cell) = anchored_person_cell(&held, person) else {
             continue;
         };
-        if let Some(credit) =
-            crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &receipt)?
-            && let Some(observation) = recomputed_person_observation(
-                vault,
-                txn,
-                &credit,
-                &attempt_ref,
-                subject,
-                Some(&subject),
-            )?
-        {
+        let observation =
+            match crate::skill_attribution::late_credit_receipt_in_txn(vault, txn, &receipt)? {
+                Some(credit) => match recomputed_person_observation(
+                    vault,
+                    txn,
+                    &credit,
+                    &attempt_ref,
+                    subject,
+                    Some(&subject),
+                )? {
+                    StandingCreditObservation::Credited(success, weight) => Some((success, weight)),
+                    StandingCreditObservation::Uncredited => None,
+                    StandingCreditObservation::Unknown => continue,
+                },
+                None => None,
+            };
+        if let Some(observation) = observation {
             let mut restated = LearningEvidence::anchored(
                 receipt.clone(),
                 row.at,

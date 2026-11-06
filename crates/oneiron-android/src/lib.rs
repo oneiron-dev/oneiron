@@ -16,7 +16,7 @@ use jni::{
 };
 use oneiron::{
     EdgeActorClass, EdgeInfo, EdgeKind, EntityId, Memory, RawEntityPut, ScoredEntity, TimeRange,
-    Vault, VaultConfig, authority::MachineDeviceClass, parse_actor_key,
+    Vault, VaultConfig, authority::MachineDeviceClass, limit_ask::EngineLimit, parse_actor_key,
 };
 use std::sync::{Arc, MutexGuard};
 
@@ -25,11 +25,16 @@ use std::sync::{Arc, MutexGuard};
 pub mod engine;
 // Public for the same reason.
 pub mod reads;
+// Public so its JNI export is a reachable item, as this file's are.
+pub mod limit_questions;
 
 struct NativeVault {
     vault: Arc<Vault>,
     /// The caller a bound vault writes as; `None` writes as the host.
     binding: Option<Binding>,
+    /// This vault's engine-limit questions when it opened its vault raw;
+    /// `None` on a bound vault or an engine-shared vault, which ask none.
+    native_limit_questions: Option<Arc<limit_questions::NativeLimitQuestions>>,
 }
 /// The principal a bound vault's app host named, and the off-record
 /// session, if any: this vault's alone, never process or engine state.
@@ -44,6 +49,24 @@ impl NativeVault {
         Self {
             vault,
             binding: None,
+            native_limit_questions: None,
+        }
+    }
+
+    /// A vault over a freshly raw-opened `vault`: installs one fresh
+    /// collector where the vault's engine rows ask and measures the opened
+    /// width once, inline. Only the raw open calls this, after its open
+    /// has succeeded.
+    fn opened(vault: Arc<Vault>) -> Self {
+        let questions = Arc::new(limit_questions::NativeLimitQuestions::new());
+        vault.set_limit_ask(questions.clone());
+        if let Ok(measured) = u64::try_from(vault.embedding_dimensions()) {
+            let _ = vault.measure_limit(EngineLimit::EmbeddingDimensions, measured);
+        }
+        Self {
+            vault,
+            binding: None,
+            native_limit_questions: Some(questions),
         }
     }
     /// A NEW vault over this one's same open vault that writes as the caller
@@ -68,6 +91,7 @@ impl NativeVault {
                 actor_class,
                 session: session.map(str::to_owned),
             }),
+            native_limit_questions: None,
         })
     }
     /// The bound caller's memory surface, its session bound.
@@ -98,7 +122,7 @@ impl NativeVault {
         let mut config = VaultConfig::device();
         config.machine_device_class = device_class;
         Vault::open(path, config)
-            .map(|vault| Self::unbound(Arc::new(vault)))
+            .map(|vault| Self::opened(Arc::new(vault)))
             .map_err(display)
     }
     fn put(&self, id: &str, kind: jint, at: jlong, body: &[u8]) -> Result<(), String> {

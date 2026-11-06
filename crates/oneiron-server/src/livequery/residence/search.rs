@@ -16,6 +16,7 @@ pub(super) fn search(
 ) -> Result<Answer, AppError> {
     let input: SearchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    oneiron::memory::caps::check_as_of(input.as_of)?;
     if input.query.trim().is_empty()
         || input.query.len() > budgets.search_query_max_bytes
         || input.limit == 0
