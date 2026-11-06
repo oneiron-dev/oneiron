@@ -63,20 +63,6 @@ impl WindowManager {
         })
     }
 
-    /// Whether a policy wake ever readied the window labelled `label`: its
-    /// ready generation is above 0.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors, and a row that does not read as a generation.
-    pub(crate) fn window_readied(&self, label: &str) -> Result<bool> {
-        let vault = self.vault();
-        let txn = vault.store.env.read_txn()?;
-        Ok(READY_GENERATION
-            .get(&vault.store, &txn, &label.to_owned())?
-            .is_some_and(|generation| u64::from_le_bytes(generation) > 0))
-    }
-
     /// Whether this vault stores window `key`: its snapshot, or pending
     /// updates a cold open recovers. A transport asks it before it names a
     /// ready window to its peer, so no ready row opens an empty window.

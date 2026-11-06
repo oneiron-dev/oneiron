@@ -535,25 +535,7 @@ impl SyncConnection {
 
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
-        let mut full_resync_markers = self.full_resync_markers()?;
-        // An opened-item lane leaves a window a policy wake readied to its own
-        // promoted exchange: its marker stays, uncleared by any residence ACK
-        // (FIX 19634). Any other marker still asks for sync-all recovery.
-        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
-            && client.config.federation_peer.is_none()
-        {
-            let mut unrelated = Vec::with_capacity(full_resync_markers.len());
-            for marker in full_resync_markers {
-                if !self
-                    .manager
-                    .window_readied(&marker.window_key)
-                    .map_err(|e| format!("Read window ready generation failed: {e}"))?
-                {
-                    unrelated.push(marker);
-                }
-            }
-            full_resync_markers = unrelated;
-        }
+        let full_resync_markers = self.full_resync_markers()?;
         let force_resync: BTreeSet<String> = full_resync_markers
             .iter()
             .map(|marker| marker.window_key.clone())

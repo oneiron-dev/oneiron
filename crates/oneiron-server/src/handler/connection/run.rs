@@ -17,7 +17,7 @@ use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
 use super::super::window_pads::{Released, send_released, send_released_outcome};
-use super::super::window_ready::send_ready_window_requests;
+use super::super::window_ready::{send_ready_window_requests, uninspectable_window};
 use super::{
     ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
     session_gone, should_forward_broadcast, window_delivery, window_update_withheld,
@@ -127,6 +127,7 @@ pub(super) async fn handle_connection(
     // Where this socket stands in the windows a policy wake readied here
     // (FIX 19634): a new socket asks again for every one.
     let mut ready_windows = oneiron::sync::manager::ReadyProgress::default();
+    let mut last_ready_pass = std::time::Instant::now();
     tracing::debug!(
         conn_id,
         machine = ?conn_state.peer_machine(server.vault()),
@@ -169,6 +170,18 @@ pub(super) async fn handle_connection(
     // sit queued in this channel — or blocked mid-`send` — across the very
     // revocation that should have stopped it.
     loop {
+        // Ready windows keep a fair turn under sustained traffic, which can
+        // starve the leaf-key tick below: a pass a whole tick overdue runs
+        // before the next event, while no catch-up waits on the direct queue,
+        // so no queued exchange is split (FIX 19634).
+        if direct_rx.is_empty() && last_ready_pass.elapsed() >= LEAF_KEY_TICK * 2 {
+            last_ready_pass = std::time::Instant::now();
+            if !send_ready_window_requests(&server, &conn_state, &mut ready_windows, &mut transport)
+                .await
+            {
+                break;
+            }
+        }
         let event = tokio::select! {
             biased;
             // OF-237: the engine's stop ends the loop at its wait.
@@ -226,6 +239,7 @@ pub(super) async fn handle_connection(
                 // The same one-second tick, its first at once, asks for the
                 // windows a policy wake readied here since this socket last
                 // asked (FIX 19634).
+                last_ready_pass = std::time::Instant::now();
                 if !send_ready_window_requests(
                     &server,
                     &conn_state,
@@ -503,6 +517,15 @@ pub(super) async fn handle_connection(
                     || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
                         && super::super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
                 {
+                    // An answer the last door could not read now leaves its
+                    // window's ready request owed again (FIX 19634).
+                    if ledger_withheld
+                        && conn_state.window_sync_mode
+                            != super::super::conn_state::WindowSyncMode::Selector
+                        && let Some(key) = uninspectable_window(&server, peer, &data)
+                    {
+                        ready_windows.retry(&key);
+                    }
                     transport.app_jti = None;
                     continue;
                 }
