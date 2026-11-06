@@ -236,6 +236,9 @@ fn call_effect(call: &EsignDeliveryCall) -> Result<ExternalEffectGateInput> {
                 connector: &normalize_key(&call.channel),
                 target: &call.target,
                 sender: call.channel_identity_ref,
+                // An e-sign delivery rides the e-sign connector, never a
+                // native or member mail send (FIX 11869).
+                native_mail_recipient: false,
                 thread_ref: None,
                 content_ref: call.content_ref.as_deref(),
                 send_ref: &call.send_ref,
