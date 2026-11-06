@@ -252,11 +252,15 @@ fn quarantine_current_in_txn(
 pub struct ManifestContribution {
     pub id: String,
     pub trusted: bool,
+    /// An untrusted contribution: a proposal that enters no effective policy,
+    /// narrowing included, until a policy holder authors its values through
+    /// the manifest put (FIX 8780).
     pub restrict_only: bool,
     pub quarantined: bool,
 }
 impl Vault {
-    /// Surface unauthenticated narrowing as actionable rows, without granting it authority.
+    /// Surface untrusted contributions as proposals a holder may act on,
+    /// without giving them any effect (FIX 8780).
     pub fn manifest_contributions(&self) -> Result<Vec<ManifestContribution>> {
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
@@ -451,6 +455,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

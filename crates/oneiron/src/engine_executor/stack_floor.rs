@@ -58,8 +58,27 @@ fn stack_remaining() -> Option<usize> {
     top.checked_sub(size).map(|low| here.saturating_sub(low))
 }
 
+/// Bytes of stack below this frame on the calling thread.
+#[cfg(target_os = "windows")]
+fn stack_remaining() -> Option<usize> {
+    let marker = 0_u8;
+    let here = std::ptr::addr_of!(marker).addr();
+    let (mut low, mut high) = (0_usize, 0_usize);
+    // SAFETY: both pointers are valid for writes; the function returns the
+    // calling thread's own stack limits and retains neither pointer.
+    unsafe {
+        windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high);
+    }
+    Some(here.saturating_sub(low))
+}
+
 /// No stack bounds are read on this platform.
-#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple",
+    target_os = "windows"
+)))]
 fn stack_remaining() -> Option<usize> {
     None
 }

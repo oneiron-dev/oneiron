@@ -82,6 +82,18 @@ impl QueuedCheckApproval {
         self.actor
     }
 
+    /// Whether this closed approval binds `repo`'s plan `plan_digest` for
+    /// completion (FIX 7227): the same repository and plan the approval was
+    /// minted for, judged on closed fields alone. This is the original
+    /// proof's binding, NOT a live-holds re-authorization; the finish writer
+    /// closes the receipt-bound token over it after SAME work/lease/attempt
+    /// checks, binding original read-scope plus actual outputs. Live holds
+    /// still decide Held vs Completed status separately.
+    #[must_use]
+    pub(crate) fn matches_completion_binding(&self, repo: EntityId, plan_digest: &str) -> bool {
+        self.repo == repo && self.plan_digest == plan_digest
+    }
+
     /// Whether this approval still authorizes `repo`'s plan `plan_digest`
     /// in `txn`: the same repository and plan, a live owner, when a
     /// credential carried it that credential still live, and when a host

@@ -27,6 +27,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `VAULT_LOCKED_SINGLE_WRITER` | Connect to the process that owns this vault. Do not remove lock files or open a second writer. |
 | `WRONG_ROOT` | The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries. |
 | `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation. |
+| `PACED_HOLD` | A count-bound budget window paced the call, and the engine holds it in its caller's fair line until its turn; nothing was refused. `resetsAt` names the earliest it runs and the message its deadline, after which it ends unrun. Send nothing again: a retry with the same invocation reads what the call came to. HTTP answers 202; over MCP the kind is `paced_hold` (-32020). |
 | `INVENTED_REFERENCE` | Name only records this writer can read, by the ref the engine issued. The write was refused and receipted. |
 | `HOST_ACTION_REQUIRES_SUPPORT_GRANT` | A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none. |
 | `WORLD_RECIPIENT_LIMIT` | The owner's read setting for a row's world keeps it from where this answer goes; the message names his choice, never the world. Read it where his choice admits, or ask him to change that setting. The row is there: do not treat this as not found. |
@@ -39,6 +40,7 @@ A server door refuses with these too; they pass through verbatim.
 
 | Code | Response |
 |---|---|
+| `DEADLINE_EXCEEDED` | The caller's signals_deadline_ms expired. HTTP answers 408 and publishes no partial signal page or advanced cursor. Retry from the previous successful cursor with a larger budget, or omit the explicit deadline. |
 | `AGENT_THREAD_WALK_IN_FORBIDDEN` | An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020). |
 | `writes_frozen` | This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020). |
 | `render_deadline` | The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020). |

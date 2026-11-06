@@ -170,6 +170,8 @@ async fn act(
     let place = blocking(|| vault.turn_room_work(action.assistant_turn))
         .map_err(|error| error.to_string())?;
     let (room, branch) = place.map_or((action.conversation, None), |work| (work.room, work.branch));
+    let model_call_no_record_at_arrival =
+        crate::api::ai::chat::model_call_keeps_no_record(vault, actor, None, Some(room), None);
     let funding = blocking(|| room_launch_funding(vault, room, branch, context.agent, actor))
         .map_err(|fault| fault.to_string())?;
     let seat = ai
@@ -179,6 +181,32 @@ async fn act(
     // FIX 4465 D: a self agent's kept prefix, read before its context is
     // spent below; the action takes it only once its own call is admitted.
     let reuse = blocking(|| reuse_chat_breakpoint(ai, vault, &action, &context));
+    let action_log = if action.action == TurnAction::Retry
+        && !matches!(&reuse, ChatReuse::Reused(_))
+        && ai.chat_self_mode(vault, context.agent).is_some()
+    {
+        blocking(|| {
+            let reader = action_reader(vault, &action)?;
+            match oneiron::compaction::read_action_pinned_log(
+                &reader,
+                &action,
+                &context,
+                settings.history_turns,
+            ) {
+                Ok(log) => log,
+                Err(_) => {
+                    tracing::info!(
+                        reason = "action_target_log_unread",
+                        "a turn action's target log was not read; its reply keeps no breakpoint"
+                    );
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
+    let mut action_craft = Vec::new();
     // The agent must still pass the dispatch predicate, as chat's does.
     let instructions = AgentDispatcher::new(vault)
         .dispatchable_definition(&AgentDispatchTarget::Custom(context.agent))
@@ -221,6 +249,9 @@ async fn act(
             && stamp_craft(vault, attempt, context.agent, &craft.entries)
         {
             today_sources.craft(&craft.entries);
+            if action_log.is_some() {
+                action_craft = craft.entries.clone();
+            }
             shown = Some(craft.message);
         }
         (shown, None)
@@ -235,10 +266,11 @@ async fn act(
         messages.push(text_message(role, line.text));
     }
     // FIX 6920: the board the action reads, hydrated once, as its
-    // requester's kept slip reads now. It rides as one request-only User
-    // right before the user turn the reply answers, so a Continue's saved
-    // reply and its suffix stay after it; the witness and the log never
-    // hold it.
+    // requester's kept slip reads now. It rides in two parts (I1 = C, FIX
+    // 14677): its state part as one request-only User right before the user
+    // turn the reply answers, its query part and the opener as one right
+    // after it, so a Continue's saved reply and its suffix stay after both;
+    // the witness and the log never hold it.
     let board = match server.and_then(Weak::upgrade) {
         Some(server) => {
             action_board(
@@ -261,6 +293,7 @@ async fn act(
     if let Some(craft) = shown {
         place_craft(&mut messages, lead, craft, layout);
     }
+    let action_messages = action_log.as_ref().map(|_| messages.clone());
     let answers = messages.len() - 1;
     if action.action == TurnAction::Continue && !context.saved.is_empty() {
         today_sources.add(Some(&[action.assistant_turn, action.message]));
@@ -268,12 +301,16 @@ async fn act(
     let text = ActionText {
         saved: context.saved,
         answers,
+        opener: crate::api::ai::chat::turn_opener(settings.turn_opener, vault),
     };
     let (admitted, board_context, board_rows) =
         admit_action(vault, ai, &seat, &action, text, messages, board)?;
     if let Some(rows) = &board_rows {
         today_sources.add(Some(rows));
     }
+    // The requester's board rode today's call, so the conversation's next
+    // turn reads one too: a published successor gets its tail prepared.
+    let board_rode = board_rows.is_some();
     let today_sources = today_sources.rows();
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
@@ -284,7 +321,7 @@ async fn act(
     // captured craft names a note erased, revised or no longer supported
     // since is never sent again (FIX 8985): the action runs as it always
     // did, on today's craft, stamped before it is sent.
-    let (admitted, today, breakpoint, action_session, sources) = match reuse {
+    let (admitted, today, mut breakpoint, action_session, sources) = match reuse {
         ChatReuse::Reused(reused) => {
             let captured = &reused.craft;
             match blocking(|| craft_withdrawn(vault, captured)) {
@@ -320,6 +357,22 @@ async fn act(
         ChatReuse::Today => (admitted, None, None, None, today_sources.clone()),
     };
     let prefix_reused = breakpoint.is_some();
+    if breakpoint.is_none()
+        && today.is_none()
+        && board_rows.is_none()
+        && let (Some(log), Some(messages)) = (action_log, action_messages)
+    {
+        breakpoint = crate::api::ai::chat::action_breakpoint(
+            ai,
+            vault,
+            &action,
+            context.agent,
+            log,
+            action_craft,
+            &messages,
+            &admitted,
+        );
+    }
     let keepalive = keepalive_every(
         vault
             .message_stream_policy()
@@ -356,6 +409,9 @@ async fn act(
             payer: WriteActor::new(actor, class),
             funding,
             budget_units: settings.turn_budget_units,
+            model_call_caller: actor,
+            model_call_room: Some(room),
+            model_call_no_record_at_arrival,
             credential: TurnCredential::Action {
                 action: Box::new(action),
                 vault: Arc::clone(vault),
@@ -391,7 +447,10 @@ async fn act(
         None => answering,
     };
     let answering = match action_session {
-        Some(session) => session.commit_on_answer(answering),
+        Some(session) => session.commit_on_answer(
+            answering,
+            server.filter(|_| board_rode).and_then(Weak::upgrade),
+        ),
         None => answering,
     };
     drop(answering.subscription);

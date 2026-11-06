@@ -10,8 +10,7 @@
 //! embedded handle refuses: its vault is the one that would adopt.
 
 use oneiron::authority::{
-    AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AuthorityCheckpointBundle, AuthorityCheckpointPin,
-    VerifiedAuthorityCheckpoint,
+    AuthorityCheckpointBundle, AuthorityCheckpointPin, VerifiedAuthorityCheckpoint,
 };
 
 use super::*;
@@ -19,10 +18,6 @@ use crate::{Backend, OneironClient};
 
 /// Path prefix the kept checkpoint images hang off.
 const CHECKPOINTS_PREFIX: &str = "v1/core/authority/checkpoints";
-
-/// A bundle's success-body ceiling: the largest image as base64 (four bytes
-/// per three), with room for its attestations.
-const MAX_BUNDLE_RESPONSE_BYTES: usize = AUTHORITY_CHECKPOINT_V2_MAX_BYTES / 3 * 4 + (16 << 20);
 
 fn hex_id(id: &[u8; 32]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -48,15 +43,11 @@ impl RemoteClient {
         if !status.is_success() {
             return Err(read_error_envelope(reply.body, status));
         }
-        let bytes =
-            read_capped(reply.body, MAX_BUNDLE_RESPONSE_BYTES).map_err(|failure| match failure {
-                ReadFailure::TooLarge => transport_error(format!(
-                    "the server's checkpoint exceeded the {MAX_BUNDLE_RESPONSE_BYTES}-byte read ceiling"
-                )),
-                ReadFailure::Io(message) => {
-                    transport_error(format!("the server's checkpoint was truncated: {message}"))
-                }
-            })?;
+        let mut body = reply.body;
+        let mut bytes = Vec::new();
+        body.read_to_end(&mut bytes).map_err(|error| {
+            transport_error(format!("the server's checkpoint was truncated: {error}"))
+        })?;
         serde_json::from_slice(&bytes).map_err(|error| {
             transport_error(format!(
                 "the server answered {status} for a checkpoint with a body this call could not decode: {error}"

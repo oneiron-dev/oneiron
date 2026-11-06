@@ -65,6 +65,7 @@ mod epoch;
 mod epoch_floor;
 mod epoch_intent;
 pub(crate) mod epoch_vector;
+mod fold_kinds;
 mod fold_words;
 mod folds;
 mod gate;
@@ -75,6 +76,7 @@ mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
+pub use fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
 pub use folds::{
     FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
     FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,
@@ -84,7 +86,7 @@ pub use folds::{
 pub use conversation::{
     ChatLog, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
-    read_chat_log, seal_conversation_flight,
+    read_action_pinned_log, read_chat_log, seal_conversation_flight,
 };
 pub(crate) use conversation::{conversation_receipt_in, put_conversation_receipt_in_txn};
 pub use driver::{

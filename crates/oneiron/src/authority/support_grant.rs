@@ -224,6 +224,8 @@ impl Vault {
                 repairs: request.repairs,
             }),
             comm: request.comm,
+            trusted_contact: None,
+            seat_claim: None,
         };
         claims.validate().map_err(|_| {
             refused("the support grant's purpose, ticket or bounds are not well formed")

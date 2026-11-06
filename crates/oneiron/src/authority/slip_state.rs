@@ -87,6 +87,20 @@ impl SlipAuthorityState {
                 }
                 self.consumed.extend(burn);
             }
+            AuthorityOp::RemovalArchiveConsume { slip_id, member } => {
+                // FIX 11862: the removal-archive door serves a slip whatever
+                // its standing, revoked and expired ones included, so this
+                // burn asks no live ancestry. It needs the slip's logged mint,
+                // and that mint must name `member`, the removed person whose
+                // archives were served, as its holder.
+                let mint = self.mints.get(slip_id).ok_or_else(invalid_authority)?;
+                if crate::entity_id::EntityId::from_hex(&mint.action.claims.holder_ref).ok()
+                    != Some(*member)
+                {
+                    return Err(invalid_authority());
+                }
+                self.consumed.insert(*slip_id);
+            }
             _ => return Err(invalid_authority()),
         }
         Ok(())
@@ -221,13 +235,39 @@ impl SlipAuthorityState {
     /// Whether the slip or an ancestor carries a revocation or id collision.
     #[must_use]
     pub fn is_revoked(&self, id: &[u8; 32]) -> bool {
+        self.revoked_ancestor_in(id, &self.revoked)
+    }
+    /// Freeze the signed parent links in the snapshot that verified a slip.
+    /// Renewal provenance is not delegation ancestry.
+    pub(super) fn explicit_revocation_ancestry(&self, id: &[u8; 32]) -> Vec<[u8; 32]> {
+        let mut current = Some(*id);
+        let mut seen = BTreeSet::new();
+        let mut ancestry = Vec::new();
+        while let Some(id) = current {
+            if !seen.insert(id) {
+                break;
+            }
+            ancestry.push(id);
+            current = self
+                .mints
+                .get(&id)
+                .and_then(|mint| mint.action.claims.parent_id);
+        }
+        ancestry
+    }
+    /// A verified `SlipRevoke` on the slip or a parent captured at admission.
+    #[must_use]
+    pub(crate) fn is_explicitly_revoked(&self, ancestry: &[[u8; 32]]) -> bool {
+        ancestry.iter().any(|id| self.explicit_revoked.contains(id))
+    }
+    fn revoked_ancestor_in(&self, id: &[u8; 32], revoked: &BTreeSet<[u8; 32]>) -> bool {
         let mut current = Some(*id);
         let mut seen = BTreeSet::new();
         while let Some(id) = current {
             if !seen.insert(id) {
                 return false;
             }
-            if self.revoked.contains(&id) {
+            if revoked.contains(&id) {
                 return true;
             }
             current = self

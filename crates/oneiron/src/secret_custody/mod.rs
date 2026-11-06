@@ -116,7 +116,8 @@ pub(crate) use self::control::input::{
     keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, EraseOwnerAct, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    ActiveChange, EraseOwnerAct, Material, custody_work_executor,
+    drop_revoked_copies_for_store_in_txn, drop_revoked_copies_in_txn,
     erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
@@ -128,16 +129,17 @@ pub(crate) use self::doors::{
     put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
     restore_secret_custody_in_txn, revoke_message_part_custody_in_txn,
-    revoke_side_row_custody_in_txn,
+    revoke_side_row_custody_in_txn, revoke_side_row_custody_with_context_in_txn,
+    revoke_side_row_prefix_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored form, its value sealed under its custody key.
+pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub use self::found_keys::{
     FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
     FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
     NOTIFICATION_PRODUCER_FOUND_KEY,
 };
-pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
     found_key_notices_due_in_txn, kept_as_text_in_txn, move_side_row_custody_in_txn,
@@ -189,14 +191,15 @@ pub(crate) use self::reveal::{
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
-pub(crate) use self::run_bound::run_secret_effector;
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
+pub(crate) use self::run_bound::{actor_class_byte, run_secret_effector};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
     StoredValue, archive_custody_body, archive_custody_guard, archive_same_custody_in_txn,
     credentials_eligible_for_heads, image_credential_row, plan_archived_credentials,
-    put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
-    stored_value_held_in_txn, stored_value_opens_in_txn, withheld_credential_row,
+    put_stored_custody_in_txn, put_stored_custody_with_context_in_txn,
+    read_secret_custody_meta_in_txn, read_stored_custody_in_txn, stored_value_held_in_txn,
+    stored_value_opens_in_txn, withheld_credential_row,
 };
 pub(crate) use self::storage_seal::{
     open_connector_resume_in_txn, read_back_connector_resume_for_activation,
@@ -210,7 +213,8 @@ pub(crate) use self::transition::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::{
-    completed_custody_groups_in_txn, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
+    CustodyPieces, completed_custody_groups_in_txn, holds_custody_carrier_in_txn,
+    keep_custody_piece_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,

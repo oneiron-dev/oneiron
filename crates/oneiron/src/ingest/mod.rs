@@ -5,6 +5,12 @@
 //! only mint claim writes through an explicit admission helper that requires
 //! entity resolution and routes through the normal Gate-backed candidate path.
 
+mod ag_ui;
+pub use ag_ui::{
+    AG_UI_FILE_PREDICATE, AG_UI_SOURCE_ID, AgUiAppObservation, AgUiCustomMapping, AgUiDecodedEvent,
+    AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
+    AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
+};
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{

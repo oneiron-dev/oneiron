@@ -1,23 +1,21 @@
-//! Historical file resolution over retained codebase snapshots. The manifest
-//! selects bytes; the caller's live scoped read still admits both the artifact
-//! and each blob before a path, name, length or body is returned.
+//! Core half of `graph_fs::snapshot`: its store-layer items live in `oneiron_store::graph_fs::snapshot` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-
-use serde::{Deserialize, Serialize};
-
-use crate::claim::ScopedRead;
-use crate::codebase::read_asset_blob_sighted_in_txn;
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::ports::PointRead;
-use crate::store::code_snapshot::snapshot_asset_entity_id;
+pub(crate) use oneiron_store::graph_fs::snapshot::*;
 
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 use super::paging::{PageBuilder, SealedPosition};
 use super::readdir::GraphFsFileRead;
+use crate::claim::ScopedRead;
+use crate::codebase::read_asset_blob_sighted_in_txn;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::ports::PointRead;
+use crate::store::code_snapshot::snapshot_asset_entity_id;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// A reference selects content, never authority. Historical references name
 /// retained imported snapshots, not a local folder on the serving host.
@@ -152,7 +150,8 @@ impl GraphFsResolver<'_, '_> {
             if after.as_deref().is_some_and(|after| entry.name() <= after) {
                 continue;
             }
-            if !page.try_push(entry.clone()) {
+            let after = scope.seal(&entry.name().to_owned());
+            if !page.try_push_after(entry.clone(), after) {
                 next = last.as_ref().map(|last| scope.seal(last));
                 break;
             }
@@ -289,14 +288,5 @@ impl GraphFsResolver<'_, '_> {
             value: read.value,
             receipt: None,
         })
-    }
-}
-
-impl SealedPosition for String {
-    fn to_bytes(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
-    fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        String::from_utf8(bytes.to_vec()).ok()
     }
 }

@@ -34,10 +34,39 @@ pub struct SelectionConfig {
     pub extraction_parallelism: usize,
     /// Maximum TURNs in one neighbourhood child.
     pub extraction_turns_per_child: usize,
-    /// Maximum Micro partitions extracting side by side in one wake pass;
-    /// their resolves and commits stay serial in admission order.
+    /// Maximum Micro or Meso partitions extracting side by side in one
+    /// wake pass ([`windowed_partition`]); their resolves and commits stay
+    /// serial in admission order.
     #[serde(default = "default_partition_extraction_parallelism")]
     pub partition_extraction_parallelism: usize,
+}
+
+/// The consolidation scopes whose plain partitions share a wake pass's
+/// extraction window: Micro, and Meso (a sitting's round, one partition per
+/// conversation). A Macro pass runs concurrent executors instead.
+const WINDOWED_SCOPES: [crate::dreamer_runner::DreamerConsolidationScope; 2] = [
+    crate::dreamer_runner::DreamerConsolidationScope::Micro,
+    crate::dreamer_runner::DreamerConsolidationScope::Meso,
+];
+
+/// Whether an attempt of queue `kind` with payload `attempt_type` is a
+/// plain partition of a windowed scope: that scope's own consolidation
+/// kind and attempt type.
+pub(crate) fn windowed_partition(kind: &str, attempt_type: &str) -> bool {
+    WINDOWED_SCOPES
+        .iter()
+        .any(|scope| kind == scope.attempt_kind() && attempt_type == scope.as_str())
+}
+
+/// Whether an attempt of queue `kind` with payload `attempt_type` is a
+/// sieve rung job (a span reading, a window audit or a TURN's typing
+/// carrier), which a window runs whole beside its partitions: its evidence
+/// check, its model reading and its commit are its own spans', so no other
+/// slot's outcome moves it.
+pub(crate) fn windowed_rung(kind: &str, attempt_type: &str) -> bool {
+    kind == crate::dreamer_runner::DreamerConsolidationScope::Micro.attempt_kind()
+        && (attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT
+            || attempt_type == crate::dreamer_wake::sieve::TYPING_BATCH_ATTEMPT)
 }
 
 /// The shipped partition width, for a stored selection row written before
