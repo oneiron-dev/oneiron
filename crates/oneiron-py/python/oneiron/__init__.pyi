@@ -3632,6 +3632,8 @@ class Oneiron:
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
         @property
         def export_member_mail(self) -> "Oneiron._VaultMailExportMemberMailVerbs": ...
+        def export_request(self, spec: Facade.MailExportRequest) -> Facade.MailExportRequestView:
+            """An Owner of a vault a person owns asks for another member's personal mailbox in their next whole-vault export; the member alone answers one Ask, Approve or Decline. Until approved, each export leaves the mailbox out."""
         def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
     class _VaultMailPackVerbs:

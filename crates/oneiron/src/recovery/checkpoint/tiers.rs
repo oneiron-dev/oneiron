@@ -72,6 +72,11 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // An owner's confirm stands only where he gave it: an image's
                 // receipt is never an election (FIX-LIST 10671).
                 b"secret_custody:restore_election:v1:",
+                // An Owner's request for a member's mailbox stands only where
+                // it was made: no image brings back an open or approved
+                // request, so a restore drops it and the Owner asks again
+                // (fix list row 15416).
+                b"mail_pack:export_request:v1:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

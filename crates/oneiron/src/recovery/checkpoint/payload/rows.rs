@@ -508,6 +508,9 @@ families! {
     Class::Other(Client::Dispatch(OtherClient::Response)) => MESSAGE_REPLY_ASSERTIONS;
     // A public model-step submission's kept copies (FIX 9929), carried whole (FIX 10461).
     Class::Other(Client::Dispatch(OtherClient::Response)) => MODEL_STEP_SUBMISSION;
+    // An Owner's request for a member's mailbox stands only where it was made (fix list row
+    // 15416).
+    Class::NotImaged => MAIL_PACK_EXPORT_REQUEST;
     Class::NotImaged => OFFICE_BODY_EXPORT_TOKEN_INDEX ORIGIN_MIRROR_LFS_CENSUS
         OUTBOUND_AUTHORIZED_RECOVERY_LEASE
         OUTBOUND_GRANT_PRINCIPAL_INDEX OWN_RATE_CHECK OWN_RATE_WINDOW PPR_COMMUNITY_CACHE

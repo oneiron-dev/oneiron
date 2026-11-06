@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4654 declarations.
-// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4657 declarations.
+// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -4489,7 +4489,7 @@ declare namespace Sdk {
   type CalendarDetailSetting = "busy_free_only" | "shared";
   type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
   type MailSourceStatus = "active" | "paused" | "disconnected";
-  type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number };
+  type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number; owners_export_member_mail: boolean };
   type MailSourceConnectReceipt = { source: MailSourceView; resumed: boolean };
   type MailSourceSettingsRequest = { source_ref: string; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null; status?: MailSourceStatus | null };
   type MailSourceMembersRequest = { source_ref: string; members: string[] };
@@ -4502,6 +4502,9 @@ declare namespace Sdk {
   type MailComplianceSetRequest = { enabled: boolean; purpose: string };
   type MailExportMemberMailSetRequest = { enabled: boolean };
   type MailExportMemberMailSettingView = { enabled: boolean; set_by_ref?: string | null; set_at?: number | null };
+  type MailExportRequest = { source_ref: string };
+  type MailExportRequestState = "pending" | "approved" | "declined" | "consumed";
+  type MailExportRequestView = { request_ref: string; source_ref: string; state: MailExportRequestState };
   type MailComplianceEventKind = "enabled" | "disabled" | "search" | "export_member_mail_enabled" | "export_member_mail_disabled";
   type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
   type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
@@ -6625,6 +6628,8 @@ declare const vault: Sdk.VaultHost & {
       /** Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes. */
       set(input: Sdk.MailExportMemberMailSetRequest): Promise<Sdk.MailExportMemberMailSettingView | StoredResult>;
     };
+    /** An Owner of a vault a person owns asks for another member's personal mailbox in their next whole-vault export; the member alone answers one Ask, Approve or Decline. Until approved, each export leaves the mailbox out. */
+    export_request(input: Sdk.MailExportRequest): Promise<Sdk.MailExportRequestView | StoredResult>;
     /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
     inbox(input: Sdk.MailInboxRequest): Promise<Sdk.MailInboxPage | StoredResult>;
     pack: {

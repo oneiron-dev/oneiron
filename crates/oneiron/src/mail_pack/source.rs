@@ -206,6 +206,11 @@ pub struct MailSourceView {
     pub status: MailSourceStatus,
     pub connected_at: u64,
     pub updated_at: u64,
+    /// Whether the vault's "Owners can export members' mail" is on now (fix
+    /// list row 15416): on, a whole-vault export by an Owner of a vault a
+    /// person owns carries members' personal mailboxes, each person told.
+    /// The vault's setting, read live; no source keeps a copy of it.
+    pub owners_export_member_mail: bool,
 }
 
 /// The identity key one source is found by again: its provider, kind,

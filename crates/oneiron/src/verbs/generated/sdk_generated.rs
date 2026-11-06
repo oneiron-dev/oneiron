@@ -6839,6 +6839,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.mail.export_request",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailExportRequest>(
+                ),
+            ),
+            (
                 "vault.mail.compliance.log",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -8098,6 +8103,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.events.get",
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
+    "vault.mail.export_request",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -10679,6 +10685,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::IdentityPairProposals,
         >(),
+        "vault.mail.export_request" => {
+            crate::code_run::vault_read::request_schema::<crate::mail_pack::MailExportRequestView>()
+        }
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
         >(),
@@ -19407,6 +19416,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.export_request" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.compliance.log" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23828,6 +23844,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.export_member_mail.set" => {
             let _input: crate::mail_pack::MailExportMemberMailSetRequest = decode(value.clone())?;
         }
+        "vault.mail.export_request" => {
+            let _input: crate::mail_pack::MailExportRequest = decode(value.clone())?;
+        }
         "vault.mail.compliance.log" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -26432,6 +26451,7 @@ pub fn invoke(
         "vault.mail.export_member_mail.set" => {
             encode(vault_mail_export_member_mail_set(memory, decode(value)?)?)
         }
+        "vault.mail.export_request" => encode(vault_mail_export_request(memory, decode(value)?)?),
         "vault.mail.compliance.log" => encode(vault_mail_compliance_log(memory, decode(value)?)?),
         "vault.mail.sources.sync_status" => {
             encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
@@ -37096,6 +37116,13 @@ pub fn vault_mail_export_member_mail_set(
     input: crate::mail_pack::MailExportMemberMailSetRequest,
 ) -> MemoryResult<crate::mail_pack::MailExportMemberMailSettingView> {
     memory.mail_export_member_mail_set(&input)
+}
+pub fn vault_mail_export_request(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailExportRequest,
+) -> MemoryResult<crate::mail_pack::MailExportRequestView> {
+    memory
+        .mail_export_request_as_owner(&memory.embedded_owner("vault.mail.export_request")?, &input)
 }
 pub fn vault_mail_compliance_log(
     memory: &Memory<'_>,

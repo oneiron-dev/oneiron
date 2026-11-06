@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1264 facade rows, 4596 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
+// UniFFI census: 1265 facade rows, 4599 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -70854,6 +70854,8 @@ pub struct MailSourceView {
     pub connected_at: u64,
     #[serde(rename = "updated_at")]
     pub updated_at: u64,
+    #[serde(rename = "owners_export_member_mail")]
+    pub owners_export_member_mail: bool,
 }
 
 /// `oneiron::mail_pack::doors::MailSourceConnectReceipt`.
@@ -71019,6 +71021,39 @@ pub struct MailExportMemberMailSettingView {
     pub set_by_ref: Option<String>,
     #[serde(rename = "set_at", default, skip_serializing_if = "Option::is_none")]
     pub set_at: Option<u64>,
+}
+
+/// `oneiron::mail_pack::export_requests::MailExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailExportRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+}
+
+/// `oneiron::mail_pack::export_requests::MailExportRequestState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MailExportRequestState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "consumed")]
+    Consumed,
+}
+
+/// `oneiron::mail_pack::export_requests::MailExportRequestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailExportRequestView {
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "state")]
+    pub state: MailExportRequestState,
 }
 
 /// `oneiron::mail_pack::compliance::MailComplianceEventKind`.

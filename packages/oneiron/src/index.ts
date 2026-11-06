@@ -3296,6 +3296,8 @@ export class Oneiron {
         /** Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes. */
         set: (input: Facade.MailExportMemberMailSetRequest): Facade.MailExportMemberMailSettingView => this.#call(() => this.#client.vaultMailExportMemberMailSet(input) as Facade.MailExportMemberMailSettingView),
       },
+      /** An Owner of a vault a person owns asks for another member's personal mailbox in their next whole-vault export; the member alone answers one Ask, Approve or Decline. Until approved, each export leaves the mailbox out. */
+      export_request: (input: Facade.MailExportRequest): Facade.MailExportRequestView => this.#call(() => this.#client.vaultMailExportRequest(input) as Facade.MailExportRequestView),
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
     },

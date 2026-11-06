@@ -456,6 +456,15 @@ pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Whether one Owner's next whole-vault export carries another member's personal mailbox
+/// (fix list row 15416): approve or decline. Asked of that mailbox's person alone, and never
+/// climbing past them. Keyed by the request.
+pub const MAIL_EXPORT_REQUEST: QuestionFamily = QuestionFamily {
+    name: "mail_pack.export_request",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -506,4 +515,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     URGENT_DIGEST_HARM,
     COMPACTION_SUPPORT,
     QUOTA_SPENT,
+    MAIL_EXPORT_REQUEST,
 ];

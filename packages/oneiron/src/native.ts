@@ -1256,6 +1256,7 @@ vaultMailThreadsUnshare(input: unknown): unknown
 vaultMailComplianceSetting(input: unknown): unknown
 vaultMailComplianceSet(input: unknown): unknown
 vaultMailExportMemberMailSet(input: unknown): unknown
+vaultMailExportRequest(input: unknown): unknown
 vaultMailComplianceLog(input: unknown): unknown
 vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown

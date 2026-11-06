@@ -11050,6 +11050,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_mail_export_request(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.export_request", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_mail_compliance_log(
         &self,
         input: serde_json::Value,

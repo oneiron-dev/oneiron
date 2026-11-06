@@ -17,6 +17,12 @@ side_tables! {
         => crate::mail_pack::erase_compliance_actor_in_txn;
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named;
+    /// An Owner's request for one member's personal mailbox in their next whole-vault export
+    /// (fix list row 15416): the request, the mailbox's person, the Owner, the member's typed
+    /// Ask and whether an export used it; no address, no mail. Key: id16(source) + id16(the
+    /// requesting Owner's PERSON).
+    MAIL_PACK_EXPORT_REQUEST: VaultMeta b"mail_pack:export_request:v1:" Named Engine
+        => crate::mail_pack::erase_export_request_actor_in_txn;
     /// One provider message of one mail source: its rows, revisions, stage and presence at the
     /// provider (FIX 12559). Key: id16(source) + blake3 (32) of the provider id.
     MAIL_PACK_OCCURRENCE: VaultMeta b"mail_pack:occurrence:v1:" Named;
