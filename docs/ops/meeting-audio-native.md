@@ -121,9 +121,34 @@ existing Gate. Speaker labels grant no PERSON, biometric, or send authority.
 These doors use ordinary blob version, ASSET, high-water, erase, hold and archive
 machinery. They add no separate lifetime system or global-erasure guarantee.
 Storage alone does not import a SESSION or NOTE; the owner-bound import door
-below performs that step. Served owner routes remain separate work. No
-text-flattening adapter or duplicate SESSION lifecycle is installed, and no
-voiceprint consent is implied.
+below performs that step. The owner HTTP storage routes below do not expose
+that import door. No text-flattening adapter or duplicate SESSION lifecycle is
+installed, and no voiceprint consent is implied.
+
+### Owner HTTP storage and selected reads
+
+The existing owner door authenticates each request before reading its JSON body.
+All three actions are POSTs under `/v1/owner/meeting-transcripts`:
+
+- `/persist` takes `source_audio`, `artifact_json` and `name`. Upload the source
+  audio through the ordinary blob-artifact API first. `artifact_json` is the
+  exact structured `oneiron.meeting_transcript.v1` JSON string. The native save
+  checks the selected audio bytes and records their version claim in `made_by`.
+- `/label` takes `stored` and `labels`, a speaker-cluster-to-source-label map.
+  It returns the native unchanged, appended or forked selection; it does not
+  relabel an unrelated newer revision or identify a PERSON.
+- `/read` takes `stored` and returns `stored`, the exact `artifact_json` string
+  and its `recording_id`. The native read validates both selected versions and
+  their ledger relationship, not a caller-supplied association.
+
+`source_audio` is a pin with `artifact` (32 hex characters), `version` (u64)
+and `content_hash` (64 hex characters of BLAKE3). `stored` contains both
+`source_audio` and `transcript` pins. Hex inputs accept either case; returned
+pins use lowercase hex. Persist and label return this same `stored` shape.
+Pins are selections, never owner credentials or bulk import consent. Bodies
+use the existing owner JSON spool and listener policy, with no new length cap.
+These storage actions do not start ASR, import observations, answer hooks or
+consume bulk consent. The caller-bound SESSION/NOTE import remains unserved.
 
 ## Typed SESSION input and selected-artifact reads
 
@@ -221,8 +246,9 @@ source, identities, births, title and secret handling.
 
 The SESSION and new NOTE commit together, or the native write error rolls back
 both. A busy SESSION outcome can still accompany a landed or retained NOTE.
-These are library doors; no served route, physical ASR execution, end-to-end
-runtime result or global-erasure guarantee is claimed here.
+These SESSION and NOTE import doors remain library APIs; no served import
+route, physical ASR execution, end-to-end runtime result or global-erasure
+guarantee is claimed here.
 
 ## Caller-bound prepared SESSION import
 
