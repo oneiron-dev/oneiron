@@ -143,6 +143,7 @@ pub(crate) use self::feedback_inbox::FloodCap;
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
 mod git_http;
+pub(crate) use self::git_http::install_origin_git_transport;
 mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
