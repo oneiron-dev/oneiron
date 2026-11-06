@@ -88,7 +88,7 @@ pub(crate) use step::{
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
-    retire_erased_step_responses_in_rows,
+    retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
 
 pub use oneiron_model::llm::{

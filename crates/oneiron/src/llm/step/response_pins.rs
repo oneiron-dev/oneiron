@@ -234,6 +234,29 @@ fn pinned_elsewhere_in_txn(
     Ok(false)
 }
 
+/// Whether another retained step claim keeps an exact version a native
+/// archive owner is releasing. This is the same local and carried-pin
+/// walk as a step teardown, not authority to erase an archive.
+pub(crate) fn step_response_version_pinned_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    except: &EntityId,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; 32],
+) -> Result<bool> {
+    pinned_elsewhere_in_txn(
+        store,
+        txn,
+        except,
+        &StepResponseRef {
+            artifact_id: *artifact,
+            version,
+            content_hash: *content_hash,
+        },
+    )
+}
+
 /// A stored row of `kind` with its body, under no delete this vault holds.
 fn row_retained(store: &Store, txn: &RoTxn<'_>, id: &EntityId, kind: u8) -> Result<bool> {
     let Some(raw) = store.port_entity_raw(txn, id)? else {

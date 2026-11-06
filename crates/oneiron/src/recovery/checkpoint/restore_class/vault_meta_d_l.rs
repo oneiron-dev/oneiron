@@ -361,6 +361,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LINEAR_EFFECT_AUTHORIZED, LIVE),
     (&t::LINEAR_SYNC_LINK, CONTENT),
     (&t::LINE_CHAT_ARCHIVE_PIN, CONTENT),
+    (&t::LINE_CHAT_ARCHIVE_RELEASE, LIVE),
     (&t::LLM_BINDING_PROPOSAL, LIVE),
     (&t::LLM_CATALOG_HEAD, LIVE),
     (&t::LLM_CATALOG_REVISION, LIVE),
