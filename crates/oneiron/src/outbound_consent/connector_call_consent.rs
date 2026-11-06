@@ -263,6 +263,7 @@ impl Vault {
                         attempt_id: record.attempt_id,
                         call_seq: record.call_seq,
                         principal_ref: candidate.principal_ref.clone(),
+                        remember_context: candidate.prepared.remember_context(),
                         held_at_ms: now_ms(),
                         settled: None,
                         held_reasons: Vec::new(),
