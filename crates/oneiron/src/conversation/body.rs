@@ -2,8 +2,6 @@
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::scan_check::{EngineScan, ScanCount};
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::store::conversation_body::{ConversationBody, ConversationKind, RoomRole};
 
@@ -266,7 +264,7 @@ pub(crate) fn create_in_txn(
             txn,
             id,
             &MembershipRow {
-                v: 1,
+                v: membership::MEMBERSHIP_ROW_VERSION,
                 person: *person,
                 action: MembershipAction::Join,
                 at: occurred.start,
@@ -276,6 +274,7 @@ pub(crate) fn create_in_txn(
                 } else {
                     occurred.start
                 }),
+                handoff: None,
             },
         )?;
     }

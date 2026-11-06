@@ -5,8 +5,7 @@ use super::{
     decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
-    ClaimOutcome, SetAttemptResult,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
 };
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::consent::AuthenticatedOwner;
@@ -23,13 +22,13 @@ use std::collections::HashSet;
 
 use self::validation::validate;
 
+mod result;
+mod room_wake;
 mod validation;
 
+pub use self::room_wake::resident_attempt_wakes_for_room;
+
 const PREDICATE: &str = "agent.resident";
-/// A completed agent run's result TURN. Parts: attempt.
-const RUN_RESULT: &[u8] = b"oneiron:agent-run-result:v1";
-/// The run's answer body, as the result TURN holds it. Parts: result TURN.
-const RUN_RESULT_BODY: &[u8] = b"oneiron:agent-run-result-body:v1";
 
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +198,9 @@ impl AgentDispatcher<'_> {
     /// reuse dispatch dedupe. A private chat does not become project context:
     /// the dispatched definition resolves its normal scope; goal refs stay data.
     /// Each pending review of a read of its diary wakes it once, first: a
-    /// reader is waiting on the answer.
+    /// reader is waiting on the answer. Each room turn that addresses it, or
+    /// whose thread's open TASK it holds, wakes it once next, under its wake
+    /// mode (FIX 15647).
     pub fn dispatch_resident_inbox(
         &self,
         agent: EntityId,
@@ -232,7 +233,7 @@ impl AgentDispatcher<'_> {
                     continue;
                 };
                 let key = format!(
-                    "resident:{}:diary-read:{}",
+                    "resident:{}:{DIARY_READ_WAKE_KEY}:{}",
                     agent.to_hex(),
                     review.request.to_hex()
                 );
@@ -279,6 +280,8 @@ impl AgentDispatcher<'_> {
                 }
             }
         }
+        // FIX 15647: its staged room wakes; Manual settles them unwoken.
+        self.dispatch_resident_room_wakes(&spec, &woken, limit, now, &mut outcomes)?;
         if spec.wake == ResidentWakeMode::Manual {
             return Ok(outcomes);
         }
@@ -493,204 +496,29 @@ impl AgentDispatcher<'_> {
     pub fn resume_signalled_runs(&self, now_ms: u64) -> Result<usize> {
         crate::llm::resume_signalled_steps(self.vault, now_ms)
     }
-
-    /// Gives a completed agent run its durable result before the runner
-    /// completes the attempt: one TURN naming the answer of the run's
-    /// finished step, which holds that body for as long as the TURN lives
-    /// (OF-597), set as the attempt's result so the task highway's Done
-    /// resolves it. The TURN's id derives from the attempt, so a replayed
-    /// completion finds the TURN it made.
-    pub fn attach_agent_run_result(
-        &self,
-        attempt: &AttemptRecord,
-        lease_owner: &str,
-        run: &crate::code_run::CodeRunReplayRecord,
-        now: u64,
-    ) -> Result<EntityId> {
-        use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
-        let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
-        // The finished step's observation, never a marker or a file the run
-        // wrote after it.
-        let answer = run
-            .outputs
-            .iter()
-            .rev()
-            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
-        let field = |key: &str, value: Value| (Value::from(key), value);
-        let artifact = Value::Map(vec![
-            field("kind", Value::from("agent.run_result")),
-            field(
-                "attempt_ref",
-                Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
-            ),
-            field("run_ref", Value::from(run.run_id.to_hex())),
-            field(
-                "task_ref",
-                attempt.task_ref.clone().map_or(Value::Nil, Value::from),
-            ),
-            field(
-                "answer",
-                answer.map_or(Value::Nil, |output| {
-                    Value::Map(vec![
-                        field("path", Value::from(output.path.clone())),
-                        field("handle", Value::from(output.handle.clone())),
-                        field("bytes", Value::from(output.raw_len)),
-                        field("lines", Value::from(output.lines)),
-                    ])
-                }),
-            ),
-        ]);
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &artifact)
-            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-        // An inline body lives in the run's own rows; only a file needs a holder.
-        let held = match answer {
-            Some(output)
-                if self
-                    .vault
-                    .store
-                    .body_file_present(&output.raw_blake3, output.raw_len)? =>
-            {
-                Some(OwnedBody {
-                    owner: result_ref,
-                    occurrence: EntityId::derive(
-                        RUN_RESULT_BODY,
-                        &[result_ref.as_bytes().as_slice()],
-                    )?,
-                    state: BodyState::Complete {
-                        body: BodyRef {
-                            blake3: output.raw_blake3,
-                            bytes: output.raw_len,
-                            location: BodyLocation::File,
-                        },
-                    },
-                    result: None,
-                })
-            }
-            _ => None,
-        };
-        let mut txn = self.vault.store.env.write_txn()?;
-        if self
-            .vault
-            .get_entity_type_in_txn(&txn, &result_ref)?
-            .is_none()
-        {
-            self.vault
-                .batch_in()
-                .put(
-                    &result_ref,
-                    crate::registry::ENTITY_TYPE_TURN,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &bytes,
-                )
-                .apply(&mut txn)?;
-        }
-        if let Some(held) = &held {
-            crate::provenance::body::publish_body_in_txn(&self.vault.store, &mut txn, held)?;
-        }
-        AttemptQueue::new(self.vault).set_result_in_txn(
-            &mut txn,
-            SetAttemptResult {
-                id: attempt.id,
-                lease_owner: lease_owner.to_owned(),
-                attempt_count: attempt.attempt_count,
-                result_ref: AttemptResultRef::new(result_ref.to_hex())?,
-                now,
-            },
-        )?;
-        txn.commit()?;
-        self.vault.store.notify_attempt_observers();
-        Ok(result_ref)
-    }
-
-    /// The answer a completed agent run's result names, for a reader that
-    /// must see exactly what the run produced (a seal check, OF-544):
-    /// `result_ref` is the TURN [`Self::attach_agent_run_result`] made for
-    /// `attempt`, and the answer is that run's own complete output, as its
-    /// digest and length. `None` for any other result, a TURN with no answer,
-    /// or a run that no longer holds that output. The TURN's id is never read
-    /// as an output digest.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn agent_run_answer(
-        &self,
-        attempt: AttemptId,
-        result_ref: &str,
-    ) -> Result<Option<crate::compaction::output::OutputRef>> {
-        Ok(self
-            .agent_run_answer_with_turn(attempt, result_ref)?
-            .map(|(answer, _)| answer))
-    }
-
-    /// [`Self::agent_run_answer`] with the result TURN it read the answer
-    /// from (FIX 7103): one source of a seal check's prompt, never the whole
-    /// set, since the answer's bytes and the check's objectives have their own.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn agent_run_answer_with_turn(
-        &self,
-        attempt: AttemptId,
-        result_ref: &str,
-    ) -> Result<Option<(crate::compaction::output::OutputRef, EntityId)>> {
-        let Ok(turn) = EntityId::from_hex(result_ref) else {
-            return Ok(None);
-        };
-        if turn != EntityId::derive(RUN_RESULT, &[attempt.as_bytes().as_slice()])? {
-            return Ok(None);
-        }
-        let Some(bytes) = self.vault.get(&turn)? else {
-            return Ok(None);
-        };
-        let Ok(artifact) = rmpv::decode::read_value(&mut bytes.as_slice()) else {
-            return Ok(None);
-        };
-        let root = Some(&artifact);
-        let attempt_ref = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
-        let kind = result_field(root, "kind").and_then(Value::as_str);
-        let of = result_field(root, "attempt_ref").and_then(Value::as_str);
-        if kind != Some("agent.run_result") || of != Some(attempt_ref.as_str()) {
-            return Ok(None);
-        }
-        let answer = result_field(root, "answer");
-        let run = result_field(root, "run_ref")
-            .and_then(Value::as_str)
-            .and_then(|run| EntityId::from_hex(run).ok());
-        let handle = result_field(answer, "handle").and_then(Value::as_str);
-        let length = result_field(answer, "bytes").and_then(Value::as_u64);
-        let (Some(run), Some(handle), Some(length)) = (run, handle, length) else {
-            return Ok(None);
-        };
-        let Some(replay) = self.vault.get_code_run_replay_record(&run)? else {
-            return Ok(None);
-        };
-        Ok(replay
-            .outputs
-            .iter()
-            .find(|output| output.complete && output.handle == handle && output.raw_len == length)
-            .map(|output| (output.output_ref(), turn)))
-    }
-}
-
-/// One key of a result TURN's map.
-fn result_field<'a>(value: Option<&'a Value>, key: &str) -> Option<&'a Value> {
-    value?
-        .as_map()?
-        .iter()
-        .find(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| value)
 }
 
 /// The run id every inbox wake of `agent` carries.
 pub(super) fn resident_run_id(agent: EntityId) -> String {
     format!("resident:{}", agent.to_hex())
+}
+
+/// The dedupe-key segment that marks a resident's diary-read review wake.
+const DIARY_READ_WAKE_KEY: &str = "diary-read";
+
+/// Whether `attempt`, a run of resident `agent`, was dispatched for a
+/// pending diary-read review: its engine-minted dedupe key says so, never
+/// its briefing. A retry keeps its source's key.
+#[must_use]
+pub fn resident_attempt_reviews_diary(attempt: &AttemptRecord, agent: EntityId) -> bool {
+    let prefix = format!(
+        "{AGENT_DISPATCH_ATTEMPT_TYPE}:resident:{}:{DIARY_READ_WAKE_KEY}:",
+        agent.to_hex()
+    );
+    attempt
+        .dedupe_key
+        .as_deref()
+        .is_some_and(|key| key.starts_with(&prefix))
 }
 
 /// A run a resident's host executes: a top-level dispatch of the resident,

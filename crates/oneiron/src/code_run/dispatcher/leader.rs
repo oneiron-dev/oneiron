@@ -144,6 +144,8 @@ impl HostSelfDispatcher<'_> {
         SelfDispatchOutcome::Failed(SelfFailedResult {
             effect,
             error: "planner_unbound".to_owned(),
+            code: None,
+            disk_floor: None,
         })
     }
 
@@ -367,6 +369,8 @@ impl HostSelfDispatcher<'_> {
             Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::LeaderSplit,
                 error,
+                code: None,
+                disk_floor: None,
             }))
         };
         let Some(issuer) = self.slip_issuer else {

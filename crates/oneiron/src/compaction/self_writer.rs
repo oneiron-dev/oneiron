@@ -379,11 +379,18 @@ impl CompactionExecution {
         })
     }
 
-    /// The receipt's digest, the hex BLAKE3 of its JSON: what the epoch's
-    /// birth names as its process parameters, so the summary points at the
-    /// receipt its run's coverage keeps.
+    /// The receipt's digest, the hex BLAKE3 of its JSON less the accepted
+    /// snapshot: what the epoch's birth names as its process parameters, so
+    /// the summary points at the receipt its run's coverage keeps.
     pub(crate) fn receipt_digest_hex(&self) -> Result<String> {
-        let bytes = serde_json::to_vec(self)
+        // Content-free (FIX 928): the accepted words' snapshot never enters
+        // it, so the birth that names it and a check that compares it keep
+        // no confirmation hash of words a withdrawal erases, and clearing
+        // the snapshot at withdrawal leaves the digest as it was.
+        let mut content_free = self.clone();
+        content_free.snapshot_hash = None;
+        content_free.snapshot_len = None;
+        let bytes = serde_json::to_vec(&content_free)
             .map_err(|_| Error::InvariantViolation("a compaction receipt did not encode"))?;
         Ok(crate::entity_id::bytes_to_hex_lower(
             blake3::hash(&bytes).as_bytes(),

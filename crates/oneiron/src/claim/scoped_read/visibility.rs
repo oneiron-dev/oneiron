@@ -135,7 +135,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
@@ -168,7 +168,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let asked = authority.grants().asked();
         let own = self.own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?;
@@ -209,8 +209,11 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
+        if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
         if self.actor_key.vault_owner_ref().is_some() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
@@ -448,7 +451,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         body: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<bool>> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
@@ -505,7 +508,7 @@ impl<'v> ScopedRead<'v> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
             // FIX 1496 S8: as above, the owner reads every text except one
@@ -561,7 +564,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Result<bool> {
         Ok(self
@@ -583,7 +586,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Result<OwnAdmission<'v>> {
         if self.own_row_readable_in(rtxn, policy, id, raw, filter, authority, None)?
@@ -613,7 +616,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: Option<&crate::federation::Scope>,
     ) -> Result<bool> {
         // A legal use limit keeps the bytes as storage only: no ordinary
@@ -660,7 +663,9 @@ impl<'v> ScopedRead<'v> {
             && let Some(admitted) =
                 self.claim_by_class_in(rtxn, policy, id, raw, &header, filter, authority, grant)?
         {
-            return Ok(admitted);
+            return Ok(
+                admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
+            );
         }
         if !self.row_stands_in(rtxn, id, raw, &header, use_asked)? {
             return Ok(false);
@@ -682,13 +687,13 @@ impl<'v> ScopedRead<'v> {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             return self.note_readable_under_in(rtxn, id, body, policy, grant);
         }
-        if header.entity_type == ENTITY_TYPE_CLAIM {
+        let admitted = if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(
                 rtxn, policy, id, raw, filter, authority, grant,
-            )
+            )?
         } else if self.actor_key.vault_owner_ref().is_some() {
             // The owner's ceiling is all of the owner's vault, stamped or not.
-            Ok(true)
+            true
         } else {
             let scope = match self.session_view {
                 Some(view) => {
@@ -704,7 +709,7 @@ impl<'v> ScopedRead<'v> {
             let Some(scope) = scope else {
                 return Ok(false);
             };
-            Ok(match grant {
+            match grant {
                 None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
                 Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
                     policy,
@@ -712,8 +717,30 @@ impl<'v> ScopedRead<'v> {
                     &scope,
                     Some(grant),
                 ),
-            })
-        }
+            }
+        };
+        Ok(admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?)
+    }
+
+    /// A row already admitted by every ordinary gate still carries the
+    /// recipient owner's retained-copy choice. This is per row, outside the
+    /// CLAIM access-class cache; an actual owner lane keeps its own read.
+    fn retained_copy_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        entity_type: u8,
+    ) -> Result<bool> {
+        Ok(self.actor_key.reads_as_vault_owner()
+            || crate::disclosure::retained_copy_admits(
+                &self.vault.store,
+                rtxn,
+                id,
+                entity_type,
+                None,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?)
     }
 
     /// Whether the stored row `raw` of `id`, with `header`, still stands as
@@ -884,6 +911,7 @@ impl crate::ports::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
         let filter = self.actor_retrieval_floor(&policy)?;
-        self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, id)
+        let held = HeldAuthority::for_request(None);
+        self.is_entity_retrievable_held_in(txn, &policy, &filter, id, &held)
     }
 }

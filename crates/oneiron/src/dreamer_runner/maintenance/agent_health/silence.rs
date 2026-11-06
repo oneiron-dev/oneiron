@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::call_evidence::{AgentCalls, CallActivity};
+use super::call_evidence::{AgentCalls, CallActivity, UnreadCalls};
 use super::{
     AgentHealthCounter, AgentHealthOutcome, Attempts, CARDS, DialBook, Dispatches, Finding, Traps,
     card_key, entity, said_blocked, task_of,
@@ -103,12 +103,12 @@ pub(super) struct SilenceRefresh {
 /// Where `silent` takes each leased attempt's calls from.
 pub(super) enum SilenceCalls<'a> {
     /// Every agent's calls in the nightly review's lookback, read once, the
-    /// newest time a receipt that did not read may hold, and, for leased
+    /// unread bounds scoped by native agent witnesses, and, for leased
     /// attempts claimed before the lookback, their calls back to their claim
     /// (FIX 8374), which the lookback alone would truncate.
     Actors(
         &'a AgentCalls,
-        Option<u64>,
+        &'a UnreadCalls,
         &'a BTreeMap<[u8; 16], CallActivity>,
     ),
     /// One attempt's, from its targeted review's scan.
@@ -131,7 +131,7 @@ impl SilenceCalls<'_> {
                     return Some(*activity);
                 }
                 Some(CallActivity {
-                    unread: *unread,
+                    unread: unread.for_actor(actor),
                     ..CallActivity::of(
                         calls.get(&actor).map_or(&[][..], Vec::as_slice),
                         own,

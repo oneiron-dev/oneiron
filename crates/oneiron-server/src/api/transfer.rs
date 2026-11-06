@@ -9,10 +9,13 @@
 //! process or its spool for as long as the socket stays open. A transfer that
 //! keeps moving, however slowly, is never cut.
 
+mod sealed;
+
 use std::any::Any;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -133,7 +136,7 @@ pub(crate) struct Transfers {
     /// The room each sealed bundle upload the home stages claims on `disk`,
     /// by its machine and object: held across its parts, through the commit
     /// or replace that writes its stored copy (FIX 3354).
-    sealed_stages: Mutex<HashMap<(EntityId, SealedBundleObject), Arc<DiskClaim>>>,
+    sealed_stages: Mutex<HashMap<sealed::SealedStageKey, Arc<DiskClaim>>>,
     /// The page size the vault's object plane is stored in, which each
     /// stored chunk rounds up to; the largest LMDB writes in when it cannot
     /// be read.
@@ -214,7 +217,7 @@ impl Transfers {
             wait,
         };
         // An upload staged before this start claims the rest it takes.
-        transfers.reconcile_sealed_stages(vault);
+        transfers.restore_sealed_stages(vault)?;
         Ok(transfers)
     }
 
@@ -275,76 +278,6 @@ impl Transfers {
             .shown_page
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(page);
-    }
-
-    /// The room a sealed bundle upload of a `total`-byte object, `staged`
-    /// bytes in, still takes on the disk: [`SEALED_BUNDLE_DISK_COPY_COUNT`]
-    /// copies of the object, each in parts of at most
-    /// [`SEALED_BUNDLE_PUT_PART_MAX`] that take at most a page more than their
-    /// bytes once rounded up to whole pages, less the stage written so far.
-    fn sealed_stage_room(&self, total: u64, staged: u64) -> u64 {
-        let page = self.lfs_page();
-        let on_disk = |bytes: u64| {
-            bytes.saturating_add(
-                bytes
-                    .div_ceil(SEALED_BUNDLE_PUT_PART_MAX as u64)
-                    .saturating_mul(page),
-            )
-        };
-        on_disk(total)
-            .saturating_mul(SEALED_BUNDLE_DISK_COPY_COUNT)
-            .saturating_sub(on_disk(staged))
-    }
-
-    /// Claims the room `machine`'s upload of `object` still takes before its
-    /// next part, `staged` bytes of `total` in (FIX 3354). The claim stays
-    /// with the stage across its parts; hold the one returned until the part
-    /// is staged. `None` when that room would cross the disk's floor.
-    pub(crate) fn hold_sealed_stage(
-        &self,
-        machine: EntityId,
-        object: SealedBundleObject,
-        total: u64,
-        staged: u64,
-    ) -> Option<Arc<DiskClaim>> {
-        let claim = Arc::clone(
-            self.sealed_stages
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry((machine, object))
-                .or_insert_with(|| self.disk.claim()),
-        );
-        self.disk
-            .hold(&claim, self.sealed_stage_room(total, staged))
-            .then_some(claim)
-    }
-
-    /// Sets each sealed bundle upload's claim to the rest its stage header in
-    /// `vault` says it takes: a stage committed, replaced or idled out gives
-    /// its room back, and one staged before a restart claims its rest again.
-    /// A claim a part still holds stays until that part is staged.
-    pub(crate) fn reconcile_sealed_stages(&self, vault: &oneiron::Vault) {
-        let Ok(stages) = sealed_bundle_stages(vault) else {
-            return;
-        };
-        let mut claims = self
-            .sealed_stages
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        claims.retain(|key, claim| {
-            Arc::strong_count(claim) > 1
-                || stages
-                    .iter()
-                    .any(|stage| (stage.machine, stage.object) == *key)
-        });
-        for stage in stages {
-            let claim = claims
-                .entry((stage.machine, stage.object))
-                .or_insert_with(|| self.disk.claim());
-            // A rest that no longer fits keeps the claim it had.
-            self.disk
-                .hold(claim, self.sealed_stage_room(stage.total, stage.staged));
-        }
     }
 
     /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.
@@ -615,13 +548,15 @@ pub(super) type BodyPiece = io::Result<Option<Bytes>>;
 ///
 /// Only the wait for the client is timed: a full channel is the worker's
 /// backpressure, and the worker bounds its own waits.
-pub(super) async fn feed_body(
+pub(super) fn feed_body(
     body: Body,
     pieces: mpsc::Sender<BodyPiece>,
     idle: Duration,
     max_piece: usize,
-) {
-    feed_pieces(body, pieces, Some(idle), max_piece).await;
+) -> impl std::future::Future<Output = ()> {
+    // Capture before a caller spawns this future on a different task.
+    let revocation = crate::http_listener::current_body_revocation();
+    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None)
 }
 
 /// [`feed_body`] with no wait of its own on the client: only the listener's
@@ -632,7 +567,29 @@ pub(super) async fn feed_body_untimed(
     pieces: mpsc::Sender<BodyPiece>,
     max_piece: usize,
 ) {
-    feed_pieces(body, pieces, None, max_piece).await;
+    feed_pieces(body, pieces, None, max_piece, None, None).await;
+}
+
+/// Feeds a spool worker, ending its memory wait before enqueueing a failed input.
+pub(super) fn feed_body_stoppable(
+    body: Body,
+    pieces: mpsc::Sender<BodyPiece>,
+    idle: Option<Duration>,
+    max_piece: usize,
+    stopped: Arc<AtomicBool>,
+) -> impl std::future::Future<Output = ()> {
+    let revocation = idle.and_then(|_| crate::http_listener::current_body_revocation());
+    async move {
+        feed_pieces(
+            body,
+            pieces,
+            idle,
+            max_piece,
+            revocation,
+            Some(stopped.as_ref()),
+        )
+        .await;
+    }
 }
 
 async fn feed_pieces(
@@ -640,13 +597,27 @@ async fn feed_pieces(
     pieces: mpsc::Sender<BodyPiece>,
     idle: Option<Duration>,
     max_piece: usize,
+    revocation: Option<crate::http_listener::BodyRevocation>,
+    stopped: Option<&AtomicBool>,
 ) {
     let mut stream = body.into_data_stream();
+    let stop_failed_feed = || {
+        if let Some(stopped) = stopped {
+            stopped.store(true, Ordering::Relaxed);
+        }
+    };
     loop {
         let next = match idle {
-            Some(idle) => match tokio::time::timeout(idle, stream.next()).await {
-                Ok(next) => next,
-                Err(_) => {
+            Some(idle) => match crate::http_listener::body_read_timeout(
+                revocation.as_ref(),
+                idle,
+                stream.next(),
+            )
+            .await
+            {
+                Some(next) => next,
+                None => {
+                    stop_failed_feed();
                     let _ = pieces
                         .send(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -665,6 +636,7 @@ async fn feed_pieces(
                 return;
             }
             Some(Err(error)) => {
+                stop_failed_feed();
                 let _ = pieces.send(Err(body_failure(error))).await;
                 return;
             }
@@ -677,6 +649,7 @@ async fn feed_pieces(
                 .await
                 .is_err()
             {
+                stop_failed_feed();
                 return;
             }
         }

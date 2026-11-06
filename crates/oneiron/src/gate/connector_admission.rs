@@ -71,7 +71,7 @@ impl ConnectorAdmissionPolicy {
                     }
                     let number = |name: &str| -> Option<usize> {
                         let n = usize::try_from(values.get(name)?.as_u64()?).ok()?;
-                        (1..=4096).contains(&n).then_some(n)
+                        (1..).contains(&n).then_some(n)
                     };
                     let quotas = ConnectorAdmissionQuotas {
                         max_tools: number("max_tools")?,

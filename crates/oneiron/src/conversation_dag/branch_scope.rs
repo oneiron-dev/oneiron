@@ -6,13 +6,12 @@ use crate::EntityId;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION};
-use crate::store::Store;
 use heed::RoTxn;
 
 /// Proves a generic Branch anchor belongs to its declared worker session.
 /// Returns that worker session, when the anchor is a worker record.
 pub(crate) fn prove_branch_anchor(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     scope: &ScopeSelector,
     anchor: EntityId,
@@ -37,7 +36,7 @@ pub(crate) fn prove_branch_anchor(
 /// Proves an exact historical reply chain. Neither HEAD nor newer siblings
 /// enter the result, and the excluded anchor is never a covered record.
 pub(crate) fn prove_branch_span(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     scope: &ScopeSelector,
     after: EntityId,

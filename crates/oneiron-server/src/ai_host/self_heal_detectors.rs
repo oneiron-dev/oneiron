@@ -369,7 +369,11 @@ fn judge(
             dial,
             bands: host.bands(),
             state: &state,
-            budget: DECIDE_BUDGET,
+            budget: oneiron::llm::decision::questions::question_call_budget_with_fallback(
+                vault,
+                None,
+                DECIDE_BUDGET,
+            )?,
         };
         vault.grade_window_part(&mut grade, &decisions, part.len())?;
     }

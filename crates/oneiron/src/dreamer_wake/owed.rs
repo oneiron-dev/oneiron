@@ -131,63 +131,96 @@ pub(crate) fn delete_attempt_owed_calls_in_txn(
 pub(crate) fn reconcile_owed_calls(vault: &Vault, now: u64) -> Result<(u64, u64)> {
     vault.with_write_txn_grouped(|wtxn| {
         let boot = vault.active_wakes.boot();
-        let store = DreamerRunnerStore::new(vault);
-        let mut sums: BTreeMap<(AttemptId, String), u64> = BTreeMap::new();
-        let mut charged = 0u64;
-        let mut dropped = 0u64;
-        for ((attempt, step_hash), row) in OWED.scan(&vault.store, &*wtxn)? {
-            if row.boot == boot {
-                continue;
-            }
-            if store.step_charge_marked_in_txn(&*wtxn, attempt, &step_hash)? {
-                sums.entry((attempt, row.line)).or_insert(0);
-                continue;
-            }
-            let usage = crate::llm::settled_step_usage_in_txn(vault, &*wtxn, attempt, &step_hash)
-                .map_err(|_| {
-                Error::InvalidClaimBody("owed wake call step usage did not decode")
-            })?;
-            match usage {
-                Some(usage) => {
-                    let units = crate::dreamer_consolidation::step_charge::usage_units(&usage);
-                    let sum = sums.entry((attempt, row.line)).or_insert(0);
-                    *sum = sum.saturating_add(units);
-                    charged += 1;
-                }
-                None => {
-                    tracing::warn!(
-                        lease = %row.lease,
-                        attempt = %bytes_to_hex_lower(attempt.as_bytes()),
-                        step = %bytes_to_hex_lower(&step_hash),
-                        reserved_units = row.reserved_units,
-                        "owed wake call never completed; dropping as unspent"
-                    );
-                    sums.entry((attempt, row.line)).or_insert(0);
-                    dropped += 1;
-                }
-            }
-        }
-        for ((attempt, line), sum) in sums {
-            let outcome = store.settle_budget_in_txn(
-                wtxn,
-                SettleDreamerBudget {
-                    budget_id: line.clone(),
-                    child_attempt: attempt,
-                    actual_units: sum,
-                    now,
-                },
-            )?;
-            match outcome {
-                DreamerBudgetSettlementOutcome::Settled(_) => {}
-                DreamerBudgetSettlementOutcome::NoReservation => {
-                    if sum > 0 {
-                        let mut budget = store.owing_budget_in_txn(wtxn, &line)?;
-                        store.owe_usage_in_txn(wtxn, &mut budget, attempt, sum, now)?;
-                    }
-                    delete_attempt_owed_calls_in_txn(vault, wtxn, attempt)?;
-                }
-            }
-        }
-        Ok((charged, dropped))
+        let calls = OWED
+            .scan(&vault.store, &*wtxn)?
+            .into_iter()
+            .filter(|(_, row)| row.boot != boot)
+            .collect();
+        settle_owed_calls_in_txn(vault, wtxn, calls, BTreeMap::new(), now)
     })
+}
+
+/// Settles the retained reservations and paid calls of an attempt that the
+/// caller has ended in this writer. All its usage is collected before the
+/// first settlement, which deletes the attempt's owed rows. A reservation
+/// with no owed call contributes no new usage, but still pays its retained
+/// `owed_units` through the ordinary budget settlement.
+pub(crate) fn reconcile_ended_attempt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    budget_lines: &[String],
+    now: u64,
+) -> Result<(u64, u64)> {
+    let calls = OWED
+        .scan(&vault.store, &*wtxn)?
+        .into_iter()
+        .filter(|((held, _), _)| *held == attempt)
+        .collect();
+    let sums = budget_lines
+        .iter()
+        .map(|line| ((attempt, line.clone()), 0))
+        .collect();
+    settle_owed_calls_in_txn(vault, wtxn, calls, sums, now)
+}
+
+fn settle_owed_calls_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    calls: Vec<((AttemptId, [u8; 32]), WakeOwedCall)>,
+    mut sums: BTreeMap<(AttemptId, String), u64>,
+    now: u64,
+) -> Result<(u64, u64)> {
+    let store = DreamerRunnerStore::new(vault);
+    let mut charged = 0u64;
+    let mut dropped = 0u64;
+    for ((attempt, step_hash), row) in calls {
+        if store.step_charge_marked_in_txn(&*wtxn, attempt, &step_hash)? {
+            sums.entry((attempt, row.line)).or_insert(0);
+            continue;
+        }
+        let usage = crate::llm::settled_step_usage_in_txn(vault, &*wtxn, attempt, &step_hash)
+            .map_err(|_| Error::InvalidClaimBody("owed wake call step usage did not decode"))?;
+        match usage {
+            Some(usage) => {
+                let units = crate::dreamer_consolidation::step_charge::usage_units(&usage);
+                let sum = sums.entry((attempt, row.line)).or_insert(0);
+                *sum = sum.saturating_add(units);
+                charged += 1;
+            }
+            None => {
+                tracing::warn!(
+                    lease = %row.lease,
+                    attempt = %bytes_to_hex_lower(attempt.as_bytes()),
+                    step = %bytes_to_hex_lower(&step_hash),
+                    reserved_units = row.reserved_units,
+                    "owed wake call never completed; dropping as unspent"
+                );
+                sums.entry((attempt, row.line)).or_insert(0);
+                dropped += 1;
+            }
+        }
+    }
+    for ((attempt, line), sum) in sums {
+        let outcome = store.settle_budget_in_txn(
+            wtxn,
+            SettleDreamerBudget {
+                budget_id: line.clone(),
+                child_attempt: attempt,
+                actual_units: sum,
+                now,
+            },
+        )?;
+        match outcome {
+            DreamerBudgetSettlementOutcome::Settled(_) => {}
+            DreamerBudgetSettlementOutcome::NoReservation => {
+                if sum > 0 {
+                    let mut budget = store.owing_budget_in_txn(wtxn, &line)?;
+                    store.owe_usage_in_txn(wtxn, &mut budget, attempt, sum, now)?;
+                }
+                delete_attempt_owed_calls_in_txn(vault, wtxn, attempt)?;
+            }
+        }
+    }
+    Ok((charged, dropped))
 }

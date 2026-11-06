@@ -119,12 +119,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     ) -> Result<ExportAgentBundle> {
         let mut skills = Vec::new();
         let mut claims = Vec::new();
-        if let Some(definition) = row
-            .body
-            .to_bytes()
-            .ok()
-            .and_then(|bytes| crate::agent_def::decode_agent_definition(&bytes).ok())
-        {
+        if let Some(definition) = row.body.to_bytes().ok().and_then(|bytes| {
+            crate::store::agent_definition_codec::decode_agent_definition(&bytes).ok()
+        }) {
             let mut named = BTreeSet::new();
             for dependency in &definition.skills {
                 if named.insert(dependency.skill_id.as_str()) {
@@ -620,9 +617,6 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         }
         crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
             Some(ImportOmissionReason::LocalProjectionNotRestored)
-        }
-        crate::registry::ENTITY_TYPE_MESSAGE => {
-            Some(ImportOmissionReason::WitnessAuthorizationNotRestored)
         }
         crate::registry::ENTITY_TYPE_NOTE => Some(ImportOmissionReason::NoteAuthorshipNotRestored),
         ENTITY_TYPE_CLAIM => {

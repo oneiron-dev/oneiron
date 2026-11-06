@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{
-    EgressPredicate, Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance,
-    PendingEmbeddingInput,
+    EgressPredicate, EmbeddedVector, Embedder, EmbedderLocality, EmbeddingDevice,
+    EmbeddingProvenance, PendingEmbeddingInput,
 };
 use oneiron::error::StoreError;
 use oneiron::federation::derivation::DerivationScope;
@@ -144,6 +144,7 @@ struct EmbeddingsResponse {
 /// names; `None` when it does not say.
 struct Answer {
     vectors: Vec<Vec<f32>>,
+    input_tokens: Vec<Option<u64>>,
     mark: Option<EmbeddingProvenance>,
 }
 
@@ -151,6 +152,10 @@ struct Answer {
 struct EmbeddingRow {
     index: usize,
     embedding: Vec<f32>,
+    /// Only the Oneiron wire names measured per-document encoder input.
+    /// Unreadable measurement metadata does not invalidate the vector.
+    #[serde(default)]
+    input_tokens: Option<Box<RawValue>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -660,12 +665,18 @@ impl HttpEmbedder {
         client.preflight()?;
         // The door settles on the vectors; the mark rides beside them.
         let mut mark = None;
+        let mut input_tokens = Vec::new();
         let vectors = door.send(texts, &mut || {
             let answer = self.post_once(texts, side, destination)?;
             mark = answer.mark;
+            input_tokens = answer.input_tokens;
             Ok(answer.vectors)
         })?;
-        Ok(Answer { vectors, mark })
+        Ok(Answer {
+            vectors,
+            input_tokens,
+            mark,
+        })
     }
 
     /// Posts one derivation request: its job is acquired over these rows
@@ -698,15 +709,21 @@ impl HttpEmbedder {
         pods.client.preflight()?;
         let mut job = Some(job);
         let mut mark = None;
+        let mut input_tokens = Vec::new();
         let vectors = door.send(texts, &mut || {
             let job = job.take().ok_or_else(|| {
                 oneiron::Error::InvariantViolation("the derivation job was already sent")
             })?;
             let answer = pods.post_with_job(self, job, scope, texts, side)?;
             mark = answer.mark;
+            input_tokens = answer.input_tokens;
             Ok(answer.vectors)
         })?;
-        Ok(Answer { vectors, mark })
+        Ok(Answer {
+            vectors,
+            input_tokens,
+            mark,
+        })
     }
 
     fn post_once(
@@ -782,22 +799,33 @@ impl HttpEmbedder {
                 code: "embedder endpoint now serves another model, or makes vectors another way, than the vault admitted; restore it or run `oneiron-server reembed`".to_owned(),
             });
         }
+        let (vectors, input_tokens) = self.order_rows(parsed.data, texts.len())?;
         Ok(Answer {
-            vectors: self.order_rows(parsed.data, texts.len())?,
+            vectors,
+            input_tokens,
             // A pod's answer that does not say is marked with the pod.
             mark: answer_mark(parsed.provenance)
                 .or_else(|| (base != self.endpoint).then(|| self.provenance_at(base))),
         })
     }
 
-    /// Each of `answer`'s vectors with the device and runtime that computed
-    /// it: the answer's own, or this endpoint's when it does not say.
-    fn marked(&self, answer: Answer) -> Vec<(Vec<f32>, EmbeddingProvenance)> {
+    /// Each vector with its reported device/runtime and, on the Oneiron
+    /// wire, its measured encoder input count. Other providers remain
+    /// unmeasured even if they send a similarly named extension.
+    fn measured(&self, answer: Answer, wire: Wire) -> Vec<EmbeddedVector> {
         let mark = answer.mark.unwrap_or_else(|| self.provenance());
         answer
             .vectors
             .into_iter()
-            .map(|vector| (vector, mark.clone()))
+            .zip(answer.input_tokens)
+            .map(|(vector, input_tokens)| EmbeddedVector {
+                vector,
+                provenance: mark.clone(),
+                input_tokens: match wire {
+                    Wire::Oneiron => input_tokens,
+                    Wire::OpenAi => None,
+                },
+            })
             .collect()
     }
 
@@ -809,7 +837,7 @@ impl HttpEmbedder {
         &self,
         rows: Vec<EmbeddingRow>,
         expected: usize,
-    ) -> oneiron::Result<Vec<Vec<f32>>> {
+    ) -> oneiron::Result<(Vec<Vec<f32>>, Vec<Option<u64>>)> {
         if rows.len() != expected {
             return Err(oneiron::Error::UpstreamToolFailure {
                 tool: EMBEDDER_TOOL,
@@ -819,7 +847,7 @@ impl HttpEmbedder {
                 ),
             });
         }
-        let mut ordered: Vec<Option<Vec<f32>>> = vec![None; expected];
+        let mut ordered: Vec<Option<EmbeddingRow>> = (0..expected).map(|_| None).collect();
         for row in rows {
             let slot =
                 ordered
@@ -837,17 +865,21 @@ impl HttpEmbedder {
                     code: format!("embedder endpoint repeated index {}", row.index),
                 });
             }
-            *slot = Some(row.embedding);
+            *slot = Some(row);
         }
-        ordered
+        let rows = ordered
             .into_iter()
             .map(|row| {
                 let row = row.ok_or(oneiron::Error::InvariantViolation(
                     "embedder endpoint left an input unanswered",
                 ))?;
-                self.common.finish_vector(row)
+                let input_tokens = row
+                    .input_tokens
+                    .and_then(|value| serde_json::from_str::<u64>(value.get()).ok());
+                Ok((self.common.finish_vector(row.embedding)?, input_tokens))
             })
-            .collect()
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        Ok(rows.into_iter().unzip())
     }
 }
 
@@ -940,7 +972,11 @@ impl Embedder for HttpEmbedder {
         &self,
         inputs: &[PendingEmbeddingInput],
     ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
-        self.embed_documents(inputs, &|_| Ok(()))
+        Ok(self
+            .embed_marked_measured(inputs)?
+            .into_iter()
+            .map(|entry| (entry.vector, entry.provenance))
+            .collect())
     }
 
     fn embed_released(
@@ -948,8 +984,28 @@ impl Embedder for HttpEmbedder {
         inputs: &[PendingEmbeddingInput],
         release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
     ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        Ok(self
+            .embed_released_measured(inputs, release)?
+            .into_iter()
+            .map(|entry| (entry.vector, entry.provenance))
+            .collect())
+    }
+
+    fn embed_marked_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
+        self.embed_documents(inputs, &|_| Ok(()))
+    }
+
+    fn embed_released_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
         self.embed_documents(inputs, release)
     }
+
     /// An answer that does not name its device was computed on one the vault
     /// does not see; it is named as an offer, model at place. The URL holds no
     /// credential or query ([`Self::with_broker`] refuses one).
@@ -977,7 +1033,7 @@ impl HttpEmbedder {
         &self,
         inputs: &[PendingEmbeddingInput],
         release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
-    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
@@ -991,7 +1047,7 @@ impl HttpEmbedder {
             }
         };
         let primary = EmbeddingDestination::Primary;
-        let mut placed: Vec<Option<(Vec<f32>, EmbeddingProvenance)>> = vec![None; inputs.len()];
+        let mut placed: Vec<Option<EmbeddedVector>> = vec![None; inputs.len()];
         for (target, wanted) in [(&destination, true), (&primary, false)] {
             let picked: Vec<usize> = (0..inputs.len())
                 .filter(|index| to_pod[*index] == wanted)
@@ -1028,7 +1084,7 @@ impl HttpEmbedder {
         release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
         wire: Wire,
         destination: &EmbeddingDestination,
-    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
         let rows: Vec<oneiron::EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         let texts: Vec<String> = inputs
             .iter()
@@ -1043,7 +1099,10 @@ impl HttpEmbedder {
         match wire {
             Wire::OpenAi => {
                 release(&rows)?;
-                Ok(self.marked(self.post_embeddings(&refs, Side::default(), destination)?))
+                Ok(self.measured(
+                    self.post_embeddings(&refs, Side::default(), destination)?,
+                    wire,
+                ))
             }
             Wire::Oneiron => {
                 let side = Side {
@@ -1056,11 +1115,9 @@ impl HttpEmbedder {
                 for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
                     release(&rows[sent..sent + request.len()])?;
                     sent += request.len();
-                    vectors.extend(self.marked(self.post_embeddings(
-                        request,
-                        side,
-                        destination,
-                    )?));
+                    vectors.extend(
+                        self.measured(self.post_embeddings(request, side, destination)?, wire),
+                    );
                 }
                 Ok(vectors)
             }

@@ -214,7 +214,8 @@ impl Vault {
                 );
             }
         }
-        let dry_run_forced = candidate.prepared.destructive_hint();
+        let dry_run_forced = candidate.prepared.destructive_hint()
+            && candidate.prepared.arguments().contains_key("dry_run");
         if dry_run_forced {
             full_arguments.remove("dry_run");
         }
@@ -262,6 +263,7 @@ impl Vault {
                         attempt_id: record.attempt_id,
                         call_seq: record.call_seq,
                         principal_ref: candidate.principal_ref.clone(),
+                        remember_context: candidate.prepared.remember_context(),
                         held_at_ms: now_ms(),
                         settled: None,
                         held_reasons: Vec::new(),

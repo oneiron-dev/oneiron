@@ -164,7 +164,9 @@ impl Vault {
         policy: [u8; 32],
     ) -> Result<bool> {
         let view = self.authority_view_readonly_in_txn(txn)?;
-        let Ok(counted) = checkpoint_root_policy_of(&view, posture) else {
+        let Ok(counted) =
+            checkpoint_root_policy_of(&view, posture, self.checkpoint_policy_selection_available())
+        else {
             return Ok(false);
         };
         Ok(counted.root(root).is_some() && counted.digest()? == policy)

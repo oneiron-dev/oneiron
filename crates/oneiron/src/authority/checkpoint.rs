@@ -354,15 +354,16 @@ impl Vault {
     ) -> Result<CheckpointWrite> {
         let (image, head, accounted, reused) = {
             let txn = self.store.env.read_txn()?;
-            let mut image = match super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(
-                &self.store,
-                &txn,
-            )? {
-                Some(adopted) => {
-                    self.build_authority_checkpoint_from_adopted_in_txn(&txn, &adopted)?
-                }
-                None => self.build_authority_checkpoint_v2_in_txn(&txn)?,
-            };
+            let mut image =
+                match super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(
+                    &self.store,
+                    &txn,
+                )? {
+                    Some(adopted) => {
+                        self.build_authority_checkpoint_from_adopted_in_txn(&txn, adopted.as_ref())?
+                    }
+                    None => self.build_authority_checkpoint_v2_in_txn(&txn)?,
+                };
             let accounted = HISTORY_TOTALS
                 .get(&self.store, &txn, &())?
                 .unwrap_or_default();

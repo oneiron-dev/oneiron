@@ -156,6 +156,21 @@ pub(crate) fn encode_admitted_record(
     encode_record(record)
 }
 
+/// A signal row's bytes, read once by the side-row wall in the writer's
+/// transaction ([`encode_admitted_record`]). An erased dispatch
+/// target's text leaves the row first, as on every queue write (FIX 7076).
+pub(crate) fn encode_admitted_signal_record(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &mut AttemptRecord,
+) -> Result<Vec<u8>> {
+    vault
+        .store
+        .attempt_operations
+        .scrub_hard_erased_payload_in_txn(&vault.store, wtxn, record);
+    encode_admitted_record(vault, wtxn, record)
+}
+
 pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<AttemptRecord> {
     // The erased marker of a retired dispatch row that never decoded reads
     // as the typed unavailable, before any version or map (FIX 9390).
@@ -328,6 +343,11 @@ pub(crate) fn validate_requeued_history(history: &[RequeuedFailure]) -> Result<(
     for failure in history {
         validate_lease_owner(&failure.lease_owner)?;
         validate_failure_reason(&failure.reason)?;
+        if failure.count == 0 || failure.last_at < failure.at {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                "invalid requeued failure span",
+            )));
+        }
     }
     Ok(())
 }

@@ -151,7 +151,7 @@ pub struct ConnectorSendTask {
     /// Frozen host UTC offset in minutes. `None` ⇒ hostless schedule: the
     /// executor cannot derive a local minute and fails closed.
     pub utc_offset_minutes: Option<i16>,
-    /// Provenance label only. Execution never consults a timezone database.
+    /// Frozen IANA label; the delivery door re-resolves it at delivery time.
     pub iana_timezone: Option<String>,
     pub human_explicit_instant: bool,
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,

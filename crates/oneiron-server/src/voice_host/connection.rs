@@ -722,7 +722,7 @@ fn response_error(error: &HostError) -> Response {
             HostError::InvalidResponse => "invalid_enrichment",
             HostError::Llm(oneiron::llm::LlmError::BudgetDenied(_)) => "budget_denied",
             HostError::Llm(_) => "provider_error",
-            HostError::Core(_) => "bridge_error",
+            HostError::Core(_) | HostError::Memory(_) => "bridge_error",
         },
     }
 }

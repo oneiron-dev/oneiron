@@ -59,8 +59,8 @@ impl AgentDispatcher<'_> {
         let (_, project) = self.owner_root_in_txn(owner, &self.vault.store.env.read_txn()?)?;
         request.need.validate()?;
         let team_shape = self.root_skill_pack(&request.skills.team_shape)?;
-        let request = &request.with_owner_choices(self.vault, Some(project))?;
-        let evidence = self.planner_evidence_for(
+        let (request, owner_choices) = request.with_owner_choices(self.vault, Some(project))?;
+        let (evidence, root_lookup) = self.planner_evidence_sourced_for(
             Some(project),
             None,
             spend,
@@ -68,11 +68,13 @@ impl AgentDispatcher<'_> {
             PlanSeats::Listed(request.seats),
             at,
         )?;
-        Ok(self
-            .plan_over_evidence(request, &team_shape, &evidence, |skill| {
+        let (mut receipt, _) =
+            self.plan_over_evidence(&request, &team_shape, &evidence, |skill| {
                 self.root_skill_pack(skill)
-            })?
-            .0)
+            })?;
+        receipt.owner_choices = owner_choices;
+        receipt.type_tree_root_lookup = root_lookup;
+        Ok(receipt)
     }
 
     /// The owner's actor and the root project, in one snapshot: the proof

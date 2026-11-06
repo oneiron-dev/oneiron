@@ -16,8 +16,6 @@ use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;
-
 /// Idempotent command carried by the canonical document frame. There is no
 /// actor field: the receiving host obtains that from its authenticated session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,8 +47,9 @@ pub enum NoteChange {
 /// erased: the record stays, naming no one (FIX 6072, Engine R2). A stored
 /// live write's record names its writer's stamp token in the actor's place
 /// (FIX 11964), and a reader sees the actor the token resolves to, or no one
-/// once it is forgotten; the birth's own record names the NOTE's author.
-/// Every new record names the live, authenticated writer.
+/// once it is forgotten. The birth's raw record names no one; its author is
+/// read from the NOTE's immutable core. Later records name the live,
+/// authenticated writer through that writer's stamp token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteAuthorship {
@@ -65,6 +64,16 @@ pub struct NoteAuthorship {
 }
 
 impl NoteAuthorship {
+    /// Native storage keeps the birth author in the NOTE core, never as a
+    /// literal in retained Loro history. Later operation tokens stay intact.
+    pub(super) fn stored_for_note(&self, note: EntityId) -> Self {
+        let mut record = self.clone();
+        if record.operation == note {
+            record.actor = NoteActor::Erased;
+        }
+        record
+    }
+
     /// Whether `other` keeps this record (ErasedWins, FIX 6072): the same
     /// record, or its erased twin, the same in every field but an actor that
     /// names no one. A live actor never keeps an erased record.
@@ -126,70 +135,110 @@ pub(super) fn record_authorship(
     record: &NoteAuthorship,
     stamp: ActorStamp,
 ) -> crate::Result<()> {
-    insert_authorship(doc, record, &stamp.token.to_hex())
+    insert_authorship(&doc.doc, record, &stamp.token.to_hex())
 }
 
 /// [`record_authorship`] for a birth's own record, its commit naming no one
 /// as the birth's stamp does: a birth is derived alike on every replica, so
-/// it can name no device's stamp token. The record names the NOTE core's
-/// author, its `author_ref`.
+/// it can name no device's stamp token. Its record names no one either;
+/// readers bind the birth author from the same NOTE's immutable core.
 pub(super) fn record_birth_authorship(
     doc: &NoteDocument,
     record: &NoteAuthorship,
 ) -> crate::Result<()> {
-    // The commit names no one, as the birth's own stamp does (FIX 10930);
-    // the record keeps the author.
-    insert_authorship(doc, record, &super::NoteActor::Erased.to_wire())
+    insert_authorship(
+        &doc.doc,
+        &record.stored_for_note(doc.id),
+        &super::NoteActor::Erased.to_wire(),
+    )
+}
+
+/// The actual authenticated program edit, recorded on the fork before storage.
+/// A later review receipt is a separate act, not the author of these operations.
+pub(super) fn record_fork_authorship(
+    fork: &super::documents::NoteDocument,
+    edit: &super::NoteProgramEdit,
+    actor: crate::WriteActor,
+    stamp: ActorStamp,
+) -> crate::Result<()> {
+    let command = serde_json::to_vec(edit).map_err(|_| invalid("NOTE fork command encode"))?;
+    insert_authorship(
+        &fork.doc,
+        &NoteAuthorship {
+            operation: fork.head,
+            actor: NoteActor::Actor(stamp.token),
+            actor_class: actor.actor_class().gate_actor_class().to_owned(),
+            grant: None,
+            command_hash: *blake3::hash(&command).as_bytes(),
+        },
+        &stamp.token.to_hex(),
+    )
 }
 
 /// Inserts `record` and commits it under the engine stamp naming `named`. No
 /// authorship count refuses it: a NOTE's edits are never capped (rule 5, FIX
 /// 10345).
 fn insert_authorship(
-    doc: &NoteDocument,
+    doc: &loro::LoroDoc,
     record: &NoteAuthorship,
     named: &str,
 ) -> crate::Result<()> {
     let value = serde_json::to_string(record).map_err(|_| invalid("NOTE authorship encode"))?;
-    doc.doc
-        .get_map("authorship")
+    doc.get_map("authorship")
         .insert(&record.operation.to_hex(), value)
         .map_err(|_| invalid("NOTE authorship insert"))?;
-    doc.doc.commit_with(
+    doc.commit_with(
         loro::CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={named}")),
     );
     Ok(())
 }
 
-/// `records`, the stored entries of `note`'s authorship map, as a reader
-/// sees them (FIX 11964): a live write's entry names its writer's stamp
-/// token, which reads as the actor through the token's live claim and as no
-/// one once the token is forgotten. The birth's own entry (its operation is
-/// `note`) names the NOTE core's author; it reads as no one once this vault
-/// erased that author.
+/// Stored authorship as a reader sees it. Later records resolve their stamp
+/// token; the birth author is bound from the same NOTE core in this snapshot.
+/// A forgotten token or erased core author reads as no one.
 ///
 /// # Errors
 ///
-/// Storage errors, or a stored token claim that does not decode.
+/// Storage errors, an invalid NOTE core, or a stored token claim that does not decode.
 pub(super) fn resolved_authorship_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
     records: Vec<NoteAuthorship>,
 ) -> crate::Result<Vec<NoteAuthorship>> {
+    let birth_author = if records.iter().any(|record| record.operation == note) {
+        super::verbs::stored_note_core_in(&vault.store, txn, note)?
+            .1
+            .author_ref
+    } else {
+        NoteActor::Erased
+    };
+    resolved_authorship_with_birth_in_txn(vault, txn, note, birth_author, records)
+}
+
+/// Uses the birth author the admitted room or vault content read already
+/// loaded. This value is display metadata, not operation admission.
+pub(super) fn resolved_authorship_with_birth_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    birth_author: NoteActor,
+    records: Vec<NoteAuthorship>,
+) -> crate::Result<Vec<NoteAuthorship>> {
     let mut resolved = Vec::with_capacity(records.len());
     for mut record in records {
-        record.actor = match record.actor {
-            NoteActor::Actor(_) if record.operation == note => {
-                record.actor.erased_here(vault, txn)?
+        record.actor = if record.operation == note {
+            birth_author.erased_here(vault, txn)?
+        } else {
+            match record.actor {
+                NoteActor::Actor(token) => {
+                    crate::provenance::resolve_actor_stamp_in_txn(vault, txn, &token)?
+                        .map_or(NoteActor::Erased, |actor| {
+                            NoteActor::Actor(actor.entity_ref())
+                        })
+                }
+                NoteActor::Erased => NoteActor::Erased,
             }
-            NoteActor::Actor(token) => {
-                crate::provenance::resolve_actor_stamp_in_txn(vault, txn, &token)?
-                    .map_or(NoteActor::Erased, |actor| {
-                        NoteActor::Actor(actor.entity_ref())
-                    })
-            }
-            NoteActor::Erased => NoteActor::Erased,
         };
         resolved.push(record);
     }
@@ -232,7 +281,8 @@ fn resolved_receipt_in_txn(
 impl crate::Vault {
     /// Whether a queued NOTE receipt still has its authoritative durable row.
     /// Host delivery combines this freshness check with current selector admission.
-    /// Erasure deletes copied full-view receipts in the same writer as their pins.
+    /// Erasure strips its pins from a saved receipt and drops the queued copies
+    /// in the same writer.
     pub fn note_receipt_is_current(
         &self,
         note: EntityId,
@@ -359,6 +409,53 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
     ) -> MemoryResult<NoteOperationReceipt> {
+        self.apply_note_candidate_in_txn(txn, note, operation, grant, None)
+    }
+
+    /// Loads the actual native fork under the same writer as admission. There
+    /// is no byte-taking import door: only a stored, undecided fork can enter.
+    pub(super) fn apply_native_note_fork_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fork_id: EntityId,
+    ) -> MemoryResult<NoteOperationReceipt> {
+        let fork = super::proposals::NOTE_FORK
+            .get(&self.vault().store, txn, &fork_id)?
+            .ok_or(invalid("missing proposal record"))?;
+        if fork.fork != fork_id || fork.decided || fork.rewrite || fork.recovery_merge.is_some() {
+            return Err(invalid("fork is not a native pending merge").into());
+        }
+        let current = super::documents::live_doc(self.vault(), txn, fork.note)?;
+        if current.head != fork.parent {
+            return Err(invalid("parent is not the canonical NOTE").into());
+        }
+        let proposed = super::documents::load_head(self.vault(), txn, fork.note, fork.fork)?;
+        let candidate = NoteDocument::from_loro(fork.note, current.doc.fork())?;
+        super::storage::import_complete(
+            &candidate.doc,
+            &super::documents::snapshot(&proposed.doc)?,
+        )?;
+        let operation = NoteOperation {
+            request_id: self.vault().store.clock.entity_id()?,
+            change: NoteChange::Edit {
+                base: current.doc.oplog_frontiers().encode(),
+                edits: vec![super::documents::text_change(
+                    &current.text(),
+                    &candidate.view()?.markdown,
+                )],
+            },
+        };
+        self.apply_note_candidate_in_txn(txn, fork.note, &operation, None, Some(candidate))
+    }
+
+    fn apply_note_candidate_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        operation: &NoteOperation,
+        grant: Option<EntityId>,
+        native: Option<NoteDocument>,
+    ) -> MemoryResult<NoteOperationReceipt> {
         if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
         }
@@ -391,7 +488,34 @@ impl Memory<'_> {
         let outcome = match &operation.change {
             NoteChange::Edit { base, edits } => {
                 let cited_by = cited_by(self.vault(), txn, note)?;
-                if doc.edit(base, edits, stamp, &cited_by)? {
+                let guarded = if native.is_some() {
+                    // The conservative review decision must not author the
+                    // accepted text as the reviewer. These operations are disposable.
+                    NoteDocument::from_loro(note, doc.doc.fork())?
+                        .edit(base, edits, stamp, &cited_by)?
+                } else {
+                    doc.edit(base, edits, stamp, &cited_by)?
+                };
+                let mut accepted = guarded;
+                if guarded && let Some(candidate) = &native {
+                    for pin in candidate.pins()? {
+                        validate_pin_source(self.vault(), txn, &pin)?;
+                    }
+                    for pin in doc
+                        .pins()?
+                        .iter()
+                        .chain(&cited_by)
+                        .filter(|pin| pin.document == note)
+                    {
+                        if !matches!(
+                            candidate.resolve(pin)?,
+                            super::NoteSpanResolution::Mapped { .. }
+                        ) {
+                            accepted = false;
+                        }
+                    }
+                }
+                if accepted {
                     None
                 } else {
                     if !policy.enforces_write_gate() {
@@ -425,19 +549,24 @@ impl Memory<'_> {
         let outcome = match outcome {
             Some(proposed) => proposed,
             None => {
-                record_authorship(
-                    &doc,
-                    &NoteAuthorship {
-                        operation: operation.request_id,
-                        actor: super::NoteActor::Actor(stamp.token),
-                        actor_class: self.actor_class().gate_actor_class().to_owned(),
-                        grant: grant.map(|id| id.to_hex()),
-                        command_hash: hash,
-                    },
-                    stamp,
-                )?;
-                persist_authoritative(self.vault(), txn, &doc)?;
-                NoteScalarEditOutcome::Applied(doc.view()?)
+                let applied = if let Some(candidate) = &native {
+                    candidate
+                } else {
+                    record_authorship(
+                        &doc,
+                        &NoteAuthorship {
+                            operation: operation.request_id,
+                            actor: super::NoteActor::Actor(stamp.token),
+                            actor_class: self.actor_class().gate_actor_class().to_owned(),
+                            grant: grant.map(|id| id.to_hex()),
+                            command_hash: hash,
+                        },
+                        stamp,
+                    )?;
+                    &doc
+                };
+                persist_authoritative(self.vault(), txn, applied)?;
+                NoteScalarEditOutcome::Applied(applied.view()?)
             }
         };
         let receipt = NoteOperationReceipt {
@@ -445,14 +574,9 @@ impl Memory<'_> {
             command_hash: hash,
             outcome,
         };
-        let payload = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
-        // The receipt goes to its requester whole in one NOTE_RECEIPT
-        // document frame: an 18-byte head and this payload within the
-        // transport's 8 MiB frame (`sync::transport::encode_document`). This
-        // bound protects that frame and stays (FIX 10345).
-        if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
-            return Err(invalid("NOTE receipt exceeds wire bound").into());
-        }
+        // Validate the full receipt before persistence as before. Its socket
+        // delivery splits the complete result, never a truncated view.
+        let _ = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
         // The stored receipt keeps the stamp tokens its view names; its
         // caller reads them resolved (FIX 11964).
         NOTE_RECEIPT_BY_REQUEST.put(
