@@ -183,7 +183,7 @@ impl GraphFsResolver<'_, '_> {
             || checkpoint(reader),
             |bytes| copy_utf8_field(bytes, reader, quantum),
         )?;
-        let mut page = PageBuilder::new(path, self.options);
+        let mut page = PageBuilder::new(path, self.options, reader)?;
         let mut last: Option<String> = None;
         let mut next = None;
         for entry in entries {
@@ -207,7 +207,7 @@ impl GraphFsResolver<'_, '_> {
                 self.options.page_byte_cap,
             )?);
         }
-        Ok(page.finish(next))
+        page.finish(next, reader)
     }
 
     fn snapshot_entries(

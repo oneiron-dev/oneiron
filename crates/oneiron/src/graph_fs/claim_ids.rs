@@ -77,7 +77,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<GraphFsPage> {
         let scope = self.cursor_scope(path);
         let after: Option<EntityId> = scope.open(cursor)?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         let mut last_listed = after;
         let mut receipt = self.scoped_read.read_receipt(None, 0)?;
@@ -96,7 +96,9 @@ impl GraphFsResolver<'_, '_> {
         if next_cursor.is_none() {
             next_cursor = run.resume_after.map(|id| scope.seal(&id));
         }
-        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
+        Ok(builder
+            .finish(next_cursor, reader)?
+            .with_read_receipt(receipt))
     }
 
     /// Up to `fetch` ids `ids_after` names after `after`. On this device the
