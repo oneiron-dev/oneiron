@@ -656,7 +656,7 @@ impl<'a> Exchange<'a> {
         }
         let session = response.headers().get(SESSION_HEADER).cloned();
         let initialized = match read_reply(response, INITIALIZE_ID) {
-            Ok(Some((message, _))) => message,
+            Ok(Some(message)) => message,
             _ => return Sent::not_sent(OutboundFailureKind::Rejected, None),
         };
         // The key pinned one revision; a server that answers another is not

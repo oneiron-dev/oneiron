@@ -13,12 +13,12 @@ use super::*;
 mod event_body;
 mod first_answer;
 
-/// One reply body: a parsed JSON message with its owned raw body, or an
-/// event stream still open.
-pub(super) enum Reply {
-    /// The message that answers the request, if the body holds one, and its
-    /// bytes.
-    Json(Option<(Value, RawOutboundBody)>),
+/// One reply body: a parsed JSON message with the body its caller retains,
+/// or an event stream still open. Control readers retain only `()`.
+pub(super) enum Reply<B = RawOutboundBody> {
+    /// The message that answers the request, if the body holds one, and the
+    /// caller's retained body.
+    Json(Option<(Value, B)>),
     Stream(EventStream),
 }
 
@@ -174,8 +174,11 @@ pub(super) fn open_reply(
     response: reqwest::blocking::Response,
     id: u64,
     deadline: Option<Instant>,
-) -> Result<Reply, ()> {
-    open_reply_body(response, id, deadline, None)
+) -> Result<Reply<()>, ()> {
+    open_reply_body(response, deadline, |body| {
+        let found = first_answer::read(body, id)?;
+        Ok(found.map(|message| (message, ())))
+    })
 }
 
 /// A tools/call JSON response keeps its original raw bytes in a vault spool.
@@ -186,21 +189,24 @@ pub(super) fn open_spooled_reply(
     deadline: Option<Instant>,
     vault: &Vault,
 ) -> Result<Reply, ()> {
-    open_reply_body(response, id, deadline, Some(vault))
+    open_reply_body(response, deadline, |body| {
+        let bytes = RawOutboundBody::read_spooled(vault, body).map_err(|_| ())?;
+        let found = first_answer::read(bytes.reader(), id)?;
+        Ok(found.map(|message| (message, bytes)))
+    })
 }
 
-fn open_reply_body(
+fn open_reply_body<B>(
     response: reqwest::blocking::Response,
-    id: u64,
     deadline: Option<Instant>,
-    vault: Option<&Vault>,
-) -> Result<Reply, ()> {
+    read_json: impl FnOnce(reqwest::blocking::Response) -> Result<Option<(Value, B)>, ()>,
+) -> Result<Reply<B>, ()> {
     let stream = response
         .headers()
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.trim_start().starts_with("text/event-stream"));
-    let mut body = response;
+    let body = response;
     if stream {
         return Ok(Reply::Stream(EventStream {
             reader: ZeroizingBufReader::new(body),
@@ -211,32 +217,23 @@ fn open_reply_body(
             last_event_id: Zeroizing::default(),
         }));
     }
-    let bytes = match vault {
-        Some(vault) => RawOutboundBody::read_spooled(vault, body).map_err(|_| ())?,
-        None => {
-            let mut bytes = Zeroizing::new(Vec::new());
-            body.read_to_end(&mut bytes).map_err(|_| ())?;
-            RawOutboundBody::from_bytes(std::mem::take(&mut *bytes))
-        }
-    };
-    let found = first_answer::read(&bytes, id)?;
-    Ok(Reply::Json(found.map(|message| (message, bytes))))
+    read_json(body).map(Reply::Json)
 }
 
 /// Reads one reply body until the response that answers `id`; server
-/// requests and notifications on a stream are dropped. Returns the message
-/// and its own bytes.
+/// requests and notifications on a stream are dropped. Control replies keep
+/// only the message, not an unused raw-body copy.
 pub(super) fn read_reply(
     response: reqwest::blocking::Response,
     id: u64,
-) -> Result<Option<(Value, RawOutboundBody)>, ()> {
+) -> Result<Option<Value>, ()> {
     let mut stream = match open_reply(response, id, None)? {
-        Reply::Json(found) => return Ok(found),
+        Reply::Json(found) => return Ok(found.map(|(message, ())| message)),
         Reply::Stream(stream) => stream,
     };
     loop {
         match stream.next(id)? {
-            StreamEvent::Answer(message, body) => return Ok(Some((message, body))),
+            StreamEvent::Answer(message, _) => return Ok(Some(message)),
             StreamEvent::Request(_) => {}
             StreamEvent::End => return Ok(None),
         }
