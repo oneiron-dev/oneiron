@@ -72,12 +72,49 @@ where
         self
     }
 
+    /// Install before feeding input to reserve the actual native open-element
+    /// vector before its push or insert.
+    /// The callback is dropped after that vector on success and failure, so an
+    /// owned reservation can be released when parsing ends, before rendering.
+    /// A refusal uses the same first-error channel as the other checkpoints.
+    pub fn with_open_elements_reservation<G>(mut self, reservation: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&mut Vec<Sink::Handle>, usize) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .sink
+            .sink
+            .set_open_elements_reservation(Box::new(move |elements, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match reservation(elements, additional) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
     /// Parse borrowed UTF-8 without copying the whole input into a heap tendril.
     /// Each input tendril contains one Unicode scalar and fits in tendril's
     /// inline storage. Tokenizer and sink allocations remain separate.
     /// Character-token batching follows the scalar stream, not whole-input runs.
     /// The first checkpoint failure stops further input production.
-    pub fn one_str(self, input: &str) -> Result<Sink::Output, E> {
+    pub fn one_str(mut self, input: &str) -> Result<Sink::Output, E> {
+        self.tokenizer.sink.sink.coalesce_table_text();
         for character in input.chars() {
             if !self.tokenizer.checkpoint() {
                 break;

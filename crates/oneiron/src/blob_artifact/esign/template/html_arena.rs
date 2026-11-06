@@ -67,7 +67,14 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
     let document = if budget.admits_memory() {
         let budget = budget.clone();
         let current = Arc::clone(&backing);
+        let open_elements = Mutex::new(Backing::new(budget.clone()));
         parser
+            .with_open_elements_reservation(move |elements, additional| {
+                open_elements
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .reserve_vec(elements, additional)
+            })
             .with_tree_sink_checkpoint(move |document, operation| {
                 budget.checkpoint()?;
                 if matches!(operation, TreeSinkOperation::ParseError) {
