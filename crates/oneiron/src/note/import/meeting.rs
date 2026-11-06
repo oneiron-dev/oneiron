@@ -89,6 +89,7 @@ impl Vault {
             self,
             txn,
             WriteActor::new(author, EdgeActorClass::System),
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
         content.apply_batch(
             self.batch_in()
