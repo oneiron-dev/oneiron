@@ -183,3 +183,13 @@ attribute clones may share the admitted allocation; a later allocating copy,
 including shared-value atomic conversion, has separate unadmitted backing.
 This covers the tokenizer's value allocation, not every downstream attribute
 copy, attribute-vector backing or interned name.
+
+Doctype names and public/system identifiers use that native backing reservation
+before every UTF-8 character append. Initial inline values need no heap, and
+clearing an owned identifier retains its capacity and admission. An accepted
+doctype token moves all three payloads through the tree builder and DOM sink;
+owned atomic conversion preserves their headers. Ignored doctypes drop their
+payloads. A stopped parse drops its partial parser and DOM before returning the
+first typed error. Diagnostic formatting, allocating later copies and other
+private payloads remain unadmitted; this does not complete FIX 9615 or bound
+opaque native work.

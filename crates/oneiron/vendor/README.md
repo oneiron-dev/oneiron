@@ -109,6 +109,10 @@ including decoded character references. Moves and native shares keep its
 allocation header; later allocating copies, including shared-value atomic
 wrapping, have separate unadmitted backing. Attribute-vector backing and
 interned names remain outside that initial value reservation.
+The doctype name and public/system identifiers also reserve their native
+backing before every UTF-8 character append. Accepted tokens move those
+payloads into DOM doctype storage; ignored tokens drop them. Diagnostic
+formatting and other private allocations remain unadmitted.
 
 Callbacks use the caller's memory and work deadline, not a node-count/content
 limit or a new timer. Attribute-vector backing, allocating attribute copies,

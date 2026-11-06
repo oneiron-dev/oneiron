@@ -180,6 +180,10 @@ and every local source change.
   slice append, including decoded character references. It retains the same
   native header through moves and shares; later allocating attribute copies,
   including shared-value atomic wrapping, have separate unadmitted backing.
+  The doctype name and public/system identifiers also reserve their actual
+  tendrils before each UTF-8 character append. Accepted tokens move that backing
+  through the native tree builder and DOM sink; ignored tokens drop it. Diagnostic
+  formatting and other native/private payloads remain outside this reservation.
 
 ## Licences and attribution
 
