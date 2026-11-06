@@ -448,6 +448,17 @@ and unknown metadata stay. The original attributes and identities are never remo
 from the retained source. This distinguishes an original element from a new style
 copy without assigning new identities or choosing a different style template.
 
+Fresh paragraph-template copies of `pPr` and `endParaRPr` use that same original
+source check and XML-namespace identity omission. A whole retained paragraph
+already owns both property sources. In a changed field-free paragraph, the
+successful styled path also records its own original property spans, but only
+after the head, middle and tail all succeed. The styled path keeps those original
+property bytes unchanged. Added or fallback lines borrowing that paragraph's
+properties then keep the same style without copying identities still carried
+by the original paragraph. Failed styled attempts and field-containing paragraphs
+do not gain these property-source entries; properties with no retained original
+source keep the prior template behavior.
+
 The leading-empty-run source case can therefore retain its original `rPr xml:id`
 once at the original edge while the inserted middle keeps the same style without
 copying that identity. The plan covers cross-paragraph copies of the global run
