@@ -81,7 +81,17 @@ impl AiHandle {
             ),
             confession: confession_wording::of(models),
             dreamer_control: None,
+            runner_seats: models.and_then(|models| models.dreamer.runner_seats.clone()),
         }
+    }
+
+    /// The owner's runner-seat policy (`[models.dreamer] runner_seats`) the
+    /// seat host routes a bound runner work's end under (FIX 9320, FIX
+    /// 10625); `None` when the config names none.
+    pub(crate) fn runner_seats(
+        &self,
+    ) -> Option<&crate::runtime::seat_login::RunnerSeatPolicySettings> {
+        self.runner_seats.as_ref()
     }
 
     /// What the Dreamer's wake policy samples before each decision (ARCH-0026

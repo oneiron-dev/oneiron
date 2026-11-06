@@ -58,6 +58,8 @@ use oneiron_driver::{
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
 use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
+#[cfg(unix)]
+pub(super) use launch_manifest::NativeLaunch;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 use serde_json::Value as JsonValue;
@@ -123,9 +125,19 @@ pub(super) struct ExternalWorker {
 pub(super) struct NativeRoute {
     pub(super) worker: InferenceWorker,
     slot: Arc<LaunchSlot>,
+    wire_model: String,
 }
 
 impl NativeRoute {
+    #[cfg(unix)]
+    pub(super) fn native_launch(&self) -> Option<NativeLaunch> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()?
+            .native_launch(&self.wire_model)
+    }
+
     /// The current launch's native socket and the digest of its launch
     /// manifest; `None` when it has no socket.
     pub(super) fn launch(&self) -> Option<(PathBuf, String)> {
@@ -875,6 +887,7 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
         NativeRoute {
             worker: hosted.worker.clone(),
             slot: Arc::clone(hosted.native_slot()?),
+            wire_model: hosted.row.binding.model.clone(),
         }
     };
     route.launch().is_some().then_some(route)
