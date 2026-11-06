@@ -66,6 +66,19 @@ pub(crate) fn retain_embed_job_home_claim_copy_in_txn(
     Ok(true)
 }
 
+/// The optional copy of this exact job, without leasing or changing its metadata.
+pub(crate) fn embed_job_home_claim_copy_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let key = encode_embed_key(entity_id);
+    let Some(value) = store.sync_queue.get(txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(embed_job_home_claim_copy(&value)?.map(<[u8]>::to_vec))
+}
+
 /// Drops only a carried copy, retaining the native job's original priority
 /// and enqueue time. The caller holds the source rewrite's own writer.
 pub(crate) fn clear_embed_job_home_claim_copy_in_txn(
