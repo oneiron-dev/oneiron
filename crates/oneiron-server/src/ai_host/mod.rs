@@ -167,6 +167,8 @@ pub struct AiHandle {
     /// The compaction writer factory chat and code mode share, settled when
     /// the host attaches (FIX 4465 D).
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
+    /// The host's resolved Dreamer question and draft wording.
+    dreamer_wording: Arc<crate::config::models::DreamerWording>,
     /// The wording runs are asked for their confession in (FIX 8696).
     confession: Arc<str>,
     /// The control the Dreamer's passes are admitted and paused through,

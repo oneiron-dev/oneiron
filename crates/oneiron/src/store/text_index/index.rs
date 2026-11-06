@@ -23,6 +23,15 @@ pub(crate) mod checkpoint;
 const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
     SideTable::new(&side_table::INDEX_SOURCE_TEXT);
 
+/// The canonical input fields retained for this document's text index.
+pub(crate) fn source_fields_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<(String, String)>>> {
+    INDEX_SOURCE_TEXT.get(store, txn, id)
+}
+
 // === Indexing ===
 
 fn prove_bm25_doc_counted_for_missing_posting_repair(

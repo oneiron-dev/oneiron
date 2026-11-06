@@ -33,9 +33,17 @@ impl Dial {
         config: &ServeConfig,
         source: EnrolmentSource,
     ) -> anyhow::Result<Option<Self>> {
+        Self::resolve_for_vault(&server.vault, config, source)
+    }
+
+    pub(super) fn resolve_for_vault(
+        vault: &oneiron::Vault,
+        config: &ServeConfig,
+        source: EnrolmentSource,
+    ) -> anyhow::Result<Option<Self>> {
         let section = config.device_sync.as_ref();
         // No directory to look in means `device enrol` wrote nothing either.
-        let enrolment = match EnrolmentFiles::for_serve(&config.keystore, &server.vault, source) {
+        let enrolment = match EnrolmentFiles::for_serve(&config.keystore, vault, source) {
             Ok(Some(files)) => files.read()?.map(|record| (files, record)),
             Ok(None) | Err(_) => None,
         };

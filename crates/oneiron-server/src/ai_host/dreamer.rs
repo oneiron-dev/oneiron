@@ -157,6 +157,18 @@ pub(super) fn paused(epoch: Option<&tokio::sync::watch::Receiver<bool>>) -> bool
     epoch.is_some_and(|epoch| *epoch.borrow())
 }
 
+/// Resolves once the pause `epoch` held lifts: the epoch closed at a thaw,
+/// or cleared. Pends while it holds none. The one wait every host loop that
+/// parks on the pause selects on (FIX 8956).
+pub(super) async fn pause_lifted(epoch: Option<tokio::sync::watch::Receiver<bool>>) {
+    match epoch {
+        Some(mut epoch) if paused(Some(&epoch)) => {
+            let _ = epoch.wait_for(|held| !*held).await;
+        }
+        _ => std::future::pending::<()>().await,
+    }
+}
+
 pub(super) struct DreamerStart {
     pub(super) vault: Arc<Vault>,
     pub(super) runtime: Arc<ModelRuntime>,

@@ -24,32 +24,59 @@ pub struct MeetingAudioSeats {
     pub vad: WireSeat,
     pub diarization: WireSeat,
     pub asr: WireSeat,
-    pub alignment: WireSeat,
+    /// Every configured alignment model, including language-specific runtimes.
+    pub alignment: Vec<WireSeat>,
     pub cleanup: WireSeat,
 }
 
 impl MeetingAudioSeats {
     /// Whether every rung runs on this device.
     pub(super) fn on_device(&self) -> bool {
-        [
-            &self.vad,
-            &self.diarization,
-            &self.asr,
-            &self.alignment,
-            &self.cleanup,
-        ]
-        .iter()
-        .all(|seat| seat.locality() == ModelLocality::OnDevice)
+        !self.alignment.is_empty()
+            && [&self.vad, &self.diarization, &self.asr, &self.cleanup]
+                .into_iter()
+                .chain(self.alignment.iter())
+                .all(|seat| seat.locality() == ModelLocality::OnDevice)
     }
 
-    fn seat(&self, kind: UnitKind) -> &WireSeat {
-        match kind {
+    pub(super) fn matches_models(
+        &self,
+        models: &std::collections::BTreeMap<String, Vec<String>>,
+    ) -> bool {
+        let configured = [
+            ("vad", vec![self.vad.model()]),
+            ("diarization", vec![self.diarization.model()]),
+            ("asr", vec![self.asr.model()]),
+            (
+                "alignment_window",
+                self.alignment.iter().map(WireSeat::model).collect(),
+            ),
+            ("cleanup_group", vec![self.cleanup.model()]),
+        ];
+        configured.into_iter().all(|(kind, expected)| {
+            models.get(kind).is_some_and(|actual| {
+                expected
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    == actual
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<std::collections::BTreeSet<_>>()
+            })
+        })
+    }
+
+    fn seat(&self, kind: UnitKind, model: &str) -> Option<&WireSeat> {
+        let seat = match kind {
             UnitKind::Vad => &self.vad,
             UnitKind::Diarization => &self.diarization,
             UnitKind::Asr => &self.asr,
-            UnitKind::AlignmentWindow => &self.alignment,
+            UnitKind::AlignmentWindow => {
+                return self.alignment.iter().find(|seat| seat.model() == model);
+            }
             UnitKind::CleanupGroup => &self.cleanup,
-        }
+        };
+        (seat.model() == model).then_some(seat)
     }
 }
 
@@ -121,7 +148,13 @@ impl CommandMeetingAudioHost {
             .and_then(UnitKind::parse)
             .ok_or_else(|| host_error(stage, "InvalidUnit"))?;
         let audio_ms = unit["audio_ms"].as_u64().unwrap_or(0);
-        let seat = self.seats.seat(kind);
+        let model = unit["model"]
+            .as_str()
+            .ok_or_else(|| host_error(stage, "InvalidUnit"))?;
+        let seat = self
+            .seats
+            .seat(kind, model)
+            .ok_or_else(|| host_error(stage, "UnitModelBindingMismatch"))?;
         let parts = match kind {
             UnitKind::CleanupGroup => vec![MediaPart::Text {
                 text: String::new(),
