@@ -117,12 +117,12 @@ pub(super) fn take(
     Ok(reads)
 }
 
-/// Each answered read's receipt carries `cost`, what the provider that answered it costs
-/// per thousand units as its host knows it; none when it knows none.
+/// Prefer the answer's own measured cost, including an explicit unknown. Providers
+/// without a per-answer measurement keep their existing provider-level rate.
 pub(super) fn price_answers(reads: &[Read], readings: &mut [Readings], cost: Option<f64>) {
     for (read, readings) in reads.iter().zip(readings.iter_mut()) {
-        if matches!(read, Read::Answer(_)) {
-            readings.cost = cost;
+        if let Read::Answer(answer) = read {
+            readings.cost = answer.cost_per_thousand.unwrap_or(cost);
         }
     }
 }
@@ -197,6 +197,11 @@ pub(super) fn joined(
         };
         for answer in &mut answers {
             answer.person = reading;
+            if answer.cost_per_thousand.is_some() || asked.cost_per_thousand.is_some() {
+                // Separate calls may use different currencies, and the extra
+                // reading may be shared by the pack. No combined quote is known.
+                answer.cost_per_thousand = Some(None);
+            }
         }
     }
     if answers.len() != count {
@@ -277,6 +282,7 @@ fn abstained() -> ProviderDecision {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     }
 }
 
