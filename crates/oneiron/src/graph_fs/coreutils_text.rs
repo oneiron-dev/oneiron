@@ -232,8 +232,8 @@ fn next_line<'bytes>(
     })
 }
 
-/// Copies a full internal path with the caller's reader, without rendering a page.
-pub(super) fn copy_path_parts(
+/// Copies complete UTF-8 text with the caller's reader, without rendering a page.
+pub(super) fn copy_text_parts(
     parts: &[&str],
     reader: &ContainerReader,
     scan_bytes: usize,
@@ -262,9 +262,9 @@ pub(super) fn join_graph_path_with_reader(
     scan_bytes: usize,
 ) -> Result<String> {
     if parent == "/" {
-        copy_path_parts(&["/", name], reader, scan_bytes)
+        copy_text_parts(&["/", name], reader, scan_bytes)
     } else {
-        copy_path_parts(&[parent, "/", name], reader, scan_bytes)
+        copy_text_parts(&[parent, "/", name], reader, scan_bytes)
     }
 }
 
