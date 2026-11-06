@@ -9,9 +9,9 @@
 //! under a row on `auto` reads the note when its breakpoint captures the
 //! live request, and again right before its live fork's first dispatch.
 //! Nothing is kept in the vault or across a restart, and no key is read: a
-//! route the table does not know, a rebuilt provider client, or a prefix no
-//! answer showed written reads cold. Warmth never depends on where the
-//! agent runs.
+//! route the table does not know, a T0 offer (FIX 6495), a rebuilt provider
+//! client, or a prefix no answer showed written reads cold. Warmth never
+//! depends on where the agent runs.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, PoisonError, Weak};
 use std::time::Instant;
@@ -51,8 +51,18 @@ struct CacheProfile {
 /// parser its wire marks with. `None`, so cold, for every route not in it
 /// (an OpenAI-style, Gemini or DeepSeek route, a proxy) until a row is
 /// added here, and for a tier the parser does not know.
+///
+/// `None` too for a T0 offer (FIX 6495), on a note and on a lookup alike.
+/// Its binding names the key's record, never the key's rotation
+/// generation, so a key rotated under the same name keeps its client and
+/// would keep its notes. Its warmth is unknown. Its sends and a forced
+/// live fork go on as before.
 fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile> {
-    let route = &rung.offer.binding.route;
+    let binding = &rung.offer.binding;
+    if binding.custody == KeyCustody::T0 {
+        return None;
+    }
+    let route = &binding.route;
     if (route.adapter(), route.origin()) != ANTHROPIC_ROUTE {
         return None;
     }
@@ -139,7 +149,8 @@ fn feed(hasher: &mut blake3::Hasher, value: &impl Serialize) -> Option<()> {
 /// offer, credential binding name and catalog revision, by digest), the
 /// wire model, the provider client it went out through (CALLS "FIX 6029
 /// client generation": a rebuilt client is another one, so cold; no key is
-/// read or hashed), and the prefix's digest.
+/// read or hashed, and a T0 offer is never held, FIX 6495), and the
+/// prefix's digest.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct WarmKey {
     offer: String,
