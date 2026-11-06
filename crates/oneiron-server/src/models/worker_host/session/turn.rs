@@ -17,8 +17,6 @@
 //! reached restores one from a kept snapshot when the worker imports them
 //! (`restore.rs`), and otherwise creates one. A turn that finds its session
 //! parking takes it back; one that finds it restoring runs plain.
-use std::path::Path;
-
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, MessageStamp, SegmentManifest, SessionBinding,
     SessionCreate, SessionCreated, SessionFork, SessionForked, SessionGenerate,
@@ -32,7 +30,7 @@ use super::policy;
 use super::registry::{self, Ops, PendingTurn, Phase, Place, Serves, Session, send};
 use super::restore;
 use crate::models::native_exl3::session_capability;
-use crate::models::worker_host::NativeRoute;
+use crate::models::worker_host::{NativeLaunch, NativeRoute};
 
 /// What a turn forks from: its session's handle, the generation the host
 /// expects, and the checkpoint it published.
@@ -43,14 +41,14 @@ struct Opened {
 }
 
 /// Opens a session turn for a call to `route`'s incarnation `epoch` at
-/// `socket`, whose lease saw `observed`, sending `conversation` with
+/// `launch`, whose lease saw `observed`, sending `conversation` with
 /// `params`. `manifest` must describe the call's messages exactly, name its
 /// conversation and leave an ephemeral tail after its canonical path.
 /// Returns the `session` field of the call's `session.generate`, or `None`
 /// to send it as a plain `generate`.
 pub(in crate::models) async fn open_turn(
     route: &NativeRoute,
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     observed: Option<&WorkerDescriptor>,
     manifest: &SegmentManifest,
@@ -73,7 +71,7 @@ pub(in crate::models) async fn open_turn(
     };
     let worker_id = route.worker.spec().worker_id.clone();
     let place = Place {
-        socket: socket.to_path_buf(),
+        launch: launch.clone(),
         epoch: epoch.to_owned(),
         worker: route.worker.clone(),
         ledger: super::super::session_device_ledger(&route.worker),
@@ -190,7 +188,7 @@ async fn serves(worker_id: &str, place: &Place) -> Option<Ops> {
     let known = registry::bind(&mut registry::lock(), worker_id, place).serves;
     let serves = match known {
         Serves::Unasked => {
-            let capability = session_capability(&place.socket).await;
+            let capability = session_capability(&place.launch, &place.epoch).await;
             let serves = match &capability {
                 Some(capability) if policy::serves_sessions(capability) => Serves::Yes(Ops {
                     restore: capability.serves(SessionOp::Restore),
