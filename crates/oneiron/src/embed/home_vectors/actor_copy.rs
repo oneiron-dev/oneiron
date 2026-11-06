@@ -13,6 +13,7 @@ use oneiron_crypto::{
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::retained_copy::RetainedHomeClaimSender;
 use super::{HomeClaimVector, ReceivedHomeClaimVector, own_peer_in_txn};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::origin::actor_erase::{OriginClaimKind, claim_actors};
@@ -77,6 +78,7 @@ pub(crate) struct RetainedHomeClaimActors {
     vault_id: [u8; 32],
     entity_id: EntityId,
     source_digest: [u8; 32],
+    sender: RetainedHomeClaimSender,
     required: Vec<Required>,
     envelope: Vec<u8>,
 }
@@ -119,6 +121,9 @@ impl ReceivedHomeClaimVector {
         vault: &Vault,
     ) -> Result<Option<PreparedHomeClaimActors>> {
         let Some(owners) = origin_owners(&self.vector)? else {
+            return Ok(None);
+        };
+        let Some(sender) = RetainedHomeClaimSender::from_peer(self.peer) else {
             return Ok(None);
         };
         let _guard = vault.store.core.key_custody.read_guard()?;
@@ -167,6 +172,7 @@ impl ReceivedHomeClaimVector {
             vault_id,
             entity_id: self.vector.entity_id,
             source_digest: *blake3::hash(&self.vector.source).as_bytes(),
+            sender,
             required,
             envelope: Vec::new(),
         };
@@ -247,6 +253,7 @@ impl PreparedHomeClaimActors {
         if self.path != vault.store.env.path()
             || binding_in_txn(&vault.store, txn)?.as_ref() != Some(&self.binding)
             || vault.authority_view_readonly_in_txn(txn)?.vault_id != Some(self.copy.vault_id)
+            || self.received.peer != self.copy.sender.peer()
             || self.received.source_facts_in_txn(vault, txn)?.is_none()
         {
             return Ok(None);
@@ -284,6 +291,7 @@ impl RetainedHomeClaimActors {
             self.vault_id,
             self.entity_id,
             self.source_digest,
+            &self.sender,
             &self.required,
             index,
         ))

@@ -5,6 +5,7 @@
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
+use super::retained_copy::RetainedHomeClaimSender;
 use super::source::HomeClaimResponseSource;
 use super::{HomeClaimVector, ReceivedHomeClaimVector};
 use crate::store::{
@@ -27,6 +28,7 @@ pub(crate) struct RetainedResponseSource {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetainedHomeClaimResponse {
+    pub(crate) sender: RetainedHomeClaimSender,
     pub(crate) response: RetainedResponseSource,
     pub(crate) vector: HomeClaimVector,
 }
@@ -141,6 +143,9 @@ impl ReceivedHomeClaimVector {
         let Some(facts) = self.source_facts_in_txn(vault, txn)? else {
             return Ok(RetainedHomeClaimState::SourceChanged);
         };
+        let Some(sender) = RetainedHomeClaimSender::from_peer(self.peer) else {
+            return Ok(RetainedHomeClaimState::SourceChanged);
+        };
         // Ordinary actor-bearing sources need their own native split. The
         // response instance is not a substitute for any actor's custody.
         if facts.origin_kind.is_some() {
@@ -195,10 +200,12 @@ impl ReceivedHomeClaimVector {
         };
         #[derive(Serialize)]
         struct Copy<'a> {
+            sender: RetainedHomeClaimSender,
             response: RetainedResponseSource,
             vector: &'a HomeClaimVector,
         }
         let copy = rmp_serde::to_vec_named(&Copy {
+            sender,
             response,
             vector: &self.vector,
         })

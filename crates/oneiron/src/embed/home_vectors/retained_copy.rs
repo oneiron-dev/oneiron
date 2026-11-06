@@ -1,11 +1,36 @@
 //! The two native custody forms in the existing embedding job copy slot.
 //! Their named fields distinguish them; no transport or queue tag is added.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::actor_copy::RetainedHomeClaimActors;
 use super::retained::RetainedHomeClaimResponse;
+use crate::authority::PeerMachine;
 use crate::{EntityId, Error, Result};
+
+/// Original receive identity carried as data, never a transport or read grant.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetainedHomeClaimSender {
+    machine: EntityId,
+    key: [u8; 32],
+}
+
+impl RetainedHomeClaimSender {
+    pub(crate) fn from_peer(peer: PeerMachine) -> Option<Self> {
+        let PeerMachine::Proven { machine, key } = peer else {
+            return None;
+        };
+        Some(Self { machine, key })
+    }
+
+    pub(crate) fn peer(&self) -> PeerMachine {
+        PeerMachine::Proven {
+            machine: self.machine,
+            key: self.key,
+        }
+    }
+}
 
 /// The original receive and its native prepared custody stay in one holder.
 /// Neither serialization nor a copied instance id can reconstruct this value.
