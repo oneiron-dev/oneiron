@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::store::checkpoint_payload::loro::Atom as ActorAtom;
 use crate::store::checkpoint_payload::rows::bad_part;
 use crate::sync::checkpoint_payload::{LoroSlice, OpenedSyncAtoms};
-use crate::sync::skill_docs::checkpoint::RecordDocumentTransport;
+use crate::sync::skill_docs::checkpoint::{RecordDocumentPairRebind, RecordDocumentTransport};
 
 struct OpenedSource {
     content: Vec<u8>,
@@ -52,6 +52,25 @@ impl OpenedSources {
     }
 }
 
+/// Sources whose own content and actor parts opened in this window. Only
+/// this authenticated opening constructs the product; it is not admission.
+#[derive(Debug)]
+pub(crate) struct OpenedWindowRecordSources {
+    window: String,
+    sources: Vec<RecordDocumentPairRebind>,
+}
+
+impl OpenedWindowRecordSources {
+    pub(crate) fn into_parts(self) -> (String, Vec<RecordDocumentPairRebind>) {
+        (self.window, self.sources)
+    }
+}
+
+pub(crate) struct OpenedWindowReconstruction {
+    pub(crate) groups: Vec<reconstruct::ReconstructedWindow>,
+    pub(crate) sources: OpenedWindowRecordSources,
+}
+
 /// One actual carrier join, before its native atoms have been reconstructed.
 /// Ordinary atom availability comes from that same carrier's original join.
 pub(crate) struct RecordDocumentRestoreGroup<'a> {
@@ -67,10 +86,11 @@ pub(crate) struct RecordDocumentRestoreGroup<'a> {
 /// group has a copy. Only equal opened content/actor fields of the SAME
 /// original head share one native rejoin. The cache ends with this call.
 pub(crate) fn reconstruct_window_opened(
+    window: &str,
     groups: Vec<RecordDocumentRestoreGroup<'_>>,
     opened: &dyn OpenedSyncAtoms,
     dropped: &mut Vec<crate::store::checkpoint_payload::rows::RowLocator>,
-) -> Result<Vec<reconstruct::ReconstructedWindow>> {
+) -> Result<OpenedWindowReconstruction> {
     let mut cache = OpenedSources::default();
     let mut transports: Vec<Vec<Option<OpenedRecordDocument>>> = Vec::with_capacity(groups.len());
     for group in &groups {
@@ -111,5 +131,17 @@ pub(crate) fn reconstruct_window_opened(
             slices: group.slices,
         });
     }
-    reconstruct::reconstruct_window(reconstruction)
+    let groups = reconstruct::reconstruct_window(reconstruction)?;
+    let sources = cache
+        .0
+        .into_values()
+        .map(|source| source.transport.source.clone())
+        .collect();
+    Ok(OpenedWindowReconstruction {
+        groups,
+        sources: OpenedWindowRecordSources {
+            window: window.to_owned(),
+            sources,
+        },
+    })
 }

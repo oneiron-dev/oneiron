@@ -456,7 +456,8 @@ pub(crate) struct ReconstructionGroup<'a> {
 }
 
 fn same_transport(left: &RecordDocumentTransport, right: &RecordDocumentTransport) -> bool {
-    left.row == right.row
+    left.source == right.source
+        && left.row == right.row
         && left.head == right.head
         && left.snapshot == right.snapshot
         && left.refinement == right.refinement

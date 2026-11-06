@@ -64,7 +64,7 @@ The window integration below now consumes this codec through its native source o
 
 Each carried head keeps its real shallow-root or retained-operation site. The native record's `row_digest` selects the exact historical entities-map bytes, rather than the current winner or callback order. The normal paired codec then validates that row, the document history and immutable FIRST. Each snapshot/FIRST descriptor position keeps every observed write of its part. Repeated positions, shared parts and multiple historical heads are not collapsed into one source or one digest-to-position map. Callback atom ids are checked against the completed temporary capture and are not final projected slot ids.
 
-The production window preparation below consumes this historical catalog in its final source-aware classification. The temporary catalog remains private and is never emitted. Native permission, authenticated native source-metadata rebinding and the other outstanding producers are unchanged.
+The production window preparation below consumes this historical catalog in its final source-aware classification. The temporary catalog remains private and is never emitted. Native permission and the other outstanding producers are unchanged; authenticated source-metadata rebinding is described below.
 
 
 ## Independent native window source copies
@@ -201,8 +201,8 @@ marker rule. An ordinary snapshot with no SKILL source remains a valid base for
 the first native head in a pending update.
 
 Production preparation, FRAME4, copy enumeration and authenticated restore now
-consume this kernel as described below. Canonical native admission, source-metadata
-rebinding, mirror and native producers remain separate. This source implementation
+consume this kernel as described below. Source-metadata rebinding is also described
+below; canonical native admission, mirror and native producers remain separate. This source implementation
 is not a compiler result or runtime proof.
 
 
@@ -237,3 +237,34 @@ existing altered-history history-free rule even when all source content opened.
 Its verdict reports native content availability separately from rewritten history
 and does not claim original `WINDOW_ROUND_TRIP` equivalence. No new refusal policy,
 operating cap, default, grant or authority witness is introduced.
+
+
+## Authenticated retained-source pair rebinding
+
+Native sealed content keeps the original pair digest computed from its exact
+captured row, canonical record head, original snapshot and optional FIRST before
+actor splitting. This pair is inside the source's content compartment, never an
+outer digest key, sender assertion or native-write permission. A native rejoin
+returns that pair beside its actual rebuilt pair and canonical record head.
+
+Only a source whose own authenticated copy opened contributes a per-window rebind
+fact. Preparation matches its original pair to the original image's canonical
+transport metadata. It keeps that fact's sender MACHINE and stages the exact
+replacement key and serialized value length in the existing restore byte budget.
+An unchanged pair needs no replacement. Different historical sources can converge
+on one rebuilt pair without making either source a reason to refuse the restore.
+
+After the restored window rows land, their same writer rechecks the original
+metadata bytes, current entity and sender erasures, the actual stored snapshot
+plus every pending update, and the selected row/head/snapshot/FIRST pair. Both
+carried and stored peer origins still exclude a peer's native source. A live fact
+already naming the rebuilt pair keeps its sender; otherwise the matching opened
+source retains its original sender at the new pair key. The original fact is not
+deleted. A missing original fact or a nonmatching current pair adds no new fact
+and does not change the restored window rows.
+
+This is transport metadata, not a synthetic import, current MACHINE standing,
+native operation admission, `SkillStateWrite` or a completed commit receipt.
+Original retained selection and native candidate/materializer checks still run on
+replay. Other native producers, root-list activation and mirror publication remain
+separate work. This source implementation is not compiler or runtime proof.
