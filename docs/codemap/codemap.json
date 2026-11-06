@@ -35115,7 +35115,7 @@
      "path": "src/engine_executor/store/reply_evidence.rs",
      "purpose": "PERSON substitution only in the typed text of a model reply's evidence copy",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -47478,7 +47478,7 @@
      "path": "src/memory/code_doors/resolutions.rs",
      "purpose": "Code proposal resolution: resolve, review, settle and read a proposal's settlement",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
