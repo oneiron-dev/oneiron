@@ -138,6 +138,9 @@ pub struct WorldEviction {
     pub cached_items_removed: usize,
     /// Thin read caches a legal hold keeps.
     pub cached_items_held: usize,
+    /// Sealed updates this install made of the worlds and the home had not
+    /// stored, which the owner's discard took.
+    pub sealed_sends_discarded: usize,
 }
 
 /// The home's version vector of world window `window_key`, as this device
@@ -185,8 +188,9 @@ pub fn evict_worlds_placed_elsewhere(vault: &Vault) -> Result<WorldEviction> {
 /// goes too, with that work and every edge it touches (Engine 11-06 08:34 =
 /// A); a pending tombstone still travels, as an id. Then every CLAIM of the
 /// world its claim posting list names, still in one of its windows, goes the
-/// same way. What a legal hold, a control or the fold's own records keep
-/// stays.
+/// same way, and so does each row of the world alone that sits in a BASE
+/// window (`world_base_rows`). What a legal hold, a control or the fold's own
+/// records keep stays.
 ///
 /// # Errors
 /// An owner proof that no longer stands; [`Error::InvalidConfig`] while this
@@ -265,17 +269,29 @@ fn evict(
             report.removed += leftover.removed;
             report.kept += leftover.kept;
             report.windows_busy += leftover.windows_busy;
+            // And its rows that sit in BASE windows (Engine call 1 = A).
+            let base = super::world_base_rows::discard_base_rows(vault, *world)?;
+            report.removed += base.removed;
+            report.kept += base.kept;
+            report.windows_busy += base.windows_busy;
         }
     }
     if report.windows_busy == 0
         && report.windows_unconfirmed == 0
         && report.windows_with_local_members == 0
     {
-        vault.with_write_txn_grouped(|wtxn| {
+        report.sealed_sends_discarded = vault.with_write_txn_grouped(|wtxn| {
+            let mut discarded = 0;
             for world in worlds {
                 crate::world_keys::purge_world_mirrors_in_txn(&vault.store, wtxn, *world)?;
+                // The owner's discard takes its unsent sealed updates of the
+                // world too, once nothing of it waits here (call 3 = A).
+                if matches!(confirmation, Confirmation::Owner) {
+                    discarded +=
+                        super::sealed_updates::discard_world_outbox_in_txn(vault, wtxn, *world)?;
+                }
             }
-            Ok(())
+            Ok(discarded)
         })?;
     }
     Ok(report)

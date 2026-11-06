@@ -331,6 +331,10 @@ pub(crate) struct OutboundSendFacts<'a> {
     pub(crate) target: &'a str,
     /// The sending identity the request resolved.
     pub(crate) sender: Option<EntityId>,
+    /// Whether the request's producer bound `sender` as a native or member
+    /// mail sender (`request_binding.rs` `bind_native_mail_recipient`), the
+    /// classification frozen with the send (FIX 11869).
+    pub(crate) native_mail_recipient: bool,
     /// The thread the send replies on.
     pub(crate) thread_ref: Option<&'a str>,
     pub(crate) content_ref: Option<&'a str>,
@@ -351,16 +355,18 @@ impl ApprovalTarget {
     /// member sender (a provider rail, an `email` send or replace with no
     /// sender bound, an e-sign or trusted-contact notice among them) pins
     /// as a communication: sender, original target, thread, content ref and
-    /// send ref. An `email` act with a bound sender keeps none: the Gate
-    /// reads that sender's row and names a native or member mail send by
-    /// mail's own canonical digest, which this pure composer cannot tell
-    /// apart from another sender's and must not shadow.
+    /// send ref. An `email` act its producer bound to a native or member
+    /// mail sender keeps none: the Gate reads that sender's row and names
+    /// the send by mail's own canonical digest, which this composer must
+    /// not shadow. Any other bound sender (a provider-rail identity on
+    /// `email`, a replace with a sender) pins as a communication too, by
+    /// the producer's prepared classification (FIX 11869).
     pub(crate) fn for_outbound(facts: &OutboundSendFacts<'_>) -> Option<Self> {
         let send_ref = facts.send_ref.to_owned();
         let content_ref = facts.content_ref.map(str::to_owned);
         let target = match facts.connector {
             "linear" => return None,
-            MAIL_CONNECTOR if facts.sender.is_some() => return None,
+            MAIL_CONNECTOR if facts.sender.is_some() && facts.native_mail_recipient => return None,
             FAILURE_SIGNALS_CONNECTOR if !FAILURE_SIGNAL_BATCHES_PIN => return None,
             ESIGN_CONNECTOR => Self::Esign {
                 document: facts.target.to_owned(),

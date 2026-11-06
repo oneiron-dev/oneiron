@@ -345,7 +345,7 @@ fn project_blob(
         REPO_OPAQUE_FILE_BYTES.to_vec()
     } else {
         let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, &marks, object.read_bytes()?)?.into_bytes()
+        project_repo_bytes_in_txn(vault, &txn, &marks, object.read_bytes()?, None)?.into_bytes()
     };
     Ok((
         wire.project_blob(object, Some(bytes.as_slice()))?,
