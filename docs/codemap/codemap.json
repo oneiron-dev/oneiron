@@ -52912,7 +52912,7 @@
      "path": "src/note/operations.rs",
      "purpose": "Authenticated semantic NOTE commands",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -72721,7 +72721,7 @@
      "path": "src/store/document_frame_tags.rs",
      "purpose": "Document frame tags shared by persisted document consumers and transport",
      "surface": {
-      "const": 11,
+      "const": 12,
       "mod": 1
      }
     },
@@ -79781,7 +79781,7 @@
       "crate-vis": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -79830,6 +79830,21 @@
       "fn": 17,
       "mod": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentAssembly",
+      "DocumentPartFrames",
+      "JoinedDocument"
+     ],
+     "path": "src/sync/transport/document_parts.rs",
+     "purpose": "Logical documents released as bounded frames and joined before admission",
+     "surface": {
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -92632,7 +92647,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 364,
+     "files": 365,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92844,7 +92859,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6542,
+   "source_files": 6543,
    "test_files": 895
   },
   "oneiron-android": {
