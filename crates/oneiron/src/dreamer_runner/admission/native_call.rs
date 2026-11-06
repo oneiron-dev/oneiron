@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use oneiron_model::llm::{BudgetGuardId, BudgetMeterRange};
 
+mod metered_owed;
 mod net;
 mod observations;
 mod owed;
@@ -43,6 +44,7 @@ struct NativeCallObligation {
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
     aggregate_observations: Vec<NativeAggregateObservation>,
     owed_reconciliations: Vec<owed::NativeOwedReconciliation>,
+    metered_owed_observations: Vec<metered_owed::NativeMeteredOwedObservation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +162,7 @@ pub(crate) fn retain_native_call_in_txn(
         house_completions: None,
         aggregate_observations: Vec::new(),
         owed_reconciliations: Vec::new(),
+        metered_owed_observations: Vec::new(),
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
@@ -175,6 +178,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.house_completions = None;
         original.aggregate_observations.clear();
         original.owed_reconciliations.clear();
+        original.metered_owed_observations.clear();
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",

@@ -394,7 +394,8 @@ impl DreamerWakeDriver<'_> {
             charged,
             "the measured charge did not settle; it stays owed on the reservation"
         );
-        self.store.owe_unsettled_charge(&settlement)?;
+        self.store
+            .owe_unsettled_charge(&settlement, measured.native.as_ref())?;
         Ok("charge_owed")
     }
 

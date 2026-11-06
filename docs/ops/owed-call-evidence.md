@@ -21,3 +21,17 @@ reservation with no known owed source does not invent an admission. Evidence
 failure does not hold settlement, and evidence is not payment, NET/GROSS
 coverage, an exclusion, guard restoration or authority for a later recovery.
 The direct native-invoice payer remains unchanged and is not enabled here.
+
+## Metered error-path owed additions
+
+If a nonzero metered settlement fails, its existing owed fallback also carries
+the same held native snapshot into the successful owed writer. An optional child
+reads the held reservation after the original owed and budget writes. It keeps
+the actual cumulative owed value, the aggregate increment and that snapshot's
+guard, interval and every retained call's raw lease state/range. Missing state
+or range remains unknown. No boot, per-call share or physical invoice is inferred.
+
+An absent native snapshot or reservation adds no such evidence. Optional source
+errors warn without changing the owed write. These records do not pin the failed
+settlement's receipts, pay a call, or establish NET/GROSS inclusion. Equal
+successful observations stay separate; timestamps and amounts are not IDs.
