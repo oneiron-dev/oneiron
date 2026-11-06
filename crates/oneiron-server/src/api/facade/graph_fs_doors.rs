@@ -1,14 +1,14 @@
 //! Cooperative file reads with the facade's original invocation setup.
 use super::*;
 
-pub(super) async fn graph_fs_bytes(
+pub(super) async fn graph_fs_bytes<I: serde::de::DeserializeOwned>(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
     verb: &'static str,
     read: impl FnOnce(
         &oneiron::Memory<'_>,
-        oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+        I,
         &oneiron::batch::ReadPacing,
     )
         -> oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>

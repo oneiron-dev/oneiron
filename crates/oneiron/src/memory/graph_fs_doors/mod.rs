@@ -239,22 +239,72 @@ impl Memory<'_> {
     }
 
     pub fn graph_fs_head(&self, input: GraphFsHeadRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_head_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same head read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_head_with_pacing(
+        &self,
+        input: GraphFsHeadRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_head_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_head_with_reader(
+        &self,
+        input: GraphFsHeadRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let lines = input.lines.unwrap_or(10);
         let call = call_key("graph_fs.head", (&input.path, lines))?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.head(&input.path, lines, cursor.as_deref())?;
+        let result = tree.head_with_reader(&input.path, lines, cursor.as_deref(), reader)?;
         Ok(output(&tree, &input.mount, input.path, &call, result))
     }
 
     pub fn graph_fs_wc(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_wc_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same word count, with cooperative container-mask checkpoints.
+    pub fn graph_fs_wc_with_pacing(
+        &self,
+        input: GraphFsLinkRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_wc_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_wc_with_reader(
+        &self,
+        input: GraphFsLinkRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.wc", &input.path)?;
-        let result = tree.wc(&input.path)?;
+        let result = tree.wc_with_reader(&input.path, reader)?;
         Ok(output(&tree, &input.mount, input.path, &call, result))
     }
 }

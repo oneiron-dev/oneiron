@@ -255,13 +255,28 @@ impl GraphFsResolver<'_, '_> {
         lines: usize,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.head_with_reader(
+            path,
+            lines,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn head_with_reader(
+        &self,
+        path: &str,
+        lines: usize,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let scope = self.cursor_scope(&format!("head -n {lines} {path}"));
         let from: HeadPosition = scope.open(cursor)?.unwrap_or_default();
         let mut out = CommandOutputBuilder::new(self.options);
         let mut next_cursor = None;
-        let read = self.read_file(path)?;
+        let read = self.read_file_with_reader(path, reader)?;
         if let Some(file) = &read.value {
             let (finished, next) = page_lines(
                 file.bytes(),
@@ -293,9 +308,17 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub fn wc(&self, path: &str) -> Result<GraphFsCommandOutput> {
+        self.wc_with_reader(path, &crate::batch::secret_scan::ContainerReader::default())
+    }
+
+    pub(crate) fn wc_with_reader(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let read = self.read_file(path)?;
+        let read = self.read_file_with_reader(path, reader)?;
         let bytes = if let Some(file) = &read.value {
             let text = String::from_utf8_lossy(file.bytes());
             let lines = text.lines().count();
