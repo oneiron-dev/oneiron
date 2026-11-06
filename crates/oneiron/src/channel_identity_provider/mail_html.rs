@@ -211,10 +211,13 @@ fn attribute_sent(element: &str, key: &str, value: &str) -> bool {
     }
 }
 
-/// Writes `text` escaped for HTML text, or for a quoted attribute value.
+/// Writes `text` escaped for HTML text, or for a quoted attribute value. A
+/// carriage return is written as a reference: a parser reads a bare one as a
+/// line feed, so the document would not read back as it stands.
 fn escape_into(out: &mut String, text: &str, attribute: bool) {
     for c in text.chars() {
         match c {
+            '\r' => out.push_str("&#13;"),
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
