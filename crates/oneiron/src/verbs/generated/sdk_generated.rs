@@ -25296,7 +25296,7 @@ pub fn invoke(
         "vault.widen_proposals.decline" => {
             encode(vault_widen_proposals_decline(memory, decode(value)?)?)
         }
-        "vault.claims.review" => encode(vault_claims_review(memory, decode(value)?)?),
+        "vault.claims.review" => claim_output::review(vault_claims_review(memory, decode(value)?)?),
         "vault.claims.settle" => encode(vault_claims_settle(memory, decode(value)?)?),
         "vault.craft_candidates" => encode(vault_craft_candidates(memory, decode(value)?)?),
         "vault.craft_candidates.answer" => {
@@ -26218,7 +26218,9 @@ pub fn invoke(
         "vault.free_time.cycles" => encode(vault_free_time_cycles(memory, decode(value)?)?),
         "vault.free_time.cycle" => encode(vault_free_time_cycle(memory, decode(value)?)?),
         "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
-        "vault.claims.vetting" => encode(vault_claims_vetting(memory, decode(value)?)?),
+        "vault.claims.vetting" => {
+            claim_output::review(vault_claims_vetting(memory, decode(value)?)?)
+        }
         "vault.memory.signal_extraction" => {
             encode(vault_memory_signal_extraction(memory, decode(value)?)?)
         }

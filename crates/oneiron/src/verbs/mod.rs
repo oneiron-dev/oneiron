@@ -11,6 +11,7 @@ mod calendar;
 mod campaign_archive;
 mod campaign_split;
 mod catalog_fragment;
+mod claim_output;
 mod comm_widen;
 mod connector;
 mod connector_call;

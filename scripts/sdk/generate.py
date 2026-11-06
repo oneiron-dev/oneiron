@@ -1886,6 +1886,8 @@ def outputs():
             core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
             encoder = {
+                'vault.claims.review': 'claim_output::review',
+                'vault.claims.vetting': 'claim_output::review',
                 'vault.kv.get': 'key_value_output::get',
                 'vault.kv.put': 'key_value_output::put',
                 'vault.kv.search': 'key_value_output::search',
