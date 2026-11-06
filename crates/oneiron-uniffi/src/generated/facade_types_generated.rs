@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1263 facade rows, 4595 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
+// UniFFI census: 1264 facade rows, 4596 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -35901,6 +35901,16 @@ pub struct CodeRunSecretLiftStatus {
     pub proposals: Vec<CodeRunSecretLiftProposalView>,
     #[serde(rename = "dismissed", default, skip_serializing_if = "Option::is_none")]
     pub dismissed: Option<CodeRunSecretLiftDismissal>,
+}
+
+/// `oneiron::code_run::storage::secret_lift::room::CodeRunRoomSecretLiftRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunRoomSecretLiftRequest {
+    #[serde(rename = "room_ref")]
+    pub room_ref: String,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
 }
 
 /// `oneiron::batch::secret_scan::lift_history::LiftCloseReason`.
