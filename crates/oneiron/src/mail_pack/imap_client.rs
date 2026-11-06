@@ -1,9 +1,11 @@
 //! A native IMAP4rev1 client (RFC 3501) for the mail pack's IMAP wire (FIX
-//! 15425): implicit TLS through rustls with the platform's roots, one
+//! 15425): TLS through rustls with the platform's roots, from the first byte
+//! or after `STARTTLS` on a server's plain port (fix list row 17870), one
 //! command at a time, each response parsed into items. It speaks what the
 //! wire needs: `LOGIN` or `AUTHENTICATE` (`PLAIN`, `XOAUTH2`), `LIST`,
-//! `EXAMINE`, `UID SEARCH`, `UID FETCH`, `LOGOUT`. Every read is bounded,
-//! and every command ends by a deadline, however slowly a server answers.
+//! `EXAMINE`, `UID SEARCH` (`ESEARCH` where offered), `UID FETCH`, `LOGOUT`.
+//! Every read is bounded, and every command ends by a deadline, however
+//! slowly a server answers.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -437,13 +439,16 @@ impl Tokens<'_> {
 }
 
 impl ImapSession {
-    /// Connects over implicit TLS to `host:port` and reads the greeting.
+    /// Connects to `host:port` and reads the greeting: over TLS from the
+    /// first byte, or with `starttls` in the clear until the server takes
+    /// `STARTTLS`, and over TLS from then on.
     ///
     /// # Errors
     ///
     /// A host that does not resolve or answer, a TLS failure (an
-    /// untrusted certificate included), or a server that is not IMAP4rev1.
-    pub(super) fn connect(host: &str, port: u16) -> Result<Self> {
+    /// untrusted certificate included), a server that does not upgrade to
+    /// TLS when asked, or a server that is not IMAP4rev1.
+    pub(super) fn connect(host: &str, port: u16, starttls: bool) -> Result<Self> {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let config = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
@@ -467,27 +472,24 @@ impl ImapSession {
                 TcpStream::connect_timeout(&address, left.min(IO_TIMEOUT)).ok()
             })
             .ok_or_else(|| refused("imap_connect_failed"))?;
-        // The handshake runs within the first read: the greeting's.
+        let mut stream = DeadlineStream { tcp, deadline };
+        if starttls {
+            stream = start_tls(stream)?;
+        }
+        // The handshake runs within the first read: the greeting's, or
+        // after `STARTTLS` the first command's.
         let mut session = Self {
-            reader: BufReader::new(rustls::StreamOwned::new(
-                tls,
-                DeadlineStream { tcp, deadline },
-            )),
+            reader: BufReader::new(rustls::StreamOwned::new(tls, stream)),
             next_tag: 1,
             capabilities: BTreeSet::new(),
         };
-        let greeting = session.read_response()?;
-        let greeting = greeting
-            .strip_prefix(b"* ")
-            .ok_or_else(|| refused("imap_greeting_malformed"))?;
-        match untagged(greeting)? {
-            // A session signed in before it presents a credential is not
-            // this source's: only a plain greeting is taken.
-            Untagged::Status { kind, code } if kind == "OK" => {
-                session.take_capabilities(&code);
-            }
-            _ => return Err(refused("imap_server_refused_connection")),
+        if !starttls {
+            let greeting = session.read_response()?;
+            let code = greeting_code(&greeting)?;
+            session.take_capabilities(&code);
         }
+        // The capabilities told in the clear are not taken: once TLS is up,
+        // they are asked again.
         if session.capabilities.is_empty() {
             let answers = session.command("CAPABILITY")?;
             for answer in &answers {
@@ -516,11 +518,7 @@ impl ImapSession {
     }
 
     fn take_capability_atoms(&mut self, items: &[Item]) {
-        self.capabilities = items
-            .iter()
-            .filter_map(Item::atom)
-            .map(str::to_ascii_uppercase)
-            .collect();
+        self.capabilities = capability_set(items);
     }
 
     /// Whether the server announced `capability` (uppercase).
@@ -634,32 +632,7 @@ impl ImapSession {
 
     /// One response, its literals included.
     fn read_response(&mut self) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        loop {
-            let start = out.len();
-            let room = MAX_RESPONSE_BYTES.saturating_sub(start);
-            let read = (&mut self.reader)
-                .take(u64::try_from(room).unwrap_or(u64::MAX))
-                .read_until(b'\n', &mut out)
-                .map_err(|_| refused("imap_transport_failed"))?;
-            if read == 0 {
-                return Err(refused("imap_connection_closed"));
-            }
-            if !out.ends_with(b"\n") {
-                return Err(refused("imap_response_too_large"));
-            }
-            let Some(length) = literal_at_end(&out[start..]) else {
-                return Ok(out);
-            };
-            if length > MAX_LITERAL_BYTES || out.len() + length > MAX_RESPONSE_BYTES {
-                return Err(refused("imap_response_too_large"));
-            }
-            let at = out.len();
-            out.resize(at + length, 0);
-            self.reader
-                .read_exact(&mut out[at..])
-                .map_err(|_| refused("imap_transport_failed"))?;
-        }
+        read_response_from(&mut self.reader)
     }
 
     /// Reads `response` as the end of command `tag`: `Some(true)` for `OK`,
@@ -798,6 +771,44 @@ impl ImapSession {
         Ok(uids)
     }
 
+    /// The UIDs from `low` to `high` the open mailbox holds, as ascending
+    /// ranges: one `ESEARCH` answer where the server offers it, which names
+    /// a run of UIDs in a few bytes, else a plain `UID SEARCH`.
+    ///
+    /// # Errors
+    ///
+    /// A malformed set, or the command's own.
+    pub(super) fn uid_ranges(&mut self, low: u64, high: u64) -> Result<Vec<(u64, u64)>> {
+        if low > high {
+            return Ok(Vec::new());
+        }
+        if !self.has("ESEARCH") {
+            let uids = self.uid_search(&format!("UID {low}:{high}"))?;
+            return Ok(ranges_of(&uids));
+        }
+        let answers = self.command(&format!("UID SEARCH RETURN (ALL) UID {low}:{high}"))?;
+        let mut ranges = Vec::new();
+        for answer in &answers {
+            if let Untagged::Data { kind, rest } = answer
+                && kind == "ESEARCH"
+            {
+                let items = parse_items(rest)?;
+                let all = items.iter().position(|item| {
+                    item.atom()
+                        .is_some_and(|atom| atom.eq_ignore_ascii_case("ALL"))
+                });
+                if let Some(at) = all {
+                    let set = items
+                        .get(at + 1)
+                        .and_then(Item::atom)
+                        .ok_or_else(malformed)?;
+                    ranges.extend(parse_set(set)?);
+                }
+            }
+        }
+        Ok(merged(ranges, low, high))
+    }
+
     /// `UID FETCH set (attributes)` in the open mailbox: each message's
     /// sequence number and attribute list.
     ///
@@ -888,6 +899,195 @@ pub(super) fn uid_set(uids: &[u64]) -> String {
         at += 1;
     }
     out
+}
+
+/// `ranges` as a UID set: `1:4,7,9:12`.
+pub(super) fn range_set(ranges: &[(u64, u64)]) -> String {
+    let mut out = String::new();
+    for &(low, high) in ranges {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        let _ = if low == high {
+            write!(out, "{low}")
+        } else {
+            write!(out, "{low}:{high}")
+        };
+    }
+    out
+}
+
+/// Ascending `uids` as ascending ranges.
+fn ranges_of(uids: &[u64]) -> Vec<(u64, u64)> {
+    let mut ranges: Vec<(u64, u64)> = Vec::new();
+    for &uid in uids {
+        match ranges.last_mut() {
+            Some((_, high)) if *high + 1 == uid => *high = uid,
+            _ => ranges.push((uid, uid)),
+        }
+    }
+    ranges
+}
+
+/// A sequence set a server answered (`1:3,5,9:7`), as ranges, each in
+/// IMAP's range.
+fn parse_set(set: &str) -> Result<Vec<(u64, u64)>> {
+    let number = |text: &str| {
+        text.parse::<u64>()
+            .ok()
+            .filter(|uid| (1..=MAX_IMAP_NUMBER).contains(uid))
+            .ok_or_else(malformed)
+    };
+    set.split(',')
+        .map(|part| match part.split_once(':') {
+            Some((a, b)) => {
+                let (a, b) = (number(a)?, number(b)?);
+                Ok((a.min(b), a.max(b)))
+            }
+            None => number(part).map(|uid| (uid, uid)),
+        })
+        .collect()
+}
+
+/// `ranges` cut to `low..=high`, in order, overlaps joined.
+fn merged(mut ranges: Vec<(u64, u64)>, low: u64, high: u64) -> Vec<(u64, u64)> {
+    ranges.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::new();
+    for (start, end) in ranges {
+        let (start, end) = (start.max(low), end.min(high));
+        if start > end {
+            continue;
+        }
+        match out.last_mut() {
+            Some((_, last)) if start <= last.saturating_add(1) => *last = (*last).max(end),
+            _ => out.push((start, end)),
+        }
+    }
+    out
+}
+
+/// Whether ascending `ranges` hold `uid`.
+pub(super) fn ranges_hold(ranges: &[(u64, u64)], uid: u64) -> bool {
+    let at = ranges.partition_point(|&(_, high)| high < uid);
+    ranges.get(at).is_some_and(|&(low, _)| low <= uid)
+}
+
+/// The capabilities `items` name, uppercase.
+fn capability_set(items: &[Item]) -> BTreeSet<String> {
+    items
+        .iter()
+        .filter_map(Item::atom)
+        .map(str::to_ascii_uppercase)
+        .collect()
+}
+
+/// The response code of a server's greeting, when it is a plain `OK`: a
+/// session signed in before it presents a credential (`PREAUTH`) is not
+/// this source's, and is refused.
+fn greeting_code(greeting: &[u8]) -> Result<Vec<Item>> {
+    let greeting = greeting
+        .strip_prefix(b"* ")
+        .ok_or_else(|| refused("imap_greeting_malformed"))?;
+    match untagged(greeting)? {
+        Untagged::Status { kind, code } if kind == "OK" => Ok(code),
+        _ => Err(refused("imap_server_refused_connection")),
+    }
+}
+
+/// One response from `reader`, its literals included.
+fn read_response_from(reader: &mut impl BufRead) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    loop {
+        let start = out.len();
+        let room = MAX_RESPONSE_BYTES.saturating_sub(start);
+        let read = (&mut *reader)
+            .take(u64::try_from(room).unwrap_or(u64::MAX))
+            .read_until(b'\n', &mut out)
+            .map_err(|_| refused("imap_transport_failed"))?;
+        if read == 0 {
+            return Err(refused("imap_connection_closed"));
+        }
+        if !out.ends_with(b"\n") {
+            return Err(refused("imap_response_too_large"));
+        }
+        let Some(length) = literal_at_end(&out[start..]) else {
+            return Ok(out);
+        };
+        if length > MAX_LITERAL_BYTES || out.len() + length > MAX_RESPONSE_BYTES {
+            return Err(refused("imap_response_too_large"));
+        }
+        let at = out.len();
+        out.resize(at + length, 0);
+        reader
+            .read_exact(&mut out[at..])
+            .map_err(|_| refused("imap_transport_failed"))?;
+    }
+}
+
+/// Upgrades a connection to a server's plain port (RFC 3501 6.2.1): reads
+/// its greeting, asks for its capabilities when the greeting does not tell
+/// them, and sends `STARTTLS`. A server that does not offer it, or does not
+/// take it, is refused: nothing but these two commands goes in the clear.
+/// The stream is answered with no byte of the clear exchange left unread,
+/// so nothing the server sent before the handshake is read after it.
+fn start_tls(stream: DeadlineStream) -> Result<DeadlineStream> {
+    let mut reader = BufReader::new(stream);
+    let greeting = read_response_from(&mut reader)?;
+    let code = greeting_code(&greeting)?;
+    let told = code
+        .first()
+        .and_then(Item::atom)
+        .is_some_and(|atom| atom.eq_ignore_ascii_case("CAPABILITY"));
+    let mut capabilities = if told {
+        capability_set(&code[1..])
+    } else {
+        BTreeSet::new()
+    };
+    if capabilities.is_empty() {
+        for answer in clear_command(&mut reader, "s1", "CAPABILITY")? {
+            if let Untagged::Data { kind, rest } = answer
+                && kind == "CAPABILITY"
+            {
+                capabilities = capability_set(&parse_items(&rest)?);
+            }
+        }
+    }
+    if !capabilities.contains("STARTTLS") {
+        return Err(refused("imap_server_offers_no_starttls"));
+    }
+    clear_command(&mut reader, "s2", "STARTTLS").map_err(|_| refused("imap_starttls_refused"))?;
+    if !reader.buffer().is_empty() {
+        return Err(refused("imap_starttls_data_before_handshake"));
+    }
+    Ok(reader.into_inner())
+}
+
+/// Runs one command in the clear, before TLS, and answers its untagged
+/// responses; any completion but `OK` refuses.
+fn clear_command(
+    reader: &mut BufReader<DeadlineStream>,
+    tag: &str,
+    text: &str,
+) -> Result<Vec<Untagged>> {
+    let stream = reader.get_mut();
+    stream
+        .write_all(format!("{tag} {text}\r\n").as_bytes())
+        .and_then(|()| stream.flush())
+        .map_err(|_| refused("imap_transport_failed"))?;
+    let mut answers = Vec::new();
+    let mut read = 0_usize;
+    loop {
+        let response = read_response_from(reader)?;
+        read = read.saturating_add(response.len());
+        if read > MAX_RESPONSE_BYTES {
+            return Err(refused("imap_response_too_large"));
+        }
+        match ImapSession::completion(tag, &response, &mut answers)? {
+            None => {}
+            Some(true) => return Ok(answers),
+            Some(false) => return Err(refused("imap_command_refused")),
+        }
+    }
 }
 
 /// A modified UTF-7 mailbox name (RFC 3501 5.1.3) as text; one that does
