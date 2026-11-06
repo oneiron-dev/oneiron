@@ -28,8 +28,12 @@
 //!
 //! Each call runs under its own reap admission
 //! ([`ManagedCarrierContext::admit_call`]), kept through its reply's
-//! encoding, its receipt and the send door's judgment of its rows. A ping's
-//! receipt and a protocol refusal's are admitted alone. While the vault is
+//! encoding and its receipt. The send door judges each reply frame's rows
+//! just before that frame is sent, under a short receipt admission of its
+//! own for the delivery refusal it may write: a reply that waits behind a
+//! peer that does not read holds no admission, and a row its world kept
+//! from the socket meanwhile stays unsent. A ping's receipt and a protocol
+//! refusal's are admitted alone. While the vault is
 //! frozen, a call or a ping is answered with the served pause, as on the
 //! MCP carrier. An idle socket holds no admission.
 
@@ -91,9 +95,11 @@ enum Event {
 
 /// One call's answer, as the loop takes it back.
 enum Answer {
-    /// Its reply frames, already judged by the send door under the call's
-    /// own reap admission, which ended before the call returned: a reply
-    /// waiting on a peer that does not read holds no admission.
+    /// Its reply frames as the call queued them, each still naming its
+    /// rows. The call's reap admission ended once they were encoded and
+    /// receipted: a reply waiting on a peer that does not read holds no
+    /// admission. The send door judges each frame as it is sent
+    /// ([`released`]).
     Reply(Vec<Vec<u8>>),
     /// The served pause: the vault was frozen for reap, and nothing ran.
     Paused(Vec<Vec<u8>>),
@@ -147,9 +153,9 @@ pub(super) async fn serve(
         None => return,
     }
     let holder = caller.holder.to_hex();
-    // The connection a call's context names: no subscription opens here, so
-    // each call judges its own reply's rows through a send door of its own.
-    let replies = Connection::new(Hub::for_server(&server), conn_id);
+    // The connection a call's context names and the send door its reply
+    // leaves by: no subscription opens here.
+    let mut replies = Connection::new(Hub::for_server(&server), conn_id);
     // Calls answer off this loop, which reads no further frame while
     // `MAX_VERB_CALLS_IN_FLIGHT` of them are in flight. A call still running
     // when the loop ends runs to its end below.
@@ -167,7 +173,25 @@ pub(super) async fn serve(
         let data = match event {
             Event::Answered(Ok(Ok(Answer::Reply(frames)))) => {
                 for frame in frames {
-                    if !transport.send_binary(frame).await {
+                    // Judged now, just before it is sent: a row a world
+                    // kept from this socket while the frame waited stays
+                    // unsent, and the refusal replaces it.
+                    let Some(frame) = released(
+                        &server,
+                        &caller.managed,
+                        &mut replies,
+                        (locality, machine),
+                        frame,
+                    ) else {
+                        // Frozen for reap: no refusal receipt can be
+                        // written, so nothing more leaves and the socket
+                        // closes. The call's own receipt stands.
+                        tracing::info!(conn_id, "vault frozen at a booking reply's send — closing");
+                        break 'serving;
+                    };
+                    if let Some(frame) = frame
+                        && !transport.send_binary(frame).await
+                    {
                         break 'serving;
                     }
                 }
@@ -320,7 +344,7 @@ pub(super) async fn serve(
                 auth,
                 request,
                 context,
-                (conn_id, locality, machine),
+                conn_id,
             ),
         ));
     }
@@ -358,26 +382,21 @@ fn ping(
 
 /// One booking call, off the loop, under its own reap admission: the vault
 /// woken from slim as a served request wakes it, then the verb through the
-/// WS door ([`crate::livequery::rpc_reply`]), then its reply judged by a send
-/// door of its own for where the socket at `locality` sits and the `machine`
-/// it proved ([`released`]). The admission ends there, before the reply goes
-/// back to the loop, so no completed call holds one while the loop waits on
-/// a peer that does not read. While the vault is frozen for reap nothing
-/// runs, and the call is answered with the served pause.
+/// WS door ([`crate::livequery::rpc_reply`]), its reply encoded and queued
+/// for `conn_id`. The admission ends there, before the reply goes back to
+/// the loop, so no completed call holds one while the loop waits on a peer
+/// that does not read; the send door judges the reply's rows at its send
+/// ([`released`]). While the vault is frozen for reap nothing runs, and the
+/// call is answered with the served pause.
 async fn answer(
     server: Arc<SyncServer>,
     managed: ManagedCarrierContext,
     auth: CoreAuth,
     request: RpcRequest,
     context: SocketCallContext,
-    (conn_id, locality, machine): (
-        u32,
-        oneiron::claim::CallerLocality,
-        oneiron::authority::PeerMachine,
-    ),
+    conn_id: u32,
 ) -> Result<Answer, ProtocolError> {
     let id = request.request_id;
-    let door_server = Arc::clone(&server);
     let call = async move {
         if let Err(error) = server.vault().resume_from_slim_on_inbound() {
             return Err(ProtocolError::Persistence(error.to_string()));
@@ -388,14 +407,10 @@ async fn answer(
     };
     match managed.admit_call(call).await {
         Ok(Some((frames, held))) => {
-            let frames = frames?;
-            // An RPC reply's chunks all ride `frames`, so a send door of the
-            // call's own judges them as the socket's would; its refusal
-            // receipt is written under the admission, which ends here.
-            let mut door = Connection::new(Hub::for_server(&door_server), conn_id);
-            let frames = released(&door_server, &mut door, locality, machine, frames);
+            // Its encoding and receipt ran under the admission, which ends
+            // here: the send door judges its rows at the send.
             drop(held);
-            Ok(Answer::Reply(frames))
+            frames.map(Answer::Reply)
         }
         Ok(None) => Err(ProtocolError::InvalidPayload(
             "the booking call ended without an answer",
@@ -404,29 +419,35 @@ async fn answer(
     }
 }
 
-/// `frames`, one call's reply, as a send door of this socket releases them:
-/// each result chunk judged again by the rows it carries, for where the
-/// socket sits and the machine it proved, judged now (DEC-0005, OF-534 G6).
-/// A chunk that would carry a row kept from it is replaced by the refusal,
-/// whose receipt is written under the call's admission. A refusal the call
-/// answered with carries no rows and leaves as it is.
+/// `frame`, one frame of a call's reply, as this socket's send door
+/// releases it just before it is sent: a result chunk judged again by the
+/// rows it carries, for where the socket at `locality` sits and the
+/// `machine` it proved, judged now (DEC-0005, OF-534 G6). A chunk that would
+/// carry a row kept from it is replaced by the refusal, and the rest of its
+/// result is dropped (`Some(None)`); the refusal's receipt is written under
+/// a receipt admission taken for this judgment alone, never the call's.
+/// A refusal the call answered with carries no rows and leaves as it is.
+/// `None` while the vault is frozen for reap: no receipt can be written, so
+/// the frame does not leave.
 fn released(
     server: &SyncServer,
+    managed: &ManagedCarrierContext,
     replies: &mut Connection,
-    locality: oneiron::claim::CallerLocality,
-    machine: oneiron::authority::PeerMachine,
-    frames: Vec<Vec<u8>>,
-) -> Vec<Vec<u8>> {
-    let peer = server.vault().peer_machine_stands(machine);
-    let mut released = Vec::with_capacity(frames.len());
-    for frame in frames {
-        if Connection::is_scoped_broadcast(&frame) {
-            released.extend(replies.release_for(locality, peer, &frame));
-        } else {
-            released.push(frame);
-        }
+    (locality, machine): (
+        oneiron::claim::CallerLocality,
+        oneiron::authority::PeerMachine,
+    ),
+    frame: Vec<u8>,
+) -> Option<Option<Vec<u8>>> {
+    if !Connection::is_scoped_broadcast(&frame) {
+        return Some(Some(frame));
     }
-    released
+    managed
+        .admit_receipt(|| {
+            let peer = server.vault().peer_machine_stands(machine);
+            replies.release_for(locality, peer, &frame)
+        })
+        .ok()
 }
 
 /// The served pause a call or a ping is answered with while the vault is
