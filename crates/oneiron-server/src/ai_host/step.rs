@@ -27,6 +27,7 @@ use oneiron::agent_dispatch::{
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::code_run::model_call::model_call_digests;
 use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
+use oneiron::context_board::{TURN_WAKE_GRAMMAR, TurnWake, turn_wake_line};
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
@@ -254,6 +255,7 @@ impl StepRunner {
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
         continuation: Option<WorkflowToolContinuation>,
+        woken: Option<TurnWake>,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
         // The step and the claim load door that reads its requester craft are
@@ -343,6 +345,18 @@ impl StepRunner {
         if let Some(left_out) = selected.omission_notice() {
             messages.push(message(LlmMessageRole::System, left_out));
         }
+        // FIX 15648: a leaf of a workflow a TASK started (`woken`, read from
+        // the workflow's own binding) was started by that event (ARCH-0067:
+        // "a session born from an event opens with the wake variant"), so
+        // the protocol is stated beside its instructions and the wake opener
+        // closes its request below. Planner calls on the shared generator
+        // stay untagged.
+        if woken.is_some() {
+            messages.push(message(
+                LlmMessageRole::System,
+                TURN_WAKE_GRAMMAR.to_owned(),
+            ));
+        }
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
         for output in &context.workflow_output_refs {
@@ -377,6 +391,14 @@ impl StepRunner {
             messages.push(message(
                 LlmMessageRole::User,
                 confession_ask(&objectives, &self.confession),
+            ));
+        }
+        // The wake opener at the leaf's final request boundary, on the
+        // vault's clock read here; it is no row the step read.
+        if let Some(wake) = woken {
+            messages.push(message(
+                LlmMessageRole::User,
+                turn_wake_line(vault.now_recorded_ms(), wake),
             ));
         }
         // The step's inputs as the caller's part of one read set (FIX

@@ -232,6 +232,7 @@ pub(super) fn code_mode_server_with(
                 soft_steps: 1,
                 hard_steps: 4,
             },
+            wake: None,
         },
     )
     .unwrap()
