@@ -156,6 +156,7 @@ mod receipts;
 mod release;
 mod reply_doors;
 mod repo_doors;
+mod request_json;
 mod research_doors;
 mod reservoir_source_doors;
 mod residence_doors;
@@ -353,12 +354,13 @@ async fn facade_route(
     uri: axum::http::Uri,
     headers: HeaderMap,
     extensions: Extensions,
-    payload: Result<Json<serde_json::Value>, JsonRejection>,
+    payload: Request,
 ) -> Response {
+    let payload = request_json::read(payload, &server).await;
     let auth = match caller {
         clock_ingress::FacadeCaller::Credential(auth) => auth,
         clock_ingress::FacadeCaller::ClockRepair(caller) => {
-            return clock_ingress::repair_reply(&server, caller, facade_json(payload)).await;
+            return clock_ingress::repair_reply(&server, caller, payload).await;
         }
     };
     super::answer_hold::until_encoded(async move {
@@ -368,7 +370,7 @@ async fn facade_route(
         let secret = extensions
             .get::<secret_body::FacadeSecret>()
             .map(secret_body::FacadeSecret::secret);
-        let input = facade_json(payload);
+        let input = payload;
         let output = match secret {
             Some(secret) => {
                 secret_body::scope_secret(secret, call_verb(&server, &call, verb, input)).await
