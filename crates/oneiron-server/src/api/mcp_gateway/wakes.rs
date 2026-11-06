@@ -41,13 +41,20 @@ pub(super) async fn poll(
     let server = Arc::clone(server);
     let actor = actor.clone();
     tokio::task::spawn_blocking(move || {
-        let delivery =
+        let mut delivery =
             crate::wake_adapters::board_stream::coalesced(&server, &actor, &connection, wakes);
-        // A review wake names no TASK row to release; it carries ids only.
+        // FIX 15011: the surviving batch's wake opener, on the vault clock
+        // at this handoff.
+        delivery.opener = oneiron::context_board::wake_batch_opener(
+            &delivery.wakes,
+            server.vault().now_recorded_ms(),
+        );
+        // A review wake or a room wake names no TASK row to release; it
+        // carries ids only.
         let rows: Vec<_> = delivery
             .wakes
             .iter()
-            .filter(|wake| wake.review_ref.is_none())
+            .filter(|wake| wake.review_ref.is_none() && wake.room_ref.is_none())
             .filter_map(|wake| oneiron::EntityId::from_hex(&wake.task_ref).ok())
             .collect();
         super::device_release::mcp_release_result(&server, &actor, &rows, false, json!(delivery))

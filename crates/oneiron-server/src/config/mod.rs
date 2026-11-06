@@ -1,5 +1,6 @@
 //! Server configuration: resolved types, CLI flags, and the file/env/argv merge.
 
+mod apns;
 pub mod backup;
 pub mod browser;
 mod channel_endpoints;
@@ -31,9 +32,11 @@ pub mod remote_embedder;
 mod self_heal;
 pub mod serve_args;
 pub mod server_config;
+pub mod shared_env;
 mod skills;
 mod trusted_proxy;
 
+pub use apns::ApnsConfig;
 pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
 pub use channel_endpoints::ChannelEndpointsConfig;
@@ -77,6 +80,7 @@ pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
 pub use server_config::{EmbeddedHolderOverrides, IngressAuth, ServeConfig, SyncServerConfig};
+pub use shared_env::SharedEnvConfig;
 pub use skills::{ReplayJudgeWording, SkillsConfig};
 pub use trusted_proxy::TrustedProxy;
 

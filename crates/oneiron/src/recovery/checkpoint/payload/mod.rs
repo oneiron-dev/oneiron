@@ -32,6 +32,7 @@
 )]
 
 mod actors;
+mod automatic;
 mod capture;
 mod preflight;
 mod restore;
@@ -55,7 +56,7 @@ pub(super) use self::seal::open_bundle;
 pub(super) use self::seal::{BundleRole, Compartment, PayloadSection, PayloadStreams};
 #[cfg(feature = "sync")]
 pub(super) use self::sync::SyncCarriers;
-use super::{INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
+use super::{BackupSelection, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
 use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
@@ -369,16 +370,23 @@ fn row_db(database: &str) -> Option<RowDb> {
 }
 
 /// What the image takes, the one rule the snapshot and the projection read
-/// it by (FIX 6377): canonical rows only, and no row of an excluded entity
-/// (a diagnostic): its own, its short ids, its edges and its index sources.
+/// it by (FIX 6377): canonical rows only, and no row of an excluded diagnostic
+/// entity: its own, its short ids, its edges and its index sources. Automatic
+/// snapshots also apply their positive known-world payload selection.
 pub(super) struct ImageFilter {
     excluded: BTreeSet<Vec<u8>>,
+    automatic: automatic::Selection,
 }
 
 impl ImageFilter {
     /// The filter of the image `txn` reads: every diagnostic entity left
-    /// out, as runtime-only.
-    pub(super) fn of_snapshot(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
+    /// out, as runtime-only, and the snapshot's actual backup selection.
+    pub(super) fn of_snapshot(
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        selection: BackupSelection,
+    ) -> Result<Self> {
+        let store = &vault.store;
         let mut excluded = BTreeSet::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(store, txn)? {
             let (key, value) = row?;
@@ -388,12 +396,17 @@ impl ImageFilter {
                 excluded.insert(key.as_bytes().to_vec());
             }
         }
-        Ok(Self { excluded })
+        Ok(Self {
+            excluded,
+            automatic: automatic::Selection::read(vault, txn, selection)?,
+        })
     }
 
     /// Whether the image takes the row `key` of `database`, as it rests.
     pub(super) fn takes(&self, database: &str, key: &[u8], value: &[u8]) -> bool {
-        if storage_tier(database, key) != StorageTier::Canonical {
+        if storage_tier(database, key) != StorageTier::Canonical
+            || !self.automatic.takes(database, key)
+        {
             return false;
         }
         let excluded = |id: &[u8]| self.excluded.contains(id);
@@ -429,7 +442,8 @@ impl ImageFilter {
     /// image leaves out goes, with its actor parts and its dependencies.
     fn keep(&self, captured: Captured) -> Captured {
         let takes = |db: RowDb, key: &[u8], value: &[u8]| self.takes(db_name(db), key, value);
-        let mut kept = keep_owner_parts(captured, &takes);
+        let mut kept =
+            keep_owner_parts(captured, &takes, &|owner| self.automatic.keeps_owner(owner));
         kept.structure
             .retain(|row| takes(row.at.db, &row.at.key, &row.value));
         kept.dispatched
@@ -443,9 +457,16 @@ impl ImageFilter {
 /// `captured` with only the owner parts whose image rows `keeps` takes: a
 /// part it leaves out goes, with its actor parts and its dependencies. Its
 /// structure, dispatched and unclassified rows stay as they are.
-fn keep_owner_parts(captured: Captured, keeps: &dyn Fn(RowDb, &[u8], &[u8]) -> bool) -> Captured {
+fn keep_owner_parts(
+    captured: Captured,
+    keeps: &dyn Fn(RowDb, &[u8], &[u8]) -> bool,
+    keeps_owner: &dyn Fn(OwnerRef) -> bool,
+) -> Captured {
     let mut kept = Captured::default();
     for rows in captured.owners() {
+        if !keeps_owner(rows.owner()) {
+            continue;
+        }
         let parts: Vec<&RowPart> = rows
             .rows
             .iter()

@@ -333,6 +333,8 @@ pub(crate) use oneiron_store::replay_only_commits;
 pub mod world_authority;
 pub(crate) mod world_pad_rows;
 pub use oneiron_store::world_registration_keys;
+// FIX 12569: a vault's own drafter artifact keys.
+pub(crate) mod drafter_custody;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;

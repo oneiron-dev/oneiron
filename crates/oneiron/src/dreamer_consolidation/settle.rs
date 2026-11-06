@@ -66,6 +66,8 @@ const REPO_CONFLICT_KIND: &str = "repo_branch";
 const MAX_KEEP_OPTIONS: usize = 61;
 /// The resolution key naming the retained alternative a Keep landed.
 pub(super) const MATERIALIZED_KEY: &str = "materialized";
+/// The conflict a settlement revert's fresh MACHINE copy still belongs to.
+pub(super) const RESTORED_MARKER_KEY: &str = "restored_conflict_marker";
 
 /// A responder's answer to one open conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +123,8 @@ pub struct OpenConflict {
     /// that is no stored claim (a candidate its round dropped) is left out.
     /// A Keep staged at a fresh id, after a revert or after the owner
     /// declined one (FIX 7072), linked to the marker, follows them (FIX
-    /// 6152). A staged Keep the owner declined stays a member.
+    /// 6152). A staged Keep the owner declined stays a member. Fresh MACHINE
+    /// copies restored by a settlement revert are members at their actual ids.
     pub members: Vec<EntityId>,
     /// The candidates the marker's round dropped, retained on it whole (FIX
     /// 496): none is a stored claim or active truth. Keeping one lands it.
@@ -299,7 +302,11 @@ fn open_conflict_from(
         super::retained_keep::keep_history_in_txn(vault, txn, marker, subject, &named, reverted)?;
     let staged = kept.staged.iter().map(|(_, staged)| *staged);
     let mut members = Vec::new();
-    for id in named.into_iter().chain(staged) {
+    for id in named
+        .into_iter()
+        .chain(staged)
+        .chain(kept.restored.iter().copied())
+    {
         if !members.contains(&id)
             && !kept.landings.iter().any(|(_, landed)| *landed == id)
             && vault
@@ -708,8 +715,12 @@ pub(crate) fn revert_settlement_in_txn(
     let Some(kept) = kept else {
         return Ok(reverted);
     };
+    let surface = RevertSurface {
+        marker: Some(marker),
+        ..SETTLEMENT_REVERT
+    };
     for loser in superseded {
-        match restore_member_in_txn(vault, txn, kept, loser, resolved, &SETTLEMENT_REVERT, now)? {
+        match restore_member_in_txn(vault, txn, kept, loser, resolved, &surface, now)? {
             MemberRestore::Restored => reverted.restored.push(loser),
             MemberRestore::Copied(copy) => reverted.copied.push((loser, copy)),
             MemberRestore::LeftClosed => reverted.left_closed.push(loser),
@@ -734,11 +745,13 @@ pub(crate) fn revert_settlement_in_txn(
 pub(super) struct RevertSurface {
     pub(super) surface: &'static str,
     pub(super) birth: &'static str,
+    pub(super) marker: Option<EntityId>,
 }
 
 const SETTLEMENT_REVERT: RevertSurface = RevertSurface {
     surface: "conflict_settlement_revert",
     birth: "dreamer.settlement_revert",
+    marker: None,
 };
 
 /// How a member a reverted write superseded stands after the revert.
@@ -856,20 +869,27 @@ fn restore_dreamer_member_in_txn(
         .with_validity(body.valid_from, None),
         &body,
     );
+    let mut provenance = vec![
+        (Value::from("surface"), Value::from(surface.surface)),
+        (
+            Value::from("restores"),
+            Value::Binary(loser.as_bytes().to_vec()),
+        ),
+        (
+            Value::from("reverted"),
+            Value::Binary(reverted.as_bytes().to_vec()),
+        ),
+    ];
+    if let Some(marker) = surface.marker {
+        provenance.push((
+            Value::from(RESTORED_MARKER_KEY),
+            Value::Binary(marker.as_bytes().to_vec()),
+        ));
+    }
     let mut envelope = WriteEnvelope::new(
         WriteActor::new(dreamer, crate::edge::EdgeActorClass::System),
         body.source.unwrap_or(ClaimSource::Generated),
-        crate::write_envelope::WriteProvenance::new(Value::Map(vec![
-            (Value::from("surface"), Value::from(surface.surface)),
-            (
-                Value::from("restores"),
-                Value::Binary(loser.as_bytes().to_vec()),
-            ),
-            (
-                Value::from("reverted"),
-                Value::Binary(reverted.as_bytes().to_vec()),
-            ),
-        ]))?,
+        crate::write_envelope::WriteProvenance::new(Value::Map(provenance))?,
         if body.approval == ClaimApprovalStatus::Proposed {
             ClaimApprovalStatus::Proposed
         } else {
