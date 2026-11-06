@@ -21,6 +21,8 @@ impl BudgetGuard {
     ) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;
+        let increment = absolute_used_units.saturating_sub(state.used_units);
+        let meter_start_used_units = state.used_units;
         let mut settled = None;
         {
             let Some(record) = state.leases.get_mut(lease.id()) else {
@@ -29,7 +31,13 @@ impl BudgetGuard {
             match record.state {
                 LeaseState::Open => {
                     record.state = LeaseState::Settled {
-                        absolute_used_units,
+                        charged_units: if record.metered { increment } else { 0 },
+                        meter_start_used_units,
+                        meter_end_used_units: if record.metered {
+                            meter_start_used_units.max(absolute_used_units)
+                        } else {
+                            meter_start_used_units
+                        },
                     };
                     settled = Some(record.clone());
                 }
@@ -40,7 +48,6 @@ impl BudgetGuard {
         if let Some(record) = settled {
             release_reservations_for_lease(&mut state, &record);
             if record.metered {
-                let increment = absolute_used_units.saturating_sub(state.used_units);
                 state.used_units = state.used_units.max(absolute_used_units);
                 apply_usage_for_lease(&mut state, &record, increment);
             }
@@ -74,6 +81,7 @@ pub(super) fn settle_usage_locked(
 ) -> Result<BudgetSettlement, BudgetDenied> {
     state.check_lease_provenance(lease)?;
     let absolute_used_units = state.used_units.saturating_add(call_used_units);
+    let meter_start_used_units = state.used_units;
     let mut settled = None;
     {
         let Some(record) = state.leases.get_mut(lease.id()) else {
@@ -82,7 +90,13 @@ pub(super) fn settle_usage_locked(
         match record.state {
             LeaseState::Open => {
                 record.state = LeaseState::Settled {
-                    absolute_used_units,
+                    charged_units: if record.metered { call_used_units } else { 0 },
+                    meter_start_used_units,
+                    meter_end_used_units: if record.metered {
+                        absolute_used_units
+                    } else {
+                        meter_start_used_units
+                    },
                 };
                 settled = Some(record.clone());
             }

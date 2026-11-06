@@ -36,6 +36,8 @@ pub struct GatedBackend {
     offer: DispatchBinding,
     /// One gate is one work tree; clones of this context share its cancel Arc.
     work_context: WorkContext,
+    /// The caller's credential release, retained only for this gate.
+    release: Option<Arc<dyn Fn() -> LlmResult<()> + Send + Sync>>,
 }
 
 impl GatedBackend {
@@ -44,12 +46,23 @@ impl GatedBackend {
         inner: Arc<dyn SingleRouteBackend>,
         offer: DispatchBinding,
         work_context: WorkContext,
+        send_guard: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ) -> Self {
+        let release = send_guard.map(|guard| {
+            Arc::new(move || {
+                if guard() {
+                    Ok(())
+                } else {
+                    Err(FatalLlmError::Auth.into())
+                }
+            }) as Arc<dyn Fn() -> LlmResult<()> + Send + Sync>
+        });
         Self {
             run,
             inner,
             offer,
             work_context,
+            release,
         }
     }
 
@@ -182,7 +195,14 @@ impl LlmBackend for GatedBackend {
             let digest = self.open(&request, lease, false)?;
             lease.attach_work_context(self.work_context.clone());
             let mut pending = self.pending(&request, lease, digest.clone());
-            let result = self.inner.generate_bound(request, lease, &digest).await;
+            let result = match &self.release {
+                Some(release) => {
+                    self.inner
+                        .generate_bound_released(request, lease, &digest, release.as_ref())
+                        .await
+                }
+                None => self.inner.generate_bound(request, lease, &digest).await,
+            };
             match &result {
                 Ok(response) => pending.finish(served_model(&response.usage), true),
                 Err(error) => pending.failed(error),
@@ -195,7 +215,14 @@ impl LlmBackend for GatedBackend {
         let digest = self.open(&request, lease, true)?;
         lease.attach_work_context(self.work_context.clone());
         let mut pending = self.pending(&request, lease, digest.clone());
-        let inner = match self.inner.stream_bound(request, lease, &digest) {
+        let stream = match &self.release {
+            Some(release) => {
+                self.inner
+                    .stream_bound_released(request, lease, &digest, release.as_ref())
+            }
+            None => self.inner.stream_bound(request, lease, &digest),
+        };
+        let inner = match stream {
             Ok(inner) => inner,
             Err(error) => {
                 pending.failed(&error);

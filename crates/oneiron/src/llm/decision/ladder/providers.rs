@@ -6,12 +6,14 @@ use super::{abstained, validate_pin};
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, DecisionRung,
-    HostRuleRef, PairedReading, ProviderPin,
+    DecisionWireLabels, HostRuleRef, PairedReading, ProviderPin,
 };
-use crate::llm::run_admission::RunAdmission;
+use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
+use oneiron_model::llm::{CallPurpose, ExtractionEgressPredicate, Scope};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -36,9 +38,24 @@ pub struct DecisionCall<'a> {
     /// spends admits on this run, sourced with the call's evidence, instead of a run of
     /// its own. `None` keeps today's own mint/carry behavior.
     pub run: Option<&'a RunAdmission>,
+    /// This call's wire names; canonical questions and receipts keep their identities.
+    pub labels: Option<&'a dyn DecisionWireLabels>,
 }
 
 impl DecisionCall<'_> {
+    /// The question's call-local name followed by its unchanged semantic text.
+    /// Unlabeled callers keep their original text.
+    #[must_use]
+    pub fn question_text(&self) -> Cow<'_, str> {
+        match self
+            .labels
+            .and_then(|labels| labels.question_label(self.question.id))
+        {
+            Some(label) => Cow::Owned(format!("{label}: {}", self.question.text)),
+            None => Cow::Borrowed(&self.question.text),
+        }
+    }
+
     /// The caller's score levels this call carries ([`score_levels_in`]).
     #[must_use]
     pub fn score_levels(&self) -> Option<Vec<String>> {
@@ -59,6 +76,8 @@ pub struct DecisionPack<'a> {
     /// The caller's run, when the pack is metered on it (FIX 10443): as
     /// [`DecisionCall::run`], carried into each question's call.
     pub run: Option<&'a RunAdmission>,
+    /// This call's wire names; canonical questions and receipts keep their identities.
+    pub labels: Option<&'a dyn DecisionWireLabels>,
 }
 
 impl<'a> DecisionPack<'a> {
@@ -72,8 +91,71 @@ impl<'a> DecisionPack<'a> {
             state: self.state,
             deadline: self.deadline,
             run: self.run,
+            labels: self.labels,
         })
     }
+}
+
+/// The original host purpose and egress predicate of a prepared read.
+/// The provider still resolves its own model binding; this carries no caller binding.
+pub struct DecisionCallContext<'a> {
+    pub purpose: &'a CallPurpose,
+    /// The original prepared request's complete scope, not its evidence references.
+    pub scope: &'a Scope,
+    pub extraction_egress: Option<&'a dyn ExtractionEgressPredicate>,
+    /// The caller's per-invocation allowance, checked at each native generation start.
+    pub generation: Option<&'a dyn DecisionGenerationAdmission>,
+}
+
+/// Admission for one logical generation, not one returned receipt or whole pack.
+/// A provider checks each native generation start, including a packed reader's
+/// additional generations. A memo replay starts no generation.
+pub trait DecisionGenerationAdmission: Send + Sync {
+    /// False keeps this generation unstarted; it is not a provider failure.
+    fn admit(&self) -> bool;
+}
+
+impl DecisionCallContext<'_> {
+    /// Checks the caller's allowance after native preflights, before a request starts.
+    pub fn admit_generation(&self) -> bool {
+        self.generation
+            .is_none_or(DecisionGenerationAdmission::admit)
+    }
+}
+
+/// Whether a native read started, apart from its provider result. An unstarted
+/// stronger read leaves the ladder's prior answer available for its normal cut rule.
+pub enum DecisionReadOutcome<T> {
+    NotStarted,
+    /// A generation answered, but the allowance stopped the read before a complete result.
+    Stopped,
+    Answered(T),
+}
+
+impl<T> DecisionReadOutcome<T> {
+    /// Transforms only a returned answer, never an unstarted read.
+    pub fn map<U>(self, answer: impl FnOnce(T) -> U) -> DecisionReadOutcome<U> {
+        match self {
+            Self::NotStarted => DecisionReadOutcome::NotStarted,
+            Self::Stopped => DecisionReadOutcome::Stopped,
+            Self::Answered(value) => DecisionReadOutcome::Answered(answer(value)),
+        }
+    }
+}
+
+/// A provider read's original result beside copies of its native settlements.
+/// Receipt usage stays optional; neither an empty inventory nor a receipt count
+/// establishes token use or a number of logical generations.
+pub struct CapturedDecision {
+    pub result: Result<DecisionReadOutcome<ProviderDecision>>,
+    pub receipts: Vec<RunReceipt>,
+}
+
+/// A native pack's original result and every settlement in its paid prefix,
+/// including when a later request fails. Usage remains optional on each receipt.
+pub struct CapturedDecisionPack {
+    pub result: Result<Vec<DecisionReadOutcome<ProviderDecision>>>,
+    pub receipts: Vec<RunReceipt>,
 }
 
 /// Providers see only caller-prepared, access-checked evidence references and the state the
@@ -117,6 +199,28 @@ pub trait DecisionProvider: Send + Sync {
     /// when the provider itself reports one; else `None` (unknown). A provider
     /// that knows only tokens answers `None`: bytes convert to nothing here.
     fn state_budget_bytes(&self) -> Option<usize> {
+        None
+    }
+    /// A read with its native settlement inventory, when this provider can capture it.
+    /// `None` means unsupported and MUST return before any read or send. A supported
+    /// read retains its original result, including an error after paid work.
+    fn decide_captured(
+        &self,
+        _call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        None
+    }
+    /// A pack with its native settlement inventory. Unsupported returns `None`
+    /// before any request. Implementations preserve their ordinary pack shape and
+    /// check `context`'s allowance before EACH native generation, retaining every
+    /// settled prefix if a later generation fails. Never probe support by sending
+    /// individual questions or replace a native packed call with a fanout.
+    fn decide_pack_captured(
+        &self,
+        _pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -186,6 +290,33 @@ impl DecisionProvider for RuleDecisionProvider {
             .cloned()
             .unwrap_or_else(abstained))
     }
+
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        Some(CapturedDecision {
+            result: self.decide(call).map(DecisionReadOutcome::Answered),
+            receipts: Vec::new(),
+        })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        Some(CapturedDecisionPack {
+            result: self.decide_pack(pack).map(|answers| {
+                answers
+                    .into_iter()
+                    .map(DecisionReadOutcome::Answered)
+                    .collect()
+            }),
+            receipts: Vec::new(),
+        })
+    }
 }
 
 /// Host adapter for the local head, the System One rung or the big model. Model access,
@@ -216,6 +347,22 @@ pub trait DecisionModel: Send + Sync {
     }
     /// See [`DecisionProvider::state_budget_bytes`].
     fn state_budget_bytes(&self) -> Option<usize> {
+        None
+    }
+    /// See [`DecisionProvider::decide_captured`].
+    fn decide_captured(
+        &self,
+        _call: &DecisionCall<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        None
+    }
+    /// See [`DecisionProvider::decide_pack_captured`].
+    fn decide_pack_captured(
+        &self,
+        _pack: &DecisionPack<'_>,
+        _context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -270,6 +417,20 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn state_budget_bytes(&self) -> Option<usize> {
         self.model.state_budget_bytes()
+    }
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        self.model.decide_captured(call, context)
+    }
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        self.model.decide_pack_captured(pack, context)
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)

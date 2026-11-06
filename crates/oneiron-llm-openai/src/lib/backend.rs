@@ -4,6 +4,7 @@ use super::{
     OpenAiCompatLlmStream, OpenAiCompatTransport, OpenAiProviderOptions, build_openai_chat_request,
     classify_openai_status, parse_openai_chat_response,
 };
+use oneiron::llm::DispatchRelease;
 use oneiron::{
     BudgetLease, ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry,
     LlmGenerateFuture, LlmMessage, LlmRequest, LlmResult, LlmStream, LlmStreamResult, ModelId,
@@ -115,6 +116,26 @@ where
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         build_openai_chat_request(&self.config, request, stream).map(drop)
     }
+
+    fn generate_bound_released<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+        release: DispatchRelease<'a>,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_with_release(request, lease, Some(release))
+    }
+
+    fn stream_bound_released<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &str,
+        release: DispatchRelease<'a>,
+    ) -> LlmStreamResult<'a> {
+        self.stream_with_release(request, lease, Some(release))
+    }
 }
 
 impl<T> LlmBackend for OpenAiCompatBackend<T>
@@ -131,9 +152,34 @@ where
         request: LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
+        self.generate_with_release(request, lease, None)
+    }
+
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        self.stream_with_release(request, lease, None)
+    }
+}
+
+impl<T> OpenAiCompatBackend<T>
+where
+    T: OpenAiCompatTransport,
+{
+    fn generate_with_release<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let wire_request = build_openai_chat_request(&self.config, &request, false)?;
-            let response = self.transport.execute(wire_request, lease).await?;
+            let response = match release {
+                Some(release) => {
+                    self.transport
+                        .execute_released(wire_request, lease, release)
+                        .await?
+                }
+                None => self.transport.execute(wire_request, lease).await?,
+            };
             if !(200..=299).contains(&response.status) {
                 return Err(classify_openai_status(
                     response.status,
@@ -149,9 +195,19 @@ where
         })
     }
 
-    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+    fn stream_with_release<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> LlmStreamResult<'a> {
         let wire_request = build_openai_chat_request(&self.config, &request, true)?;
-        let provider_stream = self.transport.stream(wire_request, lease)?;
+        let provider_stream = match release {
+            Some(release) => self
+                .transport
+                .stream_released(wire_request, lease, release)?,
+            None => self.transport.stream(wire_request, lease)?,
+        };
         Ok(LlmStream::new(
             OpenAiCompatLlmStream::new(provider_stream).bound_to(request.model),
         ))

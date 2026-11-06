@@ -30,6 +30,7 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 /// when, in Unix seconds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WakeOwedCall {
+    pub(crate) origin: crate::dreamer_runner::AdmittedCallId,
     pub(crate) boot: [u8; 16],
     pub(crate) line: String,
     pub(crate) lease: String,
@@ -41,11 +42,17 @@ pub(crate) struct WakeOwedCall {
 const OWED: SideTable<(AttemptId, [u8; 32]), WakeOwedCall, Raw> =
     SideTable::new(&side_table::DREAMER_WAKE_OWED_CALL);
 
-/// The row's bytes: the boot, each string after its u16be length, then the
-/// reserved units and the stamp, each u64be.
+/// The row's bytes: original attempt id16, generation u32be, invocation u64be,
+/// corrective ordinal u32be, boot id16, each string after its u16be length,
+/// then the reserved units and stamp, each u64be.
 impl RawValue for WakeOwedCall {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut out = Vec::with_capacity(16 + 2 + self.line.len() + 2 + self.lease.len() + 8 + 8);
+        let mut out =
+            Vec::with_capacity(32 + 16 + 2 + self.line.len() + 2 + self.lease.len() + 8 + 8);
+        out.extend_from_slice(self.origin.attempt_id.as_bytes());
+        out.extend_from_slice(&self.origin.generation.to_be_bytes());
+        out.extend_from_slice(&self.origin.invocation.to_be_bytes());
+        out.extend_from_slice(&self.origin.ordinal.to_be_bytes());
         out.extend_from_slice(&self.boot);
         push_str(&mut out, &self.line)?;
         push_str(&mut out, &self.lease)?;
@@ -56,6 +63,16 @@ impl RawValue for WakeOwedCall {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         let mut rest = bytes;
+        let origin = crate::dreamer_runner::AdmittedCallId {
+            attempt_id: AttemptId::from_bytes(take(&mut rest, 16)?).map_err(|_| undecodable())?,
+            generation: u32::from_be_bytes(
+                take(&mut rest, 4)?.try_into().map_err(|_| undecodable())?,
+            ),
+            invocation: u64::from_be_bytes(
+                take(&mut rest, 8)?.try_into().map_err(|_| undecodable())?,
+            ),
+            ordinal: u32::from_be_bytes(take(&mut rest, 4)?.try_into().map_err(|_| undecodable())?),
+        };
         let boot: [u8; 16] = take(&mut rest, 16)?.try_into().map_err(|_| undecodable())?;
         let line = take_str(&mut rest)?;
         let lease = take_str(&mut rest)?;
@@ -66,6 +83,7 @@ impl RawValue for WakeOwedCall {
             return Err(CodecError::Row(SideTableRowProblem::TrailingBytes));
         }
         Ok(Self {
+            origin,
             boot,
             line,
             lease,
@@ -175,9 +193,18 @@ fn settle_owed_calls_in_txn(
     let mut charged = 0u64;
     let mut dropped = 0u64;
     for ((attempt, step_hash), row) in calls {
-        if store.step_charge_marked_in_txn(&*wtxn, attempt, &step_hash)? {
-            sums.entry((attempt, row.line)).or_insert(0);
-            continue;
+        if let Some(claim_id) =
+            crate::llm::model_step::step_terminal_claim_in_txn(vault, &*wtxn, attempt, &step_hash)?
+        {
+            let receipt = crate::model_step_context::StepReceipt {
+                attempt_id: attempt,
+                step_hash,
+                claim_id,
+            };
+            if store.step_charge_marked_in_txn(&*wtxn, receipt)? {
+                sums.entry((attempt, row.line)).or_insert(0);
+                continue;
+            }
         }
         let usage = crate::llm::settled_step_usage_in_txn(vault, &*wtxn, attempt, &step_hash)
             .map_err(|_| Error::InvalidClaimBody("owed wake call step usage did not decode"))?;

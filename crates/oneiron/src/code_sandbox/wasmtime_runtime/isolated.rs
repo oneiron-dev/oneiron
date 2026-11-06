@@ -33,8 +33,15 @@ pub(super) fn run(
             JsCodeModeStream::Store { start } => StreamTarget::Store { start },
             JsCodeModeStream::File(path) => StreamTarget::File(path.to_owned()),
         };
-        wire::output_frame(host, &mut held, runtime.budget.message_bytes, cancel, target, frame)
-            .map(|_| ())
+        wire::output_frame(
+            host,
+            &mut held,
+            runtime.budget.message_bytes,
+            cancel,
+            target,
+            frame,
+        )
+        .map(|_| ())
     };
     let outcome = execute_foreign_code_on(
         step.script,
@@ -57,5 +64,8 @@ pub(super) fn run(
             .propose_write(proposal.write().clone())?;
     }
     cancel.check()?;
-    held.into_outcome(wire::decode_output(&outcome.result_json, runtime.budget.message_bytes)?)
+    held.into_outcome(wire::decode_output(
+        &outcome.result_json,
+        runtime.budget.message_bytes,
+    )?)
 }

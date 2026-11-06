@@ -84,9 +84,11 @@ pub fn build_openai_chat_request(
         }
         // An own server (llama.cpp, vLLM, an exllamav3 server) also reads the
         // level through its chat template, and llama.cpp reads the thinking
-        // budget per request. A hosted API takes the effort alone and refuses
-        // fields it does not know, so it is sent neither.
-        if request.envelope.locality == ModelLocality::OwnServer {
+        // budget per request, as does the same server reached on this device
+        // over its supervised native channel (I2-LOCAL). A hosted API takes
+        // the effort alone and refuses fields it does not know, so it is sent
+        // neither.
+        if request.envelope.locality != ModelLocality::ThirdParty {
             let mut kwargs = match body.remove("chat_template_kwargs") {
                 Some(JsonValue::Object(kwargs)) => kwargs,
                 Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
@@ -214,6 +216,7 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
     {
         content.push(ContentPart::Text {
             text: text.to_owned(),
+            signature: None,
         });
     }
     if let Some(reasoning) = message
@@ -322,7 +325,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                     | oneiron::ReasoningPartKind::Count,
                 ..
             } => {}
-            ContentPart::Text { text }
+            ContentPart::Text { text, .. }
             | ContentPart::Reasoning {
                 text,
                 reasoning_kind: oneiron::ReasoningPartKind::Full,

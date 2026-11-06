@@ -231,11 +231,12 @@ async fn generate(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: instructions.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: payload }],
+                content: vec![ContentPart::Text { text: payload, signature: None }],
             },
         ],
         tools: Vec::new(),
@@ -276,7 +277,7 @@ async fn generate(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

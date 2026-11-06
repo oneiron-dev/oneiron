@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::context_board::{TurnWake, turn_wake_line};
 use oneiron::ingest::ConnectorWitness;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::memory::TranscriptMessage;
@@ -147,9 +148,16 @@ fn answer(
                     message(LlmMessageRole::System, job.budget_steering.join("\n")),
                 );
             }
+            // FIX 15011: the event started this turn, so the wake opener
+            // closes it, after the event's briefing and outside its foreign
+            // text. An empty answer stays the no-send outcome below.
             context.push(message(
                 LlmMessageRole::User,
                 briefing(&origin, event_id, &text),
+            ));
+            context.push(message(
+                LlmMessageRole::User,
+                turn_wake_line(vault.now_recorded_ms(), TurnWake::Channel),
             ));
             let answer = generate(
                 server,
@@ -273,7 +281,7 @@ fn generate(
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => text.len(),
+            ContentPart::Text { text, .. } => text.len(),
             _ => 0,
         })
         .sum();
@@ -331,7 +339,7 @@ fn generate(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect())
@@ -451,6 +459,6 @@ fn briefing(origin: &SurfaceConnectorPayload, event_id: &str, text: &str) -> Str
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }
 }

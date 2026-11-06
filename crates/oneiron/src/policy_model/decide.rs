@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::llm::RunAdmission;
 use crate::llm::decision::{
     GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss, GeneratedRung,
     GeneratedStep, HeldLadder, TypedDecision,
@@ -27,6 +28,7 @@ use oneiron_model::llm::{
 };
 
 mod checked;
+mod run;
 use checked::{CheckedReplies, answer_tokens};
 
 use super::binding::PolicyContentBinding;
@@ -76,6 +78,7 @@ pub struct PolicyDecisions {
     revision: String,
     wording: String,
     budget: Duration,
+    run: Option<RunAdmission>,
 }
 
 impl std::fmt::Debug for PolicyDecisions {
@@ -117,6 +120,7 @@ impl PolicyDecisions {
             revision,
             wording,
             budget,
+            run: None,
         })
     }
 
@@ -206,16 +210,31 @@ impl PolicyDecisions {
         let deadline = clock.deadline(self.budget);
         let ladder = self.ladder.ladder();
         let _ = vault.measure_decision_pack(&self.bands, questions.len());
-        let decisions = ladder.run_pack(
-            &questions.iter().collect::<Vec<_>>(),
-            self.principal,
-            &[],
-            &state,
-            self.dial,
-            &self.bands,
-            Reversibility::OutboundEffect,
-            &deadline,
-        );
+        let decisions = match self.run.as_ref() {
+            Some(run) => ladder.run_pack_media_with_run(
+                &questions.iter().collect::<Vec<_>>(),
+                self.principal,
+                &[],
+                &[],
+                &[],
+                &state,
+                self.dial,
+                &self.bands,
+                Reversibility::OutboundEffect,
+                &deadline,
+                run,
+            ),
+            None => ladder.run_pack(
+                &questions.iter().collect::<Vec<_>>(),
+                self.principal,
+                &[],
+                &state,
+                self.dial,
+                &self.bands,
+                Reversibility::OutboundEffect,
+                &deadline,
+            ),
+        };
         let decisions = match decisions {
             Ok(decisions) => decisions,
             Err(_) => {
@@ -609,6 +628,7 @@ async fn read(
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: format!("{format}\n{schema}"),
+                signature: None,
             }],
         });
         Ok(request)

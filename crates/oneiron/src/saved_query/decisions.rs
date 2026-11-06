@@ -178,7 +178,7 @@ pub(super) async fn judge(
         membership_why(binding, &*backend, shell, verdict, &decisions.why_wording).await?;
     let mut generations: Vec<_> = steps
         .into_iter()
-        .map(|(hash, usage, _)| SavedQueryGenerationReceipt {
+        .map(|(hash, usage, _, _)| SavedQueryGenerationReceipt {
             request_hash: super::support::hex_lower(&hash),
             usage,
         })
@@ -216,6 +216,7 @@ async fn membership_why(
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: json!({"verdict": verdict.as_str(), "ask": wording}).to_string(),
+            signature: None,
         }],
     });
     let request_hash = request
@@ -230,7 +231,7 @@ async fn membership_why(
         .content
         .iter()
         .find_map(|part| match part {
-            ContentPart::Text { text } => serde_json::from_str::<Value>(text.trim()).ok(),
+            ContentPart::Text { text, .. } => serde_json::from_str::<Value>(text.trim()).ok(),
             _ => None,
         })
         .and_then(|reply| reply.get("why").and_then(Value::as_str).map(str::to_owned))

@@ -202,6 +202,7 @@ pub async fn render_on_delta(
                     "input_delta": delta,
                     "render_receipt": &receipt,
                 }))?,
+                signature: None,
             }],
         });
         Some(super::call_as_step(ctx, backend, guard, request).await?)

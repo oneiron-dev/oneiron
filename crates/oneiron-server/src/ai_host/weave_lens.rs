@@ -23,8 +23,8 @@ use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, live_weave_lens_request,
 };
 use oneiron::lens::{GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard};
+use oneiron::llm::HostInferenceContext;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, ProducerRows,
@@ -369,11 +369,7 @@ async fn render_listing(
             role,
             model.clone(),
             &HostInferenceContext {
-                binding: HostInferenceBinding::Advertised {
-                    model: model.clone(),
-                    locality,
-                    keyless: false,
-                },
+                binding: ladder.host_binding(model.clone(), locality, false),
                 extraction_egress: server.extraction_egress.as_deref(),
             },
             ladder.supports(&model, &LlmCapability::Reasoning),
@@ -389,7 +385,7 @@ async fn render_listing(
                 .content
                 .iter()
                 .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
+                    ContentPart::Text { text, .. } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect();
@@ -403,6 +399,7 @@ async fn render_listing(
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: live.repair_text(&reason),
+                            signature: None,
                         }],
                     });
                 }

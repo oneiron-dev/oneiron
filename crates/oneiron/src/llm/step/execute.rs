@@ -2,8 +2,10 @@
 
 use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
-    LlmResponse,
+    LlmResponse, LlmUsage,
 };
+use super::generation::GenerationOutcome;
+use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
     step_claim_matches_request, step_index_lookup_in_txn,
@@ -14,12 +16,15 @@ use super::step_state::{
 };
 use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
+use crate::model_step_context::StepReceipt;
+
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
-    DurableStepResult, ReplyCheck, StepOutcome, StepProgression,
+    DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, StepTerminal, current_legibility};
 use crate::error::Error;
+use crate::llm::decision::DecisionGenerationAdmission;
 
 /// An execution-completion capability, not a decoded claim or memo index.
 /// Private fields prevent ordinary claim authors and replay from minting it.
@@ -135,8 +140,33 @@ pub async fn call_as_step_checked(
         &super::super::FallbackRegistry::standard(),
         Some(check),
         DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        None,
     )
     .await
+}
+
+/// A checked step with the actual usage of a fresh response that could not
+/// be saved. Errors and saved-response recovery keep their ordinary meaning.
+pub(crate) async fn call_as_step_checked_with_unsaved_usage(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+    let mut unsaved_usage = None;
+    let outcome = durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        &super::super::FallbackRegistry::standard(),
+        Some(check),
+        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        Some(&mut unsaved_usage),
+    )
+    .await;
+    (outcome, unsaved_usage)
 }
 
 /// Durable step with an explicitly owned deterministic runner registry.
@@ -168,7 +198,17 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     fallbacks: &super::super::FallbackRegistry,
     max_retries: usize,
 ) -> DurableStepResult<StepOutcome> {
-    durable_step(ctx, backend, guard, request, fallbacks, None, max_retries).await
+    durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        fallbacks,
+        None,
+        max_retries,
+        None,
+    )
+    .await
 }
 
 /// A saved response captured before any new execution. Owning the payload
@@ -176,8 +216,16 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
 /// becomes a synthetic provider failure.
 pub(super) enum StepRecovery {
     Erased,
-    Memo(LlmResponse),
-    Payload(Vec<u8>),
+    Memo {
+        binding: StepReceipt,
+        response: LlmResponse,
+    },
+    Payload {
+        binding: StepEffectBinding,
+        payload: Vec<u8>,
+        owners: StepStateOwners,
+        source: StepSource,
+    },
 }
 
 /// Read the existing memo/checkpoint recovery path in one snapshot. This
@@ -189,6 +237,10 @@ pub(super) fn recovery_in_txn(
     step_hash: &[u8; 32],
     request: &LlmRequest,
 ) -> DurableStepResult<Option<StepRecovery>> {
+    let binding = StepEffectBinding {
+        attempt_id,
+        step_hash: *step_hash,
+    };
     let state = step_state_read_in_txn(vault, txn, attempt_id, step_hash)?;
     if state.as_ref().is_some_and(|row| row.erased) {
         return Ok(Some(StepRecovery::Erased));
@@ -202,18 +254,36 @@ pub(super) fn recovery_in_txn(
         let decoded = decode_step_claim_value(&body.value)?;
         if step_claim_matches_request(&decoded, request)? {
             let response = load_step_response_in_txn(vault, txn, &decoded)?;
-            return Ok(Some(StepRecovery::Memo(response)));
+            return Ok(Some(StepRecovery::Memo {
+                binding: StepReceipt {
+                    attempt_id,
+                    step_hash: *step_hash,
+                    claim_id,
+                },
+                response,
+            }));
         }
     }
-    Ok(state.and_then(|row| {
-        if matches!(
-            row.progression,
-            StepProgression::ResponseReceived | StepProgression::Logged
-        ) {
-            row.response_payload.map(StepRecovery::Payload)
-        } else {
-            None
-        }
+    let Some(row) = state else {
+        return Ok(None);
+    };
+    if !matches!(
+        row.progression,
+        StepProgression::ResponseReceived | StepProgression::Logged
+    ) {
+        return Ok(None);
+    }
+    let payload = row.response_payload.ok_or(Error::InvalidClaimBody(
+        "dreamer step saved response is missing",
+    ))?;
+    let source = row.source.ok_or(Error::InvalidClaimBody(
+        "dreamer step saved source is missing",
+    ))?;
+    Ok(Some(StepRecovery::Payload {
+        binding,
+        payload,
+        owners: row.owners,
+        source,
     }))
 }
 
@@ -221,39 +291,53 @@ pub(super) fn recovery_in_txn(
 /// exact payload and memoized result are shared with ordinary execution.
 pub(super) fn recover_step(
     ctx: &DurableStepContext<'_>,
-    step_hash: &[u8; 32],
     request: &LlmRequest,
     recovery: StepRecovery,
     guard: Option<&BudgetGuard>,
 ) -> DurableStepResult<StepOutcome> {
-    let (response, failure_policy) = match recovery {
+    let (binding, response, failure_policy) = match recovery {
         StepRecovery::Erased => return Err(erased_step()),
-        StepRecovery::Memo(response) => {
+        StepRecovery::Memo { binding, response } => {
             let policy = failure_policy(ctx.vault, &response)?;
-            (response, policy)
+            (binding, response, policy)
         }
-        StepRecovery::Payload(payload) => {
+        StepRecovery::Payload {
+            binding,
+            payload,
+            owners,
+            source,
+        } => {
             let response: LlmResponse = serde_json::from_slice(&payload)?;
             // Resolve the same policy before any terminal write, as on
             // the original stored-payload recovery path.
             let policy = failure_policy(ctx.vault, &response)?;
-            if log_terminal_step(
+            let Some(claim_id) = log_terminal_step(
                 ctx,
-                step_hash,
+                binding,
+                owners,
+                &source,
                 request,
                 &response,
                 &payload,
                 StepTerminal::Recovered,
             )?
-            .is_none()
-            {
+            else {
                 return Err(erased_step());
-            }
-            step_state_delete(ctx.vault, ctx.attempt_id, step_hash)?;
-            (response, policy)
+            };
+            step_state_delete(ctx.vault, binding.attempt_id, &binding.step_hash)?;
+            (
+                StepReceipt {
+                    attempt_id: binding.attempt_id,
+                    step_hash: binding.step_hash,
+                    claim_id,
+                },
+                response,
+                policy,
+            )
         }
     };
     Ok(StepOutcome::Finished {
+        binding,
         response,
         memoized: true,
         legibility: guard.and_then(|guard| step_legibility(ctx, guard)),
@@ -269,7 +353,43 @@ async fn durable_step(
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
     max_retries: usize,
+    unsaved_usage: Option<&mut Option<LlmUsage>>,
 ) -> DurableStepResult<StepOutcome> {
+    match durable_step_with_generation(
+        ctx,
+        backend,
+        guard,
+        request,
+        fallbacks,
+        check,
+        max_retries,
+        unsaved_usage,
+        None,
+    )
+    .await?
+    {
+        GenerationOutcome::Completed(outcome) => Ok(outcome),
+        GenerationOutcome::Cut { .. } => {
+            unreachable!("a step without generation admission cannot cut its allowance")
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the original durable step inputs plus optional logical admission"
+)]
+pub(super) async fn durable_step_with_generation(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    fallbacks: &super::super::FallbackRegistry,
+    check: Option<&ReplyCheck>,
+    max_retries: usize,
+    mut unsaved_usage: Option<&mut Option<LlmUsage>>,
+    generation: Option<&dyn DecisionGenerationAdmission>,
+) -> DurableStepResult<GenerationOutcome<StepOutcome>> {
     let step_hash = request.canonical_hash()?;
 
     let recovery = {
@@ -277,7 +397,8 @@ async fn durable_step(
         recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, &request)?
     };
     if let Some(recovery) = recovery {
-        return recover_step(ctx, &step_hash, &request, recovery, Some(guard));
+        return recover_step(ctx, &request, recovery, Some(guard))
+            .map(GenerationOutcome::Completed);
     }
 
     // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps
@@ -289,6 +410,8 @@ async fn durable_step(
         return Err(DurableStepError::FinalizeRefused);
     }
 
+    let mut source = StepSource::of(ctx);
+
     // An owner already gone keeps the row's erased skeleton (FIX 6226):
     // the step is over before it is admitted, asked or paid for.
     if step_state_write_owned(
@@ -298,17 +421,21 @@ async fn durable_step(
         StepProgression::Started,
         StepStateOwners::of(ctx),
         None,
+        None,
         ctx.now_ms,
     )? == StepStateDisposition::Erased
     {
         return Err(erased_step());
     }
 
+    let calls = StepCalls::new(ctx.vault, ctx.deadline, ctx.attempt_id, step_hash)?;
+    source.native_invocation = calls.original_invocation();
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
             return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
-                .inspect(|_| step_budget_hit(ctx, guard, &request));
+                .inspect(|_| step_budget_hit(ctx, guard, &request))
+                .map(GenerationOutcome::Completed);
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -337,12 +464,6 @@ async fn durable_step(
     // The admitted call binds to its wake in one short write before it is
     // sent (DOOR-144), best-effort: unobserved, it runs exactly as before.
     // Declared before the settlement guard, it closes after the lease does.
-    let calls = StepCalls {
-        vault: ctx.vault,
-        deadline: ctx.deadline,
-        attempt_id: ctx.attempt_id,
-        step_hash,
-    };
     let mut observed = calls.admitted(guard, &admission.lease, 0);
 
     // The deadline only gates admission. Once admitted, the provider (and any
@@ -362,9 +483,25 @@ async fn durable_step(
                 &capture,
                 check,
                 max_retries,
+                generation,
             ),
         )
         .await;
+    let generated = match generated {
+        Ok(GenerationOutcome::Completed(response)) => Ok(response),
+        Ok(GenerationOutcome::Cut { usage }) => {
+            match &usage {
+                Some(usage) => settle_failed_usage(guard, &admission.lease, usage),
+                None => {
+                    if let Err(denied) = guard.abort(&admission.lease) {
+                        report_unsettled(&admission.lease, denied);
+                    }
+                }
+            }
+            return Ok(GenerationOutcome::Cut { usage });
+        }
+        Err(error) => Err(error),
+    };
     // A corrective call failed: an earlier response was already answered and
     // paid, whatever usage it reported.
     let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
@@ -447,11 +584,13 @@ async fn durable_step(
                 BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
                 _ => BUDGET_PARK_REASON,
             };
-            return budget_trap(ctx, step_hash, reason).inspect(|_| {
-                if denied == BudgetDenied::Exhausted {
-                    step_budget_hit(ctx, guard, &request);
-                }
-            });
+            return budget_trap(ctx, step_hash, reason)
+                .inspect(|_| {
+                    if denied == BudgetDenied::Exhausted {
+                        step_budget_hit(ctx, guard, &request);
+                    }
+                })
+                .map(GenerationOutcome::Completed);
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -509,7 +648,11 @@ async fn durable_step(
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
-    let payload = serde_json::to_vec(&response)?;
+    let payload = serde_json::to_vec(&response).inspect_err(|_| {
+        if let Some(usage) = unsaved_usage.as_deref_mut() {
+            *usage = Some(response.usage.clone());
+        }
+    })?;
     // A late answer for an owner its erase took is never kept (FIX 6226):
     // the row keeps its erased skeleton, nothing is filed, and the spend
     // settles as `lease_settle` drops; the call closes after it.
@@ -520,8 +663,14 @@ async fn durable_step(
         StepProgression::ResponseReceived,
         StepStateOwners::of(ctx),
         Some(&payload),
+        Some(&source),
         ctx.now_ms,
-    )? == StepStateDisposition::Erased
+    )
+    .inspect_err(|_| {
+        if let Some(usage) = unsaved_usage.as_deref_mut() {
+            *usage = Some(response.usage.clone());
+        }
+    })? == StepStateDisposition::Erased
     {
         return Err(erased_step());
     }
@@ -531,7 +680,12 @@ async fn durable_step(
     let failure_policy = failure_policy(ctx.vault, &response)?;
     let Some(claim_id) = log_terminal_step(
         ctx,
-        &step_hash,
+        StepEffectBinding {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+        },
+        StepStateOwners::of(ctx),
+        &source,
         &request,
         &response,
         &payload,
@@ -555,12 +709,17 @@ async fn durable_step(
     );
     ctx.vault.capture_tier1_executed_step(&witness)?;
 
-    Ok(StepOutcome::Finished {
+    Ok(GenerationOutcome::Completed(StepOutcome::Finished {
+        binding: StepReceipt {
+            attempt_id: ctx.attempt_id,
+            step_hash,
+            claim_id,
+        },
         response,
         memoized: false,
         legibility: step_legibility(ctx, guard),
         failure_policy,
-    })
+    }))
 }
 
 /// Verify a persisted step and resolve resident eligibility in the SAME
@@ -592,11 +751,18 @@ pub(crate) fn verified_step_consolidation_eligible_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
-    binding: super::types::StepEffectBinding,
+    binding: StepReceipt,
     actor: crate::entity_id::EntityId,
     expected_response_hash: [u8; 32],
 ) -> DurableStepResult<bool> {
-    let (response, purpose) = verified_step_response_in_txn(vault, txn, binding, actor)?;
+    let (response, purpose) = verified_step_response_by_claim_in_txn(
+        vault,
+        txn,
+        binding.claim_id,
+        binding.attempt_id,
+        binding.step_hash,
+        actor,
+    )?;
     let payload = serde_json::to_vec(&response)?;
     if blake3::hash(&payload).as_bytes() != &expected_response_hash {
         return Err(Error::InvalidClaimBody("consolidation fallback response changed").into());
@@ -621,6 +787,24 @@ fn verified_step_response_in_txn(
         .ok_or(Error::InvalidClaimBody(
             "step-derived effect requires a completed step",
         ))?;
+    verified_step_response_by_claim_in_txn(
+        vault,
+        txn,
+        claim_id,
+        binding.attempt_id,
+        binding.step_hash,
+        effect_actor,
+    )
+}
+
+fn verified_step_response_by_claim_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: crate::entity_id::EntityId,
+    attempt_id: crate::attempt_queue::AttemptId,
+    step_hash: [u8; 32],
+    effect_actor: crate::entity_id::EntityId,
+) -> DurableStepResult<(LlmResponse, String)> {
     let body = vault
         .get_claim_in_txn(txn, &claim_id)?
         .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
@@ -628,8 +812,8 @@ fn verified_step_response_in_txn(
     if body.predicate != super::types::DREAMER_STEP_PREDICATE
         || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
         || body.stale
-        || decoded.attempt_id != binding.attempt_id
-        || decoded.step_hash != binding.step_hash
+        || decoded.attempt_id != attempt_id
+        || decoded.step_hash != step_hash
         || !super::step_claim::step_claim_binding_is_trusted(&decoded, &body)
     {
         return Err(Error::InvalidClaimBody("step-derived effect request mismatch").into());

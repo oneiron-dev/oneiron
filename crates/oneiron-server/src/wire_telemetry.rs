@@ -90,6 +90,7 @@ impl WireCrossed {
 mod connection_pressure;
 mod kept;
 mod rows;
+mod unrecorded;
 pub(crate) use connection_pressure::{
     BodyCredential, ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolConnections,
     PoolPressure, PressureCredentialKey, SocketHold, attach_body_credential, with_body_credential,
@@ -117,6 +118,8 @@ pub struct WireLimitQuestion {
 /// vault keeps (the embedder endpoint's) stays bounded.
 #[derive(Default)]
 pub struct LimitQuestions {
+    /// Fixed at construction for a private call's question target.
+    discard: bool,
     /// Each row's questions, oldest first: those not kept yet, and always the
     /// latest.
     asked: Mutex<BTreeMap<LimitRow, VecDeque<Asked>>>,
@@ -178,6 +181,9 @@ impl LimitQuestions {
     /// names that owner beside every other one whose work crossed the row in
     /// it. Nothing waits on the answer, and the answer is the same.
     pub(crate) fn ask_for_owner(&self, row: LimitRow, bound: u64, observed: u64, owner: EntityId) {
+        if self.discard {
+            return;
+        }
         let now = oneiron_vault_contract::now_ts();
         self.ask_at(row, bound, observed, now);
         let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
@@ -192,6 +198,9 @@ impl LimitQuestions {
         }
     }
     fn ask_at(&self, row: LimitRow, bound: u64, observed: u64, now: u64) {
+        if self.discard {
+            return;
+        }
         let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
         let mut asked = lock(&self.asked);
         let windows = asked.entry(row).or_default();

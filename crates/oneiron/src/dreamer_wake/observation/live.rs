@@ -181,9 +181,34 @@ pub(crate) struct StepCalls<'a> {
     pub(crate) deadline: Option<&'a WakePassDeadline>,
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
+    origin: Option<crate::dreamer_runner::AdmittedCallId>,
 }
 
 impl<'a> StepCalls<'a> {
+    pub(crate) fn new(
+        vault: &'a Vault,
+        deadline: Option<&'a WakePassDeadline>,
+        attempt_id: AttemptId,
+        step_hash: [u8; 32],
+    ) -> crate::Result<Self> {
+        let origin = deadline
+            .map(|deadline| deadline.admitted_call_id(attempt_id))
+            .transpose()?
+            .flatten();
+        Ok(Self {
+            vault,
+            deadline,
+            attempt_id,
+            step_hash,
+            origin,
+        })
+    }
+
+    /// The original invocation, not an execution grant or a paid fact.
+    pub(crate) fn original_invocation(&self) -> Option<crate::dreamer_runner::AdmittedCallId> {
+        self.origin
+    }
+
     /// Binds a call `guard` just admitted under `lease` to its wake: live
     /// first, then its row in one short write, before anything is sent.
     /// Best-effort: outside an observed pass, or when either fails (logged),
@@ -194,10 +219,82 @@ impl<'a> StepCalls<'a> {
         lease: &BudgetLease,
         ordinal: u32,
     ) -> ObservedCall<'a> {
+        self.record_owed(guard, lease, ordinal);
         ObservedCall {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
             stated_reset: None,
+            _native_meter: self.origin.map(|mut origin| {
+                origin.ordinal = ordinal;
+                NativeMeterCapture {
+                    vault: self.vault,
+                    origin,
+                    guard: guard.clone(),
+                    lease: lease.clone(),
+                }
+            }),
+        }
+    }
+
+    fn record_owed(&self, guard: &BudgetGuard, lease: &BudgetLease, ordinal: u32) {
+        let Some(mut origin) = self.origin else {
+            return;
+        };
+        origin.ordinal = ordinal;
+        let Some(line) = self
+            .deadline
+            .and_then(|deadline| deadline.admitted_budget_line(self.attempt_id))
+        else {
+            return;
+        };
+        let snapshot = guard.accounting_snapshot(&[lease]);
+        let reserved_units = match snapshot.leases[0] {
+            Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
+            Some(BudgetLeaseState::Settled { .. }) | Some(BudgetLeaseState::Aborted) | None => 0,
+        };
+        let owed = crate::dreamer_wake::owed::WakeOwedCall {
+            origin,
+            boot: self.vault.active_wakes.boot(),
+            line: line.to_owned(),
+            lease: lease.id().to_owned(),
+            reserved_units,
+            at: crate::unix_seconds_now(),
+        };
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::retain_native_call_in_txn(
+                self.vault,
+                wtxn,
+                self.step_hash,
+                &owed,
+            )
+        }) {
+            skipped(&error, "native call admission");
+        }
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_wake::owed::put_owed_call_in_txn(
+                self.vault,
+                wtxn,
+                self.attempt_id,
+                &self.step_hash,
+                &owed,
+            )
+        }) {
+            skipped(&error, "owed call");
+        }
+    }
+
+    /// Keep a physical response's native NET quantity before any corrective
+    /// aggregation. This records no payment and never changes the call result.
+    pub(crate) fn invoiced(&self, ordinal: u32, usage: &oneiron_model::llm::LlmUsage) {
+        let Some(mut origin) = self.origin else {
+            return;
+        };
+        origin.ordinal = ordinal;
+        let units = crate::dreamer_consolidation::step_charge::usage_units(usage);
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, origin, units)
+        }) {
+            skipped(&error, "native call invoice");
         }
     }
 
@@ -228,35 +325,10 @@ impl<'a> StepCalls<'a> {
             lease_id: lease.id().to_owned(),
             admitted_elapsed_ms,
         };
-        match self.vault.with_write_txn_grouped(|wtxn| {
-            let bound = bind_call_in_txn(self.vault, wtxn, &admitted)?;
-            // The owed row for this send, beside its call row (FIX 11450): a
-            // crash before the attempt settles still charges it. None when the
-            // attempt reserved on no recorded line.
-            if let Some(line) = binding.live.attempt_line(self.attempt_id) {
-                let reserved_units = match guard.lease_observation(lease.id()) {
-                    Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
-                    Some(BudgetLeaseState::Settled { .. })
-                    | Some(BudgetLeaseState::Aborted)
-                    | None => 0,
-                };
-                let owed = crate::dreamer_wake::owed::WakeOwedCall {
-                    boot: self.vault.active_wakes.boot(),
-                    line,
-                    lease: lease.id().to_owned(),
-                    reserved_units,
-                    at: crate::unix_seconds_now(),
-                };
-                crate::dreamer_wake::owed::put_owed_call_in_txn(
-                    self.vault,
-                    wtxn,
-                    self.attempt_id,
-                    &self.step_hash,
-                    &owed,
-                )?;
-            }
-            Ok(bound)
-        }) {
+        match self
+            .vault
+            .with_write_txn_grouped(|wtxn| bind_call_in_txn(self.vault, wtxn, &admitted))
+        {
             Ok(true) => Some(BoundCall {
                 key,
                 live,
@@ -277,6 +349,39 @@ pub(crate) struct ObservedCall<'a> {
     bound: Option<BoundCall>,
     /// The reset the provider limit that refused the call stated.
     stated_reset: Option<u64>,
+    _native_meter: Option<NativeMeterCapture<'a>>,
+}
+
+/// Lives through the original lease's settlement, even without a wake observer.
+/// It keeps the issuing guard and opaque token, not just their printable id.
+struct NativeMeterCapture<'a> {
+    vault: &'a Vault,
+    origin: crate::dreamer_runner::AdmittedCallId,
+    guard: BudgetGuard,
+    lease: BudgetLease,
+}
+
+impl Drop for NativeMeterCapture<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let snapshot = self.guard.accounting_snapshot(&[&self.lease]);
+        let Some(range) = snapshot.meter_ranges[0] else {
+            return;
+        };
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::record_native_call_meter_in_txn(
+                self.vault,
+                wtxn,
+                self.origin,
+                self.lease.id(),
+                range,
+            )
+        }) {
+            skipped(&error, "native call settled meter");
+        }
+    }
 }
 
 struct BoundCall {

@@ -1,5 +1,6 @@
 //! Transaction-composable reservation settlement shared by completion and deferral.
 use super::*;
+use crate::model_step_context::StepReceipt;
 
 impl DreamerRunnerStore<'_> {
     pub(crate) fn settle_budget_in_txn(
@@ -61,13 +62,9 @@ impl DreamerRunnerStore<'_> {
 
     /// Was this exact terminal step charged at an earlier wake checkpoint?
     /// A memoized response is paid on replay only if it has no such receipt.
-    pub(crate) fn checkpoint_step_charged(
-        &self,
-        attempt_id: AttemptId,
-        step_hash: &[u8; 32],
-    ) -> Result<bool> {
+    pub(crate) fn checkpoint_step_charged(&self, receipt: StepReceipt) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
-        self.step_charge_marked_in_txn(&rtxn, attempt_id, step_hash)
+        self.step_charge_marked_in_txn(&rtxn, receipt)
     }
 
     /// Forgets the paid receipt of `attempt_id`'s terminal step `step_hash`
@@ -80,7 +77,9 @@ impl DreamerRunnerStore<'_> {
         attempt_id: AttemptId,
         step_hash: &[u8; 32],
     ) -> Result<()> {
-        BUDGET_STEP_CHARGE.delete(&self.vault.store, wtxn, &(attempt_id, *step_hash))?;
+        let mut prefix = attempt_id.as_bytes().to_vec();
+        prefix.extend_from_slice(step_hash);
+        BUDGET_STEP_CHARGE.delete_from(&self.vault.store, wtxn, &prefix)?;
         Ok(())
     }
 
@@ -90,28 +89,13 @@ impl DreamerRunnerStore<'_> {
     pub(crate) fn step_charge_marked_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        attempt_id: AttemptId,
-        step_hash: &[u8; 32],
+        receipt: StepReceipt,
     ) -> Result<bool> {
-        let Some(paid) =
-            BUDGET_STEP_CHARGE.get(&self.vault.store, txn, &(attempt_id, *step_hash))?
-        else {
-            return Ok(false);
-        };
-        Ok(Self::terminal_claim_in(self.vault, txn, attempt_id, step_hash)? == Some(paid))
-    }
-
-    /// The terminal claim the step's memo replays now. A receipt counts only
-    /// while it names that claim: a re-ask after the memo's claim was erased
-    /// or deindexed answers with a new claim, so its paid usage is tallied
-    /// once and pinned again (FIX 7489).
-    fn terminal_claim_in(
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        attempt_id: AttemptId,
-        step_hash: &[u8; 32],
-    ) -> Result<Option<EntityId>> {
-        crate::llm::model_step::step_terminal_claim_in_txn(vault, txn, attempt_id, step_hash)
+        Ok(BUDGET_STEP_CHARGE.get(
+            &self.vault.store,
+            txn,
+            &(receipt.attempt_id, receipt.step_hash, receipt.claim_id),
+        )? == Some(receipt.claim_id))
     }
 
     /// Retire paid-step receipts, the pinned listing and the narrowed hold
@@ -126,7 +110,7 @@ impl DreamerRunnerStore<'_> {
         crate::dreamer_consolidation::delete_running_buckets_in_txn(self.vault, wtxn, attempt_id)
     }
 
-    /// Settle real usage and pin the paid receipts of `step_hashes` in one
+    /// Settle real usage and pin the paid receipts of `step_bindings` in one
     /// writer, so a memo the same try replays later is not paid twice
     /// (FIX 6100). Receipts land only beside a settled reservation, so no
     /// step reads paid before its charge commits; a step already pinned is
@@ -135,20 +119,20 @@ impl DreamerRunnerStore<'_> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: SettleDreamerBudget,
-        step_hashes: &[[u8; 32]],
+        step_bindings: &[StepReceipt],
     ) -> Result<DreamerBudgetSettlementOutcome> {
-        let child = input.child_attempt;
         let settled = self.settle_budget_in_txn(wtxn, input)?;
         if matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
-            for hash in step_hashes {
-                if self.step_charge_marked_in_txn(wtxn, child, hash)? {
+            for binding in step_bindings {
+                if self.step_charge_marked_in_txn(wtxn, *binding)? {
                     return Err(invalid_dreamer_runner("checkpoint step charged twice"));
                 }
-                // A step with no memo has nothing a replay could reuse.
-                let Some(paid) = Self::terminal_claim_in(self.vault, wtxn, child, hash)? else {
-                    continue;
-                };
-                BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &(child, *hash), &paid)?;
+                BUDGET_STEP_CHARGE.put(
+                    &self.vault.store,
+                    wtxn,
+                    &(binding.attempt_id, binding.step_hash, binding.claim_id),
+                    &binding.claim_id,
+                )?;
             }
         }
         Ok(settled)
@@ -162,14 +146,13 @@ impl DreamerRunnerStore<'_> {
     pub(crate) fn settle_budget_with_step_receipts(
         &self,
         input: SettleDreamerBudget,
-        step_hashes: &[[u8; 32]],
+        step_bindings: &[StepReceipt],
     ) -> Result<DreamerBudgetSettlementOutcome> {
         self.vault.with_write_txn_grouped(|wtxn| {
-            let child = input.child_attempt;
-            let mut unpinned = Vec::with_capacity(step_hashes.len());
-            for hash in step_hashes {
-                if !unpinned.contains(hash) && !self.step_charge_marked_in_txn(wtxn, child, hash)? {
-                    unpinned.push(*hash);
+            let mut unpinned = Vec::with_capacity(step_bindings.len());
+            for binding in step_bindings {
+                if !unpinned.contains(binding) && !self.step_charge_marked_in_txn(wtxn, *binding)? {
+                    unpinned.push(*binding);
                 }
             }
             self.settle_budget_and_step_receipts_in_txn(wtxn, input, &unpinned)
@@ -183,7 +166,7 @@ impl DreamerRunnerStore<'_> {
     pub(crate) fn settle_checkpoint_budget(
         &self,
         input: SettleDreamerBudget,
-        step_hashes: &[[u8; 32]],
+        step_bindings: &[StepReceipt],
         park: ParkDreamerAttempt,
         lease: crate::dreamer_runner::DreamerTryLease<'_>,
     ) -> Result<DreamerBudgetSettlementOutcome> {
@@ -193,7 +176,8 @@ impl DreamerRunnerStore<'_> {
             ));
         }
         let settled = self.vault.with_write_txn_grouped(|wtxn| {
-            let settled = self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_hashes)?;
+            let settled =
+                self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_bindings)?;
             if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
                 return Err(invalid_dreamer_runner(
                     "checkpoint has no budget reservation",

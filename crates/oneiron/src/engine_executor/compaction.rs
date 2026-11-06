@@ -667,7 +667,7 @@ pub(super) fn request_tokens(request: &LlmRequest) -> u64 {
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => count_context_pack_tokens(text) as u64,
+            ContentPart::Text { text, .. } => count_context_pack_tokens(text) as u64,
             _ => 0,
         })
         .sum()
@@ -942,7 +942,7 @@ pub(super) fn epoch_frame(
         }
         return Ok(Some(Some(crate::LlmMessage {
             role: crate::LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: fold.stub() }],
+            content: vec![ContentPart::Text { text: fold.stub(), signature: None }],
         })));
     };
     if seq as u64 != row.first() {
@@ -973,6 +973,7 @@ pub(super) fn epoch_frame(
                 text.as_deref(),
                 &handles,
             ),
+            signature: None,
         }],
     })))
 }
@@ -1007,6 +1008,18 @@ pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<
         "sandbox.fs.read_file": path,
         "max_chunk_bytes": super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES,
     }))?)
+}
+
+/// The text one speech call dispatched: a hook's rewrite where one rewrote
+/// it, else the guest's own request.
+pub(super) fn speech_call_text(call: &crate::code_run::CodeRunBridgeCall) -> Option<&str> {
+    let rmpv::Value::Map(entries) = call.rewritten_request.as_ref().unwrap_or(&call.request) else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("text"))
+        .and_then(|(_, value)| value.as_str())
 }
 
 /// Every stored result's read path `text` names.
