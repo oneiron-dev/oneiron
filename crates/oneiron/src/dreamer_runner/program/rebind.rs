@@ -214,6 +214,11 @@ fn rebind_owed_wake(
                 "this wake was admitted; rebind its try by attempt".to_owned(),
             ));
         }
+        if super::DECIDED.get(vault, &*txn, &key)? == Some(wake.admission_id()) {
+            return Err(Error::InvalidConfig(
+                "this wake was admitted on another machine; rebind its try by attempt".to_owned(),
+            ));
+        }
         // A riding wake is the elected home's to admit (FIX 5266): its
         // rebind runs there, where the admission it commits with can.
         #[cfg(feature = "sync")]
