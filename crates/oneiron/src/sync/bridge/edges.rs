@@ -43,42 +43,28 @@ fn projected_child_of_parents(
     .collect()
 }
 
-/// Materialize edge changes from a Loro MapDelta to LMDB.
-///
-/// Accumulates all edge ops from the delta into a single LMDB write
-/// transaction instead of committing per-edge.
-///
-/// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
-/// family, ONE-1124) and never abort the batch; LOCAL failures (the
-/// engine's own LMDB errors) propagate fail-closed and abort the txn.
-///
-/// A whole-txn failure flags the durable `rm:w:{window}:{entity_hex}`
-/// needs-remat marker for each batched edge upsert's SOURCE entity
-/// (ONE-1147): the drain is window-scoped — any marker makes forward remat
-/// re-walk the whole window's entities/edges maps, so the source id is
-/// sufficient to get the edge re-processed, and the marker discharges when
-/// the healing edge write lands.
-pub(super) fn materialize_edges_from_delta(
-    doc: &LoroDoc,
-    delta: &loro::event::MapDelta<'_>,
-    vault: &Vault,
-    window_key: &str,
-    lease_vault_id: u64,
-) -> Option<Vec<EntityId>> {
-    // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
-    // pushed into the batch, retained outside the txn for the swallow site
-    // below (no surviving per-op failure point on whole-txn failure).
-    let mut applied_edges: Vec<(EntityId, [u8; 33], Vec<u8>)> = Vec::new();
-    // ONE-1147 fix-wave: id + written blob for every endpoint whose body this
-    // batch HYDRATED-AND-WROTE into LMDB (the `Hydrated` outcome below),
-    // retained outside the txn alongside `applied_edges`. A whole-txn
-    // rollback erases those hydration writes too; the swallow site flags each
-    // for durable remat. Without this, an endpoint hydrated inside the edge
-    // batch and rolled back is silently lost — no edge need even have been
-    // tracked (e.g. the partner endpoint failed LOCALLY and aborted the batch
-    // BEFORE `applied_edges.push`).
-    let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
-    let result = vault.with_write_txn_grouped(|wtxn| {
+/// Staged edge writes whose failure recovery belongs to the outer transaction.
+#[derive(Default)]
+pub(super) struct EdgeMaterialization {
+    applied_edges: Vec<(EntityId, [u8; 33], Vec<u8>)>,
+    hydrated_endpoints: Vec<(EntityId, Vec<u8>)>,
+}
+
+impl EdgeMaterialization {
+    /// Runs the edge gauntlet in the caller's writer without committing it.
+    pub(super) fn stage_in_txn(
+        &mut self,
+        doc: &LoroDoc,
+        delta: &loro::event::MapDelta<'_>,
+        vault: &Vault,
+        window_key: &str,
+        lease_vault_id: u64,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<Vec<EntityId>> {
+        let Self {
+            applied_edges,
+            hydrated_endpoints,
+        } = self;
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let edges_map = doc.get_map("edges");
         // HOLE-1871-F2: the stale rows and stranded live candidates this delta
@@ -751,9 +737,38 @@ pub(super) fn materialize_edges_from_delta(
             }
         }
         // A hydrated endpoint a pact's delivery brought is that pact's (FIX 321).
-        for (id, blob) in &hydrated_endpoints {
+        for (id, blob) in hydrated_endpoints.iter() {
             crate::sync::ingest::note_delivered_in_txn(vault, wtxn, *id, blob)?;
         }
+        Ok(affected)
+    }
+}
+
+/// Materialize edge changes from a Loro MapDelta to LMDB.
+///
+/// Accumulates all edge ops from the delta into a single LMDB write
+/// transaction instead of committing per-edge.
+///
+/// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
+/// family, ONE-1124) and never abort the batch; LOCAL failures (the
+/// engine's own LMDB errors) propagate fail-closed and abort the txn.
+///
+/// A whole-txn failure flags the durable `rm:w:{window}:{entity_hex}`
+/// needs-remat marker for each batched edge upsert's SOURCE entity
+/// (ONE-1147): the drain is window-scoped — any marker makes forward remat
+/// re-walk the whole window's entities/edges maps, so the source id is
+/// sufficient to get the edge re-processed, and the marker discharges when
+/// the healing edge write lands.
+pub(super) fn materialize_edges_from_delta(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+) -> Option<Vec<EntityId>> {
+    let mut staged = EdgeMaterialization::default();
+    let result = vault.with_write_txn_grouped(|wtxn| {
+        let affected = staged.stage_in_txn(doc, delta, vault, window_key, lease_vault_id, wtxn)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
@@ -762,6 +777,10 @@ pub(super) fn materialize_edges_from_delta(
         }
         Ok(affected)
     });
+    let EdgeMaterialization {
+        applied_edges,
+        hydrated_endpoints,
+    } = staged;
 
     if result.is_ok() {
         // A hydrated endpoint was written where no row was stored: a birth a
