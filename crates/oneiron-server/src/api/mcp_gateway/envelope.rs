@@ -37,7 +37,7 @@ use std::sync::Arc;
 mod http;
 mod request;
 
-pub(crate) const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+pub(crate) use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 pub(crate) const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -231,6 +231,8 @@ pub(crate) struct McpCallContext {
     /// `None` lowers for the whole atom kit. It selects a rendering and
     /// grants nothing.
     pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
+    /// The current request's actual transport, for signing audit only.
+    pub(crate) signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 }
 
 impl std::ops::Deref for McpCallContext {
