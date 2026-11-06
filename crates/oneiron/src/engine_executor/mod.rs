@@ -49,9 +49,9 @@ pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
-    holds_reply_content, is_result_output_path, parse_result_read_path, result_handle_json,
-    result_read_path_for, resumed_output_wait, store_ordinal_base, store_result_output_path,
-    terminal_output_seq,
+    holds_reply_content, is_result_output_path, mask_known_text, parse_result_read_path,
+    result_handle_json, result_read_path_for, resumed_output_wait, store_ordinal_base,
+    store_result_output_path, terminal_output_seq,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
