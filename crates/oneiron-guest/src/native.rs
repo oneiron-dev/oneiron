@@ -12,6 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod egress;
+
 /// The inode allowance of a native session's `/tmp`. Boot mounts it with
 /// 1024 inodes; a session's scratch (a cargo dependency store and target
 /// dir) holds far more files than that.
@@ -75,6 +77,7 @@ pub(crate) fn run() -> Result<()> {
     let socket = directory.join("bridge.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o666))?;
+    let egress_listener = egress::bind()?;
     let mut command = Command::new("/usr/local/bin/oneiron-fence");
     command
         .arg(&socket)
@@ -86,6 +89,7 @@ pub(crate) fn run() -> Result<()> {
         .env("ONEIRON_FENCE_INHERIT_GROUP", "1")
         .env("PATH", "/usr/local/bin:/usr/bin:/bin")
         .env("HOME", "/tmp")
+        .env("ONEIRON_NATIVE_EGRESS_SOCKET", egress::SOCKET)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -105,6 +109,7 @@ pub(crate) fn run() -> Result<()> {
         Arc::new(crate::egress::VsockRelay),
     )
     .map_err(std::io::Error::other)?;
+    egress::serve(egress_listener)?;
     channel.write_all(&[1])?;
     let mut input = child.stdin.take().ok_or(Error::Runtime("native stdin"))?;
     let mut output = child.stdout.take().ok_or(Error::Runtime("native stdout"))?;
