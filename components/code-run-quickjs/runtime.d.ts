@@ -21,6 +21,8 @@ declare interface StoredResult {
   name: string;
   bytes: number;
   kind: "text" | "binary";
+  /** Opaque store-caller declaration, not validation of the final bytes. */
+  declared_media_type?: string;
   /** Absent on a range's card. */
   lines?: number;
   complete: boolean;
@@ -218,6 +220,8 @@ declare interface ResultChunks extends AsyncIterable<ChunkRef> {
  * was read. */
 declare function store(value: unknown, name?: string, options?: StoreOptions): Promise<StoredResult & { receipt?: FoldCoverage }>;
 declare interface StoreOptions {
+  /** Carried verbatim as occurrence metadata; never inferred from value. */
+  declared_media_type?: string;
   sources?: ResultRef[];
   receipt?: { source: ResultRef; tasks: string[]; tree?: { summary: ResultRef; inputs: ResultRef[] }[]; recipe?: unknown };
 }

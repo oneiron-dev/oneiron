@@ -65,7 +65,9 @@ impl Vault {
         owner: Option<EntityId>,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None, None)
+        self.publish_code_run_output_produced(
+            path, sink, complete, owner, input_rows, None, None, None,
+        )
     }
 
     /// Publishes an occurrence with the producing executor step's native
@@ -79,6 +81,7 @@ impl Vault {
         input_rows: Option<Vec<EntityId>>,
         producing_step_start: Option<u64>,
         producing_effect: Option<String>,
+        declared_media_type: Option<String>,
     ) -> Result<CodeRunRawOutput> {
         let mut finished = finish_output_sourced(
             path,
@@ -90,6 +93,7 @@ impl Vault {
         )?;
         finished.output.producing_step_start = producing_step_start;
         finished.output.producing_effect = producing_effect;
+        finished.output.declared_media_type = declared_media_type;
         let mut wtxn = self.store.env.write_txn()?;
         self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
         if owner.is_none() {
@@ -283,6 +287,7 @@ impl Vault {
         )?;
         finished.output.producing_step_start = output.producing_step_start;
         finished.output.producing_effect = output.producing_effect.clone();
+        finished.output.declared_media_type = output.declared_media_type.clone();
         if output.text_encoding.is_none() {
             finished.output.text_encoding = None;
         }

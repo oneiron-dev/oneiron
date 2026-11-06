@@ -163,6 +163,7 @@
       const input = name == null ? {} : {name};
       if (options !== undefined) {
         if (!options || typeof options !== "object") throw new TypeError("store options must be an object");
+        if (options.declared_media_type !== undefined) input.declared_media_type = options.declared_media_type;
         if (options.sources !== undefined) input.sources = listOf(options.sources, refOf);
         if (options.receipt !== undefined) {
           const receipt = options.receipt;

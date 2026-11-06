@@ -84,7 +84,14 @@ preview a tainted body withholds. The names live in the run's replay record,
 so they survive steps, compaction and restart. An unknown name throws
 `unknown_handle` with the live names.
 `store(value, name, {sources})` names the results a value was made from; the
-stored body inherits their taint. `store(value, name, {receipt: {source,
+stored body inherits their taint. `store(value, name,
+{declared_media_type: "text/plain"})` carries an opaque caller declaration in
+the occurrence and its card. It is not a validation of the final stored bytes,
+which custody transforms can change. The declaration is never guessed from
+serialization or encoding. Replays retain the original declaration, including
+an unknown value. Like every bootstrap change, this option requires the
+controlled artifact rebuild above before the guest accepts it.
+`store(value, name, {receipt: {source,
 tasks, tree?, recipe?}})` stores a fold: the host checks that each task is a
 reader child of this run over `source`, computes the fold receipt (the ranges
 its children read, the ranges none read, the children that stopped short and

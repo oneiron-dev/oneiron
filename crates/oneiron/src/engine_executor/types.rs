@@ -220,11 +220,13 @@ pub enum JsResultCall {
     /// to the store target, stored and bound under `name`, or under the next
     /// free `r<n>`. `sources` are the results it was made from, whose taint
     /// it inherits; `receipt` names a fold's inputs, of which the host
-    /// computes its fold receipt.
+    /// computes its fold receipt. `declared_media_type` is an optional
+    /// caller declaration, not a validation of the stored bytes.
     Store {
         name: Option<String>,
         sources: Vec<String>,
         receipt: Option<StoreReceiptInput>,
+        declared_media_type: Option<String>,
     },
     /// `describe(r)`: the card of one of the run's results.
     Describe(JsResultTarget),

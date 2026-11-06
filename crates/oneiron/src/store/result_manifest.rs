@@ -37,6 +37,9 @@ pub struct CodeRunRawOutput {
     /// Character encoding when known; native measurement records UTF-8.
     /// Not a MIME type, transport encoding, or proof of supplied metadata.
     pub text_encoding: Option<String>,
+    /// The store caller's media-type declaration, not a format validation
+    /// of the final bytes or authority to read them.
+    pub declared_media_type: Option<String>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -83,6 +86,7 @@ impl CodeRunRawOutput {
             producing_step_start: None,
             producing_effect: None,
             text_encoding: facts.text.then(|| "utf-8".to_owned()),
+            declared_media_type: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -114,6 +118,7 @@ impl CodeRunRawOutput {
             producing_step_start: None,
             producing_effect: None,
             text_encoding: None,
+            declared_media_type: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),

@@ -118,6 +118,7 @@ impl StoredBody {
             producing_step_start: None,
             producing_effect: None,
             text_encoding: None,
+            declared_media_type: None,
             preview: CodeRunOutputPreview {
                 codec: self.preview_codec.clone(),
                 text: self.preview_text.clone(),

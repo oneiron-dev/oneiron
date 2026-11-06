@@ -44,6 +44,8 @@ struct Store {
     sources: Vec<String>,
     #[serde(default)]
     receipt: Option<crate::engine_executor::StoreReceiptInput>,
+    #[serde(default)]
+    declared_media_type: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -300,6 +302,7 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
                 name: store.name,
                 sources: store.sources,
                 receipt: store.receipt,
+                declared_media_type: store.declared_media_type,
             })
         }
         "describe" if names_one_target(&args.input) && secret_handle(&args.input).is_none() => {

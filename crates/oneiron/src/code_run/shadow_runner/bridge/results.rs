@@ -180,6 +180,16 @@ impl ShadowBridgeHost<'_> {
         name: Option<String>,
         inherit: &[Taint],
     ) -> Result<(CodeRunRawOutput, Value)> {
+        self.bind_stored_declared(sink, name, inherit, None)
+    }
+
+    fn bind_stored_declared(
+        &mut self,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[Taint],
+        declared_media_type: Option<String>,
+    ) -> Result<(CodeRunRawOutput, Value)> {
         // The same ordinal live execution names this store with (FIX 1393):
         // the step-start full-output base plus the arm's own stores so far.
         // A replayed store then reuses its frozen occurrence and taint
@@ -187,11 +197,18 @@ impl ShadowBridgeHost<'_> {
         let ordinal = self.output_ordinal_base
             + self.spilled
             + self.results.iter().filter(|held| held.own).count();
-        let (output, secret) = self.store.finish_named(
+        let (mut output, secret) = self.store.finish_named(
             |digest| store_result_output_path(digest, ordinal),
             sink,
             true,
         )?;
+        output.declared_media_type = self
+            .results
+            .iter()
+            .find(|held| held.output.path == output.path)
+            .map_or(declared_media_type, |held| {
+                held.output.declared_media_type.clone()
+            });
         let taint = match self
             .results
             .iter()
@@ -227,6 +244,7 @@ impl ShadowBridgeHost<'_> {
         name: Option<String>,
         sources: &[String],
         receipt: bool,
+        declared_media_type: Option<String>,
     ) -> Result<Value> {
         let sink = self
             .streams
@@ -256,7 +274,7 @@ impl ShadowBridgeHost<'_> {
                 Err(refused) => return Ok(refused),
             }
         }
-        let (_, card) = self.bind_stored(sink, name, &inherit)?;
+        let (_, card) = self.bind_stored_declared(sink, name, &inherit, declared_media_type)?;
         Ok(json!({ "output": card }))
     }
 

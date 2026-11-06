@@ -248,6 +248,9 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
     if let Some(encoding) = &output.text_encoding {
         card["text_encoding"] = json!(encoding);
     }
+    if let Some(media_type) = &output.declared_media_type {
+        card["declared_media_type"] = json!(media_type);
+    }
     card
 }
 
