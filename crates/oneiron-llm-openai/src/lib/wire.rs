@@ -84,9 +84,11 @@ pub fn build_openai_chat_request(
         }
         // An own server (llama.cpp, vLLM, an exllamav3 server) also reads the
         // level through its chat template, and llama.cpp reads the thinking
-        // budget per request. A hosted API takes the effort alone and refuses
-        // fields it does not know, so it is sent neither.
-        if request.envelope.locality == ModelLocality::OwnServer {
+        // budget per request, as does the same server reached on this device
+        // over its supervised native channel (I2-LOCAL). A hosted API takes
+        // the effort alone and refuses fields it does not know, so it is sent
+        // neither.
+        if request.envelope.locality != ModelLocality::ThirdParty {
             let mut kwargs = match body.remove("chat_template_kwargs") {
                 Some(JsonValue::Object(kwargs)) => kwargs,
                 Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
@@ -444,7 +446,11 @@ fn parse_openai_tool_call(call: &JsonValue) -> Option<ContentPart> {
     })
 }
 
-pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an OpenAI chat reply's `usage` object reports: prompt tokens,
+/// of them the cached, and completion tokens, of them the reasoning. A
+/// relayed reply's own body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let prompt_tokens = u64_field(usage, "prompt_tokens");
     let completion_tokens = u64_field(usage, "completion_tokens");
     let cached_tokens = usage

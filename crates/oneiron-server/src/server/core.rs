@@ -173,6 +173,10 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// The credential-helper registrations each seat run's host made for it
+    /// (FIX 10624 step 2): `POST /v1/seat/credential-helper` answers into
+    /// them.
+    pub(crate) seat_helpers: crate::runtime::SeatHelperRuns,
     /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
     /// line and its mesh staging budget, one set its runtime's adapters and
     /// every mesh site share.
@@ -294,6 +298,10 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Where the API listener is bound, set by the serve path once it is
+    /// bound (FIX 10624 step 2): the origin a seat CLI's credential helper
+    /// calls back on. `None` where no API listener of this process serves.
+    api_addr: Option<std::net::SocketAddr>,
     /// Managed serve's artifact origin on a unix socket of its own
     /// (`--artifact-http-socket`), which has no port to advertise.
     artifact_socket: bool,
@@ -730,6 +738,29 @@ impl SyncServer {
 
     pub(crate) fn artifact_port(&self) -> Option<u16> {
         self.artifact_port
+    }
+
+    /// Records that the API listener is bound at `addr` (FIX 10624 step 2).
+    #[must_use]
+    pub fn with_api_listener(mut self, addr: std::net::SocketAddr) -> Self {
+        self.api_addr = Some(addr);
+        self
+    }
+
+    /// The loopback origin this device's own callers reach the API on: the
+    /// bound port on loopback, when the listener is bound to loopback or to
+    /// every address. `None` when no listener is recorded or it listens on
+    /// one other address alone.
+    pub(crate) fn loopback_api_origin(&self) -> Option<String> {
+        let addr = self.api_addr?;
+        let ip = addr.ip();
+        if ip.is_loopback() {
+            Some(format!("http://{addr}"))
+        } else if ip.is_unspecified() {
+            Some(format!("http://127.0.0.1:{}", addr.port()))
+        } else {
+            None
+        }
     }
 
     /// Records that the artifact-only router serves this server's `/a/` on a
