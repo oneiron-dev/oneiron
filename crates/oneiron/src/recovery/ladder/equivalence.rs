@@ -2,7 +2,7 @@
 //! Payload bytes, titles and fields resume one byte per existing work unit.
 
 use crate::error::Result;
-use crate::note::NoteFork;
+use crate::note::{NoteFork, NoteReviewBundle};
 use crate::recovery::canonical::{
     CanonicalEntity, CanonicalEntityDocument, CanonicalSnapshot, invalid,
 };
@@ -14,6 +14,7 @@ pub(in crate::recovery) struct CanonicalComparison {
     next: usize,
     byte: usize,
     payload: PayloadPart,
+    bundle: BundleComparison,
 }
 
 #[derive(PartialEq, Eq)]
@@ -21,6 +22,20 @@ enum PayloadPart {
     First,
     Second,
     Third,
+}
+
+#[derive(Default)]
+struct BundleComparison {
+    part: BundlePart,
+    member: usize,
+}
+
+#[derive(Default)]
+enum BundlePart {
+    #[default]
+    Waiting,
+    Landed,
+    Explainer,
 }
 
 enum Group {
@@ -57,6 +72,7 @@ impl CanonicalComparison {
             next: 0,
             byte: 0,
             payload: PayloadPart::First,
+            bundle: BundleComparison::default(),
         }
     }
 
@@ -169,7 +185,14 @@ impl CanonicalComparison {
                 Group::NoteProposals,
             ),
             Group::NoteProposals => (
-                compare_rows(note_proposals, &wanted.note_proposals, &mut self.next)?,
+                compare_note_bundles(
+                    note_proposals,
+                    &wanted.note_proposals,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                    &mut self.bundle,
+                )?,
                 Group::ContainerManifests,
             ),
             Group::ContainerManifests => (
@@ -231,6 +254,7 @@ impl CanonicalComparison {
             self.next = 0;
             self.byte = 0;
             self.payload = PayloadPart::First;
+            self.bundle = BundleComparison::default();
         }
         Ok(matches!(self.group, Group::Complete))
     }
@@ -367,6 +391,61 @@ fn compare_entity_documents(
         *next += 1;
         *byte = 0;
         *payload = PayloadPart::First;
+    }
+    Ok(false)
+}
+
+fn compare_note_bundles(
+    actual: &[NoteReviewBundle],
+    wanted: &[NoteReviewBundle],
+    next: &mut usize,
+    byte: &mut usize,
+    payload: &mut PayloadPart,
+    state: &mut BundleComparison,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(NoteReviewBundle {
+        id,
+        waiting,
+        landed,
+        explainer,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let NoteReviewBundle {
+        id: expected_id,
+        waiting: expected_waiting,
+        landed: expected_landed,
+        explainer: expected_explainer,
+    } = &wanted[*next];
+    match state.part {
+        BundlePart::Waiting => {
+            if state.member == 0 && *byte == 0 && *payload == PayloadPart::First {
+                compare_value(id, expected_id)?;
+            }
+            if compare_note_forks(waiting, expected_waiting, &mut state.member, byte, payload)? {
+                state.part = BundlePart::Landed;
+                state.member = 0;
+                *byte = 0;
+                *payload = PayloadPart::First;
+            }
+        }
+        BundlePart::Landed => {
+            if compare_rows(landed, expected_landed, &mut state.member)? {
+                state.part = BundlePart::Explainer;
+                state.member = 0;
+                *byte = 0;
+            }
+        }
+        BundlePart::Explainer => {
+            if compare_bytes(explainer.as_bytes(), expected_explainer.as_bytes(), byte)? {
+                *next += 1;
+                *byte = 0;
+                *payload = PayloadPart::First;
+                *state = BundleComparison::default();
+            }
+        }
     }
     Ok(false)
 }
