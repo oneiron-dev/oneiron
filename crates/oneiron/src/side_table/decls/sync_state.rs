@@ -555,6 +555,10 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
+    /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before
+    /// its window brings it back. Key: hex32 (entity id).
+    SYNC_DISCARDED_WORLD_ROW: SyncState b"wd:e:" Raw;
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
     /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
