@@ -43,6 +43,8 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_optimize::SufficiencyCard;
 
 mod cutover;
+mod stock;
+pub(super) use stock::stock_move_kinds;
 
 /// Ranks a probe reads: a target found below this depth scores as missed.
 pub const SPACE_PROBE_DEPTH: usize = 10;
