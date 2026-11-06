@@ -12,7 +12,9 @@
 //! and named on one unavailable line
 //! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
-use oneiron::context_board::{SelfBriefState, SessionReadSet, StreamConnectionId};
+use oneiron::context_board::{
+    BriefWorkingSet, CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
+};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::DescribeRequest;
@@ -95,16 +97,24 @@ pub(super) fn resolved_state(
     Ok(SelfBriefState {
         self_ref,
         principal,
-        cast: None,
-        grant_revision: None,
-        effective_scope: None,
-        communication: None,
-        classes: None,
+        grants: None,
+        run_ceiling: None,
+        credential_ceiling: None,
+        parent_ceiling: None,
+        communication: CommunicationLimits {
+            reach: None,
+            credential_ceiling: None,
+        },
+        ceilings: None,
         budget_lease_id: line.map(|line| line.run().to_owned()),
         budget: line.map(RunAdmission::read),
         clock_ms,
         skill_index,
-        working_set: None,
+        working_set: BriefWorkingSet {
+            scratchpad: None,
+            pins: None,
+            replay: None,
+        },
     })
 }
 
