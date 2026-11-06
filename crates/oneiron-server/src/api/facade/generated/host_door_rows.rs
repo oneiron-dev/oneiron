@@ -80,6 +80,7 @@
 //! - `vault.repo.symbols.declare`
 //! - `vault.repo.symbols.renew`
 //! - `vault.repo.symbols.release`
+//! - `vault.repo.model.generate`
 //! - `vault.repo.proposal_submit`
 //! - `vault.repo.merge_queue.enqueue`
 //! - `vault.repo.checkout.bind`

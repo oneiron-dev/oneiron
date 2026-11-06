@@ -4317,6 +4317,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.repo.model.generate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput>,
+                >(),
+            ),
+            (
                 "vault.repo.proposal_submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -7830,6 +7836,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.repo.symbols.declare",
     "vault.repo.symbols.renew",
     "vault.repo.symbols.release",
+    "vault.repo.model.generate",
     "vault.repo.proposal_submit",
     "vault.repo.merge_queue.enqueue",
     "vault.repo.checkout.bind",
@@ -9874,6 +9881,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.repo.symbols.release" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoSymbolsReleaseOutput,
         >(),
+        "vault.repo.model.generate" => {
+            crate::code_run::vault_read::request_schema::<crate::LlmResponse>()
+        }
         "vault.repo.proposal_submit" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoProposalSubmitOutput,
         >(),
@@ -16251,6 +16261,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.repo.model.generate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.repo.proposal_submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22298,6 +22315,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::memory::repo_doors::RepoSymbolsReleaseInput,
             > = decode(value.clone())?;
         }
+        "vault.repo.model.generate" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::code_run::RepoModelGenerateInput,
+            > = decode(value.clone())?;
+        }
         "vault.repo.proposal_submit" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::memory::repo_doors::RepoProposalSubmitInput,
@@ -25619,6 +25641,7 @@ pub fn invoke(
         "vault.repo.symbols.declare" => encode(vault_repo_symbols_declare(memory, decode(value)?)?),
         "vault.repo.symbols.renew" => encode(vault_repo_symbols_renew(memory, decode(value)?)?),
         "vault.repo.symbols.release" => encode(vault_repo_symbols_release(memory, decode(value)?)?),
+        "vault.repo.model.generate" => encode(vault_repo_model_generate(memory, decode(value)?)?),
         "vault.repo.proposal_submit" => encode(vault_repo_proposal_submit(memory, decode(value)?)?),
         "vault.repo.merge_queue.enqueue" => {
             encode(vault_repo_merge_queue_enqueue(memory, decode(value)?)?)
@@ -33186,6 +33209,12 @@ pub fn vault_repo_symbols_release(
     >,
 ) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsReleaseOutput> {
     crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.release", &input)
+}
+pub fn vault_repo_model_generate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput>,
+) -> MemoryResult<crate::LlmResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.model.generate", &input)
 }
 pub fn vault_repo_proposal_submit(
     memory: &Memory<'_>,

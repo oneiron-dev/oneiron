@@ -345,14 +345,32 @@ impl Vault {
         // covered by the one check because both arrive through this door.
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        landing(&wtxn)?;
-        self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
-        crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
-        rekeys.finish(&self.store, &mut wtxn)?;
+        self.put_claim_candidate_with_landing_in_txn(
+            &mut wtxn, id, candidate, envelope, occurred, learned_at, landing,
+        )?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
+        Ok(())
+    }
+
+    /// The complete native candidate door in its caller's transaction.
+    pub(crate) fn put_claim_candidate_with_landing_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        crate::batch::reject_family_owned_candidate(&candidate)?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
+        landing(wtxn)?;
+        self.validate_code_run_claim_target_in_txn(wtxn, id, Some(candidate.predicate()))?;
+        crate::memory::guard_existing_claim_in_txn(self, wtxn, envelope.actor(), *id)?;
+        self.apply_candidate_in_txn(wtxn, *id, candidate, envelope, occurred, learned_at)?;
+        rekeys.finish(&self.store, wtxn)?;
         Ok(())
     }
 

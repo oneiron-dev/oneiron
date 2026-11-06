@@ -79,14 +79,49 @@ pub trait RepoReviewPolicy: Send + Sync {
     fn review(&self, project: EntityId, repo: EntityId) -> Result<RepoProposalReview>;
 }
 
-/// The attribution the host mints for a run's proposal: the actor's
+/// The attribution the host prepares for a run's proposal: the actor's
 /// session, a gated `repo.provenance` claim naming the real actor, model,
-/// request and work, and the operation's provenance. Attribution, never
-/// authority; no field is the guest's.
+/// request and work, and the operation's provenance. The proposal writer
+/// lands all of it atomically. Attribution, never authority; no field is
+/// the guest's.
 pub struct RepoRunSources {
-    pub(crate) session: EntityId,
+    pub(crate) open: crate::session_lifecycle::PreparedSessionOpen,
     pub(crate) provenance_claim: EntityId,
+    pub(crate) candidate: crate::write_envelope::ClaimCandidate,
+    pub(crate) envelope: crate::write_envelope::WriteEnvelope,
+    pub(crate) at: u64,
     pub(crate) op_provenance: CodeOpProvenance,
+}
+
+impl RepoRunSources {
+    fn apply_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<Option<crate::session_lifecycle::SessionMintOutcome>> {
+        let Some(opened) = self.open.apply_in_txn(vault, txn)? else {
+            return Ok(None);
+        };
+        vault.put_claim_candidate_with_landing_in_txn(
+            txn,
+            &self.provenance_claim,
+            self.candidate.clone(),
+            &self.envelope,
+            crate::temporal::TimeRange {
+                start: self.at,
+                end: self.at,
+            },
+            self.at,
+            |_| Ok(()),
+        )?;
+        Ok(Some(opened))
+    }
+}
+
+/// A changed sitting is private preparation retry, never an admission refusal.
+enum RepoSourceAttempt {
+    ChangedSession,
+    Refused(RepoAccessRefusal),
 }
 
 /// The CALL "acceptance transfers the publication right", held at a run's
@@ -220,16 +255,17 @@ impl Memory<'_> {
     /// `self.code.proposal_submit` for a run: one whole-file change of a path
     /// the Grant edits, against the run's own work, kept as an immutable
     /// Proposed proposal whose base is the work's pinned commit. The host's
-    /// review policy names the catalog and `sources` mints the actor's
-    /// session and provenance, after the run is admitted and before the
-    /// proposal's writer, which judges the run, its declaration and that
-    /// provenance again. Nothing lands, is approved or is queued.
+    /// review policy names the catalog and `sources` prepares the actor's
+    /// session and provenance outside the writer. The writer judges the
+    /// run and declaration again, then lands the native sources and proposal
+    /// together. A changed sitting retries preparation without writing.
+    /// Nothing lands in Git, is approved or is queued.
     pub fn repo_proposal_submit_for_run(
         &self,
         binding: &RepoRunBinding,
         input: RepoProposalSubmitInput,
         policy: Option<&dyn RepoReviewPolicy>,
-        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+        sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
         self.repo_proposal_submit(binding, input, policy, sources, None, None)
     }
@@ -243,7 +279,7 @@ impl Memory<'_> {
         original: EntityId,
         input: RepoProposalSubmitInput,
         policy: Option<&dyn RepoReviewPolicy>,
-        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+        sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
         self.repo_proposal_submit(binding, input, policy, sources, Some(original), None)
     }
@@ -273,7 +309,7 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoProposalSubmitInput,
         policy: Option<&dyn RepoReviewPolicy>,
-        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+        mut sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
         original: Option<EntityId>,
         conflict: Option<(EntityId, EntityId, String)>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
@@ -315,73 +351,96 @@ impl Memory<'_> {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;
-        let base = self.vault.capture_repo_snapshot_at_commit(&repo, &green)?;
-        if base.fork_hash != own.stamp.base_snapshot {
-            return Err(MemoryError::new(
-                REPO_WORK_BASE_CHANGED,
-                "this work's pinned base no longer captures as it did at open: snapshot custody \
-                 changed since",
-                &["Open a fresh work at the current green and propose the change there."],
-            ));
-        }
-        let sources = sources(&own.stamp)?;
-        let request = RepoMutationRequest::new(
-            RepoRef::LocalFolder {
-                path: folder.clone(),
-                commit: own.stamp.base_green.clone(),
-            },
-            match conflict {
-                Some((branch_subject, open_conflict_claim_id, branch_name)) => {
-                    RepoMutationOperation::ResolveConflictFile {
-                        branch_subject,
-                        open_conflict_claim_id,
-                        branch_name,
-                        path: input.path.clone(),
-                        content: input.content,
-                        message: input.message,
-                    }
-                }
-                None => RepoMutationOperation::CommitFile {
-                    path: input.path.clone(),
-                    content: input.content,
-                    message: input.message,
-                },
-            },
-        )
-        .with_write_actor(binding.actor)
-        .with_session_id(sources.session)
-        .with_provenance_claim_id(sources.provenance_claim)
-        .with_op_provenance(sources.op_provenance);
         let stamp = RepoRunStamp {
             symbol_fence: admission.declaration(),
             ..own.stamp.clone()
         };
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [input.path.as_str()]);
-        let check = |txn: &heed::RoTxn<'_>| {
-            let now = self.vault.now_recorded_at();
-            if let Err(refused) =
-                admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
-            {
-                return Ok(Err(refused));
+        let proposal = loop {
+            let base = self.vault.capture_repo_snapshot_at_commit(&repo, &green)?;
+            if base.fork_hash != own.stamp.base_snapshot {
+                return Err(MemoryError::new(
+                    REPO_WORK_BASE_CHANGED,
+                    "this work's pinned base no longer captures as it did at open: snapshot custody \
+                     changed since",
+                    &["Open a fresh work at the current green and propose the change there."],
+                ));
             }
-            require_run_provenance_in_txn(
-                self.vault,
-                txn,
-                sources.provenance_claim,
-                binding.actor.entity_ref(),
-                own.stamp.work,
-            )?;
-            Ok(Ok(()))
+            let sources = sources(&own.stamp)?;
+            let request = RepoMutationRequest::new(
+                RepoRef::LocalFolder {
+                    path: folder.clone(),
+                    commit: own.stamp.base_green.clone(),
+                },
+                match &conflict {
+                    Some((branch_subject, open_conflict_claim_id, branch_name)) => {
+                        RepoMutationOperation::ResolveConflictFile {
+                            branch_subject: *branch_subject,
+                            open_conflict_claim_id: *open_conflict_claim_id,
+                            branch_name: branch_name.clone(),
+                            path: input.path.clone(),
+                            content: input.content.clone(),
+                            message: input.message.clone(),
+                        }
+                    }
+                    None => RepoMutationOperation::CommitFile {
+                        path: input.path.clone(),
+                        content: input.content.clone(),
+                        message: input.message.clone(),
+                    },
+                },
+            )
+            .with_write_actor(binding.actor)
+            .with_session_id(sources.open.session())
+            .with_provenance_claim_id(sources.provenance_claim)
+            .with_op_provenance(sources.op_provenance.clone());
+            let check = |txn: &mut heed::RwTxn<'_>| {
+                let now = self.vault.now_recorded_at();
+                if let Err(refused) =
+                    admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
+                {
+                    return Ok(Err(RepoSourceAttempt::Refused(refused)));
+                }
+                let Some(opened) = sources.apply_in_txn(self.vault, txn)? else {
+                    return Ok(Err(RepoSourceAttempt::ChangedSession));
+                };
+                require_run_provenance_in_txn(
+                    self.vault,
+                    txn,
+                    sources.provenance_claim,
+                    binding.actor.entity_ref(),
+                    own.stamp.work,
+                )?;
+                Ok(Ok(opened))
+            };
+            let proposed = match original {
+                Some(original) => self.vault.propose_repo_rereview_for_run(
+                    original,
+                    request,
+                    review.clone(),
+                    base,
+                    stamp.clone(),
+                    check,
+                ),
+                None => self.vault.propose_repo_mutation_for_run(
+                    request,
+                    review.clone(),
+                    base,
+                    stamp.clone(),
+                    check,
+                ),
+            }
+            .inspect_err(|error| sources.open.reopen_on_storage_error(self.vault, error))?;
+            match proposed {
+                Err(RepoSourceAttempt::ChangedSession) => continue,
+                Err(RepoSourceAttempt::Refused(refused)) => return Err(refusal_error(refused)),
+                Ok((proposal, opened)) => {
+                    self.vault.store.notify_proactivity_changes();
+                    sources.open.finish(self.vault, opened);
+                    break proposal;
+                }
+            }
         };
-        let proposed = match original {
-            Some(original) => self
-                .vault
-                .propose_repo_rereview_for_run(original, request, review, base, stamp, check)?,
-            None => self
-                .vault
-                .propose_repo_mutation_for_run(request, review, base, stamp, check)?,
-        };
-        let proposal = proposed.map_err(refusal_error)?;
         // The answer names the proposal (its `repo.proposed_diff` journal
         // claim's id), its session and its provenance claim: send-time
         // admission judges each of them (FIX 7069).

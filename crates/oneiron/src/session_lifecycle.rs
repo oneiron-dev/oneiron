@@ -56,8 +56,11 @@ use crate::temporal::TimeRange;
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
 mod expiry;
+mod prepared_open;
 mod speakers;
+
 pub use expiry::SessionExpiryPolicy;
+pub(crate) use prepared_open::PreparedSessionOpen;
 pub(crate) use speakers::erase_session_speaker_actor_in_txn;
 pub use speakers::{SessionParticipant, SessionSpeakers};
 

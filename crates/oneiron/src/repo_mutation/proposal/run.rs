@@ -66,20 +66,21 @@ impl Vault {
     /// A run's proposal: `request` names the host-stamped writer
     /// ([`RepoMutationRequest::with_write_actor`]) and the commit the run's
     /// work is pinned at, `base` is that commit's tree, and `stamp` is the
-    /// run's, bound on the row. `check` is the proposal writer's first act,
-    /// where the run is judged again; its refusal writes nothing.
+    /// run's, bound on the row. `check` first judges the run again, then
+    /// writes its prepared native sources in the proposal's transaction.
+    /// Its refusal writes nothing; its success value returns after commit.
     ///
     /// # Errors
     /// A request with no stamped writer, a base that is not the stamp's pin,
     /// or any error of the shared proposer.
-    pub(crate) fn propose_repo_mutation_for_run<R>(
+    pub(crate) fn propose_repo_mutation_for_run<R, T>(
         &self,
         request: RepoMutationRequest,
         review: RepoProposalReview,
         base: RepoPinnedBase,
         stamp: RepoRunStamp,
-        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
-    ) -> Result<std::result::Result<RepoProposal, R>> {
+        check: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<std::result::Result<T, R>>,
+    ) -> Result<std::result::Result<(RepoProposal, T), R>> {
         if request.actor_id.is_none() || request.actor_class.is_none() {
             return Err(invalid("a run's proposal names its host-stamped writer"));
         }
@@ -88,13 +89,22 @@ impl Vault {
         {
             return Err(invalid("a run's proposal base is not its work's pin"));
         }
-        self.propose_repo_mutation_checked(
+        super::validate_operation(&request.operation)?;
+        self.with_prepared_repo_proposal(
             request,
             review,
             ProposalBase::Pinned(base),
             Some(stamp),
-            None,
-            check,
+            |prepared| {
+                let mut txn = self.store.env.write_txn()?;
+                let source = match check(&mut txn)? {
+                    Ok(source) => source,
+                    Err(refused) => return Ok(Err(refused)),
+                };
+                prepared.persist_in_txn(self, &mut txn)?;
+                txn.commit()?;
+                Ok(Ok((prepared.row, source)))
+            },
         )
     }
 }

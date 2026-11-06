@@ -4499,6 +4499,9 @@ class Oneiron:
         @property
         def work(self) -> "Oneiron._VaultRepoWorkVerbs":
             return Oneiron._VaultRepoWorkVerbs(self._client)
+        @property
+        def model(self) -> "Oneiron._VaultRepoModelVerbs":
+            return Oneiron._VaultRepoModelVerbs(self._client)
         def proposal_submit(self, spec):
             """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept."""
             return json.loads(_translate(lambda: self._client.vault_repo_proposal_submit(json.dumps(spec))))
@@ -4574,6 +4577,12 @@ class Oneiron:
         def open(self, spec):
             """Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only."""
             return json.loads(_translate(lambda: self._client.vault_repo_work_open(json.dumps(spec))))
+    class _VaultRepoModelVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def generate(self, spec):
+            """Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none."""
+            return json.loads(_translate(lambda: self._client.vault_repo_model_generate(json.dumps(spec))))
     class _VaultRepoCheckoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
