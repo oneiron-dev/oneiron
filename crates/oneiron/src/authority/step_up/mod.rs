@@ -311,6 +311,25 @@ impl Vault {
         Ok(Some(record))
     }
 
+    /// Whether the step-up an Admin witness names still stands in `txn`: its
+    /// slip's record is that same step-up, by `holder` at `stepped_up_at`,
+    /// and the passkey it used is still enrolled. A reset, a removed passkey
+    /// or a newer step-up on the slip ends it.
+    pub(crate) fn step_up_record_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+        slip_id: &[u8; 32],
+        stepped_up_at: u64,
+    ) -> Result<bool> {
+        let Some(record) = RECORDS.get(&self.store, txn, slip_id)? else {
+            return Ok(false);
+        };
+        Ok(record.holder == holder
+            && record.stepped_up_at == stepped_up_at
+            && PASSKEYS.contains(&self.store, txn, &(holder, record.credential))?)
+    }
+
     /// Takes the open challenge `challenge` for `ceremony` on `request`'s
     /// slip and `holder`, and removes it: one answer per challenge, right or
     /// wrong.
