@@ -1,6 +1,8 @@
 //! Child-owned frozen continuation state, kept as reply-bearing content.
 //! The child also inherits its source's compaction at the proved cut, and
-//! its frozen state names what it inherited by id (FIX 4198).
+//! its frozen state names what it inherited by id (FIX 4198). Its fold
+//! ledger gives out handles past every one a copied fold answer names (FIX
+//! 18695).
 
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +61,10 @@ impl FrozenSeed {
     /// The frozen state, the prefix row and the compaction a child seeds
     /// from `proved`. The compaction the start captured is proved to the
     /// copied prefix (FIX 4198): after a failed step that is the row the
-    /// failure left, and no later source state takes its place.
+    /// failure left, and no later source state takes its place. The child's
+    /// ledger then gives out handles past every one that a copied call's
+    /// fold answer names (FIX 18695). A fold answer that does not decode
+    /// refuses with the storage error.
     fn from_start(
         proved: ProvedStart,
         row: &StoredRunContinuation,
@@ -76,7 +81,10 @@ impl FrozenSeed {
             .ok_or(ContinuationRefusal::SourceMissing)?;
         let prefix_digest = continuation_prefix_digest(&prefix, cut.step, cut.bridge_start)?
             .ok_or(ContinuationRefusal::NoCheckpoint)?;
-        let compaction = body.compaction.kept_inside(&prefix);
+        let compaction = body
+            .compaction
+            .kept_inside(&prefix)
+            .numbered_past_copied_calls(&prefix, cut.bridge_start)?;
         let state = Self {
             continuation_digest: continuation_digest(row),
             actor,

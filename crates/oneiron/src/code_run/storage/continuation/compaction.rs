@@ -9,17 +9,30 @@
 //! never reads the source's ledger as it stands later. Nothing is minted,
 //! billed or receipted again. The coverage and fold modules keep their own
 //! codecs and write rules.
+//!
+//! After a failed step, the copied row holds that step's calls, but the
+//! capture is the earlier start's (FIX 18695). The fold verbs those calls
+//! made are not inherited, and their recorded answers stay as history. So
+//! the child's ledger gives out handles past the highest one a copied mark,
+//! compact ask or unfold answer names. No fold or mark is added for those
+//! handles. A clean cut copies no call past its start and is unchanged.
 
 use std::collections::BTreeSet;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::super::compaction::{
     CodeRunCompactionCoverage, coverage_rows_in_txn, put_coverage_aliases_in_txn,
 };
 use super::super::folds::{base_code_run_folds_in_txn, seed_code_run_folds_in_txn};
-use crate::code_run::CodeRunReplayRecord;
-use crate::compaction::FoldLedger;
+use crate::code_run::payload::decode_self_dispatch_outcome;
+use crate::code_run::support::{expect_map, invalid_code_run_replay, map_get, str_value};
+use crate::code_run::{CodeRunBridgeCall, CodeRunReplayRecord, SelfDispatchOutcome, SelfEffect};
+use crate::compaction::{
+    FoldCompactAsked, FoldLedger, FoldMarked, FoldReply, FoldUnfolded, SelfFoldCall,
+    parse_fold_handle,
+};
 use crate::store::Store;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -80,6 +93,33 @@ impl StartCompaction {
         self
     }
 
+    /// This, with its ledger numbered past every fold handle that a
+    /// recorded answer of `prefix`'s calls from `bridge_start` on names
+    /// (FIX 18695). After a failed step, `prefix` holds that step's calls,
+    /// but this capture is the earlier start's. The child keeps those calls'
+    /// answers as history, so `last` moves to the highest handle a mark, a
+    /// compact ask or an unfold answered. The child's next mark then never
+    /// reuses one. No fold or mark is added for those handles. A clean cut
+    /// copies no call past its start, so it is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// A fold verb's recorded call, answer or handle that does not decode.
+    pub(crate) fn numbered_past_copied_calls(
+        mut self,
+        prefix: &CodeRunReplayRecord,
+        bridge_start: u64,
+    ) -> Result<Self> {
+        let copied = usize::try_from(bridge_start)
+            .ok()
+            .and_then(|start| prefix.bridge_calls.get(start..))
+            .unwrap_or_default();
+        for call in copied {
+            self.folds.last = self.folds.last.max(answered_fold_bound(call)?);
+        }
+        Ok(self)
+    }
+
     /// Whether all of this lies inside `prefix` (FIX 4198).
     fn lies_inside(&self, prefix: &CodeRunReplayRecord) -> bool {
         self.clone().kept_inside(prefix) == *self
@@ -119,8 +159,9 @@ impl StartCompaction {
 
 /// What a continuation's seed inherited of its source's compaction, by id
 /// alone (FIX 4198): the summary each aliased epoch binds, each fold's
-/// number and the ledger's `last`. The child's frozen seed keeps it, so a
-/// reopen finds the seed in place without the source's start.
+/// number and the ledger's `last`, which is past every handle a copied
+/// answer names (FIX 18695). The child's frozen seed keeps it, so a reopen
+/// finds the seed in place without the source's start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct InheritedCompaction {
     summaries: Vec<EntityId>,
@@ -187,4 +228,65 @@ pub(super) fn seed_continuation_compaction_in_txn(
         child.run_id,
         compaction.folds.clone(),
     )
+}
+
+/// The highest fold handle that `call`'s recorded answer names, or 0 (FIX
+/// 18695): a mark's new handle, a compact ask's pending marks, or an
+/// unfold's fold. A call of another effect, an answer that is not a fold
+/// answer, a read verb's answer and the ledger's refusal name none. A
+/// refusal's text is never read.
+///
+/// # Errors
+///
+/// A fold answer whose recorded call, typed answer or handle does not
+/// decode.
+fn answered_fold_bound(call: &CodeRunBridgeCall) -> Result<u64> {
+    if call.effect != SelfEffect::Fold {
+        return Ok(0);
+    }
+    let Ok(SelfDispatchOutcome::Fold(answer)) = decode_self_dispatch_outcome(&call.outcome) else {
+        return Ok(0);
+    };
+    let request = expect_map(&call.request, "fold request must be a map")?;
+    let verb: SelfFoldCall = serde_json::from_str(str_value(map_get(request, "call")?)?)
+        .map_err(|_| undecoded_fold_answer())?;
+    let handles = match verb {
+        SelfFoldCall::Mark { .. } => {
+            fold_answer::<FoldMarked>(&answer)?.map(|marked| vec![marked.fold])
+        }
+        SelfFoldCall::Compact { .. } => {
+            fold_answer::<FoldCompactAsked>(&answer)?.map(|asked| asked.pending)
+        }
+        SelfFoldCall::Unfold { .. } => {
+            fold_answer::<FoldUnfolded>(&answer)?.map(|unfolded| vec![unfolded.fold])
+        }
+        SelfFoldCall::List | SelfFoldCall::Describe { .. } => None,
+    };
+    handles
+        .unwrap_or_default()
+        .iter()
+        .try_fold(0, |bound, handle| {
+            parse_fold_handle(handle)
+                .map(|fold| bound.max(fold))
+                .map_err(|_| undecoded_fold_answer())
+        })
+}
+
+/// A fold verb's typed answer in `answer`, the JSON its call recorded, or
+/// `None` for the ledger's refusal, which gave out no handle.
+///
+/// # Errors
+///
+/// An answer that decodes as neither.
+fn fold_answer<T: DeserializeOwned>(answer: &str) -> Result<Option<T>> {
+    match serde_json::from_str::<FoldReply<T>>(answer) {
+        Ok(FoldReply::Answer(answer)) => Ok(Some(answer)),
+        Ok(FoldReply::Refused { .. }) => Ok(None),
+        Err(_) => Err(undecoded_fold_answer()),
+    }
+}
+
+/// The storage error for a copied fold call that does not decode.
+fn undecoded_fold_answer() -> Error {
+    invalid_code_run_replay("a copied fold answer does not decode")
 }
