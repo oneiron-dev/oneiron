@@ -74,8 +74,9 @@ pub(crate) use self::generic_put_routing::{
 pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
-    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn, person_party_key_in_txn,
-    resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
+    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
+    person_party_key_from_row_in_txn, person_party_key_in_txn, resolve_party_ref_from_store_in_txn,
+    resolve_party_ref_in_txn,
 };
 pub(crate) use self::projector::{
     record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
