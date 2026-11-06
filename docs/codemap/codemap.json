@@ -44523,7 +44523,7 @@
      "purpose": "Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors",
      "surface": {
       "crate-vis": 6,
-      "fn": 13,
+      "fn": 14,
       "mod": 1,
       "re-export": 4,
       "struct": 1
@@ -123846,7 +123846,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 13,
       "re-export": 1,
       "struct": 1
