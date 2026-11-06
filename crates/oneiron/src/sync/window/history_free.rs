@@ -670,6 +670,7 @@ fn scrub_for_export(
     // FIX 6279: and a birth carrier whose maker this vault erased.
     let births_scrubbed =
         crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    let positions_scrubbed = crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
@@ -689,6 +690,7 @@ fn scrub_for_export(
         || origin_claims_scrubbed
         || section_fit_scrubbed
         || births_scrubbed
+        || positions_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)
