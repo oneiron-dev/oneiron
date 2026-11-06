@@ -22,7 +22,11 @@
 mod documents;
 mod loro;
 mod message_receipts;
+mod native_source;
 mod proposal;
+mod raw_image;
+
+pub(crate) use raw_image::validate_native_image_rows;
 
 // The entity document family's Loro split and join (FIX 9126): a group is
 // its full snapshot, then its updates in replay order.
@@ -43,7 +47,7 @@ use super::forks::{
     ENTITY_DOC_PROPOSAL_BUNDLE, ENTITY_DOC_RECEIPT, ForkRecord, ForkStatus, PendingDocForkErase,
 };
 use super::pins::{ENTITY_DOC_PIN, ENTITY_DOC_PURGE_RECEIPT};
-use super::storage::ENTITY_DOC_HEAD;
+use super::storage::{self, ENTITY_DOC_HEAD};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
@@ -88,17 +92,21 @@ fn put_actor(slot: &mut DocActor, field: &str, actor: EntityId) -> Result<()> {
 /// Every entity-document row in `txn`, by owner.
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
     let mut out = Captured::default();
-    let mut slots = BTreeMap::new();
+    let mut slots = Vec::new();
+    let mut sequences = Vec::new();
     for row in rows::typed_rows(dbs, txn, ENTITY_DOC_HEAD, &mut out)? {
         let entity = row.key.0;
         if row.value.entity != entity.to_hex() {
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
-        slots.insert(row.value.document.clone(), entity);
+        slots.push((storage::document_slot(&row.value)?.to_hex(), entity));
+        if storage::has_sequence_text(&row.value)? {
+            sequences.push((entity.to_hex(), entity));
+        }
         out.exact(OwnerRef::entity(&entity), row.at, row.bytes);
     }
-    documents::capture(dbs, txn, slots, &mut out)?;
+    documents::capture(dbs, txn, slots, sequences, &mut out)?;
     for row in rows::typed_rows(dbs, txn, ENTITY_DOC_CITATION_FLOOR, &mut out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
         out.depends(owner, &row.at, OwnerRef::entity(&row.key.1.0));
@@ -327,14 +335,37 @@ pub(crate) fn restore_in_txn(
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     let rebuilt = documents::join(&opened)?;
-    let restored = rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
-        if documents::owns(at) {
-            let row = rebuilt.get(at).cloned();
-            return row.map(Some).ok_or_else(rows::bad_part);
+    restore_prepared(dbs, txn, &opened, &rebuilt)
+}
+
+/// The closed source owns the exact authenticated rows. Prepare and validate
+/// their native document histories before the first row is written.
+pub(crate) fn restore_authenticated_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    source: crate::recovery::checkpoint::EntityDocRestoreSource,
+) -> Result<Restored> {
+    let opened = source.into_rows();
+    let rebuilt = native_source::prepare(&opened)?;
+    restore_prepared(dbs, txn, &opened, &rebuilt)
+}
+
+fn restore_prepared(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    opened: &OpenedOwnerRows,
+    rebuilt: &BTreeMap<RowLocator, Vec<u8>>,
+) -> Result<Restored> {
+    let restored = rows::restore_parts(dbs, txn, opened, check, |view, at, value, parts| {
+        if let Some(row) = rebuilt.get(at) {
+            return Ok(Some(row.clone()));
         }
-        join(dbs, view, &opened, at, value, parts)
+        if documents::owns(at) {
+            return Err(rows::bad_part());
+        }
+        join(dbs, view, opened, at, value, parts)
     })?;
-    retire_left_fork_causes(dbs, txn, &opened, &restored)?;
+    retire_left_fork_causes(dbs, txn, opened, &restored)?;
     Ok(restored)
 }
 

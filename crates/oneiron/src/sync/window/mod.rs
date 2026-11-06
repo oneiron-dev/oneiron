@@ -23,12 +23,14 @@ use crate::ports::{WindowAddress, WindowDeletionRows};
 use loro::{LoroDoc, Subscription};
 
 mod admission;
+pub(crate) mod claim_frames;
 mod device_only;
 mod egress;
 mod forward;
 mod history_free;
 mod pad_custody;
 mod project_history;
+mod promotion_copies;
 mod rebootstrap;
 mod replacement;
 mod repo_manifest_conflict;
@@ -44,13 +46,14 @@ mod withdrawn;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::{
-    check_promotion_snapshot, check_window_update_residence_with_vault,
-    check_window_update_with_staged_worlds, validate_promotion_snapshot,
-    validate_window_update_with_staged_worlds,
+    check_promotion_snapshot, check_window_update_residence_in_txn,
+    check_window_update_residence_with_vault, check_window_update_with_staged_worlds,
+    validate_promotion_snapshot, validate_window_update_with_staged_worlds,
 };
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
+pub use self::claim_frames::{PreparedSyncFrame, WindowClaimCopyRelease};
 pub use self::device_only::{
     UpdateVerdict, Withhold, export_withheld, export_withheld_for, raw_update_verdict,
     raw_update_verdict_for, selector_update_verdict_for_peer,
@@ -79,6 +82,7 @@ pub use self::pad_custody::{
     WindowPadReceiptWitness, admit_window_pads, carrier_window_pads, persisted_window_pads,
     prepare_window_pads, promotion_window_pads,
 };
+pub use self::promotion_copies::PreparedPromotionClaimCopies;
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{
@@ -105,6 +109,14 @@ pub use self::tombstones::{
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
+
+/// Reads the input snapshot's original root section through the native
+/// canonical-table decoder, independently of its latest state and replay.
+pub(in crate::sync) fn original_snapshot_root(snapshot: &[u8]) -> Result<Option<LoroDoc>> {
+    admission::encoded_root_state(snapshot).ok_or_else(|| {
+        Error::InvalidConfig("shared replica snapshot state is not canonical".into())
+    })
+}
 
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).
@@ -470,10 +482,19 @@ pub(crate) fn merge_persisted_state_into_doc(
 /// Loads a window Doc from persisted state in sync_state.
 pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
+    load_window_from_state_in_txn(vault, &rtxn, key)
+}
 
+/// Read the snapshot and its surviving updates from one transaction. A
+/// fold cannot prune an update between these two parts of the same image.
+pub(in crate::sync) fn load_window_from_state_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    key: &WindowKey,
+) -> Result<LoroDoc> {
     let state = vault
         .store
-        .port_window_doc_with_raw(&rtxn, WindowAddress::new(key.as_str()), |raw| {
+        .port_window_doc_with_raw(rtxn, WindowAddress::new(key.as_str()), |raw| {
             Ok(raw.to_vec())
         })?
         .ok_or_else(|| {
@@ -482,13 +503,8 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
             })
         })?;
 
-    // Load from snapshot
     let doc = doc_from_snapshot(&state)?;
-    drop(rtxn);
-
-    // Apply pending updates on top of the snapshot (startup step 2).
-    apply_pending_window_updates(vault, &doc, key)?;
-
+    apply_pending_window_updates_in_txn(vault, rtxn, &doc, key)?;
     Ok(doc)
 }
 
@@ -511,12 +527,21 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// helpers are invisible to integration-test crates.
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
+    apply_pending_window_updates_in_txn(vault, &rtxn, doc, key)
+}
+
+pub(in crate::sync) fn apply_pending_window_updates_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    key: &WindowKey,
+) -> Result<u32> {
     let address = WindowAddress::new(key.as_str());
     // Lazy prefix iterator (B-tree range seek); `{seq:016x}` keys sort in order.
     let mut applied = 0u32;
     for entry in vault
         .store
-        .port_window_updates(&rtxn, address, |_, v| import_doc(doc, v))?
+        .port_window_updates(rtxn, address, |_, v| import_doc(doc, v))?
     {
         entry??;
         applied += 1;

@@ -732,7 +732,7 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs": ...
         def commit(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
-            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
+            """Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."""
         def remember(self, input: Facade.ClaimInput) -> Facade.CommitReceipt:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
         def forget(self, input: Facade.ForgetRequest) -> list[Facade.CommitReceipt]:
@@ -1789,10 +1789,12 @@ class Oneiron:
             """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
         def projection(self, spec: Facade.SharedMemberRequest) -> Facade.MemberProjection:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
-        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
         def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
+        def invitation_code(self, spec: Facade.InvitationCodeRequest) -> Facade.InvitationCode:
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
@@ -1803,6 +1805,8 @@ class Oneiron:
             """The caller's own pending invitations into a shared vault."""
         def accept(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee accepts their own invitation and joins the shared vault at its role."""
+        def accept_with_credential(self, spec: Facade.SharedInvitationAcceptWithCredentialRequest) -> Facade.SharedInvitationAcceptedWithCredential:
+            """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
         def decline(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee declines their own invitation; nothing is granted."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
@@ -3974,12 +3978,24 @@ class Oneiron:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
         def redo(self, spec: Facade.TaskRedo) -> Facade.TaskCallReceipt:
             """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
-        def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
-            """Admits one person's word on an ask; the word is evidence, never approval."""
+        @property
+        def answer(self) -> "Oneiron._TasksAnswerVerbs": ...
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
         def refuse(self, spec: Facade.LiveRunRequest[Facade.TaskRefuseInput]) -> Facade.TaskRefuseOutput:
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
+    class _TasksAnswerVerbs:
+        def __call__(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
+            """Admits one person's word on an ask; the word is evidence, never approval."""
+        @property
+        def forward(self) -> "Oneiron._TasksAnswerForwardVerbs": ...
+    class _TasksAnswerForwardVerbs:
+        def __call__(self, handle: Facade.TaskAskHandle, intent_key: str, act: Facade.AskForwardAct, proof: Facade.AskForwardHolderProof) -> Facade.AskForwardReceipt:
+            """Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."""
+        def challenge(self, handle: Facade.TaskAskHandle, intent_key: str, act: Facade.AskForwardAct) -> Facade.TaskAnswerForwardChallenge:
+            """The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."""
+        def status(self, intent_ref: Facade.EntityId) -> Facade.AskForwardReceipt:
+            """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
     class _AiVerbs:
         @property
         def chat(self) -> "Oneiron._AiChatVerbs": ...

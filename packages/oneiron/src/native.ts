@@ -378,11 +378,13 @@ vaultMembersDelegate(input: unknown): unknown
 vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
+vaultMembersInvitationCode(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultMembersInvitations(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
+vaultMembersAcceptWithCredential(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultSharedObject(input: unknown): unknown
@@ -864,6 +866,9 @@ peek(requestJson: string): string
 ask(input: unknown): unknown
 wait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown
+tasksAnswerForwardChallenge(input: unknown): unknown
+tasksAnswerForward(input: unknown): unknown
+tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown

@@ -16,6 +16,70 @@ use oneiron_contracts::memory::MemoryResult;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
+#[cfg(feature = "sync")]
+mod record_sources;
+#[cfg(feature = "sync")]
+pub(crate) use record_sources::RecordDocumentHistoryCut;
+
+/// Produced only inside the authenticated owner's purge transaction, after
+/// its original admission and the constrained `floor` / `shallow_at` transform.
+/// Raw snapshots and decoded facts cannot construct this source.
+pub(super) struct PurgedDocument<'vault> {
+    vault: &'vault Vault,
+    entity: EntityId,
+    head: storage::Head,
+    head_bytes: Vec<u8>,
+    source_frontier: Vec<u8>,
+    source_inventory: super::native_skill_state::NativeMapInventory,
+    document: EntityDoc,
+    frontier: Vec<u8>,
+    inventory: super::native_skill_state::NativeMapInventory,
+}
+
+impl PurgedDocument<'_> {
+    pub(super) fn vault(&self) -> &Vault {
+        self.vault
+    }
+
+    pub(super) fn document(&self) -> &EntityDoc {
+        &self.document
+    }
+
+    pub(super) fn require_document(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        head: &storage::Head,
+    ) -> Result<std::collections::BTreeSet<EntityId>> {
+        use super::native_skill_state::inspect_inventory;
+
+        if *entity != self.entity
+            || head.entity != self.head.entity
+            || head.document != self.head.document
+            || head.storage_document != self.head.storage_document
+            || head.sequence_document != self.head.sequence_document
+            || head.incarnation != self.head.incarnation
+            || head.field != self.head.field
+            || head.generation != self.head.generation
+            || head.pending != self.head.pending
+            || head.birth_frontier != self.head.birth_frontier
+            || storage::record_head_bytes(&self.vault.store, txn, entity)?.as_deref()
+                != Some(self.head_bytes.as_slice())
+        {
+            return Err(invalid("native SKILL state purge source"));
+        }
+        let current = storage::load(&self.vault.store, txn, &self.head)?;
+        if inspect_inventory(&current)? != self.source_inventory
+            || current.frontier() != self.source_frontier
+            || inspect_inventory(&self.document)? != self.inventory
+            || self.document.frontier() != self.frontier
+        {
+            return Err(invalid("native SKILL state purge source"));
+        }
+        self.inventory.writer_tokens()
+    }
+}
+
 /// A citation names the document, causal frontier, cursor span and quote hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -352,10 +416,27 @@ impl Vault {
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
             let old_state = doc.text();
             let shallow = shallow_at(self, txn, entity, &h.incarnation, &doc, &applied)?;
-            storage::persist(self, txn, entity, &mut h, &shallow, None)?;
+            #[cfg(feature = "sync")]
+            crate::store::window_record_sources::remove_history_in_txn(
+                RecordDocumentHistoryCut::new(&self.store, txn, *entity, &h, &doc, &shallow),
+            )?;
+            let purged = PurgedDocument {
+                vault: self,
+                entity: *entity,
+                head: h.clone(),
+                head_bytes: storage::record_head_bytes(&self.store, txn, entity)?
+                    .ok_or_else(|| invalid("native SKILL state purge source"))?,
+                source_frontier: doc.frontier(),
+                source_inventory: super::native_skill_state::inspect_inventory(&doc)?,
+                frontier: shallow.frontier(),
+                inventory: super::native_skill_state::inspect_inventory(&shallow)?,
+                document: shallow,
+            };
+            storage::persist_purged_document(txn, entity, &mut h, &purged)?;
+            let shallow = purged.document();
             self.store.port_document_shallow_since_put(
                 txn,
-                DocumentSlot::from_hex(&h.document)?,
+                storage::document_slot(&h)?,
                 &shallow.doc.shallow_since_vv().encode(),
             )?;
             let receipt = PurgeReceipt {

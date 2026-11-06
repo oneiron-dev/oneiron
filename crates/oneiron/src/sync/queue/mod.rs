@@ -6,7 +6,7 @@
 //!
 //! Key format (per ARCH-023b §5.4):
 //! - `q:{seq:8BE}` → `[window_key_len:1][window_key][encoded_update]`
-//! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE]`
+//! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE][home_claim_copy_len:4BE][sealed_copy]`
 //! - `h:{seq:8BE}` → ARCH-0038 hard-delete historical-carrier sweep job
 //! - `d:{seq:8BE}` → `[1]` — engine-internal DELETE-BEARING sidecar marker
 //!   (ONE-1135): the matching `q:{seq}` row carries a tombstone-commit
@@ -80,11 +80,23 @@ pub struct SyncQueue {
     vault: Arc<Vault>,
 }
 
+mod actor_copy;
 pub(super) mod checkpoint;
 mod codec;
 mod core;
+mod embed_page;
+mod home_claim_copy;
 mod scrub;
 mod seq;
+
+pub(crate) use self::actor_copy::{
+    capture_home_claim_actor_copy, open_home_claim_actor_copy_for_restore,
+};
+pub(crate) use self::embed_page::EmbedQueueRow;
+pub(crate) use self::home_claim_copy::{
+    capture_home_claim_copy, home_claim_copy_skeleton, restore_home_claim_copy,
+};
+pub(in crate::sync) use self::seq::push_update_in_txn;
 
 pub(in crate::sync) use self::scrub::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 pub(crate) use self::scrub::{
@@ -93,9 +105,10 @@ pub(crate) use self::scrub::{
     scrub_unlabelled_updates_in_txn, scrub_window_updates_in_txn, unlabelled_update_count_in_txn,
 };
 pub(crate) use self::seq::{
-    delete_embed_job_in_txn, push_delete_bearing_in_txn, push_embed_job_in_txn,
+    clear_embed_job_home_claim_copy_in_txn, delete_embed_job_in_txn,
+    embed_job_home_claim_copy_in_txn, has_pending_embed_job_in_txn, push_delete_bearing_in_txn,
+    push_embed_job_in_txn, retain_embed_job_home_claim_copy_in_txn,
 };
-
 #[cfg(test)]
 mod tests;
 

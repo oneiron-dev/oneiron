@@ -16,12 +16,15 @@ use crate::api::call_receipt::{self, CallStamp};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::protocol::{ProtocolError, TAG_RPC, TAG_SUB};
 
+pub(crate) mod ask_option_link;
 mod budget;
 mod error;
 mod history;
 mod residence;
+mod reply;
 pub(crate) use residence::{
     ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
+    residence_promote_to,
 };
 mod routing;
 mod rpc;
@@ -190,20 +193,31 @@ impl RpcReply {
         request_id: u64,
         result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
     ) -> Result<Self, ProtocolError> {
+        Self::prepare_attributed(server, auth, attribution, call, request_id, result).encode()
+    }
+
+    fn prepare_attributed(
+        server: &crate::server::SyncServer,
+        auth: &CoreAuth,
+        attribution: Option<&call_receipt::ForwardedAttribution>,
+        call: RpcCall,
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> reply::PreparedRpcReply {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         // A `reveal.wait` reply is digested with its value masked (OF-560).
         let mut masked = None;
         let packed = result.and_then(|(value, rows)| {
             masked = oneiron::task_verb::sdk::masked_reveal_reply(&call.method, &value);
-            wire::packed(&value)
-                .map(|bytes| (bytes, rows))
+            wire::prepare_result(value)
+                .map(|prepared| (prepared, rows))
                 .map_err(|_| too_large())
         });
         let (outcome, result_digest, served) = match &packed {
-            Ok((bytes, rows)) => (
+            Ok((prepared, rows)) => (
                 oneiron::receipt::CallOutcome::Ok,
                 Some(masked.as_ref().map_or_else(
-                    || oneiron::receipt::call_bytes_digest(bytes),
+                    || prepared.digest.clone(),
                     oneiron::receipt::call_json_digest,
                 )),
                 rows.iter()
@@ -252,18 +266,11 @@ impl RpcReply {
                 served,
             },
         );
-        let (frames, rows) = match packed {
-            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-            },
-            Err(error) => (rpc_error(request_id, error, &stamp)?, None),
-        };
-        Ok(Self {
+        reply::PreparedRpcReply {
             request_id,
-            frames,
-            rows,
-        })
+            packed,
+            stamp,
+        }
     }
 
     /// [`Self::answer`] for a machine-only home handoff or exact pad call
@@ -278,15 +285,12 @@ impl RpcReply {
     ) -> Result<Self, ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         let packed = result.and_then(|(value, rows)| {
-            wire::packed(&value)
-                .map(|bytes| (bytes, rows))
+            wire::prepare_result(value)
+                .map(|prepared| (prepared, rows))
                 .map_err(|_| too_large())
         });
         let (outcome, result_digest) = match &packed {
-            Ok((bytes, _)) => (
-                oneiron::receipt::CallOutcome::Ok,
-                oneiron::receipt::call_bytes_digest(bytes),
-            ),
+            Ok((prepared, _)) => (oneiron::receipt::CallOutcome::Ok, prepared.digest.clone()),
             Err(error) => (
                 oneiron::receipt::CallOutcome::Refused {
                     code: error.code().to_owned(),
@@ -302,10 +306,12 @@ impl RpcReply {
             Some(result_digest),
         );
         let (frames, rows) = match packed {
-            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-            },
+            Ok((prepared, rows)) => {
+                match wire::prepared_result_chunks(request_id, prepared, &stamp) {
+                    Ok(frames) => (frames, Some(rows)),
+                    Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+                }
+            }
             Err(error) => (rpc_error(request_id, error, &stamp)?, None),
         };
         Ok(Self {
@@ -318,13 +324,16 @@ impl RpcReply {
     /// The frames as `conn`'s send door takes them: each chunk of a result
     /// carries the rows the release judges again (DEC-0005).
     pub(crate) fn queued(self, conn: u32) -> Vec<Vec<u8>> {
-        let Some(rows) = self.rows else {
-            return self.frames;
-        };
-        self.frames
-            .into_iter()
-            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
-            .collect()
+        self.queued_frames(conn).collect()
+    }
+
+    pub(crate) fn queued_frames(self, conn: u32) -> impl Iterator<Item = Vec<u8>> {
+        let request_id = self.request_id;
+        let rows = self.rows;
+        self.frames.into_iter().map(move |frame| match &rows {
+            Some(rows) => routing::wrap(conn, request_id, 0, rows.as_deref(), frame),
+            None => frame,
+        })
     }
 }
 
@@ -424,6 +433,36 @@ pub(crate) fn residence_rpc(
     )
 }
 
+/// Routes and queues a bundle reply one frame at a time on the socket's owner loop.
+/// The eager residence answer keeps its original encoding and receipt behavior.
+pub(crate) fn residence_rpc_to(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    peer: oneiron::authority::PeerMachine,
+    request: RpcRequest,
+    index_cache: &mut Option<ResidenceIndexCache>,
+    append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
+    touch_stage: &mut Option<ResidenceTouchStage>,
+    conn: u32,
+    direct_tx: &crate::handler::DirectSender,
+) -> Result<(), ProtocolError> {
+    let reply = residence::run(
+        server,
+        auth,
+        peer,
+        request,
+        index_cache,
+        append_stage,
+        touch_stage,
+    )?;
+    for frame in reply.queued_frames(conn) {
+        direct_tx
+            .send(frame)
+            .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+    }
+    Ok(())
+}
+
 /// Whether `method` is a home handoff or exact pad call that a socket may
 /// make with its machine proof and no bound actor.
 pub(crate) fn machine_handoff_method(method: &str) -> bool {
@@ -491,23 +530,54 @@ pub(crate) async fn rpc_reply(
     context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
     crate::api::answer_hold::until_encoded(async move {
-        let mut call = RpcCall::captured(server, &request);
-        let room_note = context.room_note_call(server, auth, &request.method, &request.params);
-        let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
-            server,
-            auth,
-            &context,
-            &request.method,
-            request.params,
-        ))
-        .await;
-        call.attempt = attempt;
-        // OF-063: judged on arrival and again before the receipt is written, so
-        // a session closed mid-call keeps its call's exception.
-        call.anonymous = room_note || context.anonymous(server, auth);
-        RpcReply::answer(server, auth, call, request.request_id, result)
+        let (call, request_id, result) = rpc_answer(server, auth, request, &context).await;
+        RpcReply::answer(server, auth, call, request_id, result)
     })
     .await
+}
+
+/// The ordinary socket's answer, framed and queued while its encode holds live.
+pub(crate) async fn rpc_reply_to(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    auth: &CoreAuth,
+    request: RpcRequest,
+    context: SocketCallContext,
+    conn: u32,
+    direct_tx: &crate::handler::DirectSender,
+) -> Result<(), ProtocolError> {
+    crate::api::answer_hold::until_encoded(async move {
+        let (call, request_id, result) = rpc_answer(server, auth, request, &context).await;
+        RpcReply::prepare_attributed(server, auth, None, call, request_id, result)
+            .send(conn, direct_tx)
+    })
+    .await
+}
+
+async fn rpc_answer(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    auth: &CoreAuth,
+    request: RpcRequest,
+    context: &SocketCallContext,
+) -> (
+    RpcCall,
+    u64,
+    Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+) {
+    let mut call = RpcCall::captured(server, &request);
+    let room_note = context.room_note_call(server, auth, &request.method, &request.params);
+    let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
+        server,
+        auth,
+        context,
+        &request.method,
+        request.params,
+    ))
+    .await;
+    call.attempt = attempt;
+    // OF-063: judged on arrival and again before the receipt is written, so
+    // a session closed mid-call keeps its call's exception.
+    call.anonymous = room_note || context.anonymous(server, auth);
+    (call, request.request_id, result)
 }
 
 /// A page size a scoped view asks for, or `default`, within the facade's

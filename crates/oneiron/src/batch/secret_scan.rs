@@ -37,7 +37,7 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
-pub(super) use self::mask::mask_batch_ops;
+pub(super) use self::mask::{mask_batch_ops, mask_batch_ops_for_record_document};
 pub(crate) use self::mask::rebind_mask_origin_in_txn;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
@@ -51,7 +51,7 @@ pub(crate) use self::mask::side_row::{
     admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
-    BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
+    AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{

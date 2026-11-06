@@ -93,6 +93,42 @@ carrier. The original predecessor and the document body's final section remain
 unchanged. This prevents a duplicate section boundary and copied revision from
 being serialized on the carrier; no Word-runtime comparison is claimed.
 
+The empty header/footer expect change (2026-11-05, FIX 594) touches
+`src/edit_v4.rs` only. The `edit_header` / `edit_footer` schema arms admit a
+blank `expect` when the existing `semantic_hash` is supplied. Native `expect`
+matching is substring-based, so an unguarded blank retains its prior refusal;
+the projection sends the actual story paragraph's current guard. All previously
+admitted nonblank expectations, required string fields, part-name checks and
+apply-time guard/expect checks stay unchanged. No wire shape, error code or
+default changes.
+
+The header/footer exact-run change (2026-11-05, FIX 14300 / FIX 594) touches
+`src/edit_v4.rs`, `src/edit/mod.rs` and `src/edit/verbs/headers_footers.rs`.
+The opt-in `exact_marks` edit mode treats replacement text's six marks as a set,
+including empty sets and same-text replacements. The shared segment materializer
+is unchanged: after it builds the tracked replacement, only its new Inserted
+text nodes receive exact bold/italic/underline/subscript/superscript/strike and
+explicit authored OFF values for absent marks. Deleted source runs, opaque
+anchors, unrelated run properties and revision metadata remain as built. Direct
+mode resolves the same tracked replacement after applying these marks. Ordinary
+header/footer edits without the mode retain their current inheritance, identity
+checks and word-diff dispatch. No new serializer, format reader, version constant,
+refusal, default or cap is added.
+
+The complex-script exact-run correction (2026-11-05, FIX 14300 R2) touches
+`src/edit/verbs/headers_footers.rs` only. The same new Inserted text nodes now
+set `bold_cs` / `italic_cs` and their authored flags to the requested bold /
+italic values, with explicit OFF for absence. Word uses these complex-script
+slots instead of `b` / `i` when `cs` or `rtl` is enabled. Those script selectors,
+fonts and deleted source history remain unchanged; the shared materializer and
+all ordinary edits remain unchanged.
+
+The exact-run parser registration correction (2026-11-05, FIX 14300) adds
+`exact_marks` to both header/footer entries in `src/edit_v4.rs::OP_FIELDS`.
+`deserialize_ops` checks that allowlist before deserializing the typed operation,
+so the setting must be registered there as well as on the enum. Other fields,
+tags, unknown-field checks and schema validation stay unchanged.
+
 The wrapper's terminal final-deletion change (2026-11-05) preserves sequential
 actor attribution for one last-group paragraph delete when the only extra
 native id is its physical final-mark carrier. The existing snapshot and view
@@ -113,6 +149,19 @@ serialization are unchanged.
 The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
 The non-text inline nodes themselves are preserved unchanged.
+
+The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
+`src/tracked_model.rs`. Eligible destination clones reconstruct their original
+moved text using actual revision identities. When it equals the full paired
+source text, inner deletions retain their character ranges instead of searching
+for unique substrings. Repeated text maps to its own occurrence; empty material
+ranges leave the source unchanged. Hard breaks and opaque inlines retain their
+nodes and receive the deletion status when their one-character span is selected.
+Empty material deletions also leave nonaligned sources unchanged, matching the
+exact-range no-op; destination revision repair still runs. Nonempty nonaligned
+clones keep the existing unique-text mapping, including its non-text statuses.
+Move eligibility, pairing, marker repair and resolution order are unchanged;
+nonaligned ambiguity and suppressed destination pilcrows remain open.
 
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing

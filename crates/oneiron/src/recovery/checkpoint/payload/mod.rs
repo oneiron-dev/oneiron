@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 
 pub(super) use self::actors::{opened_content, unavailable};
 pub(super) use self::capture::{project_image, seal_image};
+pub(crate) use self::restore::EntityDocRestoreSource;
 pub(super) use self::restore::{OpenedPayload, open_image_payload, restore_opened_in_txn};
 use self::rows::{Class, DbClass, Families};
 use self::seal::Bundle;
@@ -167,7 +168,7 @@ getters! {
     OutboundCall = 15 => crate::outbound_intent_ledger::checkpoint;
     /// Independent owners of blocked step captures.
     BlockedSourceOwner = 16 => crate::self_heal::blocked_reports::checkpoint;
-    /// Media vectors and device provenance, by source document.
+    /// Media vectors, device provenance and refusals, by source document.
     EmbedMedia = 17 => crate::embed::checkpoint;
     /// Workflow leaves' retained tool transcripts and settled meters.
     WorkflowTool = 18 => crate::agent_dispatch::workflow_tool_checkpoint;
@@ -499,6 +500,12 @@ fn keep_owner_parts(
             .filter(|(at, _)| held.contains(at))
             .map(|(at, key)| (at.clone(), key.clone()))
             .collect();
+        owner.image_skeletons = rows
+            .image_skeletons
+            .iter()
+            .filter(|(at, _)| held.contains(at))
+            .map(|(at, value)| (at.clone(), value.clone()))
+            .collect();
     }
     kept.structure = captured.structure;
     kept.dispatched = captured.dispatched;
@@ -524,7 +531,23 @@ struct Claims(BTreeMap<(RowDb, Vec<u8>), (BundleRole, Claim)>);
 impl Claims {
     /// Notes every row `captured` placed, by `by`.
     fn note(&mut self, by: BundleRole, captured: &Captured) -> Result<()> {
+        let mut projected = BTreeSet::new();
         for rows in captured.owners() {
+            for at in rows.image_skeletons.keys() {
+                let exact = rows
+                    .rows
+                    .iter()
+                    .filter(|part| matches!(part, RowPart::Exact { at: owned, .. } if owned == at));
+                if !at.path.is_empty()
+                    || rows.image_keys.contains_key(at)
+                    || exact.count() != 1
+                    || !projected.insert(at)
+                {
+                    return Err(Error::InvariantViolation(
+                        "an image skeleton must belong to one whole exact owned row",
+                    ));
+                }
+            }
             for part in &rows.rows {
                 if let Some((db, key, _)) = actors::image_row(rows, part) {
                     self.put(db, key, by, Claim::Sealed)?;

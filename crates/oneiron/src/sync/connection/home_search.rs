@@ -29,6 +29,7 @@ pub(crate) struct HomeSearchSlot {
     /// The configured link's resolved mode before first attachment, then
     /// the attached connection's mode when it attached or dropped.
     mode: Option<SyncResidenceMode>,
+    claim_vector_cursor: Option<Vec<u8>>,
 }
 
 /// What this device's own sync connection says of its residence (FIX 2905):
@@ -172,6 +173,21 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner)
             .search
             .upgrade()
+    }
+}
+
+impl Vault {
+    pub(crate) fn next_claim_vector_job(
+        self: &Arc<Self>,
+    ) -> crate::Result<Option<crate::sync::queue::EmbedQueueRow>> {
+        let mut slot = self
+            .home_search
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = crate::sync::queue::SyncQueue::new(Arc::clone(self))?;
+        let row = queue.next_embed_job(slot.claim_vector_cursor.as_deref())?;
+        slot.claim_vector_cursor = row.as_ref().map(|row| row.key.clone());
+        Ok(row)
     }
 }
 

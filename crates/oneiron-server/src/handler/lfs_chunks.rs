@@ -12,7 +12,7 @@ use crate::server::SyncServer;
 pub(super) async fn handle(
     server: &SyncServer,
     payload: Vec<u8>,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {

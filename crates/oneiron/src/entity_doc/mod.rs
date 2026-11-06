@@ -20,8 +20,11 @@ mod local_discard;
 mod message_parts;
 mod message_stream;
 mod metadata;
+mod native_skill_state;
 pub mod office;
 mod pins;
+#[cfg(feature = "sync")]
+pub(crate) use pins::RecordDocumentHistoryCut;
 mod promotion_evidence;
 mod proposal_lineage;
 mod prose_admission;
@@ -30,6 +33,8 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+#[cfg(feature = "sync")]
+mod record_carried;
 mod recovery;
 mod registry;
 mod summary;
@@ -59,7 +64,15 @@ pub(crate) use pins::pin_body_quote_at_birth_in_txn;
 pub(crate) use recovery::{
     capture as capture_canonical, restore as restore_canonical,
     restore_proposals as restore_canonical_proposals,
+    restore_with_source as restore_canonical_with_source,
 };
+
+pub(crate) fn validate_canonical_skill_state(
+    row: &crate::store::canonical_document::CanonicalEntityDocument,
+) -> crate::error::Result<()> {
+    native_skill_state::validate_witnesses(row)
+}
+
 mod verbs;
 
 #[cfg(feature = "sync")]
@@ -77,11 +90,30 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+#[cfg(feature = "sync")]
+pub(crate) use native_skill_state::SkillStateSnapshot;
+
+/// Consume only the actual local batch's final input in its applying writer.
+/// The typed door suppliers remain separate from this persistence continuation.
+#[cfg(feature = "sync")]
+pub(crate) fn publish_skill_state_in_txn(
+    input: crate::batch::NativeSkillFinalInput<'_>,
+    txn: &mut heed::RwTxn<'_>,
+) -> crate::Result<()> {
+    native_skill_state::publish_in_txn(input, txn)
+}
+
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use record_carried::{
+    CarriedRecordDocument, InstalledRecordDocument, PendingRecordDocument, RecordDocumentCandidate,
+    RecordDocumentPreparation, RecordDocumentStand, RefinementOriginSource,
+    export_skill_record_document_in_txn, install_record_document_in_txn,
+};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;
@@ -89,6 +121,7 @@ pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
     record_document, record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
+    sync_document_slot_in,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
@@ -178,7 +211,6 @@ use crate::error::{ArtifactError, Error};
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(reason))
 }
-
 /// Fault injection for recovery checks: drops `entity`'s document head row
 /// alone, as a damaged vault can lose it, keeping the stored history. The
 /// returned closure puts the row back.

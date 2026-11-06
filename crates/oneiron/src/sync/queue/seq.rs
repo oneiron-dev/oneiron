@@ -2,7 +2,8 @@
 
 use super::codec::{
     decode_delete_bearing_key, decode_embed_job_value, decode_last_update_seq_metadata,
-    decode_update_key, encode_delete_bearing_key, encode_embed_job_value, encode_embed_key,
+    decode_update_key, embed_job_home_claim_copy, encode_delete_bearing_key,
+    encode_embed_job_value, encode_embed_job_with_home_claim_copy, encode_embed_key,
     encode_update_key, encode_update_value, unix_millis_now,
 };
 use super::{DELETE_BEARING_PREFIX, LAST_UPDATE_SEQ_KEY, UPDATE_PREFIX};
@@ -29,18 +30,95 @@ pub(crate) fn push_embed_job_in_txn(
     priority: u8,
 ) -> Result<()> {
     let key = encode_embed_key(entity_id);
-    let (priority, queued_at) = match store.sync_queue.get(wtxn, &key)? {
+    let value = match store.sync_queue.get(wtxn, &key)? {
         Some(existing) => match decode_embed_job_value(&existing) {
-            Ok((existing_priority, existing_queued_at)) if existing_priority <= priority => {
-                (existing_priority, existing_queued_at)
+            Ok((existing_priority, _)) if existing_priority <= priority => return Ok(()),
+            Ok(_) => {
+                let mut value = existing.into_owned();
+                value[0] = priority;
+                value[1..9].copy_from_slice(&unix_millis_now().to_be_bytes());
+                value
             }
-            _ => (priority, unix_millis_now()),
+            Err(_) => encode_embed_job_value(priority, unix_millis_now()),
         },
-        None => (priority, unix_millis_now()),
+        None => encode_embed_job_value(priority, unix_millis_now()),
     };
-    let value = encode_embed_job_value(priority, queued_at);
     store.sync_queue.put(wtxn, &key, &value)?;
     Ok(())
+}
+
+/// A real pending canonical job, checked in the copy retainer's own writer.
+/// This never enqueues work or treats a received source as admitted.
+pub(crate) fn has_pending_embed_job_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<bool> {
+    if store.pending_embedding_token(txn, entity_id)?.is_none() {
+        return Ok(false);
+    }
+    Ok(store
+        .sync_queue
+        .get(txn, &encode_embed_key(entity_id))?
+        .is_some())
+}
+
+/// Replaces only the pending job's retained copy, never its priority or
+/// enqueue time. The caller validated the exact canonical source, original
+/// binding and obligations in this same writer before serializing the copy.
+pub(crate) fn retain_embed_job_home_claim_copy_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity_id: &EntityId,
+    copy: &[u8],
+) -> Result<bool> {
+    let key = encode_embed_key(entity_id);
+    let Some(existing) = store.sync_queue.get(wtxn, &key)? else {
+        return Ok(false);
+    };
+    let (priority, queued_at) = decode_embed_job_value(&existing)?;
+    let value = encode_embed_job_with_home_claim_copy(priority, queued_at, copy)?;
+    store.sync_queue.put(wtxn, &key, &value)?;
+    Ok(true)
+}
+
+/// The optional copy of this exact job, without leasing or changing its metadata.
+pub(crate) fn embed_job_home_claim_copy_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let key = encode_embed_key(entity_id);
+    let Some(value) = store.sync_queue.get(txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(embed_job_home_claim_copy(&value)?.map(<[u8]>::to_vec))
+}
+
+/// Drops only a carried copy, retaining the native job's original priority
+/// and enqueue time. The caller holds the source rewrite's own writer.
+pub(crate) fn clear_embed_job_home_claim_copy_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<bool> {
+    let key = encode_embed_key(entity_id);
+    let Some(existing) = store.sync_queue.get(wtxn, &key)? else {
+        return Ok(false);
+    };
+    let (priority, queued_at) = match decode_embed_job_value(&existing) {
+        Ok(metadata) => metadata,
+        // The queue already prunes undecodable derived jobs. An actor rewrite
+        // must not fail because one cannot supply even its pending metadata.
+        Err(Error::CorruptedIndex(_)) => return store.sync_queue.delete(wtxn, &key),
+        Err(error) => return Err(error),
+    };
+    if embed_job_home_claim_copy(&existing)?.is_none() {
+        return Ok(false);
+    }
+    let value = encode_embed_job_value(priority, queued_at);
+    store.sync_queue.put(wtxn, &key, &value)?;
+    Ok(true)
 }
 
 pub(crate) fn delete_embed_job_in_txn(
@@ -171,5 +249,22 @@ pub(crate) fn push_delete_bearing_in_txn(
         .store
         .sync_queue
         .put(wtxn, &encode_delete_bearing_key(seq), &[1u8])?;
+    Ok(seq)
+}
+
+/// An ordinary update queued atomically with its owning window/row writer.
+/// This grants no delete-bearing marker or special retirement exemption.
+pub(in crate::sync) fn push_update_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    update_bytes: &[u8],
+) -> Result<u64> {
+    let value = encode_update_value(window_key, update_bytes)?;
+    let seq = allocate_next_update_seq_in_txn(vault, wtxn)?;
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, &encode_update_key(seq), &value)?;
     Ok(seq)
 }

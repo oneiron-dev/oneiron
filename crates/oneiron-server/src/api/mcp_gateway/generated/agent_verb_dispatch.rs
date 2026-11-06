@@ -492,11 +492,13 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.members.projection" => a.spec.clone().ok_or_else(invalid),
         "vault.members.add" => a.spec.clone().ok_or_else(invalid),
         "vault.members.invitation_slip" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.invitation_code" => a.spec.clone().ok_or_else(invalid),
         "vault.members.change" => a.spec.clone().ok_or_else(invalid),
         "vault.members.remove" => a.spec.clone().ok_or_else(invalid),
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
         "vault.members.invitations" => a.spec.clone().ok_or_else(invalid),
         "vault.members.accept" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.accept_with_credential" => a.spec.clone().ok_or_else(invalid),
         "vault.members.decline" => a.spec.clone().ok_or_else(invalid),
         "vault.members.withdraw_invitation" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.object" => a.spec.clone().ok_or_else(invalid),
@@ -978,6 +980,9 @@ pub(crate) fn mcp_agent_verb_input(
         "ask" => a.spec.clone().ok_or_else(invalid),
         "wait" => a.spec.clone().ok_or_else(invalid),
         "tasks.answer" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.challenge" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.status" => a.spec.clone().ok_or_else(invalid),
         "tasks.outcomes" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.rooms.messages" => {
@@ -2632,6 +2637,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.members.invitation_slip" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.members.invitation_code" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.members.change" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2645,6 +2653,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.accept" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.accept_with_credential" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.decline" => {
@@ -4064,6 +4075,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.challenge" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.outcomes" => {
@@ -11486,6 +11506,24 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.members.invitation_code" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.invitation_code", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::InvitationCodeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_members_invitation_code(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.members.change" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.members.change", &input)
@@ -11567,6 +11605,26 @@ async fn execute_agent_verb_row_on(
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_accept(
                 server, auth, input,
             ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.accept_with_credential" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.accept_with_credential", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_members_accept_with_credential(
+                    server, auth, input,
+                ),
+            )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -20194,6 +20252,33 @@ async fn execute_agent_verb_row_on(
             served.extend([input.handle.group_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.answer.forward.challenge" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
+            let output = oneiron::task_verb::sdk::tasks_answer_forward_challenge(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.answer.forward" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerForwardRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
+            let output = oneiron::task_verb::sdk::tasks_answer_forward(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.answer.forward.status" => {
+            let input: oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.intent_ref]);
+            let output = oneiron::task_verb::sdk::tasks_answer_forward_status(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

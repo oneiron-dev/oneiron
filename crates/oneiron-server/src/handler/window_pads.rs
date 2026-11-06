@@ -18,7 +18,7 @@ use oneiron::sync::transport::{
     ReceivedWindowPadEnvelope, WindowPadArrival, WindowPadEnvelope, WindowPadReadiness,
     WindowPadReceipt,
 };
-use oneiron::sync::window::{carrier_window_pads, prepare_window_pads};
+use oneiron::sync::window::{PreparedSyncFrame, carrier_window_pads, prepare_window_pads};
 
 use super::conn_state::ConnState;
 use super::socket_stop::StoppingTransport;
@@ -65,7 +65,7 @@ pub(super) fn accept(
         .map_err(invalid)?
     {
         WindowPadArrival::Notice => Ok(Inbound::Frame),
-        WindowPadArrival::Streaming => Ok(Inbound::Done),
+        WindowPadArrival::Streaming | WindowPadArrival::Copies(_) => Ok(Inbound::Done),
         WindowPadArrival::Broken => {
             tracing::warn!(window = %key, "window pad envelope arrived incomplete");
             Ok(Inbound::Done)
@@ -110,7 +110,11 @@ pub(super) fn receipt_frame(
 /// a message's live partial only where its conversation may go (FIX 9537);
 /// any other frame as it is. A frame no envelope can carry is dropped,
 /// warned: none was sendable before either.
-pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8>) -> Vec<Vec<u8>> {
+pub(super) fn release(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    frame: Vec<u8>,
+) -> Vec<PreparedSyncFrame> {
     if !super::ephemeral::releases_frame(server, conn_state, &frame) {
         return Vec::new();
     }
@@ -122,7 +126,7 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
             )
         });
     if !enveloped {
-        return vec![frame];
+        return vec![frame.into()];
     }
     let Ok((window_key, sub_tag, payload)) = protocol::decode_window_sync(&frame[1..]) else {
         return Vec::new();
@@ -155,8 +159,14 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
             conn_state.peer_machine(server.vault()),
         )
     };
-    match prepared.frames(window_key, sub_tag, None) {
-        Ok((frames, _)) => frames,
+    match prepared.frames_with_claim_copies(
+        server.vault(),
+        conn_state.peer_machine(server.vault()),
+        window_key,
+        sub_tag,
+        context,
+    ) {
+        Ok(frames) => frames,
         Err(error) => {
             tracing::warn!(
                 window = window_key,
@@ -210,6 +220,8 @@ pub(super) fn send_released<'t>(
     } else {
         (None, release(server, conn_state, frame))
     };
+    let vault = std::sync::Arc::clone(server.vault());
+    let peer = conn_state.peer_machine(server.vault());
     async move {
         if let Some((frame, vault, peer, owner)) = document {
             let Ok(owner) = owner else {
@@ -246,7 +258,46 @@ pub(super) fn send_released<'t>(
             return true;
         }
         for frame in frames {
-            if !transport.send_binary(frame).await {
+            let (required, optional) = frame.into_socket_parts();
+            let sent = if let Some((candidate, copies)) = optional {
+                transport
+                    .send_window_claim_frame(required, candidate, copies, &vault, peer)
+                    .await
+            } else {
+                transport.send_binary(required).await
+            };
+            if !sent {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Uses the same release and stop doors, retaining native optional promotion
+/// evidence until this socket's final synchronous send.
+pub(super) fn send_promotion_released<'t>(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    transport: &'t mut StoppingTransport,
+    frame: Vec<u8>,
+    promotion: super::direct::PromotionFrame,
+) -> impl Future<Output = bool> + use<'t> {
+    let frames = release(server, conn_state, frame);
+    let vault = std::sync::Arc::clone(server.vault());
+    let peer = conn_state.peer_machine(server.vault());
+    async move {
+        let mut promotion = Some(promotion);
+        for frame in frames {
+            let frame = frame.into_bytes();
+            let sent = if let Some(promotion) = promotion.take() {
+                transport
+                    .send_rpc_promotion(frame, promotion, &vault, peer)
+                    .await
+            } else {
+                transport.send_binary(frame).await
+            };
+            if !sent {
                 return false;
             }
         }

@@ -277,3 +277,69 @@ first.
   - bootstrapping a fresh vault from the home, rather than a copy of it;
   - moving to a new home when the election changes;
   - the apps.
+
+## Federation selector reads
+
+A federation selector fetch is separate from the full-window device sync above. Its
+rows must pass both the selector's live grant and the credential admitted on that
+socket. The same credential scope bounds source-backed text, NOTE review
+attachments, tombstones and base-window edge endpoints. Prompt sources in
+born-with text use that scope too, even when the source row is not in the window.
+A bundle remains whole when all its members pass; otherwise the existing NOTE
+projection keeps only its admitted members.
+
+By-reference bodies use the same bound when a held selector copy is rebuilt and
+when a dropped copy is rebuilt lazily. The scope comes from the socket's live
+bound authentication, not from a second stored scope registry. Grant, selector,
+pact, peer-world and facet-read checks still run. Grant-only engine callers keep
+their existing behavior; this adds no setting, expiry or transfer limit.
+
+## Optional CLAIM copies on promotion replies
+
+A `residence.promote` reply keeps its original JSON result, snapshot envelope,
+chunk sequence and call receipt. Optional home CLAIM copies travel in a separate
+`home_claim_copies` MessagePack binary field on the last `rpc.res` frame, only
+when they fit in the unused space of that result chunk. They never add a frame
+or change the result digest.
+
+The existing socket reply queue keeps the native source and recipient evidence,
+not just serialized copy bytes. After the socket is ready, owed control frames
+have drained, and its credential is rechecked, the sender rechecks every selected
+copy against that socket's vault and proved machine. A changed source, key,
+release row, required reply, or a preparation/encoding/space miss drops only the
+optional metadata. The required response still follows its original release,
+revocation, engine-stop and send behavior.
+
+The receiving machine collects and decodes the required result in the original
+order. It opens optional metadata against the promotion envelope's original
+window and payload before translating the snapshot for import. These copies use
+the existing native copy scope for validation and import. They do not authenticate
+the raw snapshot or grant a read. Missing or malformed optional copy data leaves
+the ordinary import intact. This does not provide immediate vector fill when no
+eligible native home copy is available.
+
+## Optional CLAIM copies on window updates
+
+The home's direct and broadcast `UPDATE` and `REPLACEMENT` sends can carry
+optional home CLAIM copies in their existing window-pad envelope. Preparation
+uses that envelope's actual projected payload and the current window document
+as partial-update context. It walks carried CLAIM occurrences, not the context's
+current winners.
+
+Client and server window sends share the native copy holder and required-prefix
+logic. The server adds copies only when the complete encoded copy blob fits in
+spare space in the original required frames. Frame count and every required
+prefix length remain unchanged; no copy-only frame or send is added. Receipt
+bindings still describe the canonical payload and required pads, not the copies.
+
+Native source and recipient evidence stays with the selected frames through the
+existing socket wait. After readiness, control-frame drain and fresh revocation
+checks, the final send rechecks the actual vault, proved peer, source rows and
+keys. A miss discards only the optional suffix. The required envelope id and part
+offsets remain consistent even when that suffix is omitted. Raw deliveries,
+including those to an unknown peer, keep their existing behavior.
+
+The existing receiver opens copies against the original envelope before native
+import. Missing or malformed copies do not delay or repeat canonical delivery.
+This path reuses eligible native copies; it does not provide immediate vector
+fill when no such copy exists and does not change any timer, limit or setting.

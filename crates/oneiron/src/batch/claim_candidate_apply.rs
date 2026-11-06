@@ -142,6 +142,9 @@ pub(super) fn apply_claim_candidate(
                 ..PutOptions::default()
             },
             context: PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write: None,
+                native_publication: None,
                 // A claim candidate is never part of a promotion closure:
                 // promote replays the session's typed journal, which stages
                 // no candidate op.
@@ -155,6 +158,8 @@ pub(super) fn apply_claim_candidate(
                 posture: config.privacy.posture,
                 owner_authored,
                 pending_prompt: pending_prompt.as_deref(),
+                #[cfg(feature = "sync")]
+                record_document: None,
             },
         },
     )?;

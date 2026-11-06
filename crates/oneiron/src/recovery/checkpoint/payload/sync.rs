@@ -43,9 +43,10 @@ use crate::store::checkpoint_payload::rows::{
 use crate::sync::checkpoint_payload::{
     AtomHome, AtomRef, CapturedSyncRow, CapturedSyncRows, KindPlacement, LoroCarrier, OpenedAtom,
     OpenedSyncAtoms, SkeletonRow, SlotCopy, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncSkeleton,
-    SyncUnclassified, captured_row_window, project_checkpoint_documents, project_checkpoint_sync,
-    project_checkpoint_windows, read_document_basis, restore_checkpoint_documents,
-    restore_checkpoint_sync, restore_checkpoint_windows,
+    SyncUnclassified, captured_row_window, check_projected_sync_row_in_txn,
+    project_checkpoint_documents, project_checkpoint_sync, project_checkpoint_windows,
+    read_document_basis, restore_checkpoint_documents, restore_checkpoint_sync,
+    restore_checkpoint_windows,
 };
 use crate::sync::selector::RepoCopyAliases;
 
@@ -148,6 +149,11 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         value: &[u8],
         out: &mut Captured,
     ) -> Result<bool> {
+        if matches!(carrier, Carrier::SyncQueue)
+            && crate::sync::queue::capture_home_claim_actor_copy(key, value, out)?
+        {
+            return Ok(true);
+        }
         let rows = CapturedSyncRows::new(vec![CapturedSyncRow {
             carrier: sync_carrier(carrier),
             key,
@@ -221,6 +227,7 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         let restored = restore_checkpoint_sync(&skeleton, &OpenedParts(&opened))?;
         let documents = restore_checkpoint_documents(sync_carrier(carrier), &opened)?;
         for (at, value) in restored.rows.iter().chain(&documents) {
+            check_projected_sync_row_in_txn(self.dbs, txn, at, value)?;
             restore_row_in_txn(self.dbs, txn, at, value)?;
         }
         Ok(Restored {
@@ -490,10 +497,13 @@ fn staged<'e>(
 /// an opened copy that does not read, or that came from a home other than
 /// its capture's (FIX 10283).
 pub(super) fn restore_window_carriers(
-    records: &[WindowCarrierRecord],
-    windows: &[OpenedOwnerRows],
-    unopened: &BTreeSet<OwnerRef>,
-) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+    source: super::restore::OpenedWindowRestoreSource<'_>,
+) -> Result<(
+    Vec<(RowLocator, Vec<u8>)>,
+    Vec<crate::store::window_record_sources::PreparedRecordDocumentRebinding>,
+)> {
+    let source_rows = source.source_rows();
+    let (records, windows, unopened) = source.parts();
     let carriers = records
         .iter()
         .map(|record| LoroCarrier::from_bytes(&record.carrier))
@@ -536,7 +546,11 @@ pub(super) fn restore_window_carriers(
     let restored = restore_checkpoint_windows(&carriers, &opened)?;
     let mut rows = restored.rows;
     rows.extend(restored.markers);
-    Ok(rows)
+    let rebindings = crate::store::window_record_sources::prepare_opened_rebindings(
+        restored.record_sources,
+        source_rows,
+    )?;
+    Ok((rows, rebindings))
 }
 
 /// The window copies a restore opened (FIX 10277): an owner's copy from

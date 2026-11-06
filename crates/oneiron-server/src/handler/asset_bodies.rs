@@ -43,7 +43,7 @@ pub(super) async fn handle(
     state: &mut ConnState,
     tag: u8,
     payload: Vec<u8>,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) -> Result<(), ProtocolError> {
     let followed = followed_windows(server, state);
     // The session goes to the blocking thread and comes back with its frames.
@@ -93,7 +93,7 @@ pub(super) async fn handle(
 pub(super) fn poll(
     server: &SyncServer,
     state: &mut ConnState,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) {
     let followed = followed_windows(server, state);
     let bodies = state
@@ -142,6 +142,8 @@ struct AdmittedFollow {
     windows: Vec<(WindowKey, AdmittedCopy)>,
     /// The peer a dropped copy is filtered for; read only when one is.
     peer: Option<PeerMachine>,
+    /// The same live bound credential used for held and lazily rebuilt copies.
+    credential_scope: Option<oneiron::federation::Scope>,
     /// Each copy a use read, held or rebuilt, in use order: the socket holds
     /// them again as its latest uses once the read is done.
     used: RefCell<Vec<(WindowKey, loro::LoroDoc)>>,
@@ -160,9 +162,14 @@ impl AdmittedFollow {
         let mut used = self.used.borrow_mut();
         let copy = match (used.iter().rev().find(|(read, _)| read == key), admitted) {
             (Some((_, copy)), _) | (None, AdmittedCopy::Held { copy, .. }) => copy.clone(),
-            (None, AdmittedCopy::Dropped(selector)) => {
-                rebuild(vault, manager, key, selector, self.peer?)?
-            }
+            (None, AdmittedCopy::Dropped(selector)) => rebuild(
+                vault,
+                manager,
+                key,
+                selector,
+                self.peer?,
+                self.credential_scope.as_ref(),
+            )?,
         };
         used.push((key.clone(), copy.clone()));
         Some(copy)
@@ -259,7 +266,11 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
         // A federation socket's copies, each while its selector still
         // authorizes and the peer's world read settings still admit it, and
         // only while the socket's credential is live.
-        WindowSyncMode::Selector if require_bound_app_auth(server, state).is_ok() => {
+        WindowSyncMode::Selector => {
+            let Ok(auth) = require_bound_app_auth(server, state) else {
+                return Followed::Live(Vec::new());
+            };
+            let credential_scope = auth.verified_slip().map(|slip| slip.scope().clone());
             let windows = state.admitted_windows.read(|selector| {
                 authorize_sync_selector(server.vault.as_ref(), selector_grant_scope(), selector)
                     .is_ok()
@@ -279,6 +290,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                             &key,
                             &selector,
                             peer,
+                            credential_scope.as_ref(),
                         )?;
                         if oneiron::sync::window::export_withheld_for(
                             server.vault.as_ref(),
@@ -303,17 +315,18 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
             Followed::Admitted(AdmittedFollow {
                 windows,
                 peer,
+                credential_scope,
                 used: RefCell::default(),
             })
         }
-        WindowSyncMode::Selector | WindowSyncMode::Unbound => Followed::Live(Vec::new()),
+        WindowSyncMode::Unbound => Followed::Live(Vec::new()),
     }
 }
 
 /// Queues `frames` on this socket's direct lane, whose sends take the guarded
 /// door every reply takes.
 fn queue(
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     frames: Vec<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
     for frame in frames {
