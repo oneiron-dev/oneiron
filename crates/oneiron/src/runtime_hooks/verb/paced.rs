@@ -45,8 +45,16 @@ use super::credential::{
 use super::state::DrainScope;
 use super::{InvocationId, hook_class, run_failed_transient};
 
-/// The verbs a budget window's pace holds in the line.
-pub(crate) const PACED_VERBS: [&str; 1] = [AgentVerb::VaultSharesCreate.as_str()];
+/// The verbs a budget window's pace holds in the line: share creation and
+/// the channel identity lifecycle requests the Gate paces (Engine 14:34 B).
+pub(crate) const PACED_VERBS: [&str; 6] = [
+    AgentVerb::VaultSharesCreate.as_str(),
+    AgentVerb::VaultChannelIdentitiesProvision.as_str(),
+    AgentVerb::VaultChannelIdentitiesBind.as_str(),
+    AgentVerb::VaultChannelIdentitiesRotate.as_str(),
+    AgentVerb::VaultChannelIdentitiesRelease.as_str(),
+    AgentVerb::VaultChannelIdentitiesRouteInbound.as_str(),
+];
 /// How long a paced call waits for its turn when the host sets no wait.
 pub const PACED_VERB_WAIT_DEFAULT_SECS: u64 = 7 * 24 * 60 * 60;
 /// How long an ended call's row stays for its caller's retry.
@@ -172,6 +180,21 @@ fn held(next_eligible_at: u64, deadline: u64) -> MemoryError {
             &[
                 "Send nothing again: the call runs on its turn. Retry with the same invocation to read what it came to.",
             ],
+        )
+    }
+}
+
+/// The refusal a paced call's turn answers when its window paces it again:
+/// the drain puts it back in line, not before `next_eligible_at`.
+pub(crate) fn paced_turn_again(next_eligible_at: u64) -> MemoryError {
+    MemoryError {
+        resets_at: vec![next_eligible_at],
+        ..MemoryError::new(
+            MEMORY_CODE_PACED_HOLD,
+            format!(
+                "a budget window paced this call's turn; it runs at {next_eligible_at} or later"
+            ),
+            &["Send nothing again: the call runs on its next turn."],
         )
     }
 }
