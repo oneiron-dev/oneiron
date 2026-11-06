@@ -344,6 +344,44 @@ pub(in crate::sync) struct EntityImportEffects {
 }
 
 impl EntityImportEffects {
+    /// Kept by the isolated root caller, including when staging stops early.
+    pub(in crate::sync) fn new() -> Self {
+        Self {
+            staged: EntityMaterialization::default(),
+        }
+    }
+
+    pub(in crate::sync) fn stage_in_txn(
+        &mut self,
+        doc: &LoroDoc,
+        delta: &loro::event::MapDelta<'_>,
+        vault: &Vault,
+        window_key: &str,
+        lease_vault_id: u64,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> crate::Result<()> {
+        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+        let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
+            .with_residence(Residence::Quarantine(doc));
+        self.staged
+            .stage_in_txn(doc, delta, vault, window_key, &ingest, wtxn)
+    }
+
+    /// An outer error can follow a commit. Compare the actual outputs, never
+    /// infer rollback from the error or replace a native result with raw parity.
+    pub(in crate::sync) fn recover_after_root_error(
+        &self,
+        vault: &Vault,
+        window_key: &str,
+    ) -> usize {
+        mark_lost_entity_operations(
+            vault,
+            window_key,
+            &self.staged.applied_ops,
+            &self.staged.native_records,
+        )
+    }
+
     pub(in crate::sync) fn publish_after_commit(
         self,
         vault: &Vault,
@@ -370,12 +408,9 @@ pub(in crate::sync) fn stage_isolated_entities_in_txn(
     lease_vault_id: u64,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> crate::Result<EntityImportEffects> {
-    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
-        .with_residence(Residence::Quarantine(doc));
-    let mut staged = EntityMaterialization::default();
-    staged.stage_in_txn(doc, delta, vault, window_key, &ingest, wtxn)?;
-    Ok(EntityImportEffects { staged })
+    let mut effects = EntityImportEffects::new();
+    effects.stage_in_txn(doc, delta, vault, window_key, lease_vault_id, wtxn)?;
+    Ok(effects)
 }
 
 /// Revision receipts are retained only after the nested savepoint and outer
@@ -471,39 +506,7 @@ pub(super) fn materialize_entities_with_changes(
         // env — a marker write that itself fails (env down hard) is logged
         // at ERROR and dropped; window recovery's forward remat on the
         // pinned open order remains the backstop.
-        let mut seen = HashSet::new();
-        let mut marked = 0usize;
-        let lost_native = {
-            let committed_view = vault.store.env.read_txn();
-            native_records
-                .iter()
-                .filter(|(_, record)| match &committed_view {
-                    Ok(txn) => !record.matches_stored_in_txn(&vault.store, txn).unwrap_or(false),
-                    Err(_) => true,
-                })
-                .map(|(_, record)| record.entity())
-                .collect::<Vec<_>>()
-        };
-        for id in lost_native {
-            if seen.insert(id) && set_remat_marker_logged(vault, window_key, &id) {
-                marked += 1;
-            }
-        }
-        for (id, blob) in &applied_ops {
-            // Only this exact native put uses the complete-output comparison.
-            // Another ordinary put of the same entity keeps its own parity
-            // check before dedupe, even when an earlier native put matched.
-            if native_records.iter().any(|(native_raw, record)| {
-                record.entity() == *id && native_raw.as_slice() == blob.as_slice()
-            }) || committed_entity_state_matches(vault, id, blob)
-                || !seen.insert(*id)
-            {
-                continue;
-            }
-            if set_remat_marker_logged(vault, window_key, id) {
-                marked += 1;
-            }
-        }
+        let marked = mark_lost_entity_operations(vault, window_key, &applied_ops, &native_records);
         tracing::error!(
             kind = ?e.kind(),
             window = %window_key,
@@ -521,6 +524,53 @@ pub(super) fn materialize_entities_with_changes(
             Vec::new()
         },
     )
+}
+
+/// Both live materialization and an isolated root retain the actual native
+/// results until their outer write returns. The read view closes before any
+/// replay marker opens its own writer.
+fn mark_lost_entity_operations(
+    vault: &Vault,
+    window_key: &str,
+    applied_ops: &[(EntityId, Vec<u8>)],
+    native_records: &[(Vec<u8>, crate::batch::AppliedRecordDocument)],
+) -> usize {
+    let mut seen = HashSet::new();
+    let mut marked = 0usize;
+    let lost_native = {
+        let committed_view = vault.store.env.read_txn();
+        native_records
+            .iter()
+            .filter(|(_, record)| match &committed_view {
+                Ok(txn) => !record
+                    .matches_stored_in_txn(&vault.store, txn)
+                    .unwrap_or(false),
+                Err(_) => true,
+            })
+            .map(|(_, record)| record.entity())
+            .collect::<Vec<_>>()
+    };
+    for id in lost_native {
+        if seen.insert(id) && set_remat_marker_logged(vault, window_key, &id) {
+            marked += 1;
+        }
+    }
+    for (id, blob) in applied_ops {
+        // Only this exact native put uses the complete-output comparison.
+        // Another ordinary put of the same entity keeps its own parity
+        // check before dedupe, even when an earlier native put matched.
+        if native_records.iter().any(|(native_raw, record)| {
+            record.entity() == *id && native_raw.as_slice() == blob.as_slice()
+        }) || committed_entity_state_matches(vault, id, blob)
+            || !seen.insert(*id)
+        {
+            continue;
+        }
+        if set_remat_marker_logged(vault, window_key, id) {
+            marked += 1;
+        }
+    }
+    marked
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
