@@ -6,7 +6,8 @@
 //! slices of [`socket_lifetime::SOCKET_INVENTORY_EVERY`] and checks after
 //! each that the call is still live. So a call that ended waits no more,
 //! and the launcher keeps nothing for it. The socket's timeout bounds the
-//! wait as it bounds the guest's own call.
+//! wait as it bounds the guest's own call, and so does a recvmmsg's own
+//! timeout after its first message.
 
 use super::{Call, Outgoing, rebuild};
 use crate::{linux, socket_lifetime};
@@ -31,17 +32,24 @@ pub(super) struct Wait {
     /// name: no poll sees that receiver's queue, so the call tries again
     /// after each slice.
     events: i16,
-    /// When the socket's timeout runs out, counted from the call's start:
-    /// `None` without one.
+    /// When the socket's timeout runs out, counted from the wait's start,
+    /// or the call's own deadline when that comes first: `None` without
+    /// either.
     deadline: Option<Instant>,
 }
 
 impl Wait {
-    /// A wait for `events`, bounded by the socket's timeout `option`:
-    /// SO_RCVTIMEO or SO_SNDTIMEO.
-    pub(super) fn new(socket: &OwnedFd, events: i16, option: i32) -> io::Result<Self> {
-        let deadline =
+    /// A wait for `events`, bounded by the socket's timeout `option`
+    /// (SO_RCVTIMEO or SO_SNDTIMEO) and by the call's own deadline `limit`.
+    pub(super) fn new(
+        socket: &OwnedFd,
+        events: i16,
+        option: i32,
+        limit: Option<Instant>,
+    ) -> io::Result<Self> {
+        let expires =
             timeout(socket, option)?.and_then(|timeout| Instant::now().checked_add(timeout));
+        let deadline = [expires, limit].into_iter().flatten().min();
         Ok(Self { events, deadline })
     }
 
@@ -104,9 +112,6 @@ impl Outgoing {
         flags: i32,
         blocking: bool,
     ) -> io::Result<Option<usize>> {
-        if let Some(code) = self.refused {
-            return Err(io::Error::from_raw_os_error(code));
-        }
         let witness = self.witness.as_ref().map(AsRawFd::as_raw_fd);
         let control = rebuild(&self.control, &self.copies, witness);
         let events = if self.name.is_empty() {
@@ -115,7 +120,7 @@ impl Outgoing {
             0
         };
         let wait = if blocking {
-            Some(Wait::new(&call.socket, events, libc::SO_SNDTIMEO)?)
+            Some(Wait::new(&call.socket, events, libc::SO_SNDTIMEO, None)?)
         } else {
             None
         };

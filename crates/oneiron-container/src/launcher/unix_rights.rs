@@ -5,24 +5,29 @@
 //! the message waits in the kernel's queue, no descriptor table holds the
 //! socket, so two inventories would miss it and its host entry would end.
 //!
-//! So a native send whose descriptors include a brokered socket is brokered
-//! to completion. Before the message can enqueue, the launcher copies it,
-//! duplicates the exact descriptors it names, and asks the supervisor which
-//! are brokered sockets. Under the inventory lock it records a transfer
-//! hold for them: the write end of a fresh pipe, the message's witness. It
-//! then sends the copy itself, on a duplicate of the guest's socket, with
-//! the witness as the last descriptor. The kernel moves a message's
-//! descriptors together, so the witness leaves the queue with the brokered
-//! sockets. The entry keeps its original room on the host floor; the
-//! launcher keeps no host descriptor.
+//! So once a socket was brokered, the launcher sends every message of a
+//! native sendmsg or sendmmsg itself, and no such call continues to the
+//! kernel: another guest thread could rewrite a message between the
+//! launcher's read and the kernel's. Before that, the calls continue. The
+//! launcher copies each message once, just before it sends it, with the
+//! exact descriptors it names, duplicated from the calling task's own
+//! table ([`task`]), and asks the supervisor which are brokered sockets.
+//! Under the inventory lock it records a transfer hold for them: the write
+//! end of a fresh pipe, the message's witness. It then sends the copy
+//! itself, on a duplicate of the guest's socket, with the witness as the
+//! last descriptor. The kernel moves a message's descriptors together, so
+//! the witness leaves the queue with the brokered sockets. The entry keeps
+//! its original room on the host floor; the launcher keeps no host
+//! descriptor. The kernel takes the launcher as the sender: a receiver with
+//! SO_PASSCRED sees the launcher's credentials, and credentials a message
+//! names (SCM_CREDENTIALS) must be the launcher's.
 //!
-//! The launcher judges each control buffer as the kernel does, and never
-//! leaves one to the kernel: a buffer it cannot read fails EFAULT, one
-//! longer than [`MESSAGE_BOUND`] ENOBUFS, a malformed length EINVAL. A
-//! sendmmsg is brokered up to its first failing message once an earlier one
-//! names a brokered socket. A message that names a brokered socket stays
-//! brokered when it cannot be sent: it holds nothing and answers the
-//! kernel's error, EMSGSIZE past the bound.
+//! The launcher judges each message as the kernel does: a buffer it cannot
+//! read fails EFAULT, a control buffer longer than [`MESSAGE_BOUND`]
+//! ENOBUFS, a malformed control length EINVAL, and a datagram or seqpacket
+//! message longer than the socket's SO_SNDBUF EMSGSIZE. A stream takes at
+//! most [`MESSAGE_BOUND`] bytes of one message, a short write. A sendmmsg
+//! sends its messages in order, up to the first that fails.
 //!
 //! A hold ends when the last copy of its witness closes, and only then:
 //! - the message was never sent: its send failed, or its call ended while
@@ -49,6 +54,9 @@
 // A native receive once a transfer was made: it installs what a message
 // carried, and keeps the witness from the guest (FIX 6185).
 mod receive;
+// The calling task, whose own descriptor table a brokered call reads
+// (FIX 6185).
+mod task;
 // A brokered call's wait on its socket, which ends with the call, and the
 // send that waits (FIX 6185).
 mod wait;
@@ -61,10 +69,11 @@ use std::mem::size_of;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use task::Task;
 use wait::may_wait;
 
-/// The most bytes of data, or of control, one brokered message copies: the
-/// bound a brokered socket's messages have.
+/// The most control bytes one brokered message copies, and the most data
+/// bytes a stream takes of one brokered message.
 const MESSAGE_BOUND: usize = 65536;
 /// The most buffers one message, and the most messages one call, holds:
 /// the kernel's bound, which a brokered socket's calls have too.
@@ -192,10 +201,10 @@ impl Rights {
     }
 }
 
-/// Answers a call on a native socket (FIX 6185). A send that names a
-/// brokered socket is brokered, and so is a receive with a control buffer
-/// once a transfer was made; every other call continues to the kernel as
-/// before.
+/// Answers a call on a native socket (FIX 6185). Once a socket was
+/// brokered, every send is brokered, and so is a receive with a control
+/// buffer once a transfer was made; every other call continues to the
+/// kernel as before.
 pub(super) fn dispatch(
     listener: &OwnedFd,
     bridge: &Bridge,
@@ -239,14 +248,8 @@ fn has_control(pid: u32, pointer: u64) -> bool {
         .is_ok_and(|header| !header.msg_control.is_null() && header.msg_controllen > 0)
 }
 
-/// One guest message a send names: its header's address, the header, its
-/// control bytes, and the descriptors they name.
-type Named = (u64, libc::msghdr, Vec<u8>, Vec<RawFd>);
-
 /// One message of a brokered send, copied into the launcher.
 struct Outgoing {
-    /// The guest's header: a sendmmsg stores the length sent after it.
-    pointer: u64,
     bytes: Vec<u8>,
     name: Vec<u8>,
     /// The guest's control bytes; their rights messages name `copies`.
@@ -254,41 +257,35 @@ struct Outgoing {
     /// The launcher's copies of the descriptors the message names, in
     /// order. They close once the send has returned.
     copies: Vec<OwnedFd>,
-    /// The brokered sockets among them.
-    brokered: Vec<u64>,
     /// The witness's write end, once the message holds a brokered socket.
     witness: Option<OwnedFd>,
-    /// The errno the kernel answers for a message it cannot send. Such a
-    /// message stays brokered when it names a brokered socket: it holds
-    /// nothing, and fails when it is transmitted.
-    refused: Option<i32>,
 }
 
 /// A brokered call: its notification, and the launcher's handles on the
-/// calling process and on the socket the call names.
+/// calling task and on the socket the call names.
 struct Call<'b> {
     bridge: &'b Bridge,
     n: linux::Notification,
-    process: Process,
+    task: Task,
     socket: OwnedFd,
 }
 
 impl<'b> Call<'b> {
     fn open(bridge: &'b Bridge, n: linux::Notification) -> io::Result<Self> {
-        let process = Process::open(n.pid)?;
-        let socket = process.duplicate(n.data.args[0] as RawFd)?;
+        let task = Task::open(n.pid)?;
+        let socket = task.duplicate(n.data.args[0] as RawFd)?;
         Ok(Self {
             bridge,
             n,
-            process,
+            task,
             socket,
         })
     }
 }
 
-/// A sendmsg (one header) or sendmmsg (`vector`) on a native socket. A call
-/// whose messages name no brokered socket continues to the kernel; any
-/// other is brokered up to its first failing message.
+/// A sendmsg (one header) or sendmmsg (`vector`) on a native socket. Before
+/// a socket was brokered, no message can carry one, and the call continues
+/// to the kernel. After, the launcher sends each message from its own copy.
 fn send(
     listener: &OwnedFd,
     bridge: &Bridge,
@@ -297,103 +294,73 @@ fn send(
     flags: i32,
     vector: bool,
 ) -> io::Result<()> {
-    let messages = named(n.pid, pointers);
-    let names_descriptor =
-        |message: &io::Result<Named>| message.as_ref().is_ok_and(|named| !named.3.is_empty());
-    if !messages.iter().any(names_descriptor) {
+    if !bridge.brokered.load(Ordering::Acquire) {
         return proceed(listener, n);
     }
-    let call = Call::open(bridge, n)?;
-    match call.hold_all(messages)? {
-        Some(outgoing) => call.transmit_all(listener, outgoing, flags, vector),
-        None => proceed(listener, n),
-    }
-}
-
-/// The messages a send names, up to the first whose header or control
-/// buffer fails ([`descriptors`]): that one ends the call with its error,
-/// as it ends the kernel's.
-fn named(pid: u32, pointers: &[u64]) -> Vec<io::Result<Named>> {
-    let mut messages = Vec::new();
-    for &pointer in pointers {
-        let message = load::<libc::msghdr>(pid, pointer).and_then(|header| {
-            let (control, fds) = descriptors(pid, &header)?;
-            Ok((pointer, header, control, fds))
-        });
-        let failed = message.is_err();
-        messages.push(message);
-        if failed {
-            break;
-        }
-    }
-    messages
+    Call::open(bridge, n)?.send_all(listener, pointers, flags, vector)
 }
 
 impl Call<'_> {
-    /// Copies each message with the descriptors it names, and holds the
-    /// brokered sockets among them, all under the inventory lock: a copy
-    /// proves the guest held its descriptor, and its hold is recorded
-    /// before a scan can miss it (FIX 5978). `None` when no message names a
-    /// brokered socket: the call then continues to the kernel. A refused
-    /// message holds nothing.
-    fn hold_all(
+    /// Sends each message in order, each copied just before it is sent, up
+    /// to the first that fails, and answers the call as the kernel would:
+    /// the count a sendmmsg sent, the length a sendmsg sent, or the first
+    /// failure's errno. A message never sent closes its witness, and its
+    /// hold ends. A call that ended sends nothing more and is answered no
+    /// more.
+    fn send_all(
         &self,
-        messages: Vec<io::Result<Named>>,
-    ) -> io::Result<Option<Vec<io::Result<Outgoing>>>> {
-        let _shared = self.bridge.sockets.read().map_err(|_| poisoned())?;
-        let mut outgoing = Vec::new();
-        for message in messages {
-            let prepared = message.and_then(|named| self.prepare(named));
-            let sendable = prepared
-                .as_ref()
-                .is_ok_and(|message| message.refused.is_none());
-            outgoing.push(prepared);
-            if !sendable {
-                break;
+        listener: &OwnedFd,
+        pointers: &[u64],
+        flags: i32,
+        vector: bool,
+    ) -> io::Result<()> {
+        let blocking = may_wait(&self.socket, flags);
+        let mut completed = 0_i64;
+        let mut value = 0_i64;
+        for &pointer in pointers {
+            if linux::valid(listener.as_raw_fd(), self.n.id).is_err() {
+                return Ok(());
             }
-        }
-        let brokers = |message: &io::Result<Outgoing>| {
-            message
-                .as_ref()
-                .is_ok_and(|message| !message.brokered.is_empty())
-        };
-        if !outgoing.iter().any(brokers) {
-            return Ok(None);
-        }
-        for index in 0..outgoing.len() {
-            let Ok(prepared) = &mut outgoing[index] else {
-                break;
+            let sent = self
+                .outgoing(pointer)
+                .and_then(|message| message.transmit(self, listener, flags, blocking));
+            let length = match sent {
+                Ok(Some(length)) => length,
+                Ok(None) => return Ok(()),
+                Err(error) if completed == 0 => return self.fail(listener, &error, flags),
+                Err(_) => break,
             };
-            if prepared.brokered.is_empty() || prepared.refused.is_some() {
-                continue;
-            }
-            match self
-                .bridge
-                .rights
-                .hold(std::mem::take(&mut prepared.brokered))
-            {
-                Ok(witness) => prepared.witness = Some(witness),
-                // This message fails, and none after it is sent.
-                Err(error) => {
-                    outgoing[index] = Err(error);
-                    outgoing.truncate(index + 1);
-                    break;
+            let at = pointer + size_of::<libc::msghdr>() as u64;
+            // A message whose length the guest cannot take was sent but is
+            // not counted, as the kernel counts it.
+            if vector && store(self.n.pid, at, length as u32).is_err() {
+                if completed == 0 {
+                    let error = io::Error::from_raw_os_error(libc::EFAULT);
+                    return self.fail(listener, &error, flags);
                 }
+                break;
             }
+            value = length as i64;
+            completed += 1;
         }
-        Ok(Some(outgoing))
+        let value = if vector { completed } else { value };
+        linux::respond(listener.as_raw_fd(), self.n.id, value, 0, 0)
     }
 
-    /// Copies one message out of the guest with the launcher's copies of
-    /// the descriptors it names, and asks the supervisor which are
-    /// brokered sockets. It does so before it bounds the message: one that
-    /// names a brokered socket and that the kernel refuses is refused when
-    /// it is transmitted.
-    fn prepare(&self, (pointer, header, control, fds): Named) -> io::Result<Outgoing> {
-        let (vectors, total) = vectors(self.n.pid, &header)?;
+    /// Copies the guest's message at `pointer` with the launcher's copies
+    /// of the descriptors it names, and holds the brokered sockets among
+    /// them. The copies and the hold are made under the inventory lock: a
+    /// copy proves the guest held its descriptor, and its hold is recorded
+    /// before a scan can miss it (FIX 5978).
+    fn outgoing(&self, pointer: u64) -> io::Result<Outgoing> {
+        let pid = self.n.pid;
+        let header = load::<libc::msghdr>(pid, pointer)?;
+        let (control, fds) = descriptors(pid, &header)?;
+        let (vectors, total) = vectors(pid, &header)?;
+        let _shared = self.bridge.sockets.read().map_err(|_| poisoned())?;
         let copies = fds
             .iter()
-            .map(|&fd| self.process.duplicate(fd))
+            .map(|&fd| self.task.duplicate(fd))
             .collect::<io::Result<Vec<_>>>()?;
         let mut brokered = Vec::new();
         for copy in &copies {
@@ -403,28 +370,24 @@ impl Call<'_> {
                 brokered.push(inode);
             }
         }
-        let (bytes, name, refused) = match self.payload(&header, &vectors, total) {
-            Ok((bytes, name)) => (bytes, name, None),
-            Err(error) if !brokered.is_empty() => (
-                Vec::new(),
-                Vec::new(),
-                Some(error.raw_os_error().unwrap_or(libc::EIO)),
-            ),
-            Err(error) => return Err(error),
+        let (bytes, name) = self.payload(&header, &vectors, total)?;
+        let witness = if brokered.is_empty() {
+            None
+        } else {
+            Some(self.bridge.rights.hold(brokered)?)
         };
         Ok(Outgoing {
-            pointer,
             bytes,
             name,
             control,
             copies,
-            brokered,
-            witness: None,
-            refused,
+            witness,
         })
     }
 
-    /// The message's data and destination name, as the kernel takes them.
+    /// The message's data and destination name, as the kernel takes them:
+    /// a stream may take part of a long write, and a datagram or seqpacket
+    /// message no longer than the socket's SO_SNDBUF must fit whole.
     fn payload(
         &self,
         header: &libc::msghdr,
@@ -432,56 +395,16 @@ impl Call<'_> {
         total: usize,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
         let pid = self.n.pid;
-        // A stream may take part of a long write; a message must fit whole.
-        let length = if total <= MESSAGE_BOUND {
+        let length = if socket_option(&self.socket, libc::SO_TYPE)? == libc::SOCK_STREAM {
+            total.min(MESSAGE_BOUND)
+        } else if usize::try_from(socket_option(&self.socket, libc::SO_SNDBUF)?)
+            .is_ok_and(|bound| total <= bound)
+        {
             total
-        } else if socket_type(&self.socket)? == libc::SOCK_STREAM {
-            MESSAGE_BOUND
         } else {
             return Err(io::Error::from_raw_os_error(libc::EMSGSIZE));
         };
         Ok((gather(pid, vectors, length)?, name(pid, header)?))
-    }
-
-    /// Sends each message in order, up to the first that fails, and
-    /// answers the call as the kernel would: the count a sendmmsg sent, the
-    /// length a sendmsg sent, or the first failure's errno. A message never
-    /// sent closes its witness, and its hold ends. A call that ended sends
-    /// nothing more and is answered no more.
-    fn transmit_all(
-        &self,
-        listener: &OwnedFd,
-        outgoing: Vec<io::Result<Outgoing>>,
-        flags: i32,
-        vector: bool,
-    ) -> io::Result<()> {
-        let blocking = may_wait(&self.socket, flags);
-        let mut completed = 0_i64;
-        let mut value = 0_i64;
-        for message in outgoing {
-            if linux::valid(listener.as_raw_fd(), self.n.id).is_err() {
-                return Ok(());
-            }
-            let sent = message.and_then(|message| {
-                let pointer = message.pointer;
-                let length = message.transmit(self, listener, flags, blocking)?;
-                Ok(length.map(|length| (pointer, length)))
-            });
-            let (pointer, length) = match sent {
-                Ok(Some(sent)) => sent,
-                Ok(None) => return Ok(()),
-                Err(error) if completed == 0 => return self.fail(listener, &error, flags),
-                Err(_) => break,
-            };
-            if vector {
-                let at = pointer + size_of::<libc::msghdr>() as u64;
-                store(self.n.pid, at, length as u32)?;
-            }
-            value = length as i64;
-            completed += 1;
-        }
-        let value = if vector { completed } else { value };
-        linux::respond(listener.as_raw_fd(), self.n.id, value, 0, 0)
     }
 
     /// Answers the call with `error`. A send to a closed peer raises
@@ -491,56 +414,9 @@ impl Call<'_> {
         let code = error.raw_os_error().unwrap_or(libc::EIO);
         linux::respond(listener.as_raw_fd(), self.n.id, 0, code, 0)?;
         if code == libc::EPIPE && flags & libc::MSG_NOSIGNAL == 0 {
-            self.process.raise(self.n.pid, libc::SIGPIPE);
+            self.task.raise(libc::SIGPIPE);
         }
         Ok(())
-    }
-}
-
-/// The calling process: the launcher duplicates the descriptors a call
-/// names through it (the access process_vm_readv already has).
-struct Process {
-    tgid: i32,
-    pidfd: OwnedFd,
-}
-
-impl Process {
-    fn open(pid: u32) -> io::Result<Self> {
-        let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
-        let tgid = status
-            .lines()
-            .find_map(|line| line.strip_prefix("Tgid:"))
-            .and_then(|id| id.trim().parse::<i32>().ok())
-            .ok_or_else(|| io::Error::from_raw_os_error(libc::ESRCH))?;
-        // SAFETY: pidfd_open takes two integers and passes no pointer.
-        let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, tgid, 0) };
-        if pidfd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: a successful pidfd_open returned a new descriptor, owned
-        // once.
-        let pidfd = unsafe { OwnedFd::from_raw_fd(pidfd as RawFd) };
-        Ok(Self { tgid, pidfd })
-    }
-
-    /// The process's descriptor `fd`, duplicated into the launcher.
-    fn duplicate(&self, fd: RawFd) -> io::Result<OwnedFd> {
-        // SAFETY: pidfd_getfd takes three integers and passes no pointer.
-        let copy = unsafe { libc::syscall(libc::SYS_pidfd_getfd, self.pidfd.as_raw_fd(), fd, 0) };
-        if copy < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: a successful pidfd_getfd returned a new close-on-exec
-        // descriptor, owned once.
-        Ok(unsafe { OwnedFd::from_raw_fd(copy as RawFd) })
-    }
-
-    /// Raises `signal` in the process's task `tid`.
-    fn raise(&self, tid: u32, signal: i32) {
-        // SAFETY: tgkill takes three integers and passes no pointer.
-        unsafe {
-            libc::syscall(libc::SYS_tgkill, self.tgid, tid as i32, signal);
-        }
     }
 }
 
@@ -742,24 +618,26 @@ fn identity(fd: &impl AsRawFd) -> io::Result<(u64, u64, libc::mode_t)> {
     }
 }
 
-/// The socket's type: SOCK_STREAM, SOCK_DGRAM or SOCK_SEQPACKET.
-fn socket_type(socket: &OwnedFd) -> io::Result<i32> {
-    let mut kind = 0_i32;
+/// The socket's integer option `option` at SOL_SOCKET: its type
+/// (SO_TYPE), or the size of its send or receive buffer (SO_SNDBUF,
+/// SO_RCVBUF).
+fn socket_option(socket: &OwnedFd, option: i32) -> io::Result<i32> {
+    let mut value = 0_i32;
     let mut size = size_of::<i32>() as libc::socklen_t;
     // SAFETY: getsockopt writes one int into live storage of its size.
     let read = unsafe {
         libc::getsockopt(
             socket.as_raw_fd(),
             libc::SOL_SOCKET,
-            libc::SO_TYPE,
-            (&mut kind as *mut i32).cast(),
+            option,
+            (&mut value as *mut i32).cast(),
             &mut size,
         )
     };
     if read < 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(kind)
+    Ok(value)
 }
 
 fn poisoned() -> io::Error {

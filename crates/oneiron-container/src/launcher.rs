@@ -34,7 +34,10 @@ struct Bridge {
     /// holds it alone, so no socket the supervisor is still creating can be
     /// missing from a scan (FIX 5978).
     sockets: RwLock<()>,
-    /// Whether a socket was brokered: until then there is nothing to scan.
+    /// Whether a socket was brokered: until then there is nothing to scan,
+    /// and a native send continues to the kernel. It is set before the
+    /// supervisor completes the guest's socket() (FIX 6185), so no send of
+    /// that socket finds it unset.
     brokered: AtomicBool,
     /// The brokered sockets queued on native Unix sockets: each inventory
     /// reports them as held (FIX 6185).
@@ -517,6 +520,7 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         if matches!(family, libc::AF_UNIX | libc::AF_NETLINK) {
             return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
         }
+        bridge.brokered.store(true, Ordering::Release);
         let reply = {
             let _shared = bridge
                 .sockets
@@ -534,7 +538,6 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         };
         // The successful socket syscall was completed by the host's ADDFD.
         return if reply.errno == 0 {
-            bridge.brokered.store(true, Ordering::Release);
             Ok(())
         } else {
             linux::respond(fd, n.id, 0, reply.errno, 0)
