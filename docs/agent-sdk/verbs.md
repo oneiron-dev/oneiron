@@ -350,6 +350,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
+- `vault.members.invitation_code`
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
