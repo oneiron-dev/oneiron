@@ -1,5 +1,6 @@
 //! The same credential-gated file projection for point reads and indexed
 //! hydration. A non-owner never receives a lifted value through raw bytes.
+use super::coreutils_text::{checkpoint, copy_text_parts};
 use super::model::{GRAPH_FS_PROJECTION_VERSION, GraphFsFile, GraphFsResolver};
 use crate::batch::secret_scan::ContainerReader;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -145,11 +146,14 @@ impl GraphFsResolver<'_, '_> {
         bytes.extend_from_slice(b"\nlearned_at\t");
         bytes.extend_from_slice(learned_at.to_string().as_bytes());
         bytes.extend_from_slice(b"\nbody_msgpack_hex\t");
-        bytes.extend_from_slice(bytes_to_hex_lower(&body).as_bytes());
+        for chunk in body.chunks(self.options.page_byte_cap.max(1)) {
+            checkpoint(reader)?;
+            bytes.extend_from_slice(bytes_to_hex_lower(chunk).as_bytes());
+        }
         bytes.push(b'\n');
         Ok(ScopedReadResult {
             value: Some(GraphFsFile {
-                path: path.to_owned(),
+                path: copy_text_parts(&[path], reader, self.options.page_byte_cap)?,
                 mount: self.options.mount,
                 bytes,
             }),
