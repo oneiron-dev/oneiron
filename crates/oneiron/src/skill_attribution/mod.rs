@@ -57,6 +57,7 @@ pub(crate) use judge_supersession::{
     judgment_displaced_in_txn, judgment_judge_in_txn,
 };
 mod contribution;
+pub(crate) use contribution::record_contribution_pair_in_txn;
 pub use contribution::{
     ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
     contributed, contribution_check_candidates_after, record_contribution_pair,

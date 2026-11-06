@@ -68,6 +68,10 @@ pub(crate) use self::replay_capsule::{
     step_replay_capsules_in_txn, store_fork_execution, store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
+    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
+    owner_pair_in_txn, put_owner_pair,
+};
+pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
