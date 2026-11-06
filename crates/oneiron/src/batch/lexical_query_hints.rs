@@ -479,21 +479,29 @@ pub(super) struct DeletedLexicalQueryHints {
     pub(super) deleted: Vec<(EntityId, Vec<EntityId>)>,
 }
 
-pub(super) fn delete_lexical_query_hint_claims_for_target(
-    write: &crate::secret_custody::CustodyWrite<'_>,
-    wtxn: &mut RwTxn<'_>,
-    target: &EntityId,
-    keep: &HashSet<EntityId>,
-) -> Result<DeletedLexicalQueryHints> {
-    let store = write.store;
-    let mut result = DeletedLexicalQueryHints::default();
-    let mut pending_targets = VecDeque::from([*target]);
-    let mut visited_targets = HashSet::new();
-    while let Some(current_target) = pending_targets.pop_front() {
-        if !visited_targets.insert(current_target) {
-            continue;
-        }
-        for hint_id in lexical_query_hint_claim_ids_for_target(store, wtxn, &current_target)? {
+struct PreparedLexicalQueryHintClaims {
+    ids: Vec<EntityId>,
+}
+
+impl PreparedLexicalQueryHintClaims {
+    fn prepare(store: &Store, wtxn: &mut RwTxn<'_>, target: &EntityId) -> Result<Self> {
+        Ok(Self {
+            ids: lexical_query_hint_claim_ids_for_target(store, wtxn, target)?,
+        })
+    }
+
+    // This owns one scan at the current native frontier, not permission to
+    // delete those ids from a different transaction or after another write.
+    fn apply(
+        self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
+        wtxn: &mut RwTxn<'_>,
+        target: &EntityId,
+        keep: &HashSet<EntityId>,
+        pending_targets: &mut VecDeque<EntityId>,
+        result: &mut DeletedLexicalQueryHints,
+    ) -> Result<()> {
+        for hint_id in self.ids {
             if hint_id == *target {
                 continue;
             }
@@ -510,6 +518,32 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
             result.had_vector |= had_vector;
             result.had_graph_mutation |= had_graph_mutation;
         }
+        Ok(())
+    }
+}
+
+pub(super) fn delete_lexical_query_hint_claims_for_target(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    target: &EntityId,
+    keep: &HashSet<EntityId>,
+) -> Result<DeletedLexicalQueryHints> {
+    let store = write.store;
+    let mut result = DeletedLexicalQueryHints::default();
+    let mut pending_targets = VecDeque::from([*target]);
+    let mut visited_targets = HashSet::new();
+    while let Some(current_target) = pending_targets.pop_front() {
+        if !visited_targets.insert(current_target) {
+            continue;
+        }
+        PreparedLexicalQueryHintClaims::prepare(store, wtxn, &current_target)?.apply(
+            write,
+            wtxn,
+            target,
+            keep,
+            &mut pending_targets,
+            &mut result,
+        )?;
     }
     Ok(result)
 }
