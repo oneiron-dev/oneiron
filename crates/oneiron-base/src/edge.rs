@@ -18,6 +18,8 @@ mod kind;
 pub mod kind_tables;
 pub use self::kind::EdgeKind;
 
+const CODE_SYMBOL_RELATION_WEIGHT: f32 = 1.0;
+
 impl EdgeKind {
     /// Returns the default STORED edge weight for this edge kind — the
     /// LITERAL `pprWeight` column of the contract's `edgeKinds` table
@@ -36,6 +38,7 @@ impl EdgeKind {
     /// the weight stored on their edges.
     pub const fn default_weight(self) -> Option<f32> {
         match self {
+            Self::Calls | Self::Imports | Self::Refs => Some(CODE_SYMBOL_RELATION_WEIGHT),
             Self::BelongsTo => Some(1.0),
             Self::ParticipatesIn => Some(1.0),
             Self::Attached => Some(0.8),
@@ -174,7 +177,10 @@ pub fn edge_value_layout_for_kind(kind: EdgeKind, has_provenance_claim: bool) ->
         | EdgeKind::AddressedTo
         | EdgeKind::RepliesTo
         | EdgeKind::Regenerates
-        | EdgeKind::SameAs => EdgeValueLayout::Structural,
+        | EdgeKind::SameAs
+        | EdgeKind::Calls
+        | EdgeKind::Imports
+        | EdgeKind::Refs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports
