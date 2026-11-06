@@ -26548,6 +26548,262 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/drafter/corpus.rs",
+     "purpose": "The drafter's corpus (FIX 14973, FIX 12569 slice 2; DRAFTER-DATA = A, DRAFTER-ACTIVATE = A + revert): the…",
+     "surface": {
+      "crate-vis": 18,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DrafterSealing"
+     ],
+     "path": "src/drafter/custody.rs",
+     "purpose": "A drafter version's sealed artifact (FIX 12569, after the inference snapshot's publication and retirement…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrafterListRequest",
+      "DrafterRevertReceipt",
+      "DrafterRevertRequest",
+      "DrafterStatus",
+      "DrafterStatusRequest",
+      "DrafterVersionView"
+     ],
+     "path": "src/drafter/doors.rs",
+     "purpose": "The drafter's doors (FIX 12569): the owner lists versions, reads the status and reverts a target to a…",
+     "surface": {
+      "fn": 5,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/drafter/erase.rs",
+     "purpose": "A source's erase reaches every drafter version trained on it (FIX 12569, DRAFTER-DATA = A: \"erasing a source…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "src",
+     "notable": [
+      "DrafterActivation",
+      "DrafterActivationRefusal",
+      "DrafterActivationServing",
+      "DrafterArmIdentity",
+      "DrafterCaseMeasure",
+      "DrafterEvaluation",
+      "DrafterEvaluationArm",
+      "DrafterEvaluationCorpus",
+      "DrafterEvaluationDecision",
+      "DrafterEvaluationEvidence",
+      "DrafterEvaluationPlan",
+      "DrafterFailReason",
+      "DrafterHeldOutCase",
+      "DrafterMeasurementSchedule",
+      "DrafterObservation",
+      "DrafterObservationVerdict",
+      "DrafterObserveOutcome",
+      "DrafterQualificationRule",
+      "DrafterSampleRule",
+      "DrafterSlowdownRule",
+      "DrafterSpeedComparison",
+      "DrafterSpeedMetric",
+      "DrafterSpeedOutcome",
+      "DrafterSpeedStatistic",
+      "DrafterSpeedVerdict",
+      "DrafterTieEvidence",
+      "DrafterTokenIdentity",
+      "DrafterUnknownReason"
+     ],
+     "path": "src/drafter/evaluation.rs",
+     "purpose": "The drafter evaluator's engine half (FIX 14975, FIX 12569 slice 5; DRAFTER-ACTIVATE = A + revert: \"a new…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 13,
+      "fn": 13,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/drafter/load_set.rs",
+     "purpose": "A drafter version's load set on disk (FIX 14976): its sealed files, and the plaintext a serving host…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/drafter/mod.rs",
+     "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "re-export": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrafterNightStep"
+     ],
+     "path": "src/drafter/nightly.rs",
+     "purpose": "The nightly drafter retrain, `coach.drafter_retrain` (FIX 12569, I5-DRAFTER = A): Coach-owned work on the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DrafterPolicy",
+      "DrafterPolicySetRequest"
+     ],
+     "path": "src/drafter/policy.rs",
+     "purpose": "The owner's drafter policy (I5-DRAFTER = A, DRAFTER-DATA = A): on by default with an off switch, the worlds…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DigestDrafter",
+      "DigestDrafterItem"
+     ],
+     "path": "src/drafter/report.rs",
+     "purpose": "The drafter line of the morning report (FIX 14977; DRAFTER-ACTIVATE = A + revert: \"any slowdown rolls it…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrafterLoadSetPlan",
+      "DrafterMaterialized",
+      "DrafterServedView",
+      "DrafterServingPlan",
+      "DrafterServingPlans",
+      "DrafterServingRuntime",
+      "DrafterUnservedReason"
+     ],
+     "path": "src/drafter/serving.rs",
+     "purpose": "The drafter serving binding (FIX 14976, FIX 12569 slice 4): the engine's side of a host that serves each…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrafterExampleKept",
+      "DrafterTrafficReply"
+     ],
+     "path": "src/drafter/traffic.rs",
+     "purpose": "The drafter's training traffic (FIX 15128, FIX 15129; DRAFTER-DATA = A): one example per answered chat…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrafterParentLoadSet",
+      "DrafterTrainingDispatch",
+      "DrafterTrainingJob",
+      "DrafterTrainingMark"
+     ],
+     "path": "src/drafter/training.rs",
+     "purpose": "A drafter version's training job (FIX 14974, FIX 12569 slice 3): the engine's side of the host that trains a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrafterActor",
+      "DrafterArtifact",
+      "DrafterArtifactFile",
+      "DrafterBinding",
+      "DrafterBindingChange",
+      "DrafterCorpus",
+      "DrafterCorpusFile",
+      "DrafterDependencies",
+      "DrafterEvent",
+      "DrafterEventKind",
+      "DrafterHoldReason",
+      "DrafterRecipe",
+      "DrafterRetrainOutcome",
+      "DrafterRollbackReason",
+      "DrafterServing",
+      "DrafterSkipReason",
+      "DrafterTarget",
+      "DrafterTraining",
+      "DrafterTrainingFailure",
+      "DrafterVersion",
+      "DrafterVersionState"
+     ],
+     "path": "src/drafter/types.rs",
+     "purpose": "The drafter's records (FIX 12569): its versions, the binding of each target, its events and the owner's policy",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 9,
+      "fn": 1,
+      "struct": 12
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -29584,7 +29840,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 33,
+      "const": 34,
       "crate-vis": 13,
       "fn": 11,
       "re-export": 6,
@@ -43261,7 +43517,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 207,
+      "mod": 208,
       "re-export": 103
      }
     },
@@ -48948,7 +49204,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 4
      }
     },
@@ -71713,6 +71969,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/drafter_custody.rs",
+     "purpose": "A vault's own drafter artifact keys (FIX 12569): each sealed artifact of one drafter version is sealed under…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AgentWakePolicy",
       "DreamerWakePolicy"
@@ -73034,7 +73300,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 158,
+      "crate-vis": 159,
       "mod": 68,
       "re-export": 87
      }
@@ -84344,7 +84610,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1288
+      "fn": 1294
      }
     },
     {
@@ -90569,6 +90835,13 @@
      "layout": "dir",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
+    "drafter": {
+     "files": 14,
+     "impl_vault": true,
+     "largest_src_bucket": "XL",
+     "layout": "dir",
+     "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
+    },
     "dreamer_consolidation": {
      "files": 158,
      "impl_vault": true,
@@ -91431,7 +91704,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 383,
+     "files": 384,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91669,9 +91942,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 163,
+   "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6449,
+   "source_files": 6464,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106226,7 +106499,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1256
+      "fn": 1262
      }
     },
     {
@@ -108019,7 +108292,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1257
+      "fn": 1263
      }
     },
     {
@@ -110071,6 +110344,36 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/drafter.rs",
+     "purpose": "The host's drafter trainer (FIX 14974, FIX 12569 slice 3): the `coach.drafter_retrain` arm, which trains the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/drafter/job.rs",
+     "purpose": "One drafter training job's private directory (FIX 14974): what the host stages for the worker, the receipt…",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/drafter/process.rs",
+     "purpose": "The drafter trainer's process (FIX 14974), run the way the training pack's connector runs its worker…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -110994,6 +111297,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/ai/chat/drafter_example.rs",
+     "purpose": "The drafter's training example of each answered reply (FIX 15128, FIX 15129): every live chat turn's and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/ai/chat/hook_ask.rs",
      "purpose": "The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in…",
      "surface": {
@@ -111015,9 +111328,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/model_call.rs",
-     "purpose": "Model-call evidence from the actual answering leg, independent of delivery",
+     "purpose": "Model-call evidence from the actual answering leg, independent of delivery, and the drafter's view of the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -113062,6 +113375,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/drafter_doors.rs",
+     "purpose": "The drafter host doors (FIX 12569): the owner's `vault.drafters.list`, `.status`, `.policy.set` and…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/embedding_space_doors.rs",
      "purpose": "The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`",
      "surface": {
@@ -113375,7 +113698,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 167
+      "crate-vis": 168
      }
     },
     {
@@ -119770,6 +120093,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DrafterTrainerSettings"
+     ],
+     "path": "src/config/models/drafter_trainers.rs",
+     "purpose": "`[models.training.drafters]`: the trainer connectors that train a vault's own drafter (FIX 14974)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/models/drafting.rs",
      "purpose": "`[models.dreamer.drafting]`: the role and the budget a stewardship follow-up draft is written on (FIX 1002)",
@@ -119843,7 +120179,7 @@
       "enum": 2,
       "fn": 2,
       "mod": 2,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 7
      }
     },
@@ -119935,7 +120271,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -124312,6 +124648,39 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/drafter_evaluator.rs",
+     "purpose": "The vault's own drafter, evaluated, activated and rolled back (FIX 14975, FIX 12569 slice 5): the host half…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultLoadSet"
+     ],
+     "path": "src/models/drafter_serving.rs",
+     "purpose": "The vault's own drafter, served (FIX 14976, FIX 12569 slice 4): the host seam that serves each target's…",
+     "surface": {
+      "crate-vis": 12,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/drafter_training.rs",
+     "purpose": "A drafter training job's place on its target's device work line (FIX 14974)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -124784,9 +125153,9 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 22,
       "fn": 1,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 2
      }
     },
@@ -124801,13 +125170,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/evaluator_ops.rs",
+     "purpose": "The evaluator op on the house EXL3 worker's socket (FIX 14975), host side: `eval.generate`…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -125228,7 +125607,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 39
      }
     },
     {
@@ -125239,6 +125618,26 @@
      "purpose": "The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/drafter_binding.rs",
+     "purpose": "The drafter serving binding's half inside the worker host (FIX 14976): which managed worker serves a drafter…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/evaluator_incarnation.rs",
+     "purpose": "The drafter evaluator's incarnations (FIX 14975): managed EXL3 workers launched from the vault's own serving…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -125262,7 +125661,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host/launcher.rs",
@@ -128671,14 +129070,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 113,
+     "files": 116,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 689,
+     "files": 691,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128762,7 +129161,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -129035,7 +129434,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 121,
+     "files": 127,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129196,9 +129595,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 51,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1620,
+   "source_files": 1632,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -132816,7 +133215,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Deadline",
@@ -138724,7 +139123,7 @@
     "housekeeping_schedule": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Housekeeping sweep identifiers, cadence policy, and pass budget values"
     },
@@ -141243,6 +141642,30 @@
       "DraftGapKind",
       "DraftInput",
       "DraftOutput",
+      "DrafterActor",
+      "DrafterBinding",
+      "DrafterBindingChange",
+      "DrafterEvent",
+      "DrafterEventKind",
+      "DrafterHoldReason",
+      "DrafterListRequest",
+      "DrafterPolicy",
+      "DrafterPolicySetRequest",
+      "DrafterRecipe",
+      "DrafterRetrainOutcome",
+      "DrafterRevertReceipt",
+      "DrafterRevertRequest",
+      "DrafterRollbackReason",
+      "DrafterServedView",
+      "DrafterServing",
+      "DrafterSkipReason",
+      "DrafterStatus",
+      "DrafterStatusRequest",
+      "DrafterTarget",
+      "DrafterTrainingFailure",
+      "DrafterUnservedReason",
+      "DrafterVersionState",
+      "DrafterVersionView",
       "DrainAck",
       "DreamerAttemptRef",
       "DreamerAttemptView",
@@ -144462,8 +144885,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1125,
-      "struct": 3421
+      "enum": 1135,
+      "struct": 3435
      }
     },
     {
