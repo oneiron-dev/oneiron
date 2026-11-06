@@ -199,10 +199,9 @@ impl GitWireOperation {
             Self::WriteBlob | Self::WriteTree | Self::WriteCommit | Self::WriteTag => {
                 GitWireEffectClass::ObjectWrite
             }
-            Self::NotesAdd
-            | Self::ImportFetch
-            | Self::ExpireReflogs
-            | Self::CollectObjects => GitWireEffectClass::ObjectAndRefWrite,
+            Self::NotesAdd | Self::ImportFetch | Self::ExpireReflogs | Self::CollectObjects => {
+                GitWireEffectClass::ObjectAndRefWrite
+            }
             Self::PublishRefs => GitWireEffectClass::RefWrite,
             Self::ConfigureCheckout
             | Self::WorktreeAdd

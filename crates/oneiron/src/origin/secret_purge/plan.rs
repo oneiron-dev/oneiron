@@ -62,9 +62,13 @@ impl Vault {
                 tips.push(oid.clone());
             }
         }
-        let copy = crate::origin::secret_projection::graph_objects::copy_repo_projection_objects(
-            self, &wire, &repo, &repo, &tips, &facts, store, None,
-        )?;
+        // The masked copy masks what custody knows now too (FIX 8966 part
+        // 3), as every masked copy does.
+        let copy = self.with_known_values(|known| {
+            crate::origin::secret_projection::graph_objects::copy_repo_projection_objects(
+                self, &wire, &repo, &repo, &tips, &facts, store, None, known,
+            )
+        })?;
         let mut marks: BTreeSet<EntityId> = BTreeSet::new();
         let mut purged: BTreeSet<String> = BTreeSet::new();
         let mut rewritten: u64 = 0;
@@ -149,9 +153,9 @@ pub(super) fn open_purge_store(
     repo: &str,
 ) -> Result<(EntityId, GitWireRepo)> {
     let dir = origin_repo_dir(vault, repo)?;
-    vault.published_origin_repo(wire, &dir)?.ok_or_else(|| {
-        Error::Refused("the served repository publishes no ref to purge".to_owned())
-    })
+    vault
+        .published_origin_repo(wire, &dir)?
+        .ok_or_else(|| Error::Refused("the served repository publishes no ref to purge".to_owned()))
 }
 
 /// The readable marks a purge masks: every one, or exactly the ones

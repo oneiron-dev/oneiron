@@ -75,7 +75,9 @@ pub use self::config::{
 pub use self::env::GitWireProcessEnv;
 pub use self::failure::{GitWireFailure, GitWireFailureClass, GitWireResult};
 pub use self::ids::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef};
-pub use self::import_fetch::{FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome};
+pub use self::import_fetch::{
+    FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome, SOURCE_RELAY_TICKET_HEADER,
+};
 pub use self::mirror_plan_push::{GitPlanPushReport, GitPlanRef, GitPlanRefOutcome};
 pub use self::mirror_plan_review::{
     GitPeeledRef, GitRefEnd, GitRefTag, GitRetainedPeeledRef, GitRetainedRefTag,
@@ -103,6 +105,9 @@ pub(crate) use self::repo::repository_hold_for_test;
 pub(crate) use self::repo::{
     lock_repository, lock_repository_within, try_lock_repository,
     try_lock_repository_for_maintenance,
+};
+pub(crate) use oneiron_store::git_wire::path_text::{
+    git_path_bytes, git_path_os_str, git_path_string, git_path_text, git_path_text_of_os,
 };
 
 // The flat git_wire.rs module used to provide these names to the sibling test

@@ -128,11 +128,13 @@ impl Vault {
                 // this call: a rejected re-drive is no move.
                 outcome.failure = match receipt.wire_rejection() {
                     Some(reason) => Some(rejection_text(reason).to_owned()),
-                    None if receipt.record.status != OriginPublicationStatus::Published => {
-                        Some(receipt.record.failure.clone().unwrap_or_else(|| {
-                            "the publication refused the move".to_owned()
-                        }))
-                    }
+                    None if receipt.record.status != OriginPublicationStatus::Published => Some(
+                        receipt
+                            .record
+                            .failure
+                            .clone()
+                            .unwrap_or_else(|| "the publication refused the move".to_owned()),
+                    ),
                     None => None,
                 };
             }
@@ -160,7 +162,9 @@ impl Vault {
                 // is driven again while the physical root stands; the
                 // zero-owner check keeps it for any other owner.
                 let held = self.origin_keep_owner_held(store, &oid, kind, &root.owner)?;
-                let rooted = wire.read_ref(&repo, &origin_keep_ref_name(&oid)?)?.is_some();
+                let rooted = wire
+                    .read_ref(&repo, &origin_keep_ref_name(&oid)?)?
+                    .is_some();
                 if held || rooted {
                     self.unpin_origin_object(&wire, &repo, kind, &root.owner, &oid, now)?;
                 }
@@ -193,9 +197,12 @@ impl Vault {
     }
 
     /// Whether the masked copy of each pending ref's object, rewritten now
-    /// under the plan's marks alone, is still the copy the plan froze. The
+    /// under the plan's marks and the values custody knows now (FIX 8966
+    /// part 3, as the plan's copy was), is still the copy the plan froze. The
     /// copy is written again, so a copy collected since the plan stands
-    /// again. `false` when a planned mark is no longer readable.
+    /// again. `false` when a planned mark is no longer readable, or when a
+    /// value custody learned since the plan changes the copy: the owner plans
+    /// again.
     fn copies_stand(
         &self,
         wire: &GitWire<'_>,
@@ -207,17 +214,22 @@ impl Vault {
             return Ok(false);
         };
         let tips: Vec<GitOid> = pending.iter().map(|step| step.old.clone()).collect();
-        let copy = copy_repo_projection_objects(
-            self,
-            wire,
-            repo,
-            repo,
-            &tips,
-            &facts,
-            frozen.store,
-            None,
-        )?;
-        Ok(pending.iter().all(|step| copy.copy_of(&step.old) == step.new))
+        let copy = self.with_known_values(|known| {
+            copy_repo_projection_objects(
+                self,
+                wire,
+                repo,
+                repo,
+                &tips,
+                &facts,
+                frozen.store,
+                None,
+                known,
+            )
+        })?;
+        Ok(pending
+            .iter()
+            .all(|step| copy.copy_of(&step.old) == step.new))
     }
 
     /// Moves one planned ref to its copy: the intent, written while the
@@ -297,7 +309,9 @@ impl Vault {
             receipt_value(&receipt),
         )?;
         put_purge_claim(self, owner, frozen.owner, receipt.receipt, &body, now)?;
-        Ok(self.repo_secret_purge_receipt(frozen.plan)?.unwrap_or(receipt))
+        Ok(self
+            .repo_secret_purge_receipt(frozen.plan)?
+            .unwrap_or(receipt))
     }
 }
 

@@ -668,6 +668,10 @@ fn step(value: &Value) -> Result<MemberStep> {
             entry: small(entry)?,
         }),
         [kind] if kind.as_str() == Some("xz") => Ok(MemberStep::Xz),
+        // FIX 11575: a 7z entry.
+        [kind, entry] if kind.as_str() == Some("seven_zip") => Ok(MemberStep::SevenZip {
+            entry: small(entry)?,
+        }),
         [kind, object, generation] if kind.as_str() == Some("pdf_stream") => {
             Ok(MemberStep::PdfStream {
                 object: small(object)?,

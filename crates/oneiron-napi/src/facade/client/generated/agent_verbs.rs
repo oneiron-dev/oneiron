@@ -1893,6 +1893,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_proactivity_digest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.proactivity.digest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_inbox_lens(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.inbox.lens", js_json(input))
@@ -5073,6 +5082,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.secrets.code_run_lifts", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_code_run_room_lifts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.code_run_room_lifts", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

@@ -200,6 +200,8 @@ fn settle_connector_calls(
         tracing::warn!(%error, "paced verb calls wait for the next pass");
     }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
+    // FIX 11023: the remote tasks providers accepted sends as, polled.
+    crate::connector_call_host::poll_remote_tasks(server);
     let pending = vault.pending_connector_calls()?;
     backoffs
         .0
@@ -320,10 +322,4 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     settled
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use crate::runtime::wall_clock_ms as now_ms;
