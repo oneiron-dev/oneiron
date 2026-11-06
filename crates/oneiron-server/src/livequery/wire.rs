@@ -294,6 +294,43 @@ pub(super) fn stamped_frame<T: Serialize>(
     Ok(bytes)
 }
 
+/// Adds optional promotion metadata only in the spare bytes of the existing
+/// last result chunk. The packed result and every receipt field stay unchanged.
+pub(super) fn promotion_copy_frame(frame: &[u8], copies: &[u8]) -> Option<Vec<u8>> {
+    if frame.first() != Some(&TAG_RPC) || copies.is_empty() {
+        return None;
+    }
+    let mut envelope: rmpv::Value = rmp_serde::from_slice(&frame[1..]).ok()?;
+    let rmpv::Value::Map(fields) = &mut envelope else {
+        return None;
+    };
+    let field = |name| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    if field("type")?.as_str() != Some("rpc.res") || field("last")?.as_bool() != Some(true) {
+        return None;
+    }
+    let rmpv::Value::Binary(payload) = field("payload")? else {
+        return None;
+    };
+    let spare = CHUNK_BYTES.checked_sub(payload.len())?;
+    fields.push((
+        rmpv::Value::from("home_claim_copies"),
+        rmpv::Value::Binary(copies.to_vec()),
+    ));
+    let mut extended = vec![TAG_RPC];
+    extended.extend(packed(&envelope).ok()?);
+    if extended.len().saturating_sub(frame.len()) > spare
+        || extended.len() - 1 > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    {
+        return None;
+    }
+    Some(extended)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RpcBody {

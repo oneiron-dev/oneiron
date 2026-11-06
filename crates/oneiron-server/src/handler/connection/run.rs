@@ -118,7 +118,7 @@ pub(super) async fn handle_connection(
     }
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
-    let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let (direct_tx, mut direct_rx) = super::super::direct::DirectSender::channel();
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
@@ -392,7 +392,7 @@ pub(super) async fn handle_connection(
                 continue;
             }
             ConnEvent::Direct(direct_msg) => {
-                let Some(data) = direct_msg else {
+                let Some(super::super::direct::DirectFrame { data, promotion }) = direct_msg else {
                     break;
                 };
                 let machine_only_reply = app_connection.is_own_machine_reply(&data);
@@ -489,7 +489,18 @@ pub(super) async fn handle_connection(
                     transport.app_jti = None;
                     continue;
                 }
-                let sent = send_released(&server, &conn_state, &mut transport, data).await;
+                let sent = if let Some(promotion) = promotion {
+                    super::super::window_pads::send_promotion_released(
+                        &server,
+                        &conn_state,
+                        &mut transport,
+                        data,
+                        promotion,
+                    )
+                    .await
+                } else {
+                    send_released(&server, &conn_state, &mut transport, data).await
+                };
                 transport.app_jti = None;
                 if !sent {
                     break;

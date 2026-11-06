@@ -52,6 +52,8 @@ struct ReplyEnvelope {
     seq: u64,
     last: bool,
     payload: rmpv::Value,
+    #[serde(default)]
+    home_claim_copies: Option<rmpv::Value>,
 }
 
 struct RpcChunks {
@@ -110,9 +112,14 @@ pub(super) struct ResidenceRpc {
     /// Opened as this machine alone, with no actor bound (FIX 6458): its
     /// replies come after the sync frames the home opens each socket with.
     unbound: bool,
+    promotion_copies: Vec<u8>,
 }
 
 impl ResidenceRpc {
+    pub(super) fn promotion_copies(&self) -> &[u8] {
+        &self.promotion_copies
+    }
+
     /// `None` is only a transport outage. A refused bind or malformed reply
     /// is an error, not permission to label the search local-only.
     pub(super) async fn connect(
@@ -157,6 +164,7 @@ impl ResidenceRpc {
                         home,
                         address,
                         unbound: false,
+                        promotion_copies: Vec::new(),
                     }));
                 }
                 Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,
@@ -189,6 +197,7 @@ impl ResidenceRpc {
                 home,
                 address,
                 unbound: true,
+                promotion_copies: Vec::new(),
             }))
     }
 
@@ -293,6 +302,7 @@ impl ResidenceRpc {
         params: Value,
         machine: Option<(&crate::Vault, crate::EntityId)>,
     ) -> Result<Result<Value, HomeRefused>, TransportError> {
+        self.promotion_copies.clear();
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).ok_or_else(refused)?;
         let request = RequestEnvelope {
@@ -399,9 +409,13 @@ impl ResidenceRpc {
             received += chunk.len();
             chunks.push(chunk);
             if reply.last {
-                return rmp_serde::from_read(RpcChunks::new(chunks))
-                    .map(Ok)
-                    .map_err(|_| refused());
+                let value = rmp_serde::from_read(RpcChunks::new(chunks)).map_err(|_| refused())?;
+                if method == "residence.promote"
+                    && let Some(rmpv::Value::Binary(bytes)) = reply.home_claim_copies
+                {
+                    self.promotion_copies = bytes;
+                }
+                return Ok(Ok(value));
             }
         }
         Err(refused())

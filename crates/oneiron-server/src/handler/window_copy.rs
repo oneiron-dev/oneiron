@@ -97,7 +97,7 @@ pub(super) fn acknowledge_held(
     update: &[u8],
     doc_vv: &VersionVector,
     receipt: &WindowPadReceipt,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
 ) -> Result<ControlFlow<()>, ProtocolError> {
     if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
         let frame = if residence_seq.is_some() {

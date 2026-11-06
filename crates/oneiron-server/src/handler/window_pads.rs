@@ -196,3 +196,33 @@ pub(super) fn send_released<'t>(
         true
     }
 }
+
+/// Uses the same release and stop doors, retaining native optional promotion
+/// evidence until this socket's final synchronous send.
+pub(super) fn send_promotion_released<'t>(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    transport: &'t mut StoppingTransport,
+    frame: Vec<u8>,
+    promotion: super::direct::PromotionFrame,
+) -> impl Future<Output = bool> + use<'t> {
+    let frames = release(server, conn_state, frame);
+    let vault = std::sync::Arc::clone(server.vault());
+    let peer = conn_state.peer_machine(server.vault());
+    async move {
+        let mut promotion = Some(promotion);
+        for frame in frames {
+            let sent = if let Some(promotion) = promotion.take() {
+                transport
+                    .send_rpc_promotion(frame, promotion, &vault, peer)
+                    .await
+            } else {
+                transport.send_binary(frame).await
+            };
+            if !sent {
+                return false;
+            }
+        }
+        true
+    }
+}

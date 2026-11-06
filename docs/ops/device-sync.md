@@ -293,3 +293,27 @@ when a dropped copy is rebuilt lazily. The scope comes from the socket's live
 bound authentication, not from a second stored scope registry. Grant, selector,
 pact, peer-world and facet-read checks still run. Grant-only engine callers keep
 their existing behavior; this adds no setting, expiry or transfer limit.
+
+## Optional CLAIM copies on promotion replies
+
+A `residence.promote` reply keeps its original JSON result, snapshot envelope,
+chunk sequence and call receipt. Optional home CLAIM copies travel in a separate
+`home_claim_copies` MessagePack binary field on the last `rpc.res` frame, only
+when they fit in the unused space of that result chunk. They never add a frame
+or change the result digest.
+
+The existing socket reply queue keeps the native source and recipient evidence,
+not just serialized copy bytes. After the socket is ready, owed control frames
+have drained, and its credential is rechecked, the sender rechecks every selected
+copy against that socket's vault and proved machine. A changed source, key,
+release row, required reply, or a preparation/encoding/space miss drops only the
+optional metadata. The required response still follows its original release,
+revocation, engine-stop and send behavior.
+
+The receiving machine collects and decodes the required result in the original
+order. It opens optional metadata against the promotion envelope's original
+window and payload before translating the snapshot for import. These copies use
+the existing native copy scope for validation and import. They do not authenticate
+the raw snapshot or grant a read. Missing or malformed optional copy data leaves
+the ordinary import intact. This does not provide immediate vector fill when no
+eligible native home copy is available.

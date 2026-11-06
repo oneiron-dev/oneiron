@@ -48,6 +48,24 @@ impl StoppingTransport {
             .unwrap_or(false)
     }
 
+    /// The optional promotion shares this socket's original engine-stop wait.
+    #[must_use]
+    pub(super) async fn send_rpc_promotion(
+        &mut self,
+        data: Vec<u8>,
+        promotion: super::direct::PromotionFrame,
+        vault: &oneiron::Vault,
+        peer: oneiron::authority::PeerMachine,
+    ) -> bool {
+        self.stop
+            .until(
+                self.transport
+                    .send_rpc_promotion(data, promotion, vault, peer),
+            )
+            .await
+            .unwrap_or(false)
+    }
+
     /// [`GuardedTransport::send_unguarded_close_frame`], given up once the
     /// engine stops.
     pub(super) async fn send_unguarded_close_frame(&mut self, close: WsMessage) {

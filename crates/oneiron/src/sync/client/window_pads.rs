@@ -648,6 +648,7 @@ impl SyncClient {
         encoded: &str,
         held: Option<&LoroDoc>,
         from: PeerMachine,
+        rpc_copies: &[u8],
     ) -> Result<Option<(Vec<u8>, HomeClaimCopies)>, TransportError> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
@@ -687,13 +688,18 @@ impl SyncClient {
         {
             tracing::warn!(%window, "promoted window pads not installed; its pad rows land them");
         }
-        let copies = self.vault.prepare_relayed_home_claim_copy_bytes(
+        let delivery = crate::embed::home_vectors::HomeClaimDelivery {
+            window: window.as_str(),
+            payload: &envelope.payload,
+        };
+        let mut copies = self.vault.prepare_relayed_home_claim_copy_bytes(
             from,
-            &crate::embed::home_vectors::HomeClaimDelivery {
-                window: window.as_str(),
-                payload: &envelope.payload,
-            },
+            &delivery,
             &envelope.home_claim_copies,
+        );
+        copies.extend(
+            self.vault
+                .prepare_relayed_home_claim_copy_bytes(from, &delivery, rpc_copies),
         );
         // FIX 7608 slice 4: copy rows land on the sources this device holds.
         self.admitted_whole_payload(window, envelope.payload)

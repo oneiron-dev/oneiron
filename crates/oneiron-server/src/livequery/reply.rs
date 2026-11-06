@@ -48,7 +48,7 @@ impl PreparedRpcReply {
     pub(super) fn send(
         self,
         conn: u32,
-        direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        direct_tx: &crate::handler::DirectSender,
     ) -> Result<(), ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         let Self {

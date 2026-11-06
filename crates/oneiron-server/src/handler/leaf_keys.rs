@@ -23,7 +23,6 @@ use oneiron::sync::transport::{
     decode_leaf_key_answer, decode_leaf_key_failure, decode_leaf_key_request,
     encode_leaf_key_answer, encode_leaf_key_failure, encode_leaf_key_request, leaf_key_request_hex,
 };
-use tokio::sync::mpsc::UnboundedSender;
 
 use super::conn_state::ConnState;
 use crate::protocol::{self, ProtocolError};
@@ -49,7 +48,7 @@ const LEAF_KEY_COMPLETED_MAX: usize = 65_536;
 
 /// A socket's direct lane: what it is sent there leaves through its guarded
 /// door, as every reply does.
-type Lane = UnboundedSender<Vec<u8>>;
+type Lane = crate::handler::DirectSender;
 
 /// The relay's state on the home: each live socket of a proven machine and
 /// the requests between them. In memory only.

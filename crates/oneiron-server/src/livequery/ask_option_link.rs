@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use oneiron::authority::PeerMachine;
 use oneiron::sync::ask_option_link::AskOptionLinkRequest;
-use tokio::sync::mpsc::UnboundedSender;
 
 use super::{AppError, RpcCall, RpcReply, RpcRequest};
 use crate::protocol::ProtocolError;
@@ -29,7 +28,7 @@ impl AskOptionLinkCall {
     pub(crate) async fn answer(
         self,
         server: Arc<SyncServer>,
-        direct: UnboundedSender<Vec<u8>>,
+        direct: crate::handler::DirectSender,
     ) -> Result<(), ProtocolError> {
         let Self {
             peer,

@@ -26,7 +26,7 @@ pub(super) async fn handle_sync_message(
     server: &SyncServer,
     conn_id: u32,
     msg: SyncMessage,
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     conn_state: &mut ConnState,
     session_gone: &(dyn Fn() -> bool + Sync),
 ) -> Result<ControlFlow<()>, ProtocolError> {
@@ -302,7 +302,7 @@ impl VerbCall {
     pub(super) async fn answer(
         self,
         server: std::sync::Arc<SyncServer>,
-        direct_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+        direct_tx: crate::handler::DirectSender,
     ) -> Result<(), ProtocolError> {
         let (auth, request, context, conn) = match self {
             Self::Verb {
@@ -327,7 +327,7 @@ pub(super) fn handle_app_message_with_connection(
     state: &mut ConnState,
     tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     connection: Option<&mut crate::livequery::connection::Connection>,
 ) -> Result<Option<VerbCall>, ProtocolError> {
     let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
@@ -386,7 +386,7 @@ fn answer_app_message(
     state: &mut ConnState,
     tag: u8,
     payload: &[u8],
-    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    direct_tx: &crate::handler::DirectSender,
     connection: Option<&mut crate::livequery::connection::Connection>,
 ) -> Result<Option<VerbCall>, ProtocolError> {
     if state.protocol_version < protocol::APP_TIER_PROTOCOL_VERSION_VERSION {
@@ -562,6 +562,12 @@ fn answer_app_message(
                         state.residence_work.attachment(),
                     ),
                 )));
+            }
+            if request.method == "residence.promote" {
+                crate::livequery::residence_promote_to(
+                    server, &bound, peer, request, conn, direct_tx,
+                )?;
+                return Ok(None);
             }
             if matches!(
                 request.method.as_str(),

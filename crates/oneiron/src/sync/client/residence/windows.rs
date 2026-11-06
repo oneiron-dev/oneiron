@@ -147,8 +147,13 @@ impl SyncClient {
         // Its envelope's pads reach custody first (FIX 7107), once its
         // isolated check over the empty window it opens into admits it (FIX
         // 10474).
-        let Some((snapshot, copies)) =
-            self.promotion_snapshot(window, &reply.snapshot, None, rpc.home)?
+        let Some((snapshot, copies)) = self.promotion_snapshot(
+            window,
+            &reply.snapshot,
+            None,
+            rpc.home,
+            rpc.promotion_copies(),
+        )?
         else {
             return Err(refused());
         };
@@ -322,8 +327,13 @@ impl SyncClient {
         // Its envelope's pads reach custody first (FIX 7107), once its
         // isolated check over the window it merges into admits it (FIX 10474);
         // a refused one is refused as a failed retain is.
-        let Some((snapshot, copies)) =
-            self.promotion_snapshot(window, &reply.snapshot, Some(&loaded.doc), rpc.home)?
+        let Some((snapshot, copies)) = self.promotion_snapshot(
+            window,
+            &reply.snapshot,
+            Some(&loaded.doc),
+            rpc.home,
+            rpc.promotion_copies(),
+        )?
         else {
             self.mark_retain_refused(window)?;
             return Ok(false);

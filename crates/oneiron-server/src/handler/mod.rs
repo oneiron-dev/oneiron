@@ -11,6 +11,7 @@ mod app_tier;
 mod asset_bodies;
 mod conn_state;
 mod connection;
+mod direct;
 mod document_copy;
 mod documents;
 mod ephemeral;
@@ -39,6 +40,7 @@ pub(crate) mod window_row_tests;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;
+pub(crate) use self::direct::{DirectSender, PromotionFrame};
 pub(crate) use self::leaf_keys::LeafKeyRelay;
 pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
 pub(crate) use self::selector_scope::selector_grant_scope;
