@@ -153,6 +153,13 @@ impl AgentDispatcher<'_> {
         approved_parent: Option<&PreparedParentContext>,
         task: Option<&WorkflowTaskBinding>,
     ) -> Result<AgentDispatchOutcome> {
+        // FIX 7766: a workflow is funded by its spend root's grant or, run
+        // unmetered under an agent, by its parent's; it names none itself.
+        if spawn.funding_grant_ref.is_some() {
+            return Err(invalid(
+                "a workflow is funded by its spend root's or its parent's grant and names none",
+            ));
+        }
         let (definition, mut intent) = self.workflow_intent(txn, &input, &spawn)?;
         // FIX 9180: every leaf seats one agent, noted before any check below.
         for step in &definition.steps {
@@ -277,7 +284,10 @@ impl AgentDispatcher<'_> {
             )?
             .record;
         // The wrapper is not an agent: its settlement calibrates nothing.
-        launch.reserve_in_txn(self, txn, root.id, None, input.now)?;
+        // A pinned wrapper scope is the run's root: it keeps the funding its
+        // leaves inherited from the parent (FIX 7766).
+        let funding = first.as_ref().and_then(|frozen| frozen.funding.clone());
+        launch.reserve_in_txn(self, txn, root.id, None, funding, input.now)?;
         // FIX 6637: each frozen step as the side-row wall keeps it, before the
         // record is saved and before its first leaf is enqueued, so the first
         // leaf runs the input the record froze. A step the wall leaves keeps
@@ -425,7 +435,14 @@ impl AgentDispatcher<'_> {
         else {
             return Err(invalid("new workflow step unexpectedly deduped"));
         };
-        launch.reserve_in_txn(self, txn, status.attempt.id, Some(requested), now)?;
+        launch.reserve_in_txn(
+            self,
+            txn,
+            status.attempt.id,
+            Some(requested),
+            frozen.funding.clone(),
+            now,
+        )?;
         let index: Vec<_> = frozen
             .definition
             .skills

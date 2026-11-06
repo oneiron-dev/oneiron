@@ -287,6 +287,7 @@ impl RunInner {
                     &request.envelope.purpose,
                 )),
                 attribution: self.attribution.clone(),
+                funding: self.funding.clone(),
                 seat: request
                     .envelope
                     .tier
@@ -395,6 +396,7 @@ impl RunInner {
                     .as_ref()
                     .map(|bound| super::super::routing::purpose_key(&bound.purpose)),
                 attribution: self.attribution.clone(),
+                funding: self.funding.clone(),
                 seat: None,
                 rules_enforced,
                 source_rows: origin.sources,
@@ -437,7 +439,10 @@ impl RunInner {
     /// A refused fresh allocation only matters once the live one cannot fit
     /// the call. A run with no host account has no allocation to draw on, so
     /// it admits no host-paid call. A memory-work run takes no hold at all
-    /// (FIX 11003): memory work never needs funds.
+    /// (FIX 11003): memory work never needs funds. A run an owner's agent
+    /// Grant funds (FIX 7766) holds only on a live allocation the host named
+    /// that Grant's wallet for, checked before anything is reserved; any
+    /// other is refused, never used as a default.
     fn hold_allocation(
         &self,
         payer: Payer,
@@ -461,6 +466,7 @@ impl RunInner {
             reference,
             unit,
             meter,
+            wallet,
         }) = live
         else {
             return Err(match refused {
@@ -468,6 +474,14 @@ impl RunInner {
                 None => RunDenied::NoAllocation,
             });
         };
+        if let Some(funding) = &self.funding
+            && wallet.as_ref() != Some(&funding.wallet_ref)
+        {
+            return Err(RunDenied::AllocationWalletMismatch {
+                expected: funding.wallet_ref.clone(),
+                live: wallet,
+            });
+        }
         let units = priced(native_units, native, &unit, rates)?;
         let lease = meter
             .admit_reserve(units)

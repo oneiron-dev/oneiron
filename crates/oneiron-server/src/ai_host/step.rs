@@ -43,7 +43,7 @@ use oneiron::{
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
-use super::payer_funding::{PayerFault, requires_payer, scope_funding};
+use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
@@ -759,9 +759,13 @@ impl StepRunner {
         // cannot bill holds the step on the owners' payer-needed ask: it
         // parks as this try (FIX 805), and once they say yes it bills the
         // vault. Nothing went out, so taken up it replays only what the
-        // earlier tries spent.
-        let payer = match scope_funding(vault, lease.as_ref(), payer_required) {
-            Ok(payer) => payer,
+        // earlier tries spent. Work an owner's agent Grant funds (FIX 7766)
+        // binds that Grant here too, its spend root's or its unmetered
+        // dispatch's: each host-paid call holds only on its wallet.
+        let funded = scope_run_funding(vault, lease.as_ref(), payer_required)
+            .and_then(|(payer, _)| Ok((payer, attempt_grant_funding(vault, attempt.id)?)));
+        let (payer, funding) = match funded {
+            Ok(funded) => funded,
             Err(fault) => {
                 let held = matches!(fault, PayerFault::Needed { .. });
                 if held && continuation.is_none() {
@@ -843,7 +847,7 @@ impl StepRunner {
         };
         let run = self
             .models
-            .funded_run(run_id, guard.clone(), payer)
+            .grant_funded_run(run_id, guard.clone(), payer, funding)
             .sourced(sources.clone());
         let run = run.with_work_context({
             let mut context = run.work_context();

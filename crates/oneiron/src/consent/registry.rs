@@ -77,8 +77,9 @@ pub struct ConsentRegistryRow {
 /// An owner's agent grant as the registry shows it (FIX 5628): the agent it
 /// names, the owner who granted it, its expiry (absent: it stands until
 /// revoked), the repo bounds he gave it (FIX 6894), the verb classes it
-/// names beside its exact verbs (FIX 8735) and whether its scope confers
-/// now. Its exact scope is the row's `scope`.
+/// names beside its exact verbs (FIX 8735), the host wallet its funded work
+/// draws on (FIX 7766) and whether its scope confers now. Its exact scope is
+/// the row's `scope`.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -98,6 +99,10 @@ pub struct ConsentRegistryAgentGrant {
     /// resolved when a door judges a verb; absent when it names none.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub verb_classes: std::collections::BTreeSet<String>,
+    /// The host wallet the owner named for the work the grant funds; absent
+    /// when it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<crate::federation::WalletRef>,
     /// Whether it confers now: unexpired, with `read` among its verbs (or
     /// admitted by a class it names) and no empty world, band, audience or
     /// sensitivity axis.
@@ -261,6 +266,7 @@ impl ConsentRegistryRow {
                 expires_at: grant.expires_at,
                 repo_bounds: grant.repo_bounds.clone(),
                 verb_classes: grant.verb_classes.clone(),
+                wallet_ref: grant.wallet_ref.clone(),
                 confers: grant.confers_with_classes_at(now, classes),
             },
             if standing.stands_at(now) {

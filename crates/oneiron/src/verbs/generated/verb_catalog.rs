@@ -11523,7 +11523,7 @@ impl AgentVerb {
                 "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."
             }
             Self::VaultBudgetsLeaseOpen => {
-                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
+                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."
             }
             Self::VaultBudgetsLease => {
                 "The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."
@@ -13539,7 +13539,7 @@ impl AgentVerb {
                 "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
             }
             Self::VaultAgentsGrantsMint => {
-                "The owner grants one named agent explicit verbs and verb classes in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."
+                "The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."
             }
             Self::VaultAgentsGrantsRevoke => {
                 "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."

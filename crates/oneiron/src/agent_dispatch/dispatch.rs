@@ -51,7 +51,57 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
             "spawn context cannot be encoded",
         ))
     })?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
+    let digest = blake3::hash(&bytes);
+    // FIX 7766: a root's funding Grant joins its intent only when it names
+    // one, so every spawn that names none keeps its digest.
+    Ok(match spawn.funding_grant_ref {
+        Some(grant) => blake3::Hasher::new()
+            .update(FUNDING_INTENT_DOMAIN)
+            .update(digest.as_bytes())
+            .update(grant.as_bytes())
+            .finalize()
+            .to_hex()
+            .to_string(),
+        None => digest.to_hex().to_string(),
+    })
+}
+
+/// Domain of a funded spawn's intent digest (FIX 7766).
+const FUNDING_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.funding_intent.v1";
+
+/// The owner's agent Grant a dispatch is funded by (FIX 7766, Engine 19:59
+/// W-B): the one an unmetered root names, validated in the dispatch writer
+/// (it grants the launched agent `target`), or the one its parent's input
+/// carries, inherited. A metered root and a child never name one: a metered
+/// root's funding is its spend root's, and a child's is its root's.
+fn dispatch_funding_in_txn(
+    dispatcher: &AgentDispatcher<'_>,
+    txn: &heed::RoTxn<'_>,
+    spawn: &AgentSpawnContext,
+    parent: Option<AttemptId>,
+    target: EntityId,
+) -> Result<Option<super::GrantSpendBinding>> {
+    match (spawn.funding_grant_ref, parent) {
+        (Some(_), Some(_)) => Err(super::widen_record::invalid(
+            "a child is funded by its root's grant and never names one",
+        )),
+        (Some(_), None) if spawn.spend.is_some() => Err(super::widen_record::invalid(
+            "a metered root is funded by its spend root's grant, named when that root opens",
+        )),
+        (Some(grant), None) => {
+            let funding = dispatcher.grant_funding_in_txn(txn, grant)?;
+            if funding.standing.grant.member_ref != target {
+                return Err(super::widen_record::invalid(
+                    "the funding grant cannot fund this launch: it grants another agent",
+                ));
+            }
+            Ok(Some(super::GrantSpendBinding::from_funding(&funding)))
+        }
+        (None, Some(parent)) => Ok(dispatcher
+            .parent_dispatch_input_in_txn(txn, parent)?
+            .and_then(|input| input.funding)),
+        (None, None) => Ok(None),
+    }
 }
 
 pub struct AgentDispatcher<'a> {
@@ -328,6 +378,7 @@ impl<'a> AgentDispatcher<'a> {
                     wtxn,
                     status.attempt.id,
                     Some(requested_ref),
+                    dispatch_input.funding.clone(),
                     input.now,
                 )?;
                 if let Some(case) = &dispatch_input.healer_case {
@@ -416,6 +467,8 @@ impl<'a> AgentDispatcher<'a> {
             self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
+        let funding =
+            dispatch_funding_in_txn(self, wtxn, &spawn, requested_parent, requested_target)?;
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
@@ -550,6 +603,7 @@ impl<'a> AgentDispatcher<'a> {
             // OF-541: carried as asked; `spawn_intent` above never reads it.
             direct_spawn,
             requester,
+            funding,
         })
     }
 

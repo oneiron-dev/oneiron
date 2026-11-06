@@ -19,7 +19,11 @@
 //! owner-agent door admits a verb a named class admits
 //! (`federation::AgentVerbClasses`). A mint names a nonempty exact verb set,
 //! a nonempty class set, or both; one without classes is a grant exactly as
-//! before.
+//! before. A mint may also name the host wallet the work the grant funds
+//! draws on (FIX 7766), stored on the grant and signed in the act; a launch
+//! that names the grant as its funding freezes that signed wallet on its
+//! spend root ([`Vault::funding_agent_grant_in_txn`]). A mint without one is
+//! a grant exactly as before.
 //!
 //! Mint and revoke land the owner's signed act ([`AgentGrantAct`]) and the
 //! grant row's Put or Delete in one write transaction. The vault's existing
@@ -68,6 +72,7 @@ const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this 
 const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than now";
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
+const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer and id";
 
 /// One owner's agent grant as its live row holds it.
 #[derive(Debug, Clone)]
@@ -98,6 +103,20 @@ pub(crate) struct AgentGrantMintOutcome {
     /// minting writer (FIX 8735).
     pub(crate) confers: bool,
 }
+
+/// An owner's agent grant a launch names as its funding (FIX 7766): its
+/// live row, the counted signed mint that named its wallet, and that wallet.
+#[derive(Debug, Clone)]
+pub(crate) struct FundingAgentGrant {
+    pub(crate) standing: AgentGrantStanding,
+    /// The authority entry of the owner's counted signed mint.
+    pub(crate) mint_act: crate::authority::AuthorityEntryHash,
+    /// The wallet the row and the signed mint both name.
+    pub(crate) wallet_ref: super::WalletRef,
+}
+
+/// Why a launch cannot draw on the agent grant it names as its funding.
+const FUNDING_REFUSED: &str = "the funding grant cannot fund this launch";
 
 /// What a revoke did. A repeat changed nothing and signed no act.
 #[derive(Debug, Clone, Copy)]
@@ -147,18 +166,21 @@ impl Vault {
     /// recorded scope; on a personal vault under the home's residence scope.
     /// `repo_bounds`, when he gives them, ride the grant and his signed act;
     /// so do `verb_classes`, the verb classes he names beside the exact
-    /// verbs (FIX 8735), resolved when a door judges a verb.
+    /// verbs (FIX 8735), resolved when a door judges a verb, and
+    /// `wallet_ref`, the host wallet the grant's funded work draws on (FIX
+    /// 7766).
     ///
     /// # Errors
     /// An owner refusal; `InvalidConfig` for a verb set and class set both
-    /// empty, a verb set over every verb, an invalid class name, a member
+    /// empty, a verb set over every verb, an invalid class name, a wallet
+    /// with an empty part, a member
     /// that is no live agent principal, an expiry already passed or repo
     /// bounds that break their grammar or name no repo of their PROJECT;
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
     /// cannot carry the owner's act.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the owner's one mint: his proof, surface, agent, scope, expiry, repo bounds and classes"
+        reason = "the owner's one mint: his proof, surface, agent, scope, expiry, repo bounds, classes and wallet"
     )]
     pub(crate) fn mint_agent_grant(
         &self,
@@ -169,6 +191,7 @@ impl Vault {
         expires_at: Option<u64>,
         repo_bounds: Option<RepoAccessBounds>,
         verb_classes: BTreeSet<String>,
+        wallet_ref: Option<super::WalletRef>,
     ) -> Result<AgentGrantMintOutcome> {
         self.with_write_txn_grouped(|txn| {
             let delegated_by = owner.revalidate_in_txn(self, txn)?;
@@ -185,6 +208,9 @@ impl Vault {
                 .all(|class| oneiron_authority::federation::verb_class_name_is_valid(class))
             {
                 return Err(Error::InvalidConfig(BAD_VERB_CLASS.into()));
+            }
+            if wallet_ref.as_ref().is_some_and(|wallet| !wallet.is_valid()) {
+                return Err(Error::InvalidConfig(BAD_WALLET.into()));
             }
             if authority_scope
                 .verbs
@@ -218,6 +244,7 @@ impl Vault {
                 kind: super::FederationGrantKind::Access,
                 git_push_bounds: None,
                 verb_classes,
+                wallet_ref,
             };
             // The owner's class rows, read once in this writer when the grant
             // names a class: repo bounds take `read` from a class as from its
@@ -246,6 +273,7 @@ impl Vault {
                     grant_kind: super::FederationGrantKind::Access,
                     git_push_bounds: None,
                     verb_classes: grant.verb_classes.clone(),
+                    wallet_ref: grant.wallet_ref.clone(),
                 },
             )?;
             self.apply_agent_grant_op_in_txn(
@@ -405,6 +433,105 @@ impl Vault {
             .membership_withdrew(grant, kind))
     }
 
+    /// The owner's agent grant `grant_ref` as a launch names it its funding
+    /// (FIX 7766, Engine 19:59 W-B), judged in the caller's writer at `now`
+    /// (Unix seconds): a live owner's Access agent grant that names a
+    /// wallet, unexpired and not withdrawn, whose delegating owner still
+    /// stands, with exactly one counted signed mint, which names the same
+    /// agent, owner and wallet as the live row, and no counted act that
+    /// withdrew it. The caller judges the principal and freezes the binding.
+    ///
+    /// # Errors
+    /// `InvalidConfig` when any of that fails: the launch never falls back
+    /// to an unbound or default wallet.
+    pub(crate) fn funding_agent_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+        now: u64,
+    ) -> Result<FundingAgentGrant> {
+        let refused = |why: &str| Error::InvalidConfig(format!("{FUNDING_REFUSED}: {why}"));
+        let standing = self
+            .agent_grants_in_txn(txn)?
+            .into_iter()
+            .find(|standing| standing.id == grant_ref)
+            .ok_or_else(|| refused("it names no live owner's agent grant"))?;
+        let Some(wallet_ref) = standing.grant.wallet_ref.clone() else {
+            return Err(refused("the grant names no wallet"));
+        };
+        if !standing.stands_at(now) {
+            return Err(refused("the grant has expired"));
+        }
+        if !crate::policy_model::owners_in_txn(self, txn)?.contains(&standing.delegated_by) {
+            return Err(refused("the owner who granted it no longer stands"));
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut mint: Option<(crate::authority::AuthorityEntryHash, AgentGrantActRecord)> = None;
+        for id in self
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
+        {
+            let id = id?;
+            let Some(row) = self.store.port_entity_record(txn, &id)? else {
+                continue;
+            };
+            if row.entity_type != ENTITY_TYPE_AUTHORITY_LOG || row.body.is_empty() {
+                continue;
+            }
+            let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
+                continue;
+            };
+            let names = match &entry.op {
+                AuthorityOp::AgentGrantAct(record) => record.grant == grant_ref,
+                AuthorityOp::SlipGrantRevoke { grant_ref: revoked } => *revoked == grant_ref,
+                AuthorityOp::MembershipExecution(record) => {
+                    record.withdrawn_grants.binary_search(&grant_ref).is_ok()
+                }
+                _ => false,
+            };
+            if !names {
+                continue;
+            }
+            let hash = authority_entry_hash(&entry)?;
+            if !fold.valid_entries.contains(&hash) {
+                continue;
+            }
+            match entry.op {
+                AuthorityOp::AgentGrantAct(record)
+                    if matches!(record.change, AgentGrantChange::Mint { .. }) =>
+                {
+                    if mint.replace((hash, record)).is_some() {
+                        return Err(refused("more than one counted signed mint names it"));
+                    }
+                }
+                _ => return Err(refused("a counted act withdrew it")),
+            }
+        }
+        let Some((mint_act, record)) = mint else {
+            return Err(refused("no counted signed mint names it"));
+        };
+        let AgentGrantChange::Mint {
+            member,
+            grant_kind: FederationGrantKind::Access,
+            wallet_ref: Some(signed_wallet),
+            ..
+        } = &record.change
+        else {
+            return Err(refused("its signed mint names no wallet"));
+        };
+        if *signed_wallet != wallet_ref
+            || *member != standing.grant.member_ref
+            || record.act.owner != standing.delegated_by
+        {
+            return Err(refused("its signed mint and its live row disagree"));
+        }
+        Ok(FundingAgentGrant {
+            standing,
+            mint_act,
+            wallet_ref,
+        })
+    }
+
     fn logged_owner_grants_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<LoggedOwnerGrants> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut grants = LoggedOwnerGrants::default();
@@ -525,6 +652,7 @@ impl Vault {
                     repo_bounds,
                     grant_kind: FederationGrantKind::Access,
                     verb_classes,
+                    wallet_ref,
                     ..
                 } = &record.change
                 else {
@@ -539,6 +667,7 @@ impl Vault {
                         expires_at: *expires_at,
                         repo_bounds: repo_bounds.clone(),
                         verb_classes: verb_classes.clone(),
+                        wallet_ref: wallet_ref.clone(),
                         confers: false,
                     },
                     crate::consent::ConsentGrantStatus::Revoked,

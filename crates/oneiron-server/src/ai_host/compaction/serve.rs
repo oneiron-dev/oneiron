@@ -347,7 +347,9 @@ impl ServedCompactionBackend {
                             PayerFault::Needed { .. } => {
                                 refused(CompactionSuppression::PayerNeeded, fault.to_string())
                             }
-                            PayerFault::Missing { .. } => turn(fault.to_string()),
+                            PayerFault::Missing { .. } | PayerFault::GrantWalletUnbound { .. } => {
+                                turn(fault.to_string())
+                            }
                         },
                     )?;
                 let guard = AgentDispatcher::new(&self.vault)

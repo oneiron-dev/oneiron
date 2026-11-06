@@ -19,6 +19,12 @@
 //! boundary for its subtree (FIX 9563): no more than its room is drawn
 //! through it, and the child's settlement is tallied there too, while only
 //! the open ancestor pays, so nothing is charged twice.
+//!
+//! A root may be funded by one of the owner's agent Grants that names a
+//! host wallet (FIX 7766, Engine 19:59 = A): chosen explicitly when the
+//! root opens, validated in that writer, and frozen on the root as its
+//! [`GrantSpendBinding`]. Children, retries, reservations and top-ups read
+//! it by the same root walk the payer's consent takes; none rebinds it.
 
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
@@ -29,8 +35,8 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use self::ancestry::{Host, ScopeWalk};
 use super::AgentDispatcher;
 use super::spend_record::{
-    ChildSpend, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId,
-    SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope,
+    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 use super::widen_record::invalid;
 
@@ -65,7 +71,7 @@ impl AgentDispatcher<'_> {
         shown: Option<MaximumShown>,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
-        self.open_root_in_txn(txn, launch, maximum, shown, None, now)
+        self.open_root_in_txn(txn, launch, maximum, shown, None, None, now)
     }
 
     /// [`Self::open_root_spend_scope`] for a tree a payer funds (OF-531):
@@ -100,9 +106,72 @@ impl AgentDispatcher<'_> {
         if !payer_binds_in_txn(self.vault, txn, &payer)? {
             return Err(invalid("the payer's consent is not bound to the payer").into());
         }
-        self.open_root_in_txn(txn, launch, maximum, shown, Some(payer), now)
+        self.open_root_in_txn(txn, launch, maximum, shown, Some(payer), None, now)
     }
 
+    /// Opens a root as [`Self::open_root_spend_scope_in_txn`] does, or for
+    /// `payer` as [`Self::open_root_spend_scope_for_payer_in_txn`] does,
+    /// funded by the owner's agent Grant `funding_grant_ref` (FIX 7766).
+    /// In this writer the Grant must be a live owner's Access agent Grant
+    /// that names a wallet, unexpired and not withdrawn, granted by
+    /// `principal` (the authenticated owner who opens the root), with one
+    /// counted signed mint that names the same agent, owner and wallet; the
+    /// root then freezes that binding. Re-opening the same root with the
+    /// same cap, payer and Grant returns it. Nothing falls back to an
+    /// unbound root or a default wallet.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a funded root states its launch, cap, showing, payer, Grant, principal and time"
+    )]
+    pub fn open_root_spend_scope_funded_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        launch: SpendScopeId,
+        maximum: DeclaredMaximum,
+        shown: Option<MaximumShown>,
+        payer: Option<SpendPayer>,
+        funding_grant_ref: EntityId,
+        principal: EntityId,
+        now: u64,
+    ) -> std::result::Result<SpendScope, SpendRefused> {
+        if let Some(payer) = &payer
+            && !payer_binds_in_txn(self.vault, txn, payer)?
+        {
+            return Err(invalid("the payer's consent is not bound to the payer").into());
+        }
+        let funding = self.grant_funding_in_txn(txn, funding_grant_ref)?;
+        if funding.standing.delegated_by != principal {
+            return Err(invalid(
+                "the funding grant cannot fund this launch: another owner granted it",
+            )
+            .into());
+        }
+        self.open_root_in_txn(
+            txn,
+            launch,
+            maximum,
+            shown,
+            payer,
+            Some(GrantSpendBinding::from_funding(&funding)),
+            now,
+        )
+    }
+
+    /// The owner's agent Grant `grant_ref` as a launch's funding names it,
+    /// judged in the caller's writer at the grant clock's time.
+    pub(super) fn grant_funding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+    ) -> Result<crate::federation::FundingAgentGrant> {
+        let now = self.vault.instant_in_txn(txn)?.secs();
+        self.vault.funding_agent_grant_in_txn(txn, grant_ref, now)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a root states its launch, cap, showing, payer, funding and time"
+    )]
     fn open_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -110,6 +179,7 @@ impl AgentDispatcher<'_> {
         maximum: DeclaredMaximum,
         shown: Option<MaximumShown>,
         payer: Option<SpendPayer>,
+        funding: Option<GrantSpendBinding>,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
         // The owner's start conditions are JobMaximum's; one rule, one place.
@@ -121,12 +191,14 @@ impl AgentDispatcher<'_> {
                 && existing.unit == maximum.unit
                 && existing.cap_units == maximum.units
                 && existing.payer == payer
+                && existing.funding == funding
             {
                 return Ok(existing);
             }
-            return Err(
-                invalid("the launch's spend scope exists with another cap or payer").into(),
-            );
+            return Err(invalid(
+                "the launch's spend scope exists with another cap, payer or funding grant",
+            )
+            .into());
         }
         let scope = SpendScope {
             scope: launch,
@@ -144,6 +216,7 @@ impl AgentDispatcher<'_> {
             calibration_sample: None,
             exploration_attempt: None,
             payer,
+            funding,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -282,13 +355,20 @@ impl AgentDispatcher<'_> {
             calibration_sample: None,
             exploration_attempt: None,
             payer: None,
+            funding: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
     }
 
     /// A launch's own hard scope outside any tree: the spawn pinned `budget`
-    /// and its parent spends unmetered. It narrows; it grants nothing.
+    /// and its parent spends unmetered. It narrows; it grants nothing. Work
+    /// an owner's agent Grant funds keeps that Grant's `funding` here (FIX
+    /// 7766): the pinned scope is its tree's root.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a pinned scope states its attempt, agent, unit, cap, funding and time"
+    )]
     pub(super) fn open_pinned_scope_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -296,6 +376,7 @@ impl AgentDispatcher<'_> {
         agent: Option<EntityId>,
         unit: crate::llm::run_admission::LeaseUnit,
         cap_units: u64,
+        funding: Option<GrantSpendBinding>,
         now: u64,
     ) -> Result<SpendScope> {
         let id = SpendScopeId::for_attempt(attempt);
@@ -318,6 +399,7 @@ impl AgentDispatcher<'_> {
             calibration_sample: None,
             exploration_attempt: None,
             payer: None,
+            funding,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -473,6 +555,42 @@ impl AgentDispatcher<'_> {
             .scope_with_root_in_txn(&txn, scope)?
             .ok_or_else(|| invalid("spend scope is missing"))?;
         Ok(root.payer.map(|payer| (root.scope, payer)))
+    }
+
+    /// The owner's agent Grant the root of `scope`'s tree is funded by (FIX
+    /// 7766), with that root's id: the wallet every host-paid call spending
+    /// under `scope` must draw on. `None` when the root carries none. A
+    /// missing scope or ancestor is an error, never an unbound tree.
+    pub fn root_funding(
+        &self,
+        scope: &SpendScopeId,
+    ) -> Result<Option<(SpendScopeId, GrantSpendBinding)>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (_, root) = self
+            .scope_with_root_in_txn(&txn, scope)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        Ok(root.funding.map(|funding| (root.scope, funding)))
+    }
+
+    /// The owner's agent Grant `attempt`'s work is funded by (FIX 7766): its
+    /// spend root's, when it spends under a scope whose root a Grant funds
+    /// (a retry's scope is the try it retries); else the one its durable
+    /// dispatch input carries, which an unmetered root froze and its
+    /// descendants inherited. `None` when no Grant funds it.
+    pub fn attempt_funding(&self, attempt: AttemptId) -> Result<Option<GrantSpendBinding>> {
+        let txn = self.vault.store.env.read_txn()?;
+        if let Some(scope) = self.scope_for_attempt_in_txn(&txn, attempt)? {
+            let (_, root) = self
+                .scope_with_root_in_txn(&txn, &scope)?
+                .ok_or_else(|| invalid("spend scope is missing"))?;
+            if root.funding.is_some() {
+                return Ok(root.funding);
+            }
+        }
+        Ok(crate::attempt_queue::AttemptQueue::new(self.vault)
+            .get_in_txn(&txn, attempt)?
+            .and_then(|record| super::codec::record_dispatch_input(&record))
+            .and_then(|input| input.funding))
     }
 
     /// The scope an attempt spends under. A retry spends under the scope of

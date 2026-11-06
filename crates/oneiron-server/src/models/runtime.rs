@@ -73,6 +73,28 @@ impl ModelRuntime {
         )
     }
 
+    /// [`Self::funded_run`] for work an owner's agent Grant funds (FIX
+    /// 7766): each host-paid call holds only on a live allocation of the
+    /// wallet `funding` names, which the host read before the run began.
+    /// `None` is [`Self::funded_run`]'s run.
+    #[must_use]
+    pub fn grant_funded_run(
+        &self,
+        run: impl Into<String>,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+        funding: Option<oneiron::agent_dispatch::GrantSpendBinding>,
+    ) -> RunAdmission {
+        raw::grant_funded_run(
+            run,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+            payer,
+            funding,
+        )
+    }
+
     /// [`Self::undeclared_run`] for a free-time item's calls (FIX 4453): the
     /// run carries `attribution`, which the engine stamped before it began,
     /// beside this runtime's receipts and host account. No room pays for it.

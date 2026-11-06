@@ -976,7 +976,7 @@ class Oneiron:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
         def open(self, spec: Facade.OpenSpendLeaseRequest) -> Facade.SpendLeaseView:
-            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."""
+            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."""
         def top_up(self, spec: Facade.TopUpSpendLeaseRequest) -> Facade.SpendLeaseView:
             """The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."""
     class _VaultBudgetsHoldVerbs:
@@ -2836,7 +2836,7 @@ class Oneiron:
             """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
     class _VaultAgentsGrantsVerbs:
         def mint(self, spec: Facade.AgentGrantMintRequest) -> Facade.AgentGrantMinted:
-            """The owner grants one named agent explicit verbs and verb classes in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
+            """The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
         def revoke(self, spec: Facade.AgentGrantRevokeRequest) -> Facade.AgentGrantRevoked:
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
     class _VaultAgentsVerbClassesVerbs:
