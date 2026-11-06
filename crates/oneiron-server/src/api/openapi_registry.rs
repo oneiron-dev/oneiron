@@ -165,6 +165,7 @@ use utoipa::OpenApi;
         super::phone_voice::events,
         super::phone_voice::ack,
         super::phone_voice::usage,
+        super::phone_voice::tool,
         super::phone_voice::end,
         super::phone_voice::close,
         get_core_surface_event,

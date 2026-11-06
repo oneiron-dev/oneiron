@@ -139,6 +139,46 @@ pub(crate) async fn ai_voice_tool(
     if let Err(error) = session.require_tool_context() {
         return (Err(error), Some(Vec::new()));
     }
+    voice_tool(server, auth, caller, invocation, input, session, false).await
+}
+
+/// The phone session supplies the proved receiving agent, never a caller label.
+pub(crate) async fn phone_voice_tool(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    invocation: Option<InvocationId>,
+    input: LiveVoiceToolRequest,
+) -> MaybeListed<ActAnswer<LiveVoiceToolReply>> {
+    let session = match server.live_voice.get_phone(auth, &input.session_ref) {
+        Ok(session) => session,
+        Err(error) => return (Err(error), Some(Vec::new())),
+    };
+    let agent = match session.require_phone_tool_context() {
+        Ok(agent) => agent,
+        Err(error) => return (Err(error), Some(Vec::new())),
+    };
+    voice_tool(
+        server,
+        auth,
+        (agent, EdgeActorClass::Agent),
+        invocation,
+        input,
+        session,
+        true,
+    )
+    .await
+}
+
+async fn voice_tool(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveVoiceToolRequest,
+    session: Arc<crate::voice_host::PublicSession>,
+    phone: bool,
+) -> MaybeListed<ActAnswer<LiveVoiceToolReply>> {
+    let tool_session = Arc::clone(&session);
     let (answer, mut listed) = credential_listing(
         server,
         auth,
@@ -148,6 +188,11 @@ pub(crate) async fn ai_voice_tool(
             let memory = match invocation {
                 Some(invocation) => memory.with_invocation(invocation),
                 None => memory,
+            };
+            let memory = if phone {
+                tool_session.within_phone_tool_memory(memory)?
+            } else {
+                memory
             };
             super::connector_call_doors::connector_call_listing_as(server, &memory, input.call)
         },

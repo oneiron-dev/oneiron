@@ -277,6 +277,7 @@ The same credential then uses these POST routes with the existing typed voice re
 | `/phone-voice/events` | `LiveVoiceEventsRequest` | `LiveVoiceEvents` |
 | `/phone-voice/ack` | `LiveVoiceAckRequest` | `LiveVoiceProcessed` |
 | `/phone-voice/usage` | `LiveVoiceUsageRequest` | `LiveVoiceUsage` |
+| `/phone-voice/tool` | `LiveVoiceToolRequest` | `ActAnswer<LiveVoiceToolReply>` |
 | `/phone-voice/end` | `LiveVoiceSessionRequest` | `LiveVoiceProcessed` |
 | `/phone-voice/close` | `LiveVoiceSessionRequest` | `LiveVoiceProcessed` |
 
@@ -289,14 +290,21 @@ HTTP reply cache, so a cached response cannot substitute for current credential 
 checks. Deferred request-body reading and the shared voice queue remain unchanged.
 
 The existing owner `ai.voice.*` preflights and doors remain owner-only. Ordinary start
-still passes `None`, including its working room/roster behavior. This transport does not
-add a phone tool-context endpoint: the existing owner-only tool-context condition remains
-unchanged. A future phone connector context must use the actual receiving-agent reader
-and source accounting, not bypass that condition or use unrestricted connector memory.
-The seven phone-session operations are registered in the HTTP OpenAPI document with
+still passes `None`, including its working room/roster behavior. The separate phone tool
+route requires an idle phone session and uses its native receiving agent as the connector
+caller. It conjoins the original phone key onto the same credential memory that carries
+the read collector, invocation, locality and host origin. It neither substitutes an owner
+nor creates a connector grant. The connector's existing grant checks and destination
+narrowing remain unchanged. Delivered results and their actual listed rows enter the
+shared voice brain before its next utterance; unknown picked rows remain unknown.
+Phone event pages still withhold tool-context labels and check prepared output sources.
+This is not proof of complete historical, derived or connector source accounting.
+
+The eight phone-session operations are registered in the HTTP OpenAPI document with
 JSON payloads; the concrete native voice DTOs still parse and serialize them. Typed SDK
-publication, external telephony integration and runtime answering proof remain partial. No number is provisioned, no audio or transcript is persisted by metadata intake,
-and these source changes do not prove the complete anonymous-call lifecycle.
+publication, external telephony integration and runtime answering proof remain partial.
+No number is provisioned, no audio or transcript is persisted by metadata intake, and
+these source changes do not prove the complete anonymous-call lifecycle.
 
 ## Completion boundaries
 
