@@ -8,7 +8,7 @@ use crate::memory::MemoryResult;
 use super::{ConnectorCallStatus, ConnectorSchemaReply, encode};
 
 pub(super) fn schema(mut output: ConnectorSchemaReply) -> MemoryResult<Value> {
-    let input_schema = output.input_schema.take();
+    let input_schema = output.input_schema.as_mut().map(Value::take);
     let mut encoded = encode(output)?;
     if let Some(input_schema) = input_schema {
         encoded["input_schema"] = input_schema;

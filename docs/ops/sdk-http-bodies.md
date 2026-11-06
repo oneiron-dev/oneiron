@@ -103,3 +103,13 @@ structured/error data, and each awaiting-input question's requested schema.
 The native tags, finite fields, omissions, required nulls and item order stay
 unchanged. This does not change connector admission, source stamps, native
 producers, hooks or the separate UniFFI result conversions.
+
+
+### Core conversation write receipts
+
+`vault.conversations.create` and `vault.conversations.turns.create` move the
+returned native receipt's stored body around the original whole-result codec.
+The required `body` stays present, including null. The native writer still
+selects the id, entity type, learned time and stored body, including a TURN's
+announcement normalization. Its writes, authorization, input and hooks do not
+change. The existing UniFFI receipt codec is separate and unchanged.

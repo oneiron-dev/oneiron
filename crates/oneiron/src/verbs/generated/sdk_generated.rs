@@ -26091,9 +26091,11 @@ pub fn invoke(
             encode(vault_esign_signing_signature(memory, decode(value)?)?)
         }
         "vault.esign.seal.get" => encode(vault_esign_seal_get(memory, decode(value)?)?),
-        "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
+        "vault.conversations.create" => {
+            core_write_output::entity(vault_conversations_create(memory, decode(value)?)?)
+        }
         "vault.conversations.turns.create" => {
-            encode(vault_conversations_turns_create(memory, decode(value)?)?)
+            core_write_output::entity(vault_conversations_turns_create(memory, decode(value)?)?)
         }
         "vault.conversations.records.append" => {
             encode(vault_conversations_records_append(memory, decode(value)?)?)

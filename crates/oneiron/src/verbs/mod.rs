@@ -21,6 +21,7 @@ mod connector_slate;
 mod connector_slate_revision;
 mod connector_witness_read_grant;
 mod coreference;
+mod core_write_output;
 mod courtesy_delete;
 mod credential;
 mod custody_drain;
