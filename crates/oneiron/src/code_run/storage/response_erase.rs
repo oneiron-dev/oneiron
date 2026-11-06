@@ -2,8 +2,9 @@
 //! (FIX 5718, KEY STORE = A): the replay rows (a run's own and its write
 //! receipts', bridge outcomes and output previews) and the bodies of the
 //! outputs that hold reply content. A run's reply bodies are the outputs its
-//! record lists and each body its own descriptors hold at a code-run output
-//! path that holds reply content, such as a raw put's (FIX 7365).
+//! record lists and, once that record shows the run can append no more,
+//! each body its own descriptors hold at a code-run output path that holds
+//! reply content, such as a raw put's (FIX 7365).
 //!
 //! The actor scrub only releases: each record keeps what its run did and
 //! loses what it was answered ([`super::replay_bodies::erase_replies`]), and
@@ -47,7 +48,7 @@ use super::response_owners::{
 };
 use super::spawn_erase::fence_spawn_targets_in_txn;
 use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
-use crate::engine_executor::holds_reply_content;
+use crate::engine_executor::{holds_reply_content, resumed_output_wait, terminal_output_seq};
 use crate::provenance::body::{owned_bodies_in_txn, owned_body_in_txn, release_body_in_txn};
 use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
@@ -361,25 +362,35 @@ fn reply_occurrences(record: &CodeRunReplayRecord) -> Vec<Occurrence> {
 /// reply body.
 const CAPSULE_BODY_PATH_PREFIX: &str = "replay/";
 
-/// [`reply_occurrences`], then each reply body `record`'s run holds that
-/// the record does not list (FIX 7365): a descriptor the run owns whose
-/// code-run output path holds reply content, such as a raw put's
+/// [`reply_occurrences`], then, only once `record` shows that its run can
+/// append no more ([`run_output_closed`]), each reply body the run holds
+/// that the record does not list (FIX 7365): a descriptor the run owns
+/// whose code-run output path holds reply content, such as a raw put's
 /// observation, once by its owner and occurrence, its handle its held
 /// digest's. A descriptor with no such path, one whose occurrence that path
 /// does not derive, and one that holds no bytes name none. The run's
 /// control bodies, its fallback-speech marker among them, and its capsule
 /// bodies ([`CAPSULE_BODY_PATH_PREFIX`]) stay.
+///
+/// A live run's unlisted descriptors are skipped: it publishes some bodies
+/// before its bridge call and record write, a team start's receipt among
+/// them, and a release in that interval would leave the record a receipt
+/// with no body. Its later record write meets the erase in its own writer
+/// ([`fence_replay_in_txn`]), and the run's release takes the rest.
 fn run_reply_occurrences_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &CodeRunReplayRecord,
 ) -> Result<Vec<Occurrence>> {
+    let mut held = reply_occurrences(record);
+    if !run_output_closed(record) {
+        return Ok(held);
+    }
     let run = record.run_id;
     let mut listed = BTreeSet::new();
     for output in &record.outputs {
         listed.insert(ResultOccurrence::owned(run, &output.path)?.id());
     }
-    let mut held = reply_occurrences(record);
     for body in owned_bodies_in_txn(store, txn, &run)? {
         let (Some(origin), Some(bytes)) = (&body.code_run_output, body.state.held()) else {
             continue;
@@ -394,6 +405,26 @@ fn run_reply_occurrences_in_txn(
         held.push((run, origin.path.clone(), body_handle(&bytes.blake3)));
     }
     Ok(held)
+}
+
+/// Whether `record` shows that its run can append no more output (FIX
+/// 7365): the record lists a terminal marker, and the latest one by step is
+/// not a Waiting marker the run resumed from, which the resumed reply at
+/// that step shows. Only the listed markers count: a run with none, or one
+/// that went on past its latest, may still be writing.
+fn run_output_closed(record: &CodeRunReplayRecord) -> bool {
+    let Some(step) = record
+        .outputs
+        .iter()
+        .filter_map(|output| terminal_output_seq(&output.path))
+        .max()
+    else {
+        return false;
+    };
+    !record
+        .outputs
+        .iter()
+        .any(|output| resumed_output_wait(&output.path).is_some_and(|(seq, _)| seq == step))
 }
 
 /// Releases each of `record`'s reply occurrences
