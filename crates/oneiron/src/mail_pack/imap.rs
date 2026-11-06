@@ -1500,7 +1500,14 @@ impl ImapMailWire<'_> {
         let kept = if naming == open.naming {
             None
         } else {
-            self.kept_digest(open.source, provider_id)?
+            // A message named in another naming is found here only by its
+            // kept whole-message digest. With none kept it cannot be located,
+            // which is no evidence that it is gone: refused, never read as
+            // deleted at the provider.
+            Some(
+                self.kept_digest(open.source, provider_id)?
+                    .ok_or_else(|| refused("imap_message_not_locatable"))?,
+            )
         };
         let mut best = None;
         for batch in uids.chunks(HIT_BATCH) {
