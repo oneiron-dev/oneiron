@@ -204,6 +204,12 @@ impl HostSelfDispatcher<'_> {
         self.reader_child.as_ref()
     }
 
+    /// The live cutoff the bound scoped child's runner bound (FIX 8233), if
+    /// it bound one. The child's guest reads check it at each step.
+    pub(crate) fn scoped_call_control(&self) -> Option<&ScopedCallControl> {
+        self.reader_child.as_ref()?.control.as_ref()
+    }
+
     /// Whether the bound reader child's job is still active at the
     /// generation it was claimed at: a child its cutoff settled, or one
     /// claimed again since, reads nothing more. A scoped child (FIX 7507)
