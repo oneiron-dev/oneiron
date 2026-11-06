@@ -11,7 +11,7 @@ use crate::{Error, Result};
 /// This is not a grant check: `selected` must come from the final member's
 /// native selection on the staged writer. No existing sync door uses this
 /// fresh-projection schema.
-pub(super) fn check_projection_history(update: &[u8], selected: &LoroDoc) -> Result<()> {
+pub(in crate::sync) fn check_projection_history(update: &[u8], selected: &LoroDoc) -> Result<()> {
     let decode = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "shared replica projection",

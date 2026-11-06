@@ -352,6 +352,8 @@ pub enum AgentVerb {
     VaultMembersRemove,
     VaultMembersLeave,
     VaultMembersInvitations,
+    VaultMembersReplicaManifest,
+    VaultMembersReplicaWindow,
     VaultMembersAccept,
     VaultMembersAcceptWithCredential,
     VaultMembersDecline,
@@ -1641,6 +1643,8 @@ impl AgentVerb {
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
         Self::VaultMembersInvitations,
+        Self::VaultMembersReplicaManifest,
+        Self::VaultMembersReplicaWindow,
         Self::VaultMembersAccept,
         Self::VaultMembersAcceptWithCredential,
         Self::VaultMembersDecline,
@@ -2935,6 +2939,8 @@ impl AgentVerb {
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
             Self::VaultMembersInvitations => "vault.members.invitations",
+            Self::VaultMembersReplicaManifest => "vault.members.replica_manifest",
+            Self::VaultMembersReplicaWindow => "vault.members.replica_window",
             Self::VaultMembersAccept => "vault.members.accept",
             Self::VaultMembersAcceptWithCredential => "vault.members.accept_with_credential",
             Self::VaultMembersDecline => "vault.members.decline",
@@ -4258,6 +4264,8 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
+                | Self::VaultMembersReplicaManifest
+                | Self::VaultMembersReplicaWindow
                 | Self::VaultMembersAccept
                 | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
@@ -5576,6 +5584,8 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
+                | Self::VaultMembersReplicaManifest
+                | Self::VaultMembersReplicaWindow
                 | Self::VaultMembersAccept
                 | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
@@ -7044,6 +7054,8 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
+                | Self::VaultMembersReplicaManifest
+                | Self::VaultMembersReplicaWindow
                 | Self::VaultMembersAccept
                 | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
@@ -9065,6 +9077,8 @@ impl AgentVerb {
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
+            Self::VaultMembersReplicaManifest => &["spec"],
+            Self::VaultMembersReplicaWindow => &["spec"],
             Self::VaultMembersAccept => &["spec"],
             Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
@@ -10355,6 +10369,8 @@ impl AgentVerb {
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
+            Self::VaultMembersReplicaManifest => &["spec"],
+            Self::VaultMembersReplicaWindow => &["spec"],
             Self::VaultMembersAccept => &["spec"],
             Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
@@ -12327,6 +12343,12 @@ impl AgentVerb {
             }
             Self::VaultMembersInvitations => {
                 "The caller's own pending invitations into a shared vault."
+            }
+            Self::VaultMembersReplicaManifest => {
+                "The accepted member fetches admitted original signed history and the native replica window keys."
+            }
+            Self::VaultMembersReplicaWindow => {
+                "The accepted member fetches one native window under its current logical shared-vault grant."
             }
             Self::VaultMembersAccept => {
                 "The invitee accepts their own invitation and joins the shared vault at its role."

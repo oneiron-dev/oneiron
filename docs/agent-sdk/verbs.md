@@ -354,6 +354,8 @@ both bindings and their export-census tests in one change.
 - `vault.members.remove`
 - `vault.members.leave`
 - `vault.members.invitations`
+- `vault.members.replica_manifest`
+- `vault.members.replica_window`
 - `vault.members.accept`
 - `vault.members.accept_with_credential`
 - `vault.members.decline`

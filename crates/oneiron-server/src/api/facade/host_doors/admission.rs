@@ -657,6 +657,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersReenrol
         | Row::VaultMessageStreamsRefused
         | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
+        Row::VaultMembersReplicaManifest | Row::VaultMembersReplicaWindow => {
+            crate::api::facade::shared_replica_doors::admits(server, auth, verb)
+        }
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner

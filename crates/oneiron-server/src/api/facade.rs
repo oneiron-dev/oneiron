@@ -181,6 +181,7 @@ mod share_doors;
 mod shared_act_doors;
 mod shared_admin_doors;
 mod shared_member_doors;
+mod shared_replica_doors;
 mod shared_policy_doors;
 mod sieve_doors;
 mod sieve_observation_doors;

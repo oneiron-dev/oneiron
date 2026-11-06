@@ -6,6 +6,9 @@
 //! a Member's or Admin's ask that the Owners erase a record; and the owner's
 //! guest slip mint (OF-232). Each fn passes the engine exactly what it asks
 //! for.
+mod replica;
+pub use replica::*;
+
 use serde::{Deserialize, Serialize};
 
 use crate::authority::HostSlipIssuer;

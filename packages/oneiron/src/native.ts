@@ -383,6 +383,8 @@ vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultMembersInvitations(input: unknown): unknown
+vaultMembersReplicaManifest(input: unknown): unknown
+vaultMembersReplicaWindow(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
 vaultMembersAcceptWithCredential(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown

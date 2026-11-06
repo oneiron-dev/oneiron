@@ -1,5 +1,7 @@
 //! Successful shared invitation acceptance on the SDK's verified HTTPS wire.
 
+mod replica;
+
 use ed25519_dalek::SigningKey;
 use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;

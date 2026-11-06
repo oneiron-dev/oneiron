@@ -44,6 +44,7 @@ pub(in crate::sync) fn check_bootstrap_sources(
         }
     }
     let destination_key = WithheldKey::fresh();
+    let flagged = BTreeSet::new();
     for (key, update, source) in sources {
         let selected = project_source(
             vault,
@@ -57,6 +58,8 @@ pub(in crate::sync) fn check_bootstrap_sources(
             verified.scope(),
             &destination_key,
             &source_by_key,
+            &flagged,
+            Withhold::Nothing,
         )?;
         super::projection_history::check_projection_history(update, &selected)?;
     }
@@ -65,7 +68,7 @@ pub(in crate::sync) fn check_bootstrap_sources(
 
 /// History is not a window projection. Read each original signed body from
 /// the final writer through the native source-row selector and stored scope.
-fn check_authority_history(
+pub(in crate::sync) fn check_authority_history(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     history: &[(EntityId, Vec<u8>)],
@@ -121,7 +124,7 @@ fn check_authority_history(
     Ok(())
 }
 
-fn project_source(
+pub(in crate::sync) fn project_source(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: &LoroDoc,
@@ -133,10 +136,11 @@ fn project_source(
     credential_scope: &crate::federation::Scope,
     destination_key: &WithheldKey,
     sources: &HashMap<&str, &LoroDoc>,
+    flagged: &BTreeSet<EntityId>,
+    withhold: Withhold<'_>,
 ) -> Result<LoroDoc> {
     // This is the native authority judgment: what the grant reads. The
     // actual home exporter still applies its destination/device policy.
-    let flagged = BTreeSet::new();
     let selection::WindowSelection {
         mut kept,
         mut shipped,
@@ -153,7 +157,7 @@ fn project_source(
         position,
         grant_scope,
         authority_scope,
-        &flagged,
+        flagged,
         Some(credential_scope),
     )?;
     kept.retain(|id| !withheld.contains(id));
@@ -172,6 +176,8 @@ fn project_source(
             authority_scope,
             credential_scope,
             sources,
+            flagged,
+            withhold,
         )?
     } else {
         BTreeSet::new()
@@ -200,7 +206,7 @@ fn project_source(
         source,
         &out,
         BirthReach::OtherVault(destination_key),
-        Withhold::Nothing,
+        withhold,
         &shipped,
         &notes,
     )?;
@@ -222,6 +228,8 @@ fn base_endpoints(
     authority_scope: &crate::federation::Scope,
     credential_scope: &crate::federation::Scope,
     sources: &HashMap<&str, &LoroDoc>,
+    flagged: &BTreeSet<EntityId>,
+    withhold: Withhold<'_>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -263,6 +271,8 @@ fn base_endpoints(
                 credential_scope,
                 &WithheldKey::fresh(),
                 sources,
+                flagged,
+                withhold,
             )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
