@@ -528,6 +528,7 @@ impl CodeModeBackend {
             // staged: routing below only adds host data after them, and
             // admission leaves them as they are.
             let staged_len = request.messages.len();
+            let capture_run = browser_planner::step_run(&request);
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
             let (role, request, handoff) = self.browser.route(request, pinned);
@@ -551,9 +552,18 @@ impl CodeModeBackend {
                     })?;
             // FIX 6359: the step's capture keeps the role that admitted this
             // call, matched by the executor's own messages, so its replays
-            // are admitted on that role's route.
+            // are admitted on that role's route. The role is noted on the
+            // staged prefix before the refresh below re-keys the capture.
             if let Some(messages) = call.request.messages.get(..staged_len) {
                 oneiron::code_run::note_step_admission_role(messages, admitted_role);
+            }
+            if let Some(run) = capture_run {
+                oneiron::code_run::refresh_step_capture_request(
+                    &self.vault,
+                    run,
+                    &call.request,
+                    staged_len,
+                );
             }
             let no_record_at_arrival = self.caller.as_ref().is_some_and(|caller| {
                 self.vault.model_call_keeps_no_record_for(

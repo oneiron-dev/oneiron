@@ -38,7 +38,7 @@ use crate::provenance::body::owned_body_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 
-pub(crate) use self::admit::{put_staged_capsule, store_fork_response};
+pub(crate) use self::admit::{put_staged_capsule, refresh_staged_request, store_fork_response};
 pub(crate) use self::context::{
     capsule_context_body, join_step_context_in_txn, stage_step_context,
 };
