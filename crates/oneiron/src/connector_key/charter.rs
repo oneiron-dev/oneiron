@@ -380,13 +380,15 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
                 let limit = parse_charter_number(tokens[1], "invalid sends cap limit")?;
                 let window = parse_charter_window(tokens[4])?;
                 let channel = parse_charter_cap_channel(tokens[6])?;
+                // A sends cap is a count: crossing it refuses and paces, never
+                // suspends the key (FIX 8753).
                 Ok(CharterDirective::Cap(EffectorBudget {
                     dimension: EffectorBudgetDimension::Sends,
                     channel_class: Some(channel),
                     limit,
                     unit: None,
                     window,
-                    on_exhaust: EffectorBudgetOnExhaust::Suspend,
+                    on_exhaust: EffectorBudgetOnExhaust::Refuse,
                     reserve_policy: None,
                 }))
             } else {
