@@ -18,14 +18,15 @@
 //!   Its storage may live on another public host, so the href's host is
 //!   admitted when the broker resolves it: every address it resolves to
 //!   must be a global one, and the send reaches those addresses alone. An
-//!   action never carries the repository credential.
+//!   action carries the repository credential only where the broker put
+//!   [`LFS_CREDENTIAL_PLACEHOLDER`] in its place (see below).
 //!
 //! The method and the media types follow from the target. The request
 //! digest binds the target (repository, operation or action, and for an
 //! action the batch it came from, the object and its size), the method, the
-//! URL, every header (an action's own `Authorization` too), the body's
-//! length and its bytes, in its own digest domain, so an LFS digest never
-//! equals a git or model one.
+//! URL, every header (an action's own `Authorization` too, the placeholder
+//! as given), the body's length and its bytes, in its own digest domain, so
+//! an LFS digest never equals a git or model one.
 //!
 //! One exchange is one connection, in a git exchange's steps
 //! (`crate::exchange`): the frame's opening word ([`crate::frame`]'s
@@ -33,21 +34,38 @@
 //! spool, its digest check and, for an action, the admission of its host;
 //! one acknowledgement; then one credential segment, which is the
 //! `Authorization` value for a batch, or empty for an anonymous batch and
-//! for every action (a non-empty one on an action is refused); then the
-//! reply as a streamed reply. A batch reply that holds a literal form of
-//! the credential is cut ([`crate::Failure::ReplyHoldsKey`]), never
-//! rewritten; an action's reply, with no credential in the request, goes
-//! byte for byte. A cut reply is no answer: a batch's JSON or an object's
-//! bytes count only once the end is clean.
+//! for an action (the same value only on an action that names the
+//! placeholder); then the reply as a streamed reply.
 //!
-//! As for git, no step has a call deadline or a total size bound: an object
-//! can be any size and take any time. Each step waits at most the
-//! exchange's idle bound without progress, the spool needs the disk room
-//! for the body, and the daemon's hang-up cancels the exchange. No redirect
-//! is followed and nothing is resent.
+//! A repository may hand the batch's own `Authorization` value back in the
+//! headers of the actions it names, for the client to send on them. The
+//! broker reads a batch reply whole, within the reply limit the daemon
+//! names ([`LfsCallHeader::reply_limit`]; past it the reply is cut,
+//! [`crate::Failure::ReplyTooLarge`]), and where it is the batch JSON it
+//! rewrites to the placeholder each action header value, in an object with
+//! no error, that is the installed value byte for byte; it tells the daemon
+//! how many it rewrote, never what. Then it watches the reply for every
+//! literal form of the credential (the whole value too, raw and as JSON
+//! spells it, whatever its length): one left anywhere cuts the reply
+//! ([`crate::Failure::ReplyHoldsKey`]). Any other reply, not JSON or not
+//! the batch JSON, is never rewritten, only watched. The broker installs
+//! the credential again, in place of the placeholder, on an action whose
+//! headers name `Authorization:` and the placeholder and whose URL has the
+//! repository's own origin (scheme, host and port), and watches that
+//! action's reply as it watches a batch's. A placeholder on an action at
+//! another origin, or a credential on an action that names none, is
+//! refused before anything is sent. Every other action carries no
+//! credential, and its reply goes byte for byte. A cut reply is no answer:
+//! a batch's JSON or an object's bytes count only once the end is clean.
+//!
+//! As for git, no step has a call deadline, and only a batch reply has a
+//! size bound: an object can be any size and take any time. Each step waits
+//! at most the exchange's idle bound without progress, the spool needs the
+//! disk room for the body, and the daemon's hang-up cancels the exchange.
+//! No redirect is followed and nothing is resent.
 
 use reqwest::Url;
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{AUTHORIZATION, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
 use crate::digest::{BodyDigest, field, is_hex_digest};
@@ -66,6 +84,13 @@ pub(crate) use serve::serve_lfs;
 
 /// The blake3 key-derivation context of an LFS request digest.
 const DIGEST_CONTEXT: &str = "oneiron-broker 2026-11-06 lfs request digest v1";
+
+/// The value the broker writes in a batch reply's action header in place of
+/// the repository's `Authorization` value, which the repository handed back
+/// for the action: the daemon sees this, never the value. It has no space,
+/// so it is never an `Authorization` value the broker installs (a scheme,
+/// a space, then credentials).
+pub const LFS_CREDENTIAL_PLACEHOLDER: &str = "oneiron-broker-repository-credential";
 
 /// The media type of a batch request and its reply, and of a verify.
 const LFS_JSON_MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
@@ -357,6 +382,13 @@ pub fn check_lfs_headers(
     Ok(())
 }
 
+/// Whether the action header `name: value` is the one the broker installs
+/// the repository credential in: `Authorization` (in any case, as HTTP
+/// reads a name) and exactly [`LFS_CREDENTIAL_PLACEHOLDER`].
+pub(crate) fn is_credential_placeholder(name: &str, value: &str) -> bool {
+    name.eq_ignore_ascii_case(AUTHORIZATION.as_str()) && value == LFS_CREDENTIAL_PLACEHOLDER
+}
+
 /// The digest of one LFS request, taken as its body passes, in its own
 /// digest domain: the target's kind and repository; a batch's operation, or
 /// an action's batch digest, object id and size; the method and URL it
@@ -459,12 +491,19 @@ pub struct LfsCallHeader {
     /// without progress: the host's transfer idle limit. Transport context,
     /// outside the digest.
     pub idle_ms: u64,
+    /// The largest batch reply, in bytes, the broker reads whole to rewrite
+    /// and watch it: the daemon's own bound on a batch answer, so a reply
+    /// past it is cut as the daemon would refuse it. A batch carries one;
+    /// an action, whose reply streams, carries none. Transport context,
+    /// outside the digest.
+    pub reply_limit: Option<u64>,
 }
 
 impl LfsCallHeader {
     /// The exchange `call` to `target`, whose body of `body_len` bytes had
     /// `digest` as the daemon spooled it, each step waiting at most `idle`
-    /// without progress.
+    /// without progress, a batch's reply read whole up to `reply_limit`
+    /// bytes (none for an action).
     #[must_use]
     pub fn new(
         call: String,
@@ -473,6 +512,7 @@ impl LfsCallHeader {
         body_len: u64,
         digest: String,
         idle: std::time::Duration,
+        reply_limit: Option<u64>,
     ) -> Self {
         Self {
             version: PROTOCOL_VERSION,
@@ -482,6 +522,7 @@ impl LfsCallHeader {
             body_len,
             digest,
             idle_ms: u64::try_from(idle.as_millis()).unwrap_or(u64::MAX),
+            reply_limit,
         }
     }
 
@@ -489,6 +530,26 @@ impl LfsCallHeader {
     #[must_use]
     pub const fn idle(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.idle_ms)
+    }
+
+    /// A batch's reply limit; none for an action.
+    #[cfg(unix)]
+    pub(crate) fn batch_reply_limit(&self) -> Option<u64> {
+        self.reply_limit.filter(|_| self.target.is_batch())
+    }
+
+    /// Whether the exchange is an action whose headers name
+    /// `Authorization:` [`LFS_CREDENTIAL_PLACEHOLDER`]: the one action the
+    /// broker installs the repository credential on again, so the daemon
+    /// opens it with that credential (`PreparedLfsCall::open`). Its URL has
+    /// the repository's own origin, or [`Self::check`] refuses it.
+    #[must_use]
+    pub fn names_credential_placeholder(&self) -> bool {
+        !self.target.is_batch()
+            && self
+                .headers
+                .iter()
+                .any(|(name, value)| is_credential_placeholder(name, value))
     }
 
     /// Every check on the exchange's header, with no I/O: the daemon runs it
@@ -499,15 +560,22 @@ impl LfsCallHeader {
     /// # Errors
     ///
     /// [`Refusal::Version`], [`Refusal::Frame`] for an empty or long call
-    /// id or a zero idle bound, a header refusal, [`Refusal::Body`] for a
-    /// download with a body or an upload whose body is not the object's
-    /// size, [`Refusal::Digest`] for a digest, a batch digest or an object
-    /// id not in its hex form, a target refusal.
+    /// id, a zero idle bound, a batch with no reply limit or an action with
+    /// one, a header refusal, [`Refusal::Body`] for a download with a body
+    /// or an upload whose body is not the object's size,
+    /// [`Refusal::Digest`] for a digest, a batch digest or an object id not
+    /// in its hex form, a target refusal, [`Refusal::Secret`] for an action
+    /// with a header of [`LFS_CREDENTIAL_PLACEHOLDER`] whose URL's origin
+    /// (scheme, host and port) is not the repository's.
     pub fn check(&self) -> Result<Url, Refusal> {
         if self.version != PROTOCOL_VERSION {
             return Err(Refusal::Version);
         }
-        if self.call.is_empty() || self.call.len() > MAX_GIT_HEADER_VALUE || self.idle_ms == 0 {
+        if self.call.is_empty()
+            || self.call.len() > MAX_GIT_HEADER_VALUE
+            || self.idle_ms == 0
+            || self.reply_limit.is_some() != self.target.is_batch()
+        {
             return Err(Refusal::Frame);
         }
         check_lfs_headers(&self.target, &self.headers, self.body_len)?;
@@ -527,6 +595,24 @@ impl LfsCallHeader {
         {
             return Err(Refusal::Digest);
         }
-        self.target.url()
+        let url = self.target.url()?;
+        let placeholder = self
+            .headers
+            .iter()
+            .any(|(_, value)| value == LFS_CREDENTIAL_PLACEHOLDER);
+        if placeholder && url.origin().ascii_serialization() != self.target.repository().origin() {
+            return Err(Refusal::Secret);
+        }
+        Ok(url)
     }
+}
+
+/// The LFS frame between an answered batch reply's header and its body:
+/// how many action header values the broker rewrote to
+/// [`LFS_CREDENTIAL_PLACEHOLDER`]. A count, never a value.
+#[cfg(unix)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BatchRewrites {
+    pub(crate) credential_rewrites: u64,
 }
