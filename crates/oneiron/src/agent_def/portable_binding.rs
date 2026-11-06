@@ -136,6 +136,10 @@ impl PreparedAgentBirth {
         self.asset.0
     }
 
+    pub(super) fn entity_put(&self) -> (EntityId, &[u8]) {
+        (self.asset.0, &self.asset.1)
+    }
+
     pub(crate) fn apply_binding(
         self,
         store: &Store,

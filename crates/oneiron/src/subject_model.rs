@@ -449,12 +449,23 @@ fn actor_subject_facet_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<EntityId> {
-    if vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_PERSON) {
+    actor_subject_facet_with_planned_in_txn(vault, txn, actor, None)
+}
+
+fn actor_subject_facet_with_planned_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    planned: Option<&prepared::PlannedSubjectEntities<'_>>,
+) -> Result<EntityId> {
+    if prepared::subject_entity_type_in_txn(vault, txn, &actor, planned)?
+        == Some(ENTITY_TYPE_PERSON)
+    {
         return crate::claim::substrate_facet_id(actor);
     }
     match crate::federation::record_scope::birth_facet(&vault.store, txn, actor)? {
         Some(facet)
-            if vault.get_entity_type_in_txn(txn, &facet)?
+            if prepared::subject_entity_type_in_txn(vault, txn, &facet, planned)?
                 == Some(crate::registry::ENTITY_TYPE_FACET) =>
         {
             Ok(facet)

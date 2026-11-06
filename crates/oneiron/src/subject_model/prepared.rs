@@ -74,6 +74,20 @@ pub(crate) struct PreparedSubjectHead {
 }
 
 impl PreparedSubjectHead {
+    pub(crate) fn encoded_puts(&self) -> Result<Vec<(EntityId, Vec<u8>)>> {
+        let mut puts = vec![(
+            self.fact.id,
+            crate::claim::encode_claim_body(&self.fact.body)?,
+        )];
+        for (id, body) in &self.superseded {
+            let mut body = body.clone();
+            body.lifecycle = crate::claim::ClaimLifecycleStatus::Superseded;
+            body.valid_to = Some(self.at);
+            puts.push((*id, crate::claim::encode_claim_body(&body)?));
+        }
+        Ok(puts)
+    }
+
     pub(crate) fn entity_puts(&self) -> impl Iterator<Item = EntityId> + '_ {
         std::iter::once(self.fact.id).chain(self.superseded.iter().map(|(id, _)| *id))
     }
@@ -133,11 +147,14 @@ pub(super) fn prepare_subject_head_in_txn(
 pub(super) struct PlannedSubjectEntities<'a> {
     agent: (EntityId, &'a [u8]),
     person: Option<(EntityId, &'a [u8])>,
+    preceding: &'a [crate::agent_def::SetupEntityPut<'a>],
 }
 
 impl PlannedSubjectEntities<'_> {
     pub(super) fn kind(&self, id: &EntityId) -> Option<u8> {
-        if *id == self.agent.0 {
+        if let Some(put) = self.preceding.iter().rev().find(|put| put.id == *id) {
+            Some(put.entity_type)
+        } else if *id == self.agent.0 {
             Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
         } else if self.person.is_some_and(|(person, _)| person == *id) {
             Some(crate::registry::ENTITY_TYPE_PERSON)
@@ -179,12 +196,27 @@ pub(super) fn validate_anchor_with_planned_in_txn(
 pub(crate) struct PreparedSubjectAgent<'a> {
     id: EntityId,
     data: &'a [u8],
+    preceding: &'a [crate::agent_def::SetupEntityPut<'a>],
 }
 
 impl<'a> PreparedSubjectAgent<'a> {
     pub(crate) fn new(id: EntityId, data: &'a [u8]) -> Result<Self> {
         crate::agent_def::decode_agent_definition(data)?;
-        Ok(Self { id, data })
+        Ok(Self {
+            id,
+            data,
+            preceding: &[],
+        })
+    }
+
+    pub(crate) fn after_puts(
+        id: EntityId,
+        data: &'a [u8],
+        preceding: &'a [crate::agent_def::SetupEntityPut<'a>],
+    ) -> Result<Self> {
+        let mut agent = Self::new(id, data)?;
+        agent.preceding = preceding;
+        Ok(agent)
     }
 
     pub(crate) fn has_subject_in_txn(
@@ -196,6 +228,7 @@ impl<'a> PreparedSubjectAgent<'a> {
         let planned = PlannedSubjectEntities {
             agent: (self.id, self.data),
             person: None,
+            preceding: self.preceding,
         };
         Ok(super::actor_subject_anchor_with_planned_in_txn(
             vault,
@@ -218,6 +251,7 @@ impl<'a> PreparedSubjectAgent<'a> {
         let planned = PlannedSubjectEntities {
             agent: (self.id, self.data),
             person: person_put.map(|data| (person, data)),
+            preceding: self.preceding,
         };
         let writer = crate::WriteActor::new(self.id, crate::EdgeActorClass::Agent);
         let model = prepare_subject_head_in_txn(
@@ -240,7 +274,8 @@ impl<'a> PreparedSubjectAgent<'a> {
             writer,
             at,
         )?;
-        anchor_body.scope_facet = super::actor_subject_facet_in_txn(vault, txn, self.id)?;
+        anchor_body.scope_facet =
+            super::actor_subject_facet_with_planned_in_txn(vault, txn, self.id, Some(&planned))?;
         let anchor = prepare_subject_head_in_txn(vault, txn, anchor_body, at, &planned)?;
         Ok(PreparedAgentSubjects {
             agent: self.id,
@@ -259,6 +294,10 @@ pub(crate) struct PreparedAgentSubjects {
 }
 
 impl PreparedAgentSubjects {
+    pub(crate) fn heads(&self) -> impl Iterator<Item = &PreparedSubjectHead> {
+        self.model.iter().chain(self.anchor.iter())
+    }
+
     pub(crate) fn entity_puts(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.model
             .iter()
