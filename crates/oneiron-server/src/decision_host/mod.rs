@@ -719,6 +719,9 @@ struct SystemOneRung {
     connector: PaidConnector,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
+    /// Explicit catalog identity for the same native endpoint, when the
+    /// owner configured one. None keeps old ordinary behavior.
+    native_catalog: Option<ModelId>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -734,6 +737,13 @@ impl SystemOneRung {
     ) -> anyhow::Result<Self> {
         let endpoint = settings.endpoint.clone();
         let (model, version) = (settings.model.clone(), settings.version.clone());
+        if let Some(catalog) = &settings.catalog_model {
+            if catalog.name() != model || catalog.revision() != version {
+                anyhow::bail!(
+                    "models.decisions.system_one.catalog_model name@revision must equal model and version"
+                );
+            }
+        }
         let seat = match (&settings.key_env, &settings.key_secret) {
             (Some(env), _) => {
                 let bearer = std::env::var(env).map_err(|_| anyhow::anyhow!("{env} is not set"))?;
@@ -786,6 +796,7 @@ impl SystemOneRung {
             connector,
             posture,
             remote_opt_in: settings.remote_opt_in,
+            native_catalog: settings.catalog_model.clone(),
             runtime,
         })
     }
