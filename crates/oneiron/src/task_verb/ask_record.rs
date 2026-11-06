@@ -374,6 +374,14 @@ pub(super) enum AskGroupRead {
 }
 
 impl crate::memory::Memory<'_> {
+    /// The existing effective deadline of an ask this author can read.
+    pub(crate) fn hook_ask_effective_deadline(&self, id: EntityId) -> Result<Option<u64>> {
+        let txn = self.vault().store.env.read_txn()?;
+        Ok(self
+            .ask_group_in(&txn, id)?
+            .and_then(|group| group.effective.until))
+    }
+
     /// The ask group `id`, read as its handle's verbs read it (DEC-0005):
     /// each member TASK, the TASK its class came from and its question and
     /// context rows are listed as producers of what the call answers from the
