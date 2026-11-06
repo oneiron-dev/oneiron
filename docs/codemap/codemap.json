@@ -4589,7 +4589,7 @@
      "path": "src/authority/machine_profile/mod.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -22010,7 +22010,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BrowserConsentFacts",
@@ -31347,7 +31347,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 6,
       "re-export": 17
      }
@@ -31497,8 +31497,18 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/project.rs",
+     "purpose": "The project a turn program's code run sends in (FIX 11906): the project whose home room the turn that woke…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -35524,7 +35534,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 63
+      "crate-vis": 64
      }
     },
     {
@@ -58638,7 +58648,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -91893,7 +91903,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 203,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92966,7 +92976,7 @@
    },
    "over_bar": 169,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6553,
+   "source_files": 6554,
    "test_files": 895
   },
   "oneiron-android": {
