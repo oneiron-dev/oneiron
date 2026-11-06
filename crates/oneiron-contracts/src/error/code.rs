@@ -18,6 +18,9 @@ pub enum CodeError {
     /// validation. Nothing was written.
     #[error("invalid codebase snapshot body: {0}")]
     InvalidCodebaseSnapshotBody(&'static str),
+    /// Current folder bytes could not be admitted by the process memory line.
+    #[error("codebase capture memory refused: {detail}")]
+    CodebaseCaptureMemoryRefused { detail: String },
     /// A hosted-media hash-match provider reported a known match. Nothing was
     /// written; provider metadata is preserved for incident handling.
     #[error(
@@ -266,6 +269,7 @@ impl CodeError {
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
+            Self::CodebaseCaptureMemoryRefused { .. } => ErrorKind::MemoryFloorRefused,
             Self::HostedMediaHashMatchKnownMatch { .. } => {
                 ErrorKind::HostedMediaHashMatchKnownMatch
             }

@@ -478,6 +478,11 @@ pub fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
     if let Some(commit_hash) = &snapshot.commit_hash {
         validate_normalized_commit_hash(commit_hash)?;
     }
+    if matches!(snapshot.repo_ref, RepoRef::LocalCapture { .. }) && snapshot.commit_hash.is_some() {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "a local capture has no commit witness",
+        )));
+    }
     if let Some(repo_commit) = snapshot.repo_ref.commit_hash()
         && snapshot.commit_hash.as_deref() != Some(repo_commit)
     {

@@ -175,6 +175,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_board_layout(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.layout", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_fold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.fold", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_unfold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.unfold", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_size(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.size", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_filter(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.filter", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_replace(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_memory_diary(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.memory.diary", js_json(input))
@@ -827,7 +863,7 @@ impl NativeClient {
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
-        let scope = recall_scope_to_engine(scope);
+        let scope = recall_scope_to_engine(scope).map_err(facade_error)?;
         let limit = limit
             .map(limit_to_engine)
             .transpose()
@@ -1854,6 +1890,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.inbox.concerns.review", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_proactivity_digest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.proactivity.digest", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -4113,6 +4158,57 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_drafters_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.drafters.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_drafters_list_as(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.drafters.list_as", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_drafters_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.drafters.status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_drafters_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.drafters.policy.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_drafters_revert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.drafters.revert", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_drafters_revert_as(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.drafters.revert_as", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_bind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.research.bind", js_json(input))
@@ -6308,6 +6404,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.snapshots.ingest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_snapshots_capture(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.snapshots.capture", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -9070,6 +9175,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.productivity.tree", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_ingest_ag_ui_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.ingest.ag_ui.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_ingest_ag_ui_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.ingest.ag_ui.read", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

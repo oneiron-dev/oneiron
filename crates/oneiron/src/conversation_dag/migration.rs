@@ -1,7 +1,10 @@
-//! Idempotent lazy and maintenance migration of legacy conversation turns.
+//! Idempotent local initialization of received conversation DAGs.
+//!
+//! Parentage comes only from current DAG records and retained ancestry pins;
+//! independent turns are never adopted into a time-ordered legacy chain.
 
 use super::graph::{self, MIGRATED, require_type};
-use super::writes::{set_head_in_txn, value};
+use super::writes::set_head_in_txn;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, RegistryError, Result};
@@ -17,6 +20,55 @@ pub(crate) fn migrate_in_txn(
     txn: &mut RwTxn<'_>,
     conversation: &EntityId,
 ) -> Result<bool> {
+    initialize_except_in_txn(vault, txn, conversation, None)
+}
+
+/// The admitted current producer permits its fresh ChildOf before staging.
+pub(crate) fn permit_core_turn_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    conversation: &EntityId,
+    turn: EntityId,
+) -> Result<()> {
+    super::admission::permit(&vault.store, txn, &turn, conversation)
+}
+
+/// A fresh core TURN joins the actual local HEAD in its create transaction.
+/// It is excluded only while initializing the pre-existing received DAG;
+/// its own Parent and canonical placement are then written explicitly.
+pub(crate) fn join_core_turn_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    conversation: &EntityId,
+    turn: EntityId,
+    at: u64,
+) -> Result<()> {
+    // These records already keep their explicit non-trunk placement.
+    if graph::is_thread_record(&vault.store, txn, &turn)?
+        || super::writes::bound_to_thread(vault, txn, &turn)?
+        || graph::is_sub_session_record(&vault.store, txn, &turn)?
+    {
+        return super::admission::finish(&vault.store, txn, &turn);
+    }
+    initialize_except_in_txn(vault, txn, conversation, Some(&turn))?;
+    if graph::parent(&vault.store, txn, &turn)?.is_none()
+        && let Some(parent) = graph::read_id(&vault.store, txn, graph::HEAD, conversation)?
+    {
+        vault
+            .batch_in()
+            .edge_with_value_fields(&turn, EdgeKind::Parent, &parent, super::writes::value(at))
+            .apply(txn)?;
+    }
+    set_head_in_txn(vault, txn, conversation, turn)?;
+    super::admission::finish(&vault.store, txn, &turn)
+}
+
+fn initialize_except_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    conversation: &EntityId,
+    fresh_turn: Option<&EntityId>,
+) -> Result<bool> {
     require_type(&vault.store, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
     if let Some(marker) = MIGRATED.get(&vault.store, txn, conversation)? {
         if marker != [1] {
@@ -27,7 +79,7 @@ pub(crate) fn migrate_in_txn(
     // Rule 5: adoption reads the whole room, however many records, and
     // counts it as one walk.
     let mut walk = graph::walk_count(&vault.store, txn, conversation)?;
-    let candidates = graph::all_edge_ids(
+    let mut candidates = graph::all_edge_ids(
         &vault.store,
         txn,
         conversation,
@@ -35,6 +87,7 @@ pub(crate) fn migrate_in_txn(
         true,
         &mut walk,
     )?;
+    candidates.retain(|id| Some(id) != fresh_turn);
     // A pending received Parent does not turn its source into a trunk root.
     // Check the coordinator's exact source index in this same per-room txn;
     // maintenance skips/names this incomplete room and continues scanning.
@@ -52,7 +105,7 @@ pub(crate) fn migrate_in_txn(
     let mut turns = Vec::new();
     let mut all_parents = HashMap::new();
     let mut non_trunk = HashSet::new();
-    let mut already_dag = false;
+    let mut opaque_thread_roots = HashSet::new();
     for id in candidates {
         match live_entity_row_in_txn(&vault.store, txn, &id)? {
             LiveEntityRow::Absent | LiveEntityRow::DeletedShell => continue,
@@ -61,7 +114,8 @@ pub(crate) fn migrate_in_txn(
         }
         graph::require_member(&vault.store, txn, conversation, &id)?;
         let body = graph::require_type(&vault.store, txn, &id, ENTITY_TYPE_TURN)?;
-        super::admission::record_kind(&body)?;
+        let record_kind = super::admission::record_kind(&body)?;
+        let room_thread = crate::workspace_roster::thread_binding(&body)?.is_some();
         let raw = vault
             .store
             .port_entity_record(txn, &id)?
@@ -90,7 +144,12 @@ pub(crate) fn migrate_in_txn(
             continue;
         }
         all_parents.insert(id, parent);
-        let thread = graph::is_thread_record(&vault.store, txn, &id)?;
+        // Native opaque room-thread births need no DAG Parent. They remain
+        // graph roots for later thread replies, but never trunk roots.
+        if parent.is_none() && room_thread && record_kind.is_none() {
+            opaque_thread_roots.insert(id);
+        }
+        let thread = graph::is_thread_record(&vault.store, txn, &id)? || room_thread;
         let sub_session =
             graph::is_sub_session_record(&vault.store, txn, &id).map_err(|error| {
                 // This is a received conversation's topology, not a storage
@@ -105,7 +164,6 @@ pub(crate) fn migrate_in_txn(
             non_trunk.insert(id);
             continue;
         }
-        already_dag |= parent.is_some();
         let raw = vault
             .store
             .port_entity_record(txn, &id)?
@@ -113,9 +171,6 @@ pub(crate) fn migrate_in_txn(
             .ok_or(Error::EntityNotFound)?;
         let metadata =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) {
-            already_dag |= super::topology::record_kind(body)?.is_some();
-        }
         turns.push((metadata.occurred_start, id));
     }
     turns.sort_unstable();
@@ -166,7 +221,7 @@ pub(crate) fn migrate_in_txn(
                 ));
             }
             all_children.entry(parent).or_default().push(id);
-        } else if non_trunk.contains(&id) {
+        } else if non_trunk.contains(&id) && !opaque_thread_roots.contains(&id) {
             return Err(graph::invalid(
                 "received thread or sub-session has no Parent",
             ));
@@ -184,9 +239,9 @@ pub(crate) fn migrate_in_txn(
     if visited != all_parents.len() {
         return Err(graph::invalid("received DAG contains a Parent cycle"));
     }
-    if already_dag {
-        // Received DAG edges predate local HEAD state. Never overwrite their
-        // parentage with a legacy chain. Validate and choose a deterministic
+    {
+        // Received DAG edges predate local HEAD state. Validate their
+        // parentage and choose a deterministic
         // local initial branch; HEAD remains local after this first adoption.
         // This additional trunk-only pass stays linear: it reads each record
         // and Parent once, never every ancestor path.
@@ -223,7 +278,7 @@ pub(crate) fn migrate_in_txn(
                 ready.push_back(id);
             }
         }
-        if ready.len() != 1 {
+        if !members.is_empty() && ready.len() != 1 {
             return Err(graph::invalid(
                 "received DAG requires exactly one trunk root",
             ));
@@ -238,17 +293,6 @@ pub(crate) fn migrate_in_txn(
         if visited != members.len() {
             return Err(graph::invalid("received DAG contains a Parent cycle"));
         }
-    } else {
-        let mut batch = vault.batch_in();
-        for pair in turns.windows(2) {
-            batch = batch.edge_with_value_fields(
-                &pair[1].1,
-                EdgeKind::Parent,
-                &pair[0].1,
-                value(pair[1].0),
-            );
-        }
-        batch.apply(txn)?;
     }
     if let Some((_, head)) = turns.last() {
         set_head_in_txn(vault, txn, conversation, *head)?;
@@ -270,8 +314,9 @@ fn carries_audience_edit(body: &[u8]) -> bool {
 }
 
 impl Vault {
-    /// Builds a time-ordered chain for a legacy conversation, once. Existing
-    /// bodies and ChildOf edges are untouched; deleted shells are omitted.
+    /// Initializes a received DAG's local HEAD once, preserving its actual
+    /// Parent edges. Bodies and ChildOf edges are untouched; deleted shells
+    /// are omitted. Independent turns are never joined by their timestamps.
     pub fn migrate_conversation_dag(&self, conversation: &EntityId) -> Result<bool> {
         self.with_write_txn_grouped(|txn| migrate_in_txn(self, txn, conversation))
     }

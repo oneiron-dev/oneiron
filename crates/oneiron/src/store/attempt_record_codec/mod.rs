@@ -343,6 +343,11 @@ pub(crate) fn validate_requeued_history(history: &[RequeuedFailure]) -> Result<(
     for failure in history {
         validate_lease_owner(&failure.lease_owner)?;
         validate_failure_reason(&failure.reason)?;
+        if failure.count == 0 || failure.last_at < failure.at {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                "invalid requeued failure span",
+            )));
+        }
     }
     Ok(())
 }
