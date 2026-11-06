@@ -81,7 +81,7 @@ impl Selection {
             }) else {
                 continue;
             };
-            let Some(worlds) = crate::sync::residence::CachedItemWorlds::decode(value) else {
+            let Some(worlds) = crate::sync::residence::CachedItemWorlds::decode(&value) else {
                 continue;
             };
             if worlds.worlds().is_empty()
@@ -106,16 +106,16 @@ impl Selection {
             else {
                 continue;
             };
-            if !worlds.matches(item, blob, document) {
+            if !worlds.matches(item, &blob, &document) {
                 continue;
             }
             if let Some(keys) =
-                crate::sync::residence::checkpoint_read_cache_keys(&vault.store, txn, item, blob)?
+                crate::sync::residence::checkpoint_read_cache_keys(&vault.store, txn, item, &blob)?
             {
                 out.worlds.extend(worlds.worlds().iter().copied());
                 out.rows.entry(RowDb::SyncState).or_default().extend(
                     keys.into_iter()
-                        .chain([key.to_owned()])
+                        .chain([key.into_owned()])
                         .map(String::into_bytes),
                 );
             }
@@ -188,7 +188,7 @@ impl Selection {
         for row in store.sync_queue.iter(txn)? {
             let (key, value) = row?;
             let Some((window, has_sidecar)) =
-                crate::sync::queue::checkpoint_update_window(store, txn, key, value)?
+                crate::sync::queue::checkpoint_update_window(store, txn, &key, &value)?
             else {
                 continue;
             };
