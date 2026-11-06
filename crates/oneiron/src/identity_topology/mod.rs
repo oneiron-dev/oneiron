@@ -81,6 +81,7 @@ mod op_apply;
 mod op_undo;
 mod op_vocabulary;
 mod proposal_resolution;
+mod proposer_scope;
 mod reassignment_map;
 mod replicated_event_validation;
 mod seal_standing;
@@ -96,7 +97,7 @@ pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,
 };
-pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
+pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict, ProposerStamp};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::{sealed_by_key_for_test, signed_validated_row_for_test};
@@ -152,7 +153,7 @@ use reassignment_map::{
 pub(crate) use store_entity_helpers::guard_batch_identity_delete_in_txn;
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.
-pub(crate) use seal_standing::carried_seal_tokens_in_txn;
+pub(crate) use seal_standing::{acknowledged_grant_seals_in_txn, carried_seal_tokens_in_txn};
 pub(crate) use shell_edge_reconcile::{
     identity_topology_shell_sources_for_store_in_txn,
     reconcile_identity_topology_for_deleted_entities_in_txn,

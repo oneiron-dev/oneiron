@@ -44,6 +44,7 @@ mod account_routes;
 mod agent_grant_routes;
 mod authority_clock_routes;
 pub(super) mod backup_setting_routes;
+pub(super) mod board_layout_setting_routes;
 pub(super) mod browser_takeover_routes;
 pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
@@ -60,6 +61,7 @@ pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 pub(super) mod craft_candidate_routes;
+mod curator_rubric_routes;
 pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
@@ -139,6 +141,7 @@ fn owner_tables() -> OwnerTable {
         checkpoint_policy_routes::owner_table(),
         claim_refinement_routes::owner_table(),
         commitment_routes::owner_table(),
+        curator_rubric_routes::owner_table(),
         conflict_routes::owner_table(),
         connector_admission_routes::owner_table(),
         connector_consent_routes::owner_table(),
@@ -163,6 +166,7 @@ fn owner_tables() -> OwnerTable {
         model_setting_routes::owner_table(),
         room_thread_setting_routes::owner_table(),
         backup_setting_routes::owner_table(),
+        board_layout_setting_routes::owner_table(),
         widen_proposal_routes::owner_table(),
         craft_candidate_routes::owner_table(),
         pad_routes::owner_table(),
@@ -210,6 +214,7 @@ fn owner_tables() -> OwnerTable {
         removal_archive_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
+        super::phone_line::owner_table(),
         carrier_table(),
     ]
     .into_iter()

@@ -24,17 +24,25 @@
 //! `final` feed the worker's activity (FIX 9190), as the supervisor's own
 //! poll ([`activity`]) does.
 mod buffer;
+mod evaluator_ops;
 mod session_ops;
 mod transport;
 mod updates;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+// FIX 14975: the drafter evaluator's op, and the chat body split it sends.
+pub(super) use evaluator_ops::{
+    advertised as evaluator_advertised, evaluate as evaluator_generate,
+};
 pub(super) use transport::next_request_id;
+pub(super) use wire::split_request;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
 // restore paths.
 pub(super) use buffer::SnapshotRegion;
 pub(super) use session_ops::{export as session_export, import as session_import};
+// The launch tie, shared with the HTTP routes (FIX 9296).
+pub(super) use super::exl3_evidence::Tie;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
@@ -46,7 +54,7 @@ use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{WorkContext, WorkPhysical};
 use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, SchedulingReceipt,
-    SegmentManifest, WorkerBuildEvidence, WorkerFailure,
+    SegmentManifest, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
 use oneiron_llm_openai::{
@@ -54,16 +62,11 @@ use oneiron_llm_openai::{
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
     OpenAiCompatTransportError,
 };
-use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::openai::{OpenAiHttp, carry_reply_evidence, send_format};
-use super::worker_host::{self, NativeRoute};
+use super::worker_host::{self, NativeLaunch, NativeRoute};
 use transport::{Call, Channel, Cut, Event, Start};
-
-/// The usage key a worker's answer echoes its launch manifest's digest
-/// under, as the worker probe reads it.
-const LAUNCH_MANIFEST_KEY: &str = "launch_manifest";
 
 /// What a worker's `resident_mib` must say it measures to be its resident
 /// memory: this process's CUDA allocator reservations.
@@ -109,10 +112,7 @@ impl NativeExl3Transport {
     fn http_tie(&self, body: &JsonValue) -> Option<Tie> {
         let wire_model = body.get("model").and_then(JsonValue::as_str)?;
         let evidence = worker_host::managed_http_evidence(&self.provider, wire_model)?;
-        Some(Tie {
-            manifest_sha256: evidence.manifest_sha256,
-            epoch: evidence.backend_epoch,
-        })
+        Some(Tie::new(evidence.manifest_sha256, evidence.backend_epoch))
     }
 
     /// The body as HTTP would send it: its output cap and response format.
@@ -176,59 +176,6 @@ impl OpenAiCompatTransport for NativeExl3Transport {
             },
             Streaming::step,
         )))
-    }
-}
-
-/// What a sent call answers to: its manifest and epoch check (FIX 9195, FIX 9296).
-#[derive(Clone)]
-pub(super) struct Tie {
-    manifest_sha256: Option<String>,
-    epoch: Option<String>,
-}
-
-impl Tie {
-    /// Keeps each receipt's verified-artifacts claim only when the answer
-    /// echoes this launch's manifest and the receipt names this epoch;
-    /// otherwise the receipt's build is unknown. Both expected facts must be
-    /// known: a missing fact never matches, so it downgrades a claimed
-    /// verification to unknown instead of keeping it.
-    pub(super) fn apply(&self, body: &mut JsonValue) {
-        let Some(usage) = body.get_mut("usage").and_then(JsonValue::as_object_mut) else {
-            return;
-        };
-        let echoed = match (
-            self.manifest_sha256.as_deref(),
-            usage.get(LAUNCH_MANIFEST_KEY).and_then(JsonValue::as_str),
-        ) {
-            (Some(expected), Some(echoed)) => echoed == expected,
-            _ => false,
-        };
-        let Some(JsonValue::Array(calls)) = usage.get_mut(INFERENCE_CALLS_KEY) else {
-            return;
-        };
-        for call in calls {
-            let Some(worker) = call.get_mut("worker").and_then(JsonValue::as_object_mut) else {
-                continue;
-            };
-            let claimed = worker
-                .get("build_evidence")
-                .and_then(|evidence| WorkerBuildEvidence::deserialize(evidence).ok())
-                == Some(WorkerBuildEvidence::VerifiedArtifacts);
-            let epoch = worker
-                .get("identity")
-                .and_then(|identity| identity.get("backend_epoch"))
-                .and_then(JsonValue::as_str);
-            let epoch_matches = match (self.epoch.as_deref(), epoch) {
-                (Some(expected), Some(actual)) => actual == expected,
-                _ => false,
-            };
-            if claimed
-                && !(echoed && epoch_matches)
-                && let Ok(unknown) = serde_json::to_value(WorkerBuildEvidence::Unknown)
-            {
-                worker.insert("build_evidence".to_owned(), unknown);
-            }
-        }
     }
 }
 
@@ -303,9 +250,10 @@ async fn begin(
         .and_then(|observed| observed.identity.backend_epoch.as_ref())
         .map(|epoch| epoch.as_str().to_owned())
         .ok_or(OpenAiCompatTransportError::Connection)?;
-    let (socket, manifest_sha256) = route
-        .launch()
+    let launch = route
+        .native_launch()
         .ok_or(OpenAiCompatTransportError::Connection)?;
+    let manifest_sha256 = launch.manifest_sha256().to_owned();
     if lease.revoked() {
         return Err(OpenAiCompatTransportError::Connection);
     }
@@ -325,7 +273,7 @@ async fn begin(
         Some(manifest) => {
             worker_host::open_turn(
                 route,
-                &socket,
+                &launch,
                 &epoch,
                 lease.observed(),
                 manifest,
@@ -340,7 +288,7 @@ async fn begin(
     // A plain retry after a refused session is the same call: it reuses the
     // ticket, grant, class, priority and deadline.
     let mut started = Call::start(
-        &socket,
+        &launch,
         &epoch,
         &conversation,
         params,
@@ -348,7 +296,7 @@ async fn begin(
         Some(lease),
         session,
         Some(&schedule),
-        Some(route.worker.spec().worker_id.as_str()),
+        Some(&route.worker),
     )
     .await;
     let refused = matches!(
@@ -362,7 +310,7 @@ async fn begin(
             .await
             .map_err(|_| OpenAiCompatTransportError::Connection)?;
         started = Call::start(
-            &socket,
+            &launch,
             &epoch,
             &conversation,
             params,
@@ -370,7 +318,7 @@ async fn begin(
             Some(lease),
             None,
             Some(&schedule),
-            Some(route.worker.spec().worker_id.as_str()),
+            Some(&route.worker),
         )
         .await;
     }
@@ -399,10 +347,7 @@ async fn begin(
             };
             Ok(Begun::Sent(Sent {
                 call,
-                tie: Tie {
-                    manifest_sha256: Some(manifest_sha256),
-                    epoch: Some(epoch),
-                },
+                tie: Tie::new(Some(manifest_sha256), Some(epoch)),
                 physical,
                 registration,
                 _foreground: foreground,
@@ -623,7 +568,7 @@ fn record_receipt(
     if let Some(mut receipt) = receipt {
         receipt.scheduling = scheduling;
         receipt.physical = Some(sent.physical);
-        if let Some(epoch) = sent.tie.epoch.as_deref() {
+        if let Some(epoch) = sent.tie.epoch() {
             worker_host::report_receipt(&route.worker.spec().worker_id, epoch, receipt.clone());
         }
         Some(receipt)
@@ -683,7 +628,7 @@ fn report(route: &NativeRoute, last: &JsonValue) {
 /// polls.
 fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
     if let Some(stats) = stats {
-        worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
+        worker_host::report_device_stats(&route.worker, stats);
     }
     if let Some(activity) = stats.and_then(activity_of) {
         worker_host::report_device_activity(&route.worker, activity);
@@ -736,14 +681,10 @@ pub(super) async fn drain_and_shutdown(socket: &Path) {
 /// sent once, buffered, with the epoch the hello named. Returns the hello
 /// and the reply in the HTTP reply's shape.
 pub(super) async fn qualify(
-    socket: &Path,
+    launch: &NativeLaunch,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    let mut channel = Channel::connect(socket)
-        .await
-        .map_err(|_| WorkerFailure::Unreachable)?;
-    let hello = channel
-        .ask("hello", json!({}))
+    let (channel, hello) = Channel::connect_launch(launch, None)
         .await
         .map_err(|_| WorkerFailure::Unreachable)?;
     drop(channel);
@@ -754,7 +695,7 @@ pub(super) async fn qualify(
         .to_owned();
     let (conversation, params) = wire::split_request(request);
     let mut call = Call::start(
-        socket,
+        launch,
         &epoch,
         &conversation,
         params,

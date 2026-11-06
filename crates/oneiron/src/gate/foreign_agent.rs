@@ -395,6 +395,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
