@@ -68,6 +68,7 @@ use super::carrier_parts::{
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::quarantine::{QuarantineContainer, quarantine_once_in_txn};
 use super::types::WindowKey;
+use super::window_rows::HISTORY_FREE_WINDOW;
 use crate::Vault;
 use crate::entity_doc::DocumentMerge;
 use crate::entity_doc::office::OFFICE_BODY_OWNER;
@@ -478,15 +479,30 @@ pub(crate) fn materialize_typed_body_rows_from_delta(
 ) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     let mut parts = BTreeSet::new();
+    let mut deleted = false;
     for (map_key, value) in &delta.updated {
-        if let Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) = value {
-            let map_key = map_key.to_string();
-            if is_part_key(&map_key) {
-                parts.insert(map_key);
-            } else {
-                rows.push((map_key, bytes.to_vec()));
+        match value {
+            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+                let map_key = map_key.to_string();
+                if is_part_key(&map_key) {
+                    parts.insert(map_key);
+                } else {
+                    rows.push((map_key, bytes.to_vec()));
+                }
             }
+            None => deleted |= !is_part_key(&map_key.to_string()),
+            Some(_) => {}
         }
+    }
+    // A row the import deleted (a removed body's, or an open fork whose
+    // opener was erased) still stands in the window's history with the
+    // actors it named: the window is pinned history-free before any export
+    // of it can ship that history.
+    if deleted
+        && let Err(error) =
+            vault.with_write_txn_grouped(|txn| pin_history_free_in_txn(vault, txn, window_key))
+    {
+        tracing::warn!(window = window_key, error = %error, "typed body row window not pinned");
     }
     let map = doc.get_map(TYPED_BODY_ROWS_MAP);
     if !parts.is_empty() {
@@ -524,6 +540,12 @@ pub(crate) fn merge_committed_typed_body_rows(
     merge_rows(vault, &map, key.as_str(), carried);
 }
 
+/// Pins window `window` to history-free transport in the caller's writer,
+/// as an erase that rewrites a carrier does.
+fn pin_history_free_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, window: &str) -> Result<()> {
+    HISTORY_FREE_WINDOW.put(&vault.store, txn, &window.to_owned(), &[1u8])
+}
+
 /// Whether `doc` holds a typed body row map. Looking a root up by name
 /// creates it: look first.
 fn holds_typed_body_rows_map(doc: &LoroDoc) -> bool {
@@ -559,6 +581,14 @@ fn merge_rows(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec
         };
         let outcome = match row {
             Row::Receipt(record) => vault.with_write_txn_grouped(|txn| {
+                // An erased receipt in the window may have replaced a live
+                // one whose actor and MadeBy its history still holds, here or
+                // on the machine that erased it: the window is pinned
+                // history-free in this writer, whatever the merge, before any
+                // export of it can ship that history.
+                if !record.names_actor() {
+                    pin_history_free_in_txn(vault, txn, window)?;
+                }
                 let merge = merge_carried_receipt_in_txn(vault, txn, &record)?;
                 if merge == DocumentMerge::Conflict {
                     let divergence = receipt_divergence_digest(vault, txn, &record, &bytes)?;
@@ -583,6 +613,12 @@ fn merge_rows(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec
                     carried.snapshot = Some(ForkSnapshot::Whole(snapshot));
                 }
                 vault.with_write_txn_grouped(|txn| {
+                    // A fork whose opener or settler reads as erased may have
+                    // replaced a copy that named them, which the window's
+                    // history still holds: pinned as an erased receipt is.
+                    if carried.names_erased_actor() {
+                        pin_history_free_in_txn(vault, txn, window)?;
+                    }
                     let merge =
                         merge_carried_fork_in_txn(vault, txn, &carried, &OFFICE_BODY_OWNER)?;
                     if merge == DocumentMerge::Conflict {
