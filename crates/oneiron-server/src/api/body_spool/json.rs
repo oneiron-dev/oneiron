@@ -11,7 +11,6 @@ use std::fs::File;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 
 use base64::Engine as _;
-use serde::de::DeserializeOwned;
 
 /// Bytes of base64 text a [`Base64FileSink`] holds before it decodes them.
 const BASE64_PIECE: usize = 64 * 1024;
@@ -64,18 +63,20 @@ impl<'a> BulkMember<'a> {
     }
 }
 
-/// Decodes the object `reader` holds to its end: each bulk member's string
-/// to its sink, every other member as `T`. A bulk member given twice, given
-/// as anything but a string, or missing while required, or anything after
-/// the object, is malformed.
-pub(super) fn decode_object<T: DeserializeOwned>(
+/// Scans the object to its end: bulk strings to their sinks, other members
+/// to the head file for the route's later DTO decode. A bulk given twice,
+/// given as anything but a string, or missing while required, or anything
+/// after the object, is malformed.
+pub(super) fn scan_object_head(
     reader: impl BufRead,
     bulk: &mut [BulkMember<'_>],
-) -> Decoded<T> {
+    head: &mut TextFileSink,
+) -> Decoded<()> {
     let mut scan = Scanner { reader };
-    let mut head = vec![b'{'];
+    let mut has_members = false;
     scan.skip_whitespace()?;
     scan.expect(b'{')?;
+    write_head(head, b"{");
     scan.skip_whitespace()?;
     if scan.peek()? == Some(b'}') {
         scan.bump();
@@ -100,16 +101,18 @@ pub(super) fn decode_object<T: DeserializeOwned>(
                     member.refused = true;
                 }
             } else {
-                if head.len() > 1 {
-                    head.push(b',');
+                if has_members {
+                    write_head(head, b",");
                 }
-                head.extend_from_slice(
+                write_head(
+                    head,
                     serde_json::to_string(&name)
                         .map_err(|_| JsonInvalid)?
                         .as_bytes(),
                 );
-                head.push(b':');
-                scan.copy_value(&mut head)?;
+                write_head(head, b":");
+                scan.copy_value(head)?;
+                has_members = true;
             }
             scan.skip_whitespace()?;
             match scan.next()? {
@@ -126,8 +129,15 @@ pub(super) fn decode_object<T: DeserializeOwned>(
     if bulk.iter().any(|member| member.required && !member.seen) {
         return Err(JsonInvalid);
     }
-    head.push(b'}');
-    serde_json::from_slice(&head).map_err(|_| JsonInvalid)
+    write_head(head, b"}");
+    Ok(())
+}
+
+/// Keeps the first head-file failure while the scanner still judges syntax.
+fn write_head(head: &mut TextFileSink, run: &[u8]) {
+    if head.refusal.is_none() {
+        let _ = head.write(run);
+    }
 }
 
 /// Decodes an object containing only the declared string members. Names
@@ -310,18 +320,18 @@ impl<R: BufRead> Scanner<R> {
 
     /// One value as it stands, appended to `out`. Only its extent is found
     /// here; the DTO's decode judges what it holds.
-    fn copy_value(&mut self, out: &mut Vec<u8>) -> Decoded<()> {
+    fn copy_value(&mut self, out: &mut TextFileSink) -> Decoded<()> {
         match self.peek()?.ok_or(JsonInvalid)? {
             b'"' => {
                 self.bump();
-                out.push(b'"');
+                write_head(out, b"\"");
                 self.copy_string(out)
             }
             b'{' | b'[' => {
                 let mut depth = 0usize;
                 loop {
                     let byte = self.next()?.ok_or(JsonInvalid)?;
-                    out.push(byte);
+                    write_head(out, &[byte]);
                     match byte {
                         b'"' => self.copy_string(out)?,
                         b'{' | b'[' => depth += 1,
@@ -340,7 +350,7 @@ impl<R: BufRead> Scanner<R> {
                     if matches!(byte, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t') {
                         break;
                     }
-                    out.push(byte);
+                    write_head(out, &[byte]);
                     self.bump();
                 }
                 Ok(())
@@ -350,13 +360,13 @@ impl<R: BufRead> Scanner<R> {
 
     /// A string as it stands, after its opening quote, through its closing
     /// quote.
-    fn copy_string(&mut self, out: &mut Vec<u8>) -> Decoded<()> {
+    fn copy_string(&mut self, out: &mut TextFileSink) -> Decoded<()> {
         loop {
             let byte = self.next()?.ok_or(JsonInvalid)?;
-            out.push(byte);
+            write_head(out, &[byte]);
             match byte {
                 b'"' => return Ok(()),
-                b'\\' => out.push(self.next()?.ok_or(JsonInvalid)?),
+                b'\\' => write_head(out, &[self.next()?.ok_or(JsonInvalid)?]),
                 _ => {}
             }
         }
@@ -525,10 +535,7 @@ pub(in crate::api) struct Base64FileSink {
 }
 
 impl Base64FileSink {
-    pub(in crate::api) fn new_admitted(
-        file: File,
-        memory: &mut crate::machine::MemoryLease,
-    ) -> Self {
+    pub(in crate::api) fn new_admitted(file: File, memory: &mut crate::machine::MemoryLease) -> Self {
         let text = Vec::with_capacity(BASE64_TEXT_BUFFER_BYTES);
         memory.materialized(BASE64_TEXT_BUFFER_BYTES as u64, text.capacity() as u64);
         let decoded = vec![0; BASE64_DECODE_BUFFER_BYTES];

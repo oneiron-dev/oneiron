@@ -67,21 +67,20 @@ pub(super) struct BodySpool {
 impl BodySpool {
     /// The spool as one JSON document `T`, decoded as it is read; `None`
     /// when it is not one.
-    pub(super) fn json<T: serde::de::DeserializeOwned>(
-        &mut self,
-    ) -> Result<Option<T>, MemoryRefusal> {
+    pub(super) fn json<T: serde::de::DeserializeOwned>(&mut self) -> Result<Option<T>, MemoryRefusal> {
         let mut memory = self.admit_reader()?;
         Ok(self.with_reader_admitted(&mut memory, |reader| serde_json::from_reader(reader).ok()))
     }
 
-    /// The spool as one JSON object `T`, with each bulk member's string
-    /// streamed to its sink as it is read (`json::decode_object`).
-    pub(super) fn object_admitted<T: serde::de::DeserializeOwned>(
+    /// Streams bulk strings to their sinks and the remaining object to its
+    /// head file under the combined working-buffer lease.
+    pub(super) fn object_head_admitted(
         &mut self,
         bulk: &mut [BulkMember<'_>],
+        head: &mut TextFileSink,
         memory: &mut crate::machine::MemoryLease,
-    ) -> Result<T, JsonInvalid> {
-        self.with_reader_admitted(memory, |reader| json::decode_object(reader, bulk))
+    ) -> Result<(), JsonInvalid> {
+        self.with_reader_admitted(memory, |reader| json::scan_object_head(reader, bulk, head))
     }
 
     /// The declared string members, using reader room admitted with the text sink.
@@ -110,6 +109,18 @@ impl BodySpool {
     /// The room the spool holds on the disk floor, kept past the spool.
     pub(super) fn into_room(self) -> Option<Arc<DiskClaim>> {
         self.room
+    }
+}
+
+impl SpooledField {
+    /// Decodes a rewound field under an already-admitted reader lease.
+    pub(super) fn json_admitted<T: serde::de::DeserializeOwned>(
+        &self,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> serde_json::Result<T> {
+        let reader = BufReader::with_capacity(SPOOL_PIECE, self.file().0);
+        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
+        serde_json::from_reader(reader)
     }
 }
 

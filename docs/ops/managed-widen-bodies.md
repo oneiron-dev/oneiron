@@ -21,8 +21,8 @@ the existing native comparison rules.
 The `proposal_ref` string is also unescaped into an anonymous file. Property names
 are matched as they stream, without copying them or an unknown member's value
 into a metadata head. Missing, duplicate, unknown and non-string members still
-produce the same invalid-JSON response. The generic decoder used by other doors
-is unchanged.
+produce the same invalid-JSON response. Large widen answers do not use the generic
+metadata decoder. The existing whole-JSON reader used by other doors is unchanged.
 
 Large reject bodies use the same closed-schema string reader and UTF-8 file sink
 for their sole required `proposal_ref` member. They have no delta member. Small
@@ -95,25 +95,46 @@ reads retain the existing JSON-before-sink and native validation order. This acc
 only for the fixed reader buffer, not generic DTOs, metadata heads or native decoded
 rows. The sealed object's additional fixed base64 buffers are covered below.
 
-## Sealed base64 working buffers
+## Sealed base64 and metadata working buffers
 
-The sealed custody reader admits its JSON reader, pending base64 text and decoded
-output together on the original transfer worker, before any of them allocates.
-It takes no second reader lease. One buffer lease covers the existing read window,
-a pending base64 piece plus one reader run, and the maximum decoded bytes of that
-text. Their room is derived from the existing 64 KiB window and piece geometry,
-not a request-size limit. Actual capacities are recorded once on the combined lease.
+The sealed custody reader admits its source JSON reader, pending base64 text,
+decoded output and metadata-head writer together on the original transfer worker,
+before any of them allocates. One lease covers two existing 64 KiB I/O windows,
+128 KiB of pending base64 text and 96 KiB of initialized output: 352 KiB in this
+phase. These capacities derive from the existing window and piece geometry, not
+a request-size limit. Each actual capacity is recorded once on the combined lease.
 
 The sink keeps reusable text and initialized output buffers. It decodes the same
 text extent with the same standard base64 engine and writes only the decoded
 prefix. Chunk boundaries, padding checks, JSON-before-sink errors, file writes
-and final field handling keep their existing order. The reader and both sink
-buffers drop before the lease, including refusal and unwind; the returned request
-keeps only its original head, input file and disk room.
+and final field handling keep their existing order.
+
+The other object members stream to a second anonymous vault-staged file instead
+of one rebuilt encoded metadata vector. Values retain their original bytes;
+normalized property names cannot exceed their original JSON spelling. Omitting
+the base64 member also removes its name and punctuation. The head and decoded
+input bytes therefore fit within the raw body's stored-copy room; no second
+cumulative disk claim is created. Files still close on drop, and real disk
+capacity failures keep the custody response.
+
+A head-file write failure stops further writes but does not stop syntax scanning.
+After scanning, both sinks close inside the first lease. All four working buffers
+and that lease drop before a later admission. Known syntax and head-file failures
+are returned before waiting for another reader. Only then does the same original
+transfer worker admit a separate 64 KiB head reader and decode the route's DTO.
+There is no buffer lease or vault transaction across that wait, and the original
+live cancellation flag remains in use. The phases do not overlap. A head-file
+read failure keeps body-not-whole rather than being called malformed JSON.
+
+A readable head's DTO errors still precede saved input-sink errors. The reader
+drops before its lease, including refusal and unwind; the returned request keeps
+only its original head, input file and disk room. The transient head file is gone
+before the worker returns.
 
 A physical memory floor uses the existing internal-server-error shape with a
 custody-decode allocation message. A stopped wait keeps body-not-whole, not disk
-capacity. Generic metadata and DTO allocations still remain separate work.
+capacity. Per-property names and their normalization strings, generic DTOs and
+native decoded rows remain unpriced; this is not whole-endpoint heap admission.
 
 ## Native answers
 
