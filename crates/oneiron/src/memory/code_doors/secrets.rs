@@ -195,20 +195,21 @@ impl Memory<'_> {
         {
             self.code_readable(id, None)?;
         }
-        let remediation =
-            self.vault
-                .propose_repo_secret_remediation(RepoSecretRemediationRequest {
-                    repo_ref,
-                    actor_id: actor,
-                    session_id: input.session,
-                    provenance_claim_id: input.provenance_claim,
-                    op_provenance: input.op_provenance,
-                    actor_class: Some(self.actor_class),
-                    review: input.catalog.map_or(
-                        RepoProposalReview::VaultDefault,
-                        RepoProposalReview::Explicit,
-                    ),
-                })?;
+        let remediation = self.vault.propose_repo_secret_remediation_as_owner(
+            owner,
+            RepoSecretRemediationRequest {
+                repo_ref,
+                actor_id: actor,
+                session_id: input.session,
+                provenance_claim_id: input.provenance_claim,
+                op_provenance: input.op_provenance,
+                actor_class: Some(self.actor_class),
+                review: input.catalog.map_or(
+                    RepoProposalReview::VaultDefault,
+                    RepoProposalReview::Explicit,
+                ),
+            },
+        )?;
         if let Some(proposal) = remediation.proposal {
             self.produced_from([proposal]);
         }
