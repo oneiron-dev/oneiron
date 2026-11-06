@@ -24,6 +24,8 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::LlmCapability;
 use oneiron_model::llm::ModelId;
 
+mod notice;
+
 /// The switch one offer's approval applied, keyed by offer id.
 const SWITCH: SideTable<EntityId, OfferSwitchReceipt, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_OFFER_SWITCH);
@@ -264,6 +266,7 @@ pub(super) fn apply_switch_in_txn(
         undone: None,
     };
     SWITCH.put(&vault.store, txn, offer, &receipt)?;
+    notice::record_applied_switch_in_txn(vault, txn, &receipt)?;
     Ok(receipt)
 }
 
@@ -343,6 +346,7 @@ pub(crate) fn settle_staged_switch_in_txn(
     {
         receipt.application = application;
         SWITCH.put(&vault.store, txn, offer, &receipt)?;
+        notice::record_applied_switch_in_txn(vault, txn, &receipt)?;
     }
     Ok(())
 }
