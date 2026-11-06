@@ -135,6 +135,14 @@ keeps that value unchanged. A prefix `exports` read still requires the original
 alias and must occur before the first fresh replacement. Reading that old wrapper
 after a replacement keeps the ordinary fallback; its old keys are not restored.
 
+For a whole-slot outer assignment, the final element may itself be another
+plain native whole-slot assignment. For example,
+`module.exports = (module.exports = {a: 1}, module.exports = {b: 2})` keeps `b`.
+That final store uses the same prefix checks and ordered fresh-value handling;
+the outer store writes the value that was just stored. A current-valued final
+store preserves that current value. Detached-wrapper, named-property, rebinding,
+compound and unknown-value final stores keep the ordinary fallback.
+
 A direct assignment to the wrapper `exports` binding can use that same flat
 prefix when the final element reads the native `module.exports` slot. For example,
 `exports = (module.exports = {a: 1}, module.exports)` contributes `a` and reconnects
@@ -142,7 +150,12 @@ that wrapper to the current module value. Fresh prefix values still apply in
 source order, including their unresolved interior references. An all-current
 prefix preserves the declared keys and reconnects the wrapper. A fresh final or
 an `exports` final does not qualify for this binding form: assigning a fresh value
-to `exports` alone would not replace the module value.
+to `exports` alone would not replace the module value. The final element may instead
+be another qualifying plain native whole-slot assignment. For example,
+`exports = (module.exports = {a: 1}, module.exports = {b: 2})` applies both
+replacements and reconnects the wrapper to the current module value containing `b`. The final store
+uses the same whole-slot prefix checks; property, wrapper-binding, compound and
+unknown-value stores keep the ordinary fallback.
 
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and other sequence-valued terminals keep
@@ -154,8 +167,24 @@ expressions are evaluated.
 Uninitialized root `var module` and `var exports` redeclare the CommonJS wrapper
 parameters, including hoisted or repeated redeclarations. Direct simple `var`
 initializers update the same alias state in
-source order. Lexical and function shadows remain distinct from wrapper bindings.
-Destructured, conditional and loop-carried initializer flows are not modeled.
+source order. A direct root `var exports` initializer can also use the same flat
+whole-slot prefix when its final element reads the current native module slot,
+such as `var exports = (module.exports = {a: 1}, module.exports)`, or makes another
+qualifying plain whole-slot assignment. It applies the fresh prefix values in
+order and reconnects that actual wrapper binding; an all-current prefix preserves
+keys. Fresh or `exports` final values retain the ordinary initializer handling. A direct root `var module` initializer can use
+that same flat whole-slot prefix when its final element reads the native `module`
+object itself, as in `var module = (module.exports = {a: 1}, module)`. Fresh prefix
+values apply in source order and detach the old `exports` alias; an all-current
+prefix preserves keys and alias. The `module` binding stays native because the
+final read returns the same original module object, not the current exported value.
+A direct plain assignment to the native wrapper `module` binding uses the same
+module-object final rule, as in `module = (module.exports = {a: 1}, module)`.
+Its prefix replacements apply in order without rebinding the module object;
+only fresh replacements detach the old `exports` alias. A final export value,
+fresh value or assignment does not qualify for either module-binding form.
+Lexical and function shadows remain distinct from wrapper bindings. Destructured,
+conditional and loop-carried initializer flows are not modeled.
 A direct `module = module` or `var module = module` preserves its current
 wrapper identity; assigning an unrelated value does not. This does not infer
 arbitrary alias identities. Rebinding `exports` does not replace the module value. Replacing
