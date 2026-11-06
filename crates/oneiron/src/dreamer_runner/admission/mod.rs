@@ -6,6 +6,10 @@
 
 mod buckets;
 mod budget_line;
+mod native_call;
+pub(crate) use self::native_call::{
+    NativeCallPayment, invoice_native_call_in_txn, retain_native_call_in_txn,
+};
 mod requester;
 mod settlement;
 mod spend;
