@@ -66,14 +66,17 @@ pub use owner_args::{
     SubscriptionRevokeArgs, SubscriptionsCommand,
 };
 pub use recovery_kit_args::{
-    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
-    RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
-    RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
+    RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
+    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use reminder_route_args::{
     ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs,
 };
-pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
+pub use seat_args::{
+    SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs, SiwcCredentialArgs, SiwcLoginArgs,
+    SiwcRevokeArgs,
+};
 pub use secret_control_args::{
     SecretBindArgs, SecretImportSupplementArgs, SecretPendingArgs, SecretRefArgs,
     SecretShowSupplementArgs, SecretUnbindArgs,
@@ -1076,6 +1079,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
         Command::Oneironer(command) => commands::oneironer(command),
+        Command::Seat(SeatCommand::SiwcLogin(args)) => commands::seat_siwc_login(*args).await,
+        Command::Seat(SeatCommand::SiwcClear(args)) => commands::seat_siwc_clear(*args),
+        Command::Seat(SeatCommand::SiwcRevoke(args)) => commands::seat_siwc_revoke(*args).await,
         Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
         Command::Seat(SeatCommand::Runners) => commands::seat_runners(),
