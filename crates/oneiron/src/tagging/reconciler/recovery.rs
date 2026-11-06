@@ -14,7 +14,9 @@ use crate::attempt_queue::{
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::tagging::history;
-use crate::tagging::marker::{MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn};
+use crate::tagging::marker::{
+    MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_with_hint_read_in_txn,
+};
 use crate::tagging::trace::{HandBackReason, TaggingOutcome, TaggingTrace};
 
 impl TaggingReconciler {
@@ -95,6 +97,7 @@ impl TaggingReconciler {
                         record,
                         reason: HandBackReason::WorkerRestarted,
                         owned: false,
+                        _room_turns: Vec::new(),
                     });
                 }
             }
@@ -208,7 +211,15 @@ impl TaggingReconciler {
         };
         // Settled first, so its dedupe entry is free for the new marker.
         self.settle_in_txn(txn, &record, &trace)?;
-        enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now, work)?;
+        enqueue_marker_with_hint_read_in_txn(
+            &self.vault,
+            txn,
+            payload.turn,
+            &self.config,
+            now,
+            work,
+            payload.hint_read,
+        )?;
         Ok(())
     }
 
@@ -262,9 +273,15 @@ impl TaggingReconciler {
         };
         // The class the row carried under this writer (FIX 6755).
         let work = payload.effective_work(&self.vault);
-        if let EnqueueOutcome::Enqueued(owed) =
-            enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.config, now, work)?
-        {
+        if let EnqueueOutcome::Enqueued(owed) = enqueue_marker_with_hint_read_in_txn(
+            &self.vault,
+            txn,
+            payload.turn,
+            &self.config,
+            now,
+            work,
+            payload.hint_read,
+        )? {
             queue.intervene_in_txn(
                 txn,
                 InterveneAttempt {

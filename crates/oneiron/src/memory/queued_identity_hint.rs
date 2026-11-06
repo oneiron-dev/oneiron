@@ -62,6 +62,10 @@ impl Memory<'_> {
 }
 
 impl QueuedIdentityHintReader {
+    pub(crate) fn hold_room_turn(&self, vault: &Vault) -> Option<crate::claim::TurnTerms> {
+        self.room.as_ref()?.hold_turn(vault)
+    }
+
     pub(crate) fn valid(&self) -> bool {
         EdgeActorClass::try_from_u8(self.actor_class).is_some()
             && self

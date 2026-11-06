@@ -27,6 +27,8 @@ pub(super) struct Held {
     /// Whether its preparation, its call, its settlement or a hand-back owns
     /// it now: no hand-back starts on it until that owner lets it go.
     pub(super) owned: bool,
+    /// SAME original terms, held through preparation, inference and settlement.
+    pub(super) _room_turns: Vec<crate::claim::TurnTerms>,
 }
 
 /// The markers a reconciler holds, shared with each claim's hold.
@@ -49,15 +51,18 @@ pub(super) struct ClaimHold {
 }
 
 impl ClaimHold {
-    /// Enters `record`, owned, in `held`. An entry of the same row left by a
-    /// claim whose commit failed goes: the row is leased only by this one.
-    fn new(held: &HeldSet, record: &AttemptRecord) -> Self {
+    /// Enters `record`, owned, in `held`, replacing an older entry of that row.
+    fn new(vault: &crate::Vault, held: &HeldSet, record: &AttemptRecord) -> Self {
+        let room_turns = MarkerPayload::decode(&record.payload)
+            .map(|payload| payload.hint_read.hold_room_turns(vault))
+            .unwrap_or_default();
         let mut entries = lock_held(held);
         entries.retain(|entry| entry.record.id != record.id);
         entries.push(Held {
             record: record.clone(),
             reason: HandBackReason::SettlementFailed,
             owned: true,
+            _room_turns: room_turns,
         });
         Self {
             held: Arc::clone(held),
@@ -219,10 +224,12 @@ impl TaggingReconciler {
                 }
                 return Ok(Claim::Empty);
             };
-            // Held before the lease commits: a commit that fails leaves an
-            // entry the next hand-back finds not leased, and lets go.
-            let hold = ClaimHold::new(&self.unsettled, &record);
-            txn.commit()?;
+            // Keep the original terms alive before the lease becomes visible.
+            let hold = ClaimHold::new(&self.vault, &self.unsettled, &record);
+            if let Err(error) = txn.commit() {
+                hold.settled();
+                return Err(error.into());
+            }
             self.vault.store.notify_attempt_observers();
             return Ok(Claim::Leased(Box::new(record), hold));
         }
