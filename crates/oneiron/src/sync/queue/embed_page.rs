@@ -8,6 +8,7 @@ use crate::{Error, Result};
 pub(crate) struct EmbedQueueRow {
     pub(crate) key: Vec<u8>,
     pub(crate) job: Option<QueuedEmbedJob>,
+    pub(crate) copy: Option<Vec<u8>>,
 }
 
 impl SyncQueue {
@@ -33,9 +34,15 @@ impl SyncQueue {
             Err(Error::CorruptedIndex(_)) => None,
             Err(error) => return Err(error),
         };
+        let copy = if job.is_some() {
+            codec::embed_job_home_claim_copy(&value)?.map(<[u8]>::to_vec)
+        } else {
+            None
+        };
         Ok(Some(EmbedQueueRow {
             key: key.to_vec(),
             job,
+            copy,
         }))
     }
 }

@@ -104,8 +104,9 @@ pub(crate) use self::scrub::{
     scrub_unlabelled_updates_in_txn, scrub_window_updates_in_txn, unlabelled_update_count_in_txn,
 };
 pub(crate) use self::seq::{
-    clear_embed_job_home_claim_copy_in_txn, delete_embed_job_in_txn, push_delete_bearing_in_txn,
-    push_embed_job_in_txn, retain_embed_job_home_claim_copy_in_txn,
+    clear_embed_job_home_claim_copy_in_txn, delete_embed_job_in_txn,
+    embed_job_home_claim_copy_in_txn, push_delete_bearing_in_txn, push_embed_job_in_txn,
+    retain_embed_job_home_claim_copy_in_txn,
 };
 #[cfg(test)]
 mod tests;
