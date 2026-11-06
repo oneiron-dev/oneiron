@@ -111,11 +111,13 @@ pub trait CompactionBackend: Send + Sync {
     > {
         self.compact(request, retry).map(|product| (product, None))
     }
-    /// At a breakpoint that seals a flight, the run's `live` request as the
-    /// host's admitted rung sends it, when this backend writes as its agent
-    /// from the live context (FIX 4465 C), or why it cannot be bound. `None`
-    /// from every other backend. Called on the step loop before the feed
-    /// can park; `summary_token_budget` sizes the room the capture leaves.
+    /// At a breakpoint that seals a flight, the fork of the run's latest
+    /// completed call as the rung that answered it sent it (FIX 4933), when
+    /// this backend writes as its agent from the live context (FIX 4465 C),
+    /// or why it cannot be bound; `live` is the call the run sends next.
+    /// `None` from every other backend. Called on the step loop before the
+    /// feed can park; `summary_token_budget` sizes the room the capture
+    /// leaves.
     fn capture_live_fork(
         &self,
         _live: &oneiron_model::llm::LlmRequest,

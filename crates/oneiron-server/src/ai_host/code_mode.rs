@@ -144,8 +144,9 @@ pub(super) async fn bind(
             }) as Arc<dyn LlmBackend>
         })
     };
-    // Each run's compaction seat reads the rung its step's call is admitted
-    // on, at the breakpoint, through this same admission (FIX 4465 C).
+    // Each run's compaction seat admits its step's call at the breakpoint
+    // through this same admission (FIX 4465 C), and reads there the rung
+    // that answered the run's latest completed call (FIX 4933).
     let live_admission = Arc::new(LiveStepAdmission {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
@@ -509,9 +510,11 @@ fn pinned_call(models: &ModelRuntime, vault: &Vault, request: &LlmRequest) -> Op
 /// The live admission a run's compaction seat reads at a breakpoint (FIX
 /// 4465 C): the step's request admitted exactly as [`CodeModeBackend`]
 /// admits it, on the same role and with the same browser evidence, before
-/// the call is sent. It sends nothing, spends nothing, counts nothing and
-/// keeps no request: the seat's capture holds the one copy, on its flight,
-/// under the run's own actor and meter.
+/// the call is sent. It sends nothing, spends nothing and counts nothing.
+/// The rung that answered the run's latest completed call, with that call,
+/// is in the run's answering rung slot, which the run's writer holds (FIX
+/// 4933); the seat's capture holds its flight's one copy, under the run's
+/// own actor and meter.
 struct LiveStepAdmission {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
@@ -634,8 +637,8 @@ impl CodeModeBackend {
                 handoff.answered();
             }
             // FIX 4933: only a call that answered fills its run's slot.
-            if let (Ok((_, binding)), Some(run)) = (&answered, capture_run) {
-                self.answering.answered(run, binding);
+            if let (Ok((_, binding)), Some(run_id)) = (&answered, capture_run) {
+                self.answering.answered(run_id, binding);
             }
             answered.map(|(response, binding)| {
                 if let (Some(caller), Some(request)) = (&self.caller, &record_request) {

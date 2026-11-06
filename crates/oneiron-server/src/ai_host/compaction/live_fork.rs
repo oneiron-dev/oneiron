@@ -1,9 +1,9 @@
 //! The agent's own compaction from its live context (FIX 4465 C). At the
-//! breakpoint that seals a flight, the run's live request is read as the
-//! host's admitted rung sends it, and each call of the flight forks it on
-//! that rung: the prefix unchanged with its end marked as a cache boundary,
-//! then the house compaction's instruction, the agent's home and the span's
-//! input after it. A call is admitted on the live role as exactly that
+//! breakpoint that seals a flight, the run's latest completed call is read
+//! as the rung that answered it sent it (FIX 4933), and each call of the
+//! flight forks it on that rung: the prefix unchanged with its end marked
+//! as a cache boundary, then the house compaction's instruction, the
+//! agent's home and the span's input after it. A call is admitted on the live role as exactly that
 //! rung's model, sent on that rung alone with a permit of its own on the
 //! run's compaction meter, and files, lands and is checked as any other
 //! self-written pass. Under a row on `auto` (FIX 6029) the fork is bound
@@ -44,14 +44,20 @@ pub(super) enum LiveBind {
 }
 
 /// `bind_live_compaction_fork`: the run's `live` request at a breakpoint,
-/// admitted on the live role exactly as its host admits it, bound to the
-/// rung its walk would send it to now, for `writer` under `row`, as `how`
-/// says. A forced fork that a route refuses, or a ladder with no rung to
-/// take it now, binds none and says why: no rung is guessed and nothing
-/// falls through to the cheap route. A prefix that leaves the live model no
-/// room for the window is refused, never cut. Under `auto` every such
-/// failure, and a cold prefix, binds none and says nothing: `None`, so the
-/// cheap writer writes the flight as the agent.
+/// admitted on the live role exactly as its host admits it, for `writer`
+/// under `row`, as `how` says. The fork binds the rung that answered the
+/// run's latest completed call, and that call as the rung sent it is its
+/// prefix (FIX 4933): never the rung the walk would take now, and never a
+/// wait for a call not sent yet. The room and, under `auto`, the warmth are
+/// read for that rung and that prefix now, before the flight is sealed.
+/// The answering rung witnesses no source of the prefix, so its sources
+/// stay unknown (FIX 9463). A forced fork that a route refuses, a run with
+/// no completed call, or a rung its live route no longer takes now binds
+/// none and says why: no rung is guessed and nothing falls through to the
+/// cheap route. A prefix that leaves the live model no room for the window
+/// is refused, never cut. Under `auto` every such failure, and a cold
+/// prefix, binds none and says nothing: `None`, so the cheap writer writes
+/// the flight as the agent.
 pub(super) fn bind_live_compaction_fork(
     route: &ServedCompactionBackend,
     admission: &dyn LiveAdmission,
@@ -66,7 +72,10 @@ pub(super) fn bind_live_compaction_fork(
     let Ok(call) = admission.admit_live(live.clone()) else {
         return unbound(SelfCompactionUnavailable::LiveRungUnbound);
     };
-    let Some((rung, request)) = call.ladder.live_rung(&call.request) else {
+    let Some(AnsweringRung { rung, request }) = admission.answering_rung(live).filter(|answered| {
+        call.ladder
+            .takes_answering_rung(&answered.rung, &call.request)
+    }) else {
         return unbound(SelfCompactionUnavailable::LiveRungUnbound);
     };
     // The row bounds where the fork may be served: an egress limit, never a
@@ -88,7 +97,12 @@ pub(super) fn bind_live_compaction_fork(
     if room == 0 {
         return unbound(SelfCompactionUnavailable::LivePrefixTooLong);
     }
-    Some(Ok(LiveCompactionFork::capture(request, rung, writer, room)))
+    Some(Ok(LiveCompactionFork::capture(
+        Arc::unwrap_or_clone(request),
+        rung,
+        writer,
+        room,
+    )))
 }
 
 impl ServedCompactionBackend {
