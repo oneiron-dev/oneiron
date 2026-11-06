@@ -448,7 +448,7 @@ impl RawValue for MediaVectorRow {
             .split_first()
             .ok_or(Error::CorruptedIndex("media vector input hash"))?;
         let (input_hash, row) = match present {
-            0 => (None, rest),
+            0 if kind != InputKind::Text => (None, rest),
             1 => {
                 let (hash, row) = rest
                     .split_first_chunk::<TEXT_HASH_LEN>()
