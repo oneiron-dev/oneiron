@@ -13,7 +13,7 @@ cover it.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `d60c68b1d6153cdebc51cbb7e32b761ff9dc9d09` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `ee0cf6716e2d6e664d6729c6fda163dfeabced5f` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -53,14 +53,14 @@ five to the fork by rev:
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "d60c68b1d6153cdebc51cbb7e32b761ff9dc9d09" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "d60c68b1d6153cdebc51cbb7e32b761ff9dc9d09" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "d60c68b1d6153cdebc51cbb7e32b761ff9dc9d09" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "d60c68b1d6153cdebc51cbb7e32b761ff9dc9d09" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "d60c68b1d6153cdebc51cbb7e32b761ff9dc9d09" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "ee0cf6716e2d6e664d6729c6fda163dfeabced5f" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "ee0cf6716e2d6e664d6729c6fda163dfeabced5f" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "ee0cf6716e2d6e664d6729c6fda163dfeabced5f" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "ee0cf6716e2d6e664d6729c6fda163dfeabced5f" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "ee0cf6716e2d6e664d6729c6fda163dfeabced5f" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.91), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.92), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -1117,10 +1117,30 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.91), over `362becff`:
   coverage remain PART. No new token clone, clock, quota, cap, operating default,
   refusal policy or corpus/timing claim.
 
+- `ee0cf6716e2d6e664d6729c6fda163dfeabced5f` polls the same borrowed caller token before each original
+  target attempt in the graph plan's shape and conflict walks, and each original
+  cell in spill-write rectangle invalidation. The old ordinary plan entry point
+  delegates without a token to the same algorithm. Only the existing token-bearing
+  spill-manager path selects the cancellable plan; native errors move through the
+  original plan-error owner cleanup. The token-bearing plan uses the existing
+  value-type discriminator for its Empty-only blocker question instead of
+  materializing text, stored errors or nested arrays. Reserved tags retain the
+  discriminator's original Empty meaning; all normal-return nonempty values,
+  including stored Cancelled errors, remain blockers. Token-absent calls retain
+  the original owned value read. The token-bearing tag check bypasses arena
+  payload materialization and does not claim malformed-payload panic equivalence.
+  Original blocker order, diagnostics and overwrite allowances remain unchanged.
+  Earlier reservations or invalidation rectangles may remain after cancellation;
+  this adds no rollback, replay, second walk or checkpoint inside graph paired
+  mutations, overlays or change-log work. This is `0.9.3-oneiron.92`.
+  Hashing, allocation, core mutations and other opaque spans remain; heap-floor,
+  native work-budget and hard-time coverage remain PART. No new token clone,
+  clock, quota, cap, operating default, refusal policy or corpus/timing claim.
+
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.91`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.92`.
 
 ## Vendored, modified snapshots
 
