@@ -6,16 +6,17 @@ use super::prose_admission::{LandedProse, PROPOSAL_ROW, admit_landed};
 use super::side_keys::HexPair;
 use super::verbs::{admitted_prose_in_txn, admitted_text_in_txn, apply};
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
-use crate::consent::{AuthenticatedOwner};
-use crate::store::consent_bound::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
+use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error, Result};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::store::consent_bound::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Authorization is separate from attribution. Owner evidence is opaque;
 /// automated writes resolve a live DEC-0006 entity-bound action grant in-txn.
@@ -170,6 +171,12 @@ pub(crate) fn erase_fork_actor_in_txn(
         if fork.status == ForkStatus::Pending
             && ACTOR_ERASE_PENDING_ENTITY_DOC_FORK == PendingDocForkErase::Delete
         {
+            crate::ports::remove_fork_dependencies_in_txn(
+                &vault.store,
+                wtxn,
+                &EntityId::from_hex(&fork.entity)?,
+                &EntityId::from_hex(&fork.fork)?,
+            )?;
             ENTITY_DOC_FORK.delete(&vault.store, wtxn, &key)?;
             ENTITY_DOC_FORK_SNAPSHOT.delete(&vault.store, wtxn, &key)?;
         } else {
@@ -473,6 +480,9 @@ pub(super) fn open_proposal_in_txn(
         // A shared vault's role and record scope, in this writer, for a fork
         // retained for review as for one a grant lands (FIX 9846).
         vault.authorize_shared_content_write_in_txn(txn, req.entity, &req.actor)?;
+        if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &req.entity)? {
+            return Err(refusal);
+        }
         let h = storage::head(&vault.store, txn, &req.entity)?;
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;
@@ -638,11 +648,22 @@ fn settle_one(
         }));
     }
     let entity = EntityId::from_hex(&record.entity)?;
+    if verb != SettleVerb::Reject {
+        if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &entity)? {
+            return Err(refusal);
+        }
+    }
     let mut h = storage::head(&vault.store, txn, &entity)?;
     let live = storage::load(&vault.store, txn, &h)?;
     let before = live.frontier();
     let after = match verb {
         SettleVerb::Reject => {
+            crate::ports::remove_fork_dependencies_in_txn(
+                &vault.store,
+                txn,
+                &entity,
+                &EntityId::from_hex(fork_id)?,
+            )?;
             record.status = ForkStatus::Rejected;
             before.clone()
         }
@@ -681,7 +702,12 @@ fn settle_one(
                 DocumentRow::ShallowSince,
             )?;
             h.document = record.fork.clone();
-            storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
+            storage::move_pointer(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &entity,
+                &h.document,
+            )?;
             storage::persist(vault, txn, &entity, &mut h, &live, None)?;
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
@@ -788,13 +814,21 @@ pub(super) fn all_forks(
 }
 
 pub(super) fn erase_forks(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
+    let mut proposals = BTreeSet::new();
     for fork in all_forks(store, txn, entity)? {
         ENTITY_DOC_FORK_SNAPSHOT.delete(store, txn, &fork.fork)?;
         ENTITY_DOC_FORK.delete(store, txn, &fork.fork)?;
-        let id = EntityId::from_hex(&fork.proposal)?;
+        proposals.insert(fork.proposal);
+    }
+    for proposal in proposals {
+        let id = EntityId::from_hex(&proposal)?;
         let mut bundle = read_bundle(store, txn, &id)?;
         bundle.forks.retain(|row| row.entity != entity.to_hex());
-        ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
+        if bundle.forks.is_empty() {
+            ENTITY_DOC_PROPOSAL_BUNDLE.delete(store, txn, &id.to_hex())?;
+        } else {
+            ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
+        }
     }
     Ok(())
 }

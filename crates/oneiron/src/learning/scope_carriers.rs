@@ -18,6 +18,16 @@ use crate::side_table::{self, Named, Raw, SideTable};
 
 use super::scope_erase::contains;
 
+/// Whether `bytes` hold `needle` in any ASCII case (REVIEW-4322 P1): a stored
+/// critic ref may be uppercase hex while the erased id renders lowercase, and
+/// the parsed comparison below must still see the row.
+fn contains_folded(bytes: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && bytes
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 /// Terminal attempt receipts, by their raw key.
 const PACK_RECEIPT: SideTable<Vec<u8>, ReceiptRecord, Named> =
     SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
@@ -44,7 +54,8 @@ const REVIEW_POINTER: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::CRITIC_REVIEW_RESULT_ID);
 
 /// Re-keys every terminal attempt receipt's frozen project stamp naming
-/// erased `entity` to one fresh opaque scope.
+/// erased `entity` to one fresh opaque scope, and removes its retained-revision
+/// witnesses from the manifest without changing the manifest's other fields.
 ///
 /// # Errors
 ///
@@ -65,7 +76,10 @@ pub(crate) fn erase_receipt_scope_in_txn(
         }
         match PACK_RECEIPT.decode_value(&value) {
             Ok(mut receipt) => {
-                if receipt.rescope_task_project(*entity, minted(vault, &mut scope)?) {
+                let scope_changed =
+                    receipt.rescope_task_project(*entity, minted(vault, &mut scope)?);
+                let pins_changed = receipt.erase_manifest_revision_pins(*entity);
+                if scope_changed || pins_changed {
                     PACK_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
                 }
             }
@@ -124,7 +138,8 @@ pub(crate) fn erase_team_receipt_scope_in_txn(
 /// a review actor to the same opaque scope, and every touched row to a fresh opaque key
 /// with its verdict's pointer. A session-erased review's row moves with its verdict's
 /// re-keyed session tag below. The rename map then reaches the producer claims (FIX
-/// 11368). Registered on both stores; the first call does both.
+/// 11368). A critic's erase forgets it on the artifacts it wrote, in place (FIX 5221).
+/// Registered on both stores; the first call does both.
 ///
 /// # Errors
 ///
@@ -239,6 +254,40 @@ pub(crate) fn erase_review_scope_in_txn(
             }
         }
     }
+    // A critic's erase forgets it on every artifact it wrote (FIX 5221): its
+    // ref and the person executor that copied it, in place — the key holds
+    // no critic, so no row moves.
+    let rows = ARTIFACT
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, value) in rows {
+        if !contains_folded(&value, named.as_bytes()) {
+            continue;
+        }
+        let mut artifact = match ARTIFACT.decode_value(&value) {
+            Ok(artifact) => artifact,
+            Err(_) => continue,
+        };
+        // Parsed, not string-compared (REVIEW-4322 P1): put accepts an
+        // uppercase critic ref, and from_hex reads any case.
+        if EntityId::from_hex(&artifact.provenance.critic_ref).ok() != Some(*entity) {
+            continue;
+        }
+        let opaque = crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
+        artifact.forget_critic(&opaque);
+        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+        match ARTIFACT.put(&vault.store, &mut savepoint, &key, &artifact) {
+            Ok(()) => savepoint.commit()?,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "a critique artifact the side-row wall no longer admits is dropped by its critic's erase"
+                );
+                drop(savepoint);
+                ARTIFACT.delete(&vault.store, wtxn, &key)?;
+            }
+        }
+    }
     let rows = REVIEW
         .iter_raw_from(&vault.store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -246,7 +295,7 @@ pub(crate) fn erase_review_scope_in_txn(
         let Ok(hash) = <[u8; 32]>::try_from(key.as_slice()) else {
             continue;
         };
-        if !contains(&value, named.as_bytes()) {
+        if !contains_folded(&value, named.as_bytes()) {
             continue;
         }
         let mut review = match REVIEW.decode_value(&value) {
@@ -266,6 +315,8 @@ pub(crate) fn erase_review_scope_in_txn(
             }
         };
         let mut named_here = false;
+        let mut critic_touched = false;
+        let mut critic_opaque: Option<String> = None;
         if let Some(rmpv::Value::Array(artifacts)) = field_mut(&mut review, "artifacts") {
             for artifact in artifacts {
                 let mut artifact_named = false;
@@ -294,6 +345,38 @@ pub(crate) fn erase_review_scope_in_txn(
                     }
                     artifact_named = true;
                 }
+                let old_ref = field_mut(artifact, "provenance")
+                    .and_then(|provenance| field_mut(provenance, "critic_ref"))
+                    .and_then(|critic_ref| critic_ref.as_str())
+                    .and_then(|hex| EntityId::from_hex(hex).ok());
+                if old_ref == Some(*entity) {
+                    let token = match &critic_opaque {
+                        Some(token) => token.clone(),
+                        None => {
+                            let token =
+                                crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
+                            critic_opaque = Some(token.clone());
+                            token
+                        }
+                    };
+                    if let Some(critic_ref) = field_mut(artifact, "provenance")
+                        .and_then(|provenance| field_mut(provenance, "critic_ref"))
+                    {
+                        *critic_ref = rmpv::Value::from(token.as_str());
+                    }
+                    if let Some(executor) = field_mut(artifact, "calibration")
+                        .and_then(|calibration| field_mut(calibration, "executor"))
+                        .filter(|executor| {
+                            executor
+                                .as_str()
+                                .and_then(|hex| EntityId::from_hex(hex).ok())
+                                == Some(*entity)
+                        })
+                    {
+                        *executor = rmpv::Value::from(token.as_str());
+                    }
+                    critic_touched = true;
+                }
                 named_here = named_here || artifact_named;
             }
         }
@@ -304,9 +387,11 @@ pub(crate) fn erase_review_scope_in_txn(
             *principal = rmpv::Value::from(scope.to_hex());
             named_here = true;
         }
-        if !named_here {
+        if !named_here && !critic_touched {
             continue;
         }
+        // The cached review's identity hash names its critics, so a critic
+        // match takes the same move and pointer update as the other ids.
         rename_strings(&mut review, &renamed);
         let (_, salt) = minted_pair(vault, &mut fresh)?;
         let mut hasher = blake3::Hasher::new();

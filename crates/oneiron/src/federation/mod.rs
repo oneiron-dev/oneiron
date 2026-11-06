@@ -61,6 +61,7 @@ mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
     guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
+    witness_grant_rulings_in_txn,
 };
 mod own_device;
 mod pending_act;
@@ -93,13 +94,13 @@ pub use shared_creation::{
 };
 // A courtesy ask's recipient copies, read in the caller's writer (FIX 2927).
 pub(crate) mod courtesy_scope;
+pub(crate) mod delivery_record;
+pub use delivery_record::FederationDeliveryRecord;
 mod foreign_world;
-pub(crate) use foreign_world::PactDelivery;
 pub use foreign_world::pact_foreign_world;
+pub(crate) use foreign_world::{PactDelivery, foreign_world_for};
 #[cfg(feature = "sync")]
-pub(crate) use foreign_world::{
-    courtesy_ask_worlds_here, foreign_world_for, guest_claim_withheld, guest_claim_world,
-};
+pub(crate) use foreign_world::{courtesy_ask_worlds_here, guest_claim_withheld, guest_claim_world};
 mod guest;
 mod peer_authority;
 pub mod record_scope;

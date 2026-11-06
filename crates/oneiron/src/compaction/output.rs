@@ -5,6 +5,8 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
+pub use crate::store::output_decay::OutputDecayPolicy;
+
 /// The occurrence path a context output's manifest names. Its body is one of
 /// the code-run raw-output family, keyed by its content: inline in its row
 /// up to the inline bound, past it a file beside data.mdb.
@@ -41,12 +43,6 @@ pub struct OutputContextEntry {
     pub source: OutputRef,
     pub created_turn: u64,
     pub overview: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutputDecayPolicy {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,6 +266,21 @@ impl OutputContextEntry {
         })
     }
 
+    /// Capture an output with the actual run's retained replay record.
+    pub fn capture_for_run(
+        vault: &Vault,
+        run: EntityId,
+        bytes: &[u8],
+        created_turn: u64,
+        overview: String,
+    ) -> Result<Self> {
+        Ok(Self {
+            source: store_output_for_run(vault, run, bytes)?,
+            created_turn,
+            overview,
+        })
+    }
+
     fn stub_view(&self) -> OutputContextView {
         OutputContextView {
             source: self.source,
@@ -349,6 +360,17 @@ pub fn store_output_sourced(
     sink.write(bytes)?;
     Ok(vault
         .publish_code_run_output_sourced(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None, sources)?
+        .output_ref())
+}
+
+/// Stores an output with the actual run's retained replay record. The body
+/// and its replay link commit together. An unretained run keeps the standalone
+/// storage that [`store_output`] uses; input rows remain unknown.
+pub fn store_output_for_run(vault: &Vault, run: EntityId, bytes: &[u8]) -> Result<OutputRef> {
+    let mut sink = vault.code_run_output_sink()?;
+    sink.write(bytes)?;
+    Ok(vault
+        .publish_code_run_output_for_replay(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, run, None)?
         .output_ref())
 }
 

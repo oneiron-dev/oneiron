@@ -1,5 +1,7 @@
-//! A walk row and the marks it holds: what each mark of a source covers,
-//! and the worlds a row is withdrawn for.
+//! Core half of `ports::dependent_walk::mark`: its store-layer items live in `oneiron_store::ports::dependent_walk::mark` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::ports::dependent_walk::mark::*;
 
 use super::{DependentWalkDoor, ROW, RowKey};
 use crate::error::{Error, Result};
@@ -107,12 +109,6 @@ impl WalkRow {
     }
 }
 
-/// Earlier marks one walk keeps apart. Past it the two oldest merge into one
-/// that withdraws the rows of both for the worlds of both, settled rows as
-/// the newer one passes them: a narrowing, never a widening, and only for a
-/// source whose worlds changed this often within one walk.
-const EARLIER_MARKS: usize = 16;
-
 /// The earlier marks a walk keeps beside `latest`, newest first: none that a
 /// later mark answers for, and at most [`EARLIER_MARKS`].
 pub(super) fn keep_apart(mut earlier: Vec<Mark>, latest: &Mark) -> Vec<Mark> {
@@ -135,17 +131,6 @@ pub(super) fn keep_apart(mut earlier: Vec<Mark>, latest: &Mark) -> Vec<Mark> {
         older.worlds.absorb(&oldest.worlds);
     }
     kept
-}
-
-fn corrupt_walk() -> Error {
-    Error::CorruptedIndex("dependent walk")
-}
-
-/// The next `n` bytes of `raw`, which moves past them.
-fn take<'a>(raw: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
-    let (head, rest) = raw.split_at_checked(n).ok_or_else(corrupt_walk)?;
-    *raw = rest;
-    Ok(head)
 }
 
 impl RawValue for WalkRow {

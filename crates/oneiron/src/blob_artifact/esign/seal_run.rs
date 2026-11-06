@@ -6,8 +6,8 @@
 
 use super::{ESIGN_SEAL_ATTEMPT_KIND, EsignSealer, SealProfile};
 use crate::attempt_queue::{AttemptQueue, ClaimOutcome};
-use crate::store::attempt_inputs::FailAttempt;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::{EntityId, Result, Vault};
 
 /// The most bytes of a failure a failed attempt keeps.

@@ -145,6 +145,8 @@ impl<'a> HostSelfDispatcher<'a> {
             _ => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::SkillsCall,
                 error: SKILLS_CALL_UNPINNED.to_owned(),
+                code: None,
+                disk_floor: None,
             })),
         }
     }

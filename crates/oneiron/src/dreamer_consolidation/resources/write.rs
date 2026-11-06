@@ -1,16 +1,16 @@
 //! Sealed resource handoff. Only the executor can construct one; every real
 //! promotion and attachment checks its pins inside the write transaction.
 use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
-#[cfg(test)]
-use crate::claim::ClaimSource;
-use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
+use crate::claim::{ClaimSource, ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
+use crate::dreamer_consolidation::conflict::candidate_probe_body;
 use crate::dreamer_consolidation::evidence::{
     ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
 };
 use crate::dreamer_consolidation::stage_log::LandingTally;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
+use crate::dreamer_promotion::scope_with_taint;
 use crate::{EntityId, Result, Vault, WriteActor};
 use oneiron_model::llm::Scope;
 use std::collections::BTreeMap;
@@ -165,6 +165,7 @@ impl BranchResources<'_> {
         // Each output's head: its own id, or the head it attaches to.
         let mut heads: BTreeMap<EntityId, EntityId> = BTreeMap::new();
         let mut answers = Vec::new();
+        let mut unlisted = super::restated::UnlistedHeads::default();
         for verified in candidates {
             verified.evidence.check_pins(self)?;
             answers.extend(verified.answers);
@@ -194,8 +195,40 @@ impl BranchResources<'_> {
                     "multiple admitted prior heads for one question",
                 ));
             }
-            if let [(id, true)] = matches.as_slice() {
-                let id = *id;
+            let attachment_head = match matches.as_slice() {
+                [(id, true)] => Some(*id),
+                _ if matches.len() > 1
+                    && evidence.meet() != ClaimSource::Imported
+                    && matches
+                        .iter()
+                        .all(|(id, equal)| *equal && !self.provisional.contains(id)) =>
+                {
+                    let fresh = candidate_probe_body(&candidate.candidate)?;
+                    let (id, _) = matches[0];
+                    let head = &self.prior(id)?.body;
+                    // A named facet fixes the fresh stamp without relying on
+                    // the vault default. Other scopes keep the fresh path.
+                    let named_facet = super::signals::facet(fresh.scope.as_ref()).ok().flatten();
+                    let same_scope = named_facet == Some(fresh.scope_facet)
+                        && fresh.scope_facet == head.scope_facet
+                        && fresh.scope_project == head.scope_project
+                        && scope_with_taint(fresh.scope, evidence.meet())
+                            == scope_with_taint(head.scope.clone(), evidence.meet());
+                    same_scope.then_some(id)
+                }
+                _ => None,
+            };
+            // A candidate no admitted prior names may still restate the
+            // Dreamer's own unvetted head outside this listing: it is
+            // already said, as a listed one is (FIX 12043).
+            if attachment_head.is_none()
+                && matches.is_empty()
+                && prior.is_none()
+                && self.restates_unlisted_head(&candidate, rules, evidence.meet(), &mut unlisted)?
+            {
+                continue;
+            }
+            if let Some(id) = attachment_head {
                 // Nothing attaches to an unvetted head, so a candidate that
                 // restates one is already said; this attempt's own head met
                 // again is its replay.

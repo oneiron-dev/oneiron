@@ -8,9 +8,7 @@ use super::files::{
     BodyEntry, RemoveOutcome, body_entries, remove_unnamed, remove_unnamed_entry_now,
     remove_unnamed_now, sync_dir, unlink_body,
 };
-use super::{
-    RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
-};
+use super::{RAW_OUTPUT_ROWS, raw_output_handle, unowned_mark_key};
 use crate::code_run::code_run_body_held_in_txn;
 use crate::provenance::body::{
     digest_is_held_in_txn, released_bodies_in_txn, take_released_in_txn,
@@ -238,8 +236,7 @@ impl Vault {
         }
         let marks = unowned_mark_key(digest)?;
         RAW_OUTPUT_ROWS.delete(&self.store, txn, &raw_output_handle(digest))?;
-        RAW_OUTPUT_TAINTS.delete(&self.store, txn, &marks)?;
-        RAW_OUTPUT_SECRETS.delete(&self.store, txn, &marks)?;
+        crate::code_run::drop_code_run_result_marks_in_txn(&self.store, txn, &marks)?;
         Ok(Some(retire_body_key_in_txn(&self.store, txn, digest)?))
     }
 

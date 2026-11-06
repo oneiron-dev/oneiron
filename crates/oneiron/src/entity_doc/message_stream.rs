@@ -48,7 +48,8 @@ pub(crate) fn quote_birth_admits_in(
     };
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
-        || crate::store::witness_message_body::validate_canonical_witness_message_body(body).is_err()
+        || crate::store::witness_message_body::validate_canonical_witness_message_body(body)
+            .is_err()
     {
         return Ok(false);
     }
@@ -148,9 +149,12 @@ fn birth_message_in_txn(
     let mut pointer = Vec::new();
     rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("message document pointer"))?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &pointer,
+    )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),

@@ -55,6 +55,7 @@ pub(crate) fn ensure_person_substrate(
             ENTITY_TYPE_FACET,
             occurred,
             learned_at,
+            0,
             &bytes,
         )?;
         super::put_apply::stage_entity_index_rows(
@@ -136,20 +137,21 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         };
         if !policy_done
             && header.entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-            && let Some(bytes) =
-                crate::gate::normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
+            && let Some(bytes) = store
+                .gate_hooks
+                .normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
         {
             // A locally authored manifest keeps its origin across the upgrade;
             // replayed bytes gain no trust stamp from it.
-            if crate::gate::manifest_authenticity::manifest_is_trusted(
+            if store.gate_hooks.manifest_is_trusted(
                 store,
                 &txn,
                 &id,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? {
-                crate::gate::manifest_authenticity::stamp_manifest_origin(
-                    store, &mut txn, &id, &bytes, false,
-                )?;
+                store
+                    .gate_hooks
+                    .stamp_manifest_origin(store, &mut txn, &id, &bytes, false)?;
             }
             super::put_apply::stage_entity_body_row(
                 store,
@@ -158,6 +160,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -225,6 +228,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -241,6 +245,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             }
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            crate::ports::claim_order::observe_in_txn(store, &mut txn, header.row_version)?;
             let bytes = crate::claim::upgrade_pre_scope_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let prefix = store.short_id_prefix(header.entity_type)?;
             let plan =
@@ -252,6 +257,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;

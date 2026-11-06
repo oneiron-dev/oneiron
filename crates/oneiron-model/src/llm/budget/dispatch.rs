@@ -176,6 +176,22 @@ impl BudgetGuard {
         Ok(())
     }
 
+    /// The immutable request digest admitted for this guard's lease. Reading
+    /// it grants no dispatch: `begin_dispatch` still checks the complete
+    /// binding, provenance, open state and one-use rule.
+    #[must_use]
+    pub fn admitted_request_digest(&self, lease: &BudgetLease) -> Option<String> {
+        let state = self.lock_state();
+        state.check_lease_provenance(lease).ok()?;
+        state
+            .leases
+            .get(lease.id())?
+            .binding
+            .as_ref()?
+            .request_digest
+            .clone()
+    }
+
     /// Whether [`Self::begin_dispatch`] started this lease; `None` for a
     /// lease another meter issued or this one never did.
     #[must_use]

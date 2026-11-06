@@ -89,7 +89,7 @@ pub(super) fn note_retention_in_txn(
     };
     let kind =
         crate::note::note_defaults_in_txn(&vault.store, txn, id, note.kind.as_str().as_ref())?;
-    let (crate::note::RetentionDefault::ArchiveAfterDays, Some(days)) =
+    let (crate::store::note_kind::RetentionDefault::ArchiveAfterDays, Some(days)) =
         (kind.retention, kind.archive_after_days)
     else {
         return Ok(None);

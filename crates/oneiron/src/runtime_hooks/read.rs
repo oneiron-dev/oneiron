@@ -185,6 +185,90 @@ pub(super) fn answer_within(
     Ok(response)
 }
 
+/// Replays one pinned `oneiron.read` from its existing rows only (FIX 2392):
+/// the pinned revision's bytes through the current lane and grant. `Ok(None)`
+/// is missing history; `Err` is a throw. It never re-enumerates, never falls
+/// back to live, and never serves raw bytes.
+pub(super) fn answer_pinned(
+    lane: &ScopedRead<'_>,
+    grant: &HookGrant,
+    pin: &HookReadPin,
+) -> std::result::Result<Option<String>, String> {
+    let parsed: ReadRequest =
+        serde_json::from_str(&pin.request).map_err(|_| "read request does not parse".to_owned())?;
+    let claim_id = match parsed {
+        ReadRequest::Claim { claim } => {
+            Some(EntityId::from_hex(&claim).map_err(|error| error.to_string())?)
+        }
+        ReadRequest::About { claims_about, .. } => {
+            EntityId::from_hex(&claims_about).map_err(|error| error.to_string())?;
+            None
+        }
+    };
+    if let Some(id) = claim_id {
+        if pin.rows.is_empty() {
+            return Ok(Some(Value::Null.to_string()));
+        }
+        if pin.rows.len() != 1 {
+            return Ok(None);
+        }
+        if pin.rows[0].id != id {
+            return Ok(None);
+        }
+    }
+    let mut values = Vec::new();
+    for row in &pin.rows {
+        let revision = {
+            let txn = lane
+                .vault()
+                .store
+                .env
+                .read_txn()
+                .map_err(|error| error.to_string())?;
+            crate::vault::entity_revision::revision_for_body_hash_in_txn(
+                lane.vault(),
+                &txn,
+                &row.id,
+                &row.body_hash,
+            )
+            .map_err(|error| error.to_string())?
+        };
+        let Some(revision) = revision else {
+            return Ok(None);
+        };
+        let point = PointRead::id(row.id).at(ReadMode::Pinned(revision));
+        let stored = lane
+            .read(&[point], None)
+            .map_err(|error| error.to_string())?;
+        let Some(read) = stored.value.into_iter().next().flatten() else {
+            return Ok(None);
+        };
+        if read.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        let Some(body) = read.body.as_deref() else {
+            return Ok(None);
+        };
+        if *blake3::hash(body).as_bytes() != row.body_hash {
+            return Ok(None);
+        }
+        let Ok(claim) = crate::claim::decode_claim_body(body, true) else {
+            return Ok(None);
+        };
+        if !grant.admits(&claim) {
+            return Ok(None);
+        }
+        values.push(claim_json(claim_id.unwrap_or(row.id), &claim));
+    }
+    if claim_id.is_some() {
+        let Some(value) = values.into_iter().next() else {
+            return Ok(None);
+        };
+        return Ok(Some(value.to_string()));
+    }
+    Ok(Some(Value::Array(values).to_string()))
+}
+
 fn read_claim(
     lane: &ScopedRead<'_>,
     cap: Option<&ScopedRead<'_>>,

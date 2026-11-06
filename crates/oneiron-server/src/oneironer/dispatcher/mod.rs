@@ -79,6 +79,8 @@ pub(super) struct Job {
     /// (FIX 9518), each run whole and merged into the call's one answer.
     pub(super) windows: InferenceWindows,
     work: ExtractionWork,
+    /// The invocation's vault and native host permission, never a slot-global vault.
+    call_context: Option<oneiron::llm::TaggerCallContext>,
     /// Its longest window in tokens with specials, counted once as it was
     /// submitted: which workers may run it. 0 in a slot that counts none,
     /// whose one worker runs every call.
@@ -455,6 +457,21 @@ impl Dispatcher {
     ) -> EncoderAttempt {
         let claim = capacity::claim_blocking(&self.shared, work, caller);
         claim.submit(input.clone()).wait()
+    }
+
+    /// The contextual call follows the same room and queue accounting.
+    pub(crate) fn call_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+        context: &oneiron::llm::TaggerCallContext,
+    ) -> EncoderAttempt {
+        let claim = capacity::claim_blocking(&self.shared, work, caller);
+        let planned = self.shared.plan(input.clone());
+        claim
+            .submit_planned_in(planned, Some(context.clone()))
+            .wait()
     }
 
     /// Room for one call in `work`'s class, for an async caller: awaited on

@@ -9,6 +9,7 @@ use std::io::Read;
 
 mod body;
 mod spool;
+mod spooled_edit;
 pub use body::{SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter};
 pub use spool::{ProposalSpoolClaim, ProposalSpoolFloor, SpoolAtFloor, SpoolFloorRefusal};
 
@@ -108,6 +109,17 @@ pub struct SandboxFileEditProposal {
     pub edit: crate::code_document::CodeFileEdit,
 }
 impl SandboxFileWriteProposal {
+    /// Lowers against the exact spooled boot snapshot without reading the base
+    /// file whole. Only the changed spans become the edit's owned strings.
+    pub(in crate::code_sandbox) fn lower_to_edit_spooled(
+        &self,
+        base: &SandboxProposalBody,
+        cancel: &crate::engine_executor::StepCancellation,
+        deadline: std::time::Instant,
+    ) -> Result<Option<SandboxFileEditProposal>> {
+        spooled_edit::lower(self, base, cancel, deadline)
+    }
+
     /// The same operation as [`crate::code_document::CodeFileEdit::between`],
     /// read from the body in frames: the shared prefix and suffix are
     /// compared where they lie, and only the changed span is read whole.

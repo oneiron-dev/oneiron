@@ -8,8 +8,9 @@
 //! manifest and lease-generation fence, appends the failure to the row's
 //! [`AttemptRecord::history`], and schedules the row at the caller's due
 //! instant. Its next claim advances the fence, so an answer to the failed
-//! lease can never settle the next one. Nothing is capped, dropped or
-//! coalesced: every failure stays on the row, repeats included.
+//! lease can never settle the next one. The ordinary door keeps every
+//! failure separately. The opt-in coalescing door keeps consecutive equal
+//! failures as one entry with their first and latest instant and count.
 
 use crate::attempt_queue::encoding::{decode_record, ready_at, ready_key};
 use crate::attempt_queue::telemetry::invalid_transition;
@@ -21,6 +22,7 @@ use crate::error::Result;
 
 use super::AttemptQueue;
 pub use crate::store::attempt_record::RequeuedFailure;
+pub(in crate::attempt_queue) use crate::store::attempt_record_codec::validate_requeued_history;
 
 /// Input of [`AttemptQueue::requeue`]: the lease it answers, the failure and
 /// the instant the row becomes claimable again.
@@ -42,8 +44,20 @@ impl AttemptQueue<'_> {
     /// [`AttemptState::Scheduled`] until `due_at`. Fenced by owner and exact
     /// lease generation, so a stale or repeated answer changes nothing.
     pub fn requeue(&self, input: RequeueAttempt) -> Result<AttemptRecord> {
+        self.requeue_with_history(input, false)
+    }
+
+    /// [`Self::requeue`] with consecutive failures by the same worker for
+    /// the same reason counted together. Each entry keeps its first lease
+    /// generation and instant, its latest instant, and its failure count.
+    /// A gap in lease generations starts a new entry.
+    pub fn requeue_coalescing(&self, input: RequeueAttempt) -> Result<AttemptRecord> {
+        self.requeue_with_history(input, true)
+    }
+
+    fn requeue_with_history(&self, input: RequeueAttempt, coalesce: bool) -> Result<AttemptRecord> {
         let mut wtxn = self.store.env.write_txn()?;
-        let requeued = self.requeue_in_txn(&mut wtxn, input)?;
+        let requeued = self.requeue_with_history_in_txn(&mut wtxn, input, coalesce)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
         Ok(requeued)
@@ -55,6 +69,15 @@ impl AttemptQueue<'_> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: RequeueAttempt,
+    ) -> Result<AttemptRecord> {
+        self.requeue_with_history_in_txn(wtxn, input, false)
+    }
+
+    fn requeue_with_history_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RequeueAttempt,
+        coalesce: bool,
     ) -> Result<AttemptRecord> {
         let now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let Some(raw) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
@@ -68,12 +91,43 @@ impl AttemptQueue<'_> {
         validate_transition_lease(&row, &input.lease_owner, input.attempt_count, "requeue")?;
         validate_failure_reason(&input.reason)?;
 
-        row.history.push(RequeuedFailure {
-            at: now,
-            lease_owner: input.lease_owner,
-            attempt_count: row.attempt_count,
-            reason: input.reason.clone(),
-        });
+        let mut reason = input.reason.clone();
+        if coalesce {
+            match self.vault {
+                Some(vault) => crate::batch::secret_scan::admit_typed(
+                    vault,
+                    wtxn,
+                    ("attempt", input.id.as_bytes()),
+                    &mut reason,
+                )?,
+                None => crate::batch::secret_scan::admit_typed(
+                    self.store,
+                    wtxn,
+                    ("attempt", input.id.as_bytes()),
+                    &mut reason,
+                )?,
+            };
+        }
+
+        if coalesce
+            && let Some(last) = row.history.last_mut()
+            && last.lease_owner == input.lease_owner
+            && last.reason == reason
+            && u64::from(last.attempt_count) + u64::from(last.count) == u64::from(row.attempt_count)
+            && let Some(count) = last.count.checked_add(1)
+        {
+            last.count = count;
+            last.last_at = now;
+        } else {
+            row.history.push(RequeuedFailure {
+                at: now,
+                last_at: now,
+                count: 1,
+                lease_owner: input.lease_owner,
+                attempt_count: row.attempt_count,
+                reason,
+            });
+        }
         row.last_error = Some(input.reason);
         row.state = AttemptState::Scheduled;
         row.lease_owner = None;
@@ -95,15 +149,4 @@ impl AttemptQueue<'_> {
         )?;
         Ok(row)
     }
-}
-
-/// Refuses a stored history entry no requeue could have written.
-pub(in crate::attempt_queue) fn validate_requeued_history(
-    history: &[RequeuedFailure],
-) -> Result<()> {
-    for failure in history {
-        validate_lease_owner(&failure.lease_owner)?;
-        validate_failure_reason(&failure.reason)?;
-    }
-    Ok(())
 }

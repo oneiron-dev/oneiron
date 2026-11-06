@@ -17,6 +17,10 @@ use crate::store::attempt_result::AttemptResultRef;
 use crate::store::attempt_run_signal::{RunAsk, RunBranchSignal, SignalIntent};
 use crate::store::attempt_state::AttemptState;
 
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`crate::store::STORAGE_ABI_VERSION`] bump.
+pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 5;
+
 /// Durable attempt row stored in LMDB.
 ///
 /// One synced TASK owns N node-local ATTEMPT rows. A retry never mutates a
@@ -125,7 +129,8 @@ pub struct AttemptRecord {
     /// Operator-selected placement, separate from the immutable executor payload.
     #[serde(default)]
     pub placement: Option<AttemptPlacement>,
-    /// FIX 5240: each failure a same-intent requeue kept, oldest first.
+    /// Same-intent requeue failures, oldest first. An opt-in coalesced entry
+    /// counts consecutive equal failures without losing their time span.
     #[serde(default)]
     pub history: Vec<RequeuedFailure>,
     /// FIX 9579: the pause this row is held under while paused, kept here so
@@ -193,15 +198,19 @@ pub struct AttemptReadSet {
     pub reported: BTreeSet<String>,
 }
 
-/// One failed try a requeue kept on its row: when it was recorded, the lease
-/// it ended and the worker's reason.
+/// One failure, or a consecutive run of equal failures, a requeue kept.
+/// The lease generation plus the count names every failed generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequeuedFailure {
-    /// The vault's recorded instant the failure was kept at.
+    /// The vault's recorded instant of the first failure.
     pub at: u64,
-    /// The owner of the lease the failure ended.
+    /// The vault's recorded instant of the latest failure.
+    pub last_at: u64,
+    /// The number of consecutive failures this entry records, at least one.
+    pub count: u32,
+    /// The owner of every lease this entry records.
     pub lease_owner: String,
-    /// That lease's generation within the row.
+    /// The first failed lease's generation within the row.
     pub attempt_count: u32,
     /// The worker's reason, as it gave it.
     pub reason: String,
@@ -224,6 +233,8 @@ pub(crate) enum AttemptPause {
     Budget,
     /// OF-393: the cut waits on its launch approval.
     Fanout { launch_ref: EntityId },
+    /// FIX 7114: a workflow tool waits on this verb-hook invocation.
+    Hook { invocation: [u8; 16] },
 }
 
 /// A terminal try's durable exhaust: the output references it attached
@@ -248,4 +259,13 @@ pub struct AttemptTerminalExhaust {
 )]
 fn is_zero(value: &u32) -> bool {
     *value == 0
+}
+
+pub(crate) fn attempt_record_order(
+    left: &AttemptRecord,
+    right: &AttemptRecord,
+) -> std::cmp::Ordering {
+    left.created_at
+        .cmp(&right.created_at)
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }

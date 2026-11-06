@@ -1,6 +1,5 @@
 //! Stored body descriptors, digest holders, and the released-file queue.
 
-use heed::{RoTxn, RwTxn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -8,6 +7,7 @@ use crate::store::ManifestDbs;
 pub use crate::store::body_descriptor::{
     BodyLocation, BodyRef, BodyState, OwnedBody, RetainedResultProvenance,
 };
+use heed::{RoTxn, RwTxn};
 
 /// Body descriptors by owner. Key: id16 (owner) + id16 (occurrence).
 pub(crate) const BODY: SideTable<(EntityId, EntityId), OwnedBody, Named> =

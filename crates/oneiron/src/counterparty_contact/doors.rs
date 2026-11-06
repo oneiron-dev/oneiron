@@ -83,21 +83,22 @@ impl Vault {
             &opted_out,
             recorded_at,
         )?;
-        crate::comm::supersede_party_opt_out_head_in_txn(
-            self,
-            &mut wtxn,
-            &opted_out.counterparty,
-            reason,
-            recorded_at,
-        )
-        .map_err(comm_fold_error)?;
+        self.store
+            .record_hooks
+            .supersede_party_opt_out_head_in_txn(
+                self,
+                &mut wtxn,
+                &opted_out.counterparty,
+                reason,
+                recorded_at,
+            )
+            .map_err(comm_fold_error)?;
         rematerialize_contact_cache_in_txn(self, &mut wtxn, id, recorded_at)?;
         // The head just written carries NO channel class, so it covers every
         // contact this party has — and every one of their cache rows has to say
-        // so in this same transaction. Re-deriving only `id` would leave a
-        // sibling contact on another channel identity reading not-opted-out,
-        // and the gate, which folds type-132 rows rather than `comm.opt_out`
-        // heads, would allow a send the party's own opt-out forbids.
+        // so in this same transaction. The gate also reads standing
+        // `comm.opt_out` heads; re-deriving every sibling keeps row-based
+        // readers consistent with the party's opt-out.
         rematerialize_party_contact_cache_in_txn(
             self,
             &mut wtxn,
@@ -275,6 +276,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data,
                     allow_maintenance: false,
                     allow_reserved_predicate: true,
@@ -479,6 +481,7 @@ impl Vault {
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

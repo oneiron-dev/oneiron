@@ -166,6 +166,8 @@ fn take_outputs(
     } = *called;
     // From the reply's own moved deadline: only the waits from here on.
     let clock = Clock::new(deadline, room.waits());
+    // The slots' room was pre-held with the frame's lease (FIX 12434):
+    // `fd_read_cost` covers this collect beside the fds buffer.
     let mut slots: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
     let mut total = 0u64;
     let taken = outputs

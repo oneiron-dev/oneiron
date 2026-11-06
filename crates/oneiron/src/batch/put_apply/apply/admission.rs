@@ -7,6 +7,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) entity_type: u8,
     pub(super) occurred: crate::temporal::TimeRange,
     pub(super) learned_at: u64,
+    pub(super) row_version: Option<u64>,
     pub(super) options: crate::batch::put_apply::request::PutOptions,
     pub(super) origin: crate::batch::BaseWriteOrigin<'a>,
     pub(super) write_policy: Option<&'a crate::gate::PolicyManifestResolution>,
@@ -47,7 +48,7 @@ pub(super) struct Owners {
 pub(super) struct Dispatch {
     pub(super) is_lexical_query_hint_claim: bool,
     pub(super) new_skill_record: Option<crate::write_envelope::skill_record::SkillRecord>,
-    pub(super) new_agent_definition: Option<crate::agent_def::AgentDefinition>,
+    pub(super) new_agent_definition: Option<crate::store::agent_definition::AgentDefinition>,
     pub(super) new_workflow: Option<crate::store::workflow_definition::WorkflowDefinition>,
     pub(super) decoded_claim_body: Option<ClaimBody>,
     pub(super) authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash>,
@@ -90,6 +91,7 @@ pub(super) fn admit_put<'a>(
                 occurred,
                 learned_at,
                 data,
+                row_version,
             },
         options,
         context:
@@ -118,12 +120,13 @@ pub(super) fn admit_put<'a>(
     if let Some(refusal) = store.use_restricted_in_txn(wtxn, &id)? {
         return Err(refusal);
     }
-    crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
+    crate::store::base_agent::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = super::super::put_staging::normalized_policy_scope(entity_type, data);
+    let normalized_policy =
+        super::super::put_staging::normalized_policy_scope(store, entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     let project = stage_project_put(store, wtxn, id, entity_type, data, replicated, posture)?;
     let data = project.as_deref().unwrap_or(data);
@@ -224,6 +227,7 @@ pub(super) fn admit_put<'a>(
             entity_type,
             occurred,
             learned_at,
+            row_version,
             options,
             origin,
             write_policy,

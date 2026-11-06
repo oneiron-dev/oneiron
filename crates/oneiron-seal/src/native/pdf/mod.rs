@@ -4,6 +4,7 @@
 //! bytes are emitted by the writer here; every pre-existing input byte is
 //! preserved and all changes are appended revisions.
 
+pub(super) mod admitted;
 mod decode;
 mod incremental;
 mod lex;
@@ -33,7 +34,21 @@ pub(crate) use self::revision_chain::{
 use self::parse::*;
 
 pub(crate) use self::decode::load_strict;
+mod work;
+mod work_burn;
+mod work_evidence;
+mod work_preflight;
+mod work_present;
+mod work_source;
+mod work_streams;
+pub(crate) use self::work::{WorkError, WorkLimits};
+mod work_prepare;
 pub(crate) use self::revision_facts::{
     RevisionAnalysisError, RevisionFacts, analyze as analyze_revision_facts,
 };
 pub(crate) use self::walk::{catalog, chain, resolve, resolve_id};
+pub(crate) use self::work::{inspect_in, prepare_in};
+pub(crate) use self::work_burn::{BurnField, BurnValue, WorkRaster};
+pub(crate) use self::work_evidence::{WorkRecipient, WorkSignature};
+pub(crate) use self::work_prepare::{WorkPrepareRequest, WorkPrepared};
+pub(crate) use self::work_present::FieldGeometry;

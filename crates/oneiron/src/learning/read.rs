@@ -9,16 +9,15 @@
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
 
 use super::cell::{LearningCell, TypeRef};
-use super::estimate::{Estimate, OwnTally, Prior, PriorOrigin};
+use super::estimate::{Estimate, Prior, PriorOrigin};
 use super::evidence::{CELL, cells_for_subject_in_txn};
-use super::prior::{cell_prior_in_txn, prior_for_cell_in_txn};
-use super::project::{
-    StoredEstimateClaim, active_heads_in_txn, measured_tally_in_txn, window_in_txn,
-};
+use super::frozen::{FrozenFold, StoredPrior};
+use super::prior::{cell_prior_in_txn, prior_for_cell_in_txn, stored_prior_for_cell_in_txn};
+use super::project::{StoredEstimateClaim, active_heads_in_txn, window_in_txn};
 
 /// One reading of a cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,7 +53,8 @@ pub fn learning_estimate_with_sources(
     cell: &LearningCell,
 ) -> Result<Option<(Estimate, Vec<EntityId>)>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(own_head_in_txn(vault, &rtxn, cell)?.map(|(estimate, _, claim)| (estimate, vec![claim])))
+    Ok(own_head_in_txn(vault, &rtxn, cell)?
+        .map(|(estimate, _, claim, _, _)| (estimate, vec![claim])))
 }
 
 /// [`learning_estimate`] inside the caller's transaction. With two heads
@@ -64,54 +64,82 @@ pub(crate) fn own_estimate_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<Estimate>> {
-    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _, _)| estimate))
+    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _, _, _, _)| estimate))
 }
 
-/// The head [`own_estimate_in_txn`] reads, with the time it was projected
-/// and its claim.
+/// The head [`own_estimate_in_txn`] reads, with the time it was projected,
+/// its claim and its frozen donor tally.
 fn own_head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
-) -> Result<Option<(Estimate, u64, EntityId)>> {
+) -> Result<
+    Option<(
+        Estimate,
+        u64,
+        EntityId,
+        Option<(f64, f64)>,
+        Option<FrozenFold>,
+    )>,
+> {
     Ok(active_heads_in_txn(vault, txn, cell)?
         .into_iter()
         .filter_map(|(claim, body, at)| {
             StoredEstimateClaim::from_value(&body.value)
                 .ok()
-                .map(|stored| (stored.estimate, at, claim))
+                .map(|stored| {
+                    (
+                        stored.estimate,
+                        at,
+                        claim,
+                        stored.donor_tally,
+                        stored.frozen,
+                    )
+                })
         })
-        .filter(|(estimate, _, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
+        .filter(|(estimate, _, _, _, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
         .max_by(|a, b| a.0.runs.total_cmp(&b.0.runs)))
 }
 
+/// Copies the selected head's frozen inputs, never its current evidence.
+/// A vault twin's stored prior is copied under the same seed precedence.
+pub(crate) fn stored_prior_from_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &LearningRead,
+) -> Result<StoredPrior> {
+    let mut prior = StoredPrior::plain(read.estimate.prior.clone());
+    if let Some(source) = &read.borrowed_from {
+        prior.fold = if let Some((_, _, _, _, frozen)) = own_head_in_txn(vault, txn, source)? {
+            frozen.map(Box::new)
+        } else if let Some(row) = CELL.get(&vault.store, txn, &source.digest())? {
+            stored_prior_for_cell_in_txn(vault, txn, source, row.form, &row.of, &source.digest())?
+                .0
+                .fold
+        } else {
+            None
+        };
+    }
+    Ok(prior)
+}
+
 /// The measured success and failure mass behind `cell`'s own head, with no
-/// prior: its evidence folded again under the head's window at the time the
-/// head was projected, so it is the mass that head holds. `None` when the
+/// prior: the frozen tally the head holds, as projected. `None` when the
 /// cell has no own head, or its head is not a success estimate. A read only:
 /// no backoff, nothing written.
 ///
 /// # Errors
 ///
-/// Storage errors, or a head whose cell is not registered.
+/// Storage errors.
 pub(crate) fn measured_outcomes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<(f64, f64)>> {
-    let Some((estimate, at, _)) = own_head_in_txn(vault, txn, cell)? else {
+    let Some((_, _, _, donor, _)) = own_head_in_txn(vault, txn, cell)? else {
         return Ok(None);
     };
-    let digest = cell.digest();
-    let row = CELL
-        .get(&vault.store, txn, &digest)?
-        .ok_or(Error::CorruptedIndex("learning cell"))?;
-    Ok(
-        match measured_tally_in_txn(vault, txn, &row, &digest, estimate.window, at)? {
-            OwnTally::Beta { wins, losses } => Some((wins, losses)),
-            OwnTally::Mean { .. } | OwnTally::Counts { .. } => None,
-        },
-    )
+    Ok(donor)
 }
 
 /// Reads `cell` with backoff. `type_parents` is the cell's task-type chain
@@ -166,8 +194,8 @@ pub(crate) fn read_learning_in_txn(
             (form, cell.predicate.default_of(form).to_owned())
         }
     };
-    let prior = prior_for_cell_in_txn(vault, txn, cell, form, &of, &digest)?;
-    if prior.origin != PriorOrigin::Shipped {
+    let (prior, default_hint) = prior_for_cell_in_txn(vault, txn, cell, form, &of, &digest)?;
+    if prior.origin != PriorOrigin::Shipped && !default_hint {
         return Ok(LearningRead {
             estimate: Estimate::from_prior(prior, of, window),
             own: false,
@@ -260,9 +288,9 @@ fn vault_twin_read_in_txn(
     let Some(row) = CELL.get(&vault.store, txn, &digest)? else {
         return Ok(None);
     };
-    let prior = cell_prior_in_txn(vault, txn, &row, &digest)?;
+    let (prior, default_hint) = cell_prior_in_txn(vault, txn, &row, &digest)?;
     Ok(
-        (prior.origin != PriorOrigin::Shipped).then(|| LearningRead {
+        (prior.origin != PriorOrigin::Shipped && !default_hint).then(|| LearningRead {
             estimate: Estimate::from_prior(prior, row.of.clone(), window),
             own: false,
             borrowed_from: Some(twin.clone()),

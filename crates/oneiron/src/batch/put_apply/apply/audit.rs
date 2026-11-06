@@ -11,7 +11,7 @@ pub(super) struct StagedMarkers {
 /// P5: audit the put and stage the body — claim attachments, markers, the
 /// entity body row, and the ASSET body file arm.
 pub(super) fn audit_and_stage_body(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -20,13 +20,18 @@ pub(super) fn audit_and_stage_body(
     previous_skill_record: &Option<crate::write_envelope::skill_record::SkillRecord>,
     markers: StagedMarkers,
 ) -> Result<()> {
+    let store = write.store;
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {
         if fixed.replicated {
-            crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &fixed.id, body)?;
+            store
+                .gate_hooks
+                .attach_replicated_critical_confirm_in_txn(store, wtxn, &fixed.id, body)?;
         }
         // A claim whose owner has not answered stays held through any new
         // revision, and its owner is shown an item for this one.
-        crate::gate::show_owner_answer_item_in_txn(store, wtxn, &fixed.id, Some(body))?;
+        store
+            .gate_hooks
+            .show_owner_answer_item_in_txn(store, wtxn, &fixed.id, Some(body))?;
     }
 
     // Past every check that can reject this row remotely: a replicated row
@@ -35,9 +40,9 @@ pub(super) fn audit_and_stage_body(
     if fixed.replicated {
         crate::tagging::release_held_id_in_txn(store, wtxn, &fixed.id)?;
     }
-    crate::ports::withdraw_before_rewrite_in_txn(store, wtxn, &fixed.id)?;
+    crate::ports::withdraw_before_rewrite_in_txn(write, wtxn, &fixed.id)?;
     crate::ingest::invalidate_docs_source_before_put(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -45,7 +50,7 @@ pub(super) fn audit_and_stage_body(
         fixed.options.storage.asset_file,
     )?;
     crate::ports::keep_worlds_of_unmade_epoch_in_txn(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -71,7 +76,7 @@ pub(super) fn audit_and_stage_body(
             transition: fixed.transition,
         },
     )?;
-    crate::gate::manifest_authenticity::update_manifest_origin(
+    store.gate_hooks.update_manifest_origin(
         store,
         wtxn,
         &fixed.id,
@@ -84,7 +89,7 @@ pub(super) fn audit_and_stage_body(
         crate::dreamer_consolidation::mark_person_about_moved_in_txn(store, wtxn, fixed.id, body)?;
     }
     stage_claim_projection(
-        store,
+        write,
         wtxn,
         fixed.id,
         dispatch.decoded_claim_body.as_ref(),
@@ -92,7 +97,7 @@ pub(super) fn audit_and_stage_body(
     )?;
     stage_optional_side_row(store, wtxn, markers.hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -118,7 +123,7 @@ pub(super) fn audit_and_stage_body(
         dispatch.decoded_claim_body.as_ref(),
     )?;
     if fixed.entity_type == ENTITY_TYPE_COMM_RECORD {
-        crate::comm::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
+        crate::store::pending_comm_stop::maintain_pending_stop_put(store, wtxn, &fixed.id, data)?;
     }
     // A local put over an erased row is a sanctioned recreation: the row it
     // writes is live, so the fence goes in the same commit. A row that still
@@ -131,6 +136,14 @@ pub(super) fn audit_and_stage_body(
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(fixed.id))?;
     }
+    let row_version = crate::ports::claim_order::for_put_in_txn(
+        store.read(),
+        wtxn,
+        &fixed.id,
+        (fixed.entity_type, fixed.occurred, fixed.learned_at),
+        data,
+        fixed.row_version,
+    )?;
     stage_entity_body_row(
         store,
         wtxn,
@@ -138,8 +151,24 @@ pub(super) fn audit_and_stage_body(
         fixed.entity_type,
         fixed.occurred,
         fixed.learned_at,
+        row_version,
         data,
     )?;
+    // FIX 12113: which machine wrote the MESSAGE row just staged, for the
+    // reverse scan to vouch for its exact bytes beside it: this one for a
+    // local put, the lane's verified writer for a replicated one.
+    #[cfg(feature = "sync")]
+    if fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+        crate::sync::note_message_put_in_txn(
+            store,
+            wtxn,
+            &fixed.id,
+            fixed.replicated,
+            fixed
+                .own_device
+                .and_then(|lane| lane.proof_for(&fixed.id, data)),
+        )?;
+    }
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(
             store,

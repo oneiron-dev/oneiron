@@ -20,9 +20,9 @@
 
 use zeroize::Zeroizing;
 
-use crate::store::host_issuer_seed::HOST_ISSUER_SEED_BYTES;
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::store::host_issuer_seed::HOST_ISSUER_SEED_BYTES;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
     LocalCustody, custody_present,
@@ -108,10 +108,26 @@ impl Store {
         &self,
         seed: &[u8; HOST_ISSUER_SEED_BYTES],
     ) -> Result<bool> {
+        Ok(self
+            .escrow_host_issuer_seed_checked(seed, |_| Ok(true))?
+            .unwrap_or(false))
+    }
+
+    /// The same escrow, with its caller's authority check in the writer
+    /// before any custody entry or binding is published. None means the
+    /// archive or the caller's current selection left the seed uninstalled.
+    pub(crate) fn escrow_host_issuer_seed_checked(
+        &self,
+        seed: &[u8; HOST_ISSUER_SEED_BYTES],
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
+    ) -> Result<Option<bool>> {
         if self.core.gate_custody_archived() {
-            return Ok(false);
+            return Ok(None);
         }
         let mut wtxn = self.env.write_txn()?;
+        if !check(&wtxn)? {
+            return Ok(None);
+        }
         self.core.key_custody.pin_in_txn(self, &mut wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, &wtxn)?;
         let subject = issuer_seed_subject(custody.binding())?;
@@ -136,7 +152,7 @@ impl Store {
         let secret = CustodySecret::from_bytes(Zeroizing::new(seed.to_vec()));
         custody.publish_minted(&subject.at(generation), &secret)?;
         wtxn.commit()?;
-        Ok(!held)
+        Ok(Some(!held))
     }
 
     /// Every live host issuer seed this vault's custody holds, newest

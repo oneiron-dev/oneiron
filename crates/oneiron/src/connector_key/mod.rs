@@ -32,6 +32,7 @@ mod slate_revision;
 mod slate_scope_signal;
 mod slate_setting;
 mod tool_effect;
+mod tool_remember;
 mod txn;
 
 #[cfg(test)]
@@ -71,11 +72,11 @@ pub use self::record::{
     PendingConnectorCharter, PendingConnectorManifest,
 };
 pub use self::setup::{
-    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
-    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR,
-    PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck, PackConnectionEvidence,
-    PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
-    TELEGRAM_GET_ME_CHECK,
+    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GoogleAuthorizationCode, GoogleAuthorizationGrant,
+    LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK,
+    PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE,
+    PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk,
+    ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 
@@ -96,8 +97,15 @@ pub(crate) use self::meter::{
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
-pub(crate) use self::slate::{read_connector_slate_in_txn, stop_asking_tool_in_txn};
+pub(crate) use self::slate::{
+    erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn,
+};
+pub(crate) use self::slate_holder::erase_holder_narrows_in_txn;
 pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
+pub(crate) use self::tool_remember::{
+    ConnectorToolRememberContext, connector_tool_connection_in_txn,
+    connector_tool_remember_bound_in_txn, connector_tool_remembered_in_txn,
+};
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling

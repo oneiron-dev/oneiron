@@ -5,11 +5,12 @@ use crate::batch::EntityMetadataHeader;
 use crate::deletion::HydratedShortIdDeletion;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 
 use crate::ports::EntityStoreRead;
-use crate::store::scan_count::ScanCount;
 use crate::store::EngineScan;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
+use crate::store::scan_count::ScanCount;
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -50,7 +51,7 @@ pub struct HydratedShortId {
 /// What one entity id resolves to inside ONE transaction.
 ///
 /// "The row parses" and "the entity is live" are DIFFERENT questions: the
-/// ARCH-0038 soft delete keeps the 25-byte metadata header of the entity it
+/// ARCH-0038 soft delete keeps the metadata header of the entity it
 /// erases (`deletion/erase.rs`), so a deleted shell still parses and still
 /// carries its original entity-type byte. This enum is the one shared answer
 /// for callers that must not confuse the two — the GATE-12 evidence resolver
@@ -160,17 +161,9 @@ impl Vault {
         data: &[u8],
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            crate::ports::EntityStore::port_entity_put(
-                self,
-                txn,
-                id,
-                &crate::ports::EntityRecord {
-                    entity_type,
-                    occurred,
-                    learned_at,
-                    body: data.to_vec(),
-                },
-            )
+            self.batch_in()
+                .put(id, entity_type, occurred, learned_at, data)
+                .apply(txn)
         })?;
         if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             self.store.notify_proactivity_changes();
@@ -255,6 +248,10 @@ impl Vault {
 
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
+        // The count this search serves, asked after the query checks and
+        // before the read opens. Best effort: the search serves its rows
+        // either way.
+        let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
         let results = {
             let rtxn = self.store.env.read_txn()?;
             // The direct vault path stays the exact-quality path for

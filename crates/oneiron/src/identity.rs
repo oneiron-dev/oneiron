@@ -89,64 +89,10 @@ impl InstallSignerDerive for InstallSigner {
     }
 }
 
-fn signer_not_loaded() -> Error {
-    Error::Secret(crate::error::SecretError::KeystoreUnavailable(
-        "this install's signing keys are not loaded; the host installs a keystore",
-    ))
-}
-
-/// The handle's signer for the machine id in `txn`'s snapshot. Never touches
-/// the keystore: with no loaded signer, or one for another machine id, this
-/// refuses `KeystoreUnavailable`.
-pub(crate) fn loaded_signer_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<std::sync::Arc<InstallSigner>> {
-    let machine = read_machine_id_in_txn(vault, txn)?;
-    match (machine, vault.loaded_install_signer()) {
-        (Some(machine), Some(signer)) if signer.machine == machine => Ok(signer),
-        _ => Err(signer_not_loaded()),
-    }
-}
-
-/// The full device identity (client id + Ed25519 keypair) inside the
-/// CALLER's txn (OD-2): the client id is minted when missing, the key is the
-/// handle's loaded device key ([`loaded_signer_in_txn`]).
-pub(crate) fn ensure_device_identity_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-) -> Result<DeviceIdentity> {
-    let client_id = load_or_mint_client_id_in_txn(vault, wtxn)?;
-    let signer = loaded_signer_in_txn(vault, wtxn)?;
-    put_or_check_device_pk_in_txn(vault, wtxn, &signer.device_key)?;
-    Ok(DeviceIdentity {
-        client_id,
-        signing_key: signer.device_key.clone(),
-    })
-}
-
-/// This install's machine id and machine key in the caller's snapshot, from
-/// the handle's loaded signer ([`loaded_signer_in_txn`]).
-pub(crate) fn machine_signer_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<(crate::EntityId, SigningKey)> {
-    let signer = loaded_signer_in_txn(vault, txn)?;
-    Ok((signer.machine, signer.machine_key.clone()))
-}
-
-/// This install's machine signing key, or `None` before it has a machine id.
-/// Never touches the keystore: an install with an id and no loaded signer
-/// refuses `KeystoreUnavailable`.
-pub(crate) fn read_machine_signing_key_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Option<SigningKey>> {
-    if read_machine_id_in_txn(vault, txn)?.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(loaded_signer_in_txn(vault, txn)?.machine_key.clone()))
-}
+pub(crate) use crate::store::install_identity::{
+    ensure_device_identity_in_txn, loaded_signer_in_txn, machine_signer_in_txn,
+    read_machine_signing_key_in_txn,
+};
 
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`]: loads the
 /// install's signing keys first, outside the transaction.

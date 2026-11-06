@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 
 use super::CheckPhase;
 use crate::EntityId;
-use crate::store::contract_oracle::invalid;
-use crate::store::attempt_id::AttemptId;
+use crate::build_cache::command_spec::CodeBuildSpec;
 use crate::error::Result;
-use crate::memory::code_view_doors::CodeBuildSpec;
+use crate::store::attempt_id::AttemptId;
+use crate::store::contract_oracle::invalid;
 
 /// The candidate-key prefix of a verdict a bound queue check recorded. An
 /// older verdict, recorded by the low-level callback path, has none.
@@ -112,6 +112,20 @@ pub struct QueueCheckInputs {
     /// The shared contract-output commands, by contract name.
     pub contract_outputs: BTreeMap<String, CodeBuildSpec>,
     pub environment: QueueCheckEnvironment,
+    /// BEFORE-hostexecute snapshot of the served CODE's read scope: the
+    /// repo row's actual raw bytes through `scope_for_blob`. `None` when
+    /// the row is absent. Frozen at the `new_receipt` producer, ORIGINAL
+    /// through finish; never re-read from CURRENT config. Skipped from
+    /// the digest wire so the candidate key stays byte-stable.
+    #[serde(skip)]
+    pub(super) input_scope: Option<crate::federation::Scope>,
+    /// BEFORE-hostexecute snapshot of the served CODE's forward taint
+    /// refs (`exhaust_taint_refs_in_txn`); empty is Clean. Frozen at the
+    /// `new_receipt` producer, ORIGINAL through finish. Refs only, never
+    /// a derived state (S7: state is derived on every read). Skipped from
+    /// the digest wire so the candidate key stays byte-stable.
+    #[serde(skip)]
+    pub(super) input_taint: Vec<crate::secret_lease::SecretTaintRef>,
 }
 
 impl QueueCheckInputs {
@@ -145,20 +159,21 @@ impl QueueCheckInputs {
 /// One native command's actual result. A command a signal ended has no
 /// exit status.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueueCommandReceipt {
+#[serde(bound(deserialize = "Exhaust: Deserialize<'de>"))]
+pub struct QueueCommandReceipt<Exhaust = Vec<u8>> {
     pub argv: Vec<String>,
     pub status: Option<i32>,
     pub signal: Option<i32>,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    pub stdout: Exhaust,
+    pub stderr: Exhaust,
     /// The bytes of each output file the command declared that it left,
     /// by its declared path (FIX 7235); a declared file it did not leave
     /// is absent.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub declared_outputs: BTreeMap<String, Vec<u8>>,
+    pub declared_outputs: BTreeMap<String, Exhaust>,
 }
 
-impl QueueCommandReceipt {
+impl<Exhaust> QueueCommandReceipt<Exhaust> {
     /// Whether this phase command passed: it exited, with status zero.
     #[must_use]
     pub fn exited_zero(&self) -> bool {
@@ -168,11 +183,11 @@ impl QueueCommandReceipt {
 
 /// What a completed execution observed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueueCheckRun {
+pub struct QueueCheckRun<Exhaust = Vec<u8>> {
     /// The phase commands in plan order; the run stops after the first that
     /// does not exit zero.
-    pub commands: Vec<QueueCommandReceipt>,
-    pub contract_outputs: BTreeMap<String, QueueCommandReceipt>,
+    pub commands: Vec<QueueCommandReceipt<Exhaust>>,
+    pub contract_outputs: BTreeMap<String, QueueCommandReceipt<Exhaust>>,
     /// The isolated session's manifest and fence proof; `None` on the host.
     pub session: Option<oneiron_container::SessionManifest>,
     /// The executor's digest of the input files before and after the
@@ -251,14 +266,21 @@ pub enum QueueCheckExecution {
 /// The receipt one check generation leaves: its inputs and digest, the
 /// attempt lease it ran under, what it observed and the verdict it recorded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueCheckReceipt {
+pub struct QueueCheckReceipt<Exhaust = Vec<u8>> {
     pub inputs_digest: String,
     pub inputs: QueueCheckInputs,
+    /// The original approver frozen with the configuration used for this run.
+    /// Author data only; it grants no new command or content-write authority.
+    pub recorded_actor: EntityId,
+    /// Runtime-only proof from the exact configuration this execution used.
+    /// The finish writer closes it over the actual returned outputs.
+    #[serde(skip)]
+    pub(super) completion_approval: Option<crate::consent::QueuedCheckApproval>,
     pub attempt: AttemptId,
     pub attempt_count: u32,
     pub lease_owner: String,
     pub generation: u32,
-    pub run: Option<QueueCheckRun>,
+    pub run: Option<QueueCheckRun<Exhaust>>,
     pub hold: Option<QueueCheckHold>,
     pub need: Option<QueueCheckNeed>,
     /// The earlier receipt digest this one reuses, when it ran nothing.
@@ -266,6 +288,17 @@ pub struct QueueCheckReceipt {
     pub tests_passed: Option<bool>,
     pub verdict_ref: Option<String>,
 }
+
+/// One immutable native artifact version holding an execution output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueCheckOutputRef {
+    pub artifact_id: EntityId,
+    pub version: u64,
+    pub content_hash: [u8; 32],
+}
+
+/// A persisted receipt retains output version references, never command bytes.
+pub type StoredQueueCheckReceipt = QueueCheckReceipt<QueueCheckOutputRef>;
 
 /// One file of a pinned tree: its path bytes, Git mode and blob id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
