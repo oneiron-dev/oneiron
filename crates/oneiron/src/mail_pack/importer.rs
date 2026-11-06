@@ -390,6 +390,16 @@ impl Step<'_> {
             }
             return Ok(());
         }
+        // A listing complete but not yet settled (a delete failed) settles
+        // again first.
+        let state = self.state()?;
+        if state.backfill_done
+            && let Some(relist) = state
+                .relist
+                .filter(|relist| relist.generation == state.generation)
+        {
+            self.settle_relist(relist, state.backfill_newer_than)?;
+        }
         let newer_than = self.state()?.backfill_newer_than;
         for _ in 0..pages {
             let state = self.state()?;
@@ -431,6 +441,18 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// Records that the provider still holds `provider_id` as of this
+    /// listing (`generation`).
+    fn mark_listed_one(&self, provider_id: &str, generation: u64) -> Result<()> {
+        self.mark_listed(
+            &[MailMessageRef {
+                provider_id: provider_id.to_owned(),
+                thread_id: None,
+            }],
+            generation,
+        )
+    }
+
     /// Records that this listing (`generation`) named each of `messages`
     /// the vault holds a copy of.
     fn mark_listed(&self, messages: &[MailMessageRef], generation: u64) -> Result<()> {
@@ -450,8 +472,10 @@ impl Step<'_> {
 
     /// Settles a completed listing after an expired anchor (fix list row
     /// 17937): each live copy landed before it began, within its cutoff,
-    /// that it never named was deleted at the provider while the feed was
-    /// lost, and takes the source's delete setting.
+    /// that it never named is asked of the provider again; one it no longer
+    /// holds, or holds as trash or spam, was deleted while the feed was lost
+    /// and takes the source's delete setting. A delete that fails leaves the
+    /// listing unsettled, and the next step settles it again.
     fn settle_relist(&mut self, relist: MailRelist, cutoff: Option<u64>) -> MemoryResult<()> {
         let lost: Vec<String> = {
             let txn = self
@@ -475,14 +499,34 @@ impl Step<'_> {
             }
             lost
         };
+        let mut settled = true;
         for provider_id in lost {
-            self.delete(&provider_id)?;
-        }
-        self.write_state(|state| {
-            if state.relist == Some(relist) {
-                state.relist = None;
+            // A copy the listing missed may have moved behind its cursor:
+            // the provider's own answer decides.
+            if let Some(headers) = self.wire.headers(&self.wire_source, &provider_id)?
+                && !headers.trash_or_spam
+            {
+                update_labels(
+                    self.vault,
+                    self.source,
+                    &provider_id,
+                    &headers.labels,
+                    self.at,
+                )?;
+                self.mark_listed_one(&provider_id, relist.generation)?;
+                continue;
             }
-        })?;
+            if self.delete(&provider_id).is_err() {
+                settled = false;
+            }
+        }
+        if settled {
+            self.write_state(|state| {
+                if state.relist == Some(relist) {
+                    state.relist = None;
+                }
+            })?;
+        }
         Ok(())
     }
 
