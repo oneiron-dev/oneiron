@@ -45,7 +45,7 @@ use crate::sync::withdrawn_cutoffs::{
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 22] = [
+pub(super) const WINDOW_ROOTS: [&str; 23] = [
     "entities",
     "edges",
     "tombstones",
