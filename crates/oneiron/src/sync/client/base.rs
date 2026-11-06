@@ -90,6 +90,7 @@ pub struct SyncClient {
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
+    pub(crate) document_parts: Mutex<crate::sync::transport::DocumentAssembly>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -221,6 +222,7 @@ impl SyncClient {
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             window_pads: Mutex::default(),
+            document_parts: Mutex::default(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,

@@ -245,7 +245,7 @@ impl SyncClient {
                     let lane = AssetBodyLane::FederationReceive { role: receipt.role };
                     let vault = std::sync::Arc::clone(&self.vault);
                     let born = watch_births(&vault, &[(id, carrier.clone())], || {
-                        with_manager_peer(&self.manager, lane, |peer| {
+                        with_manager_peer(&self.manager, lane, None, |peer| {
                             land_carried_body(peer, key, bound, bytes)
                         })
                         .map(|_| ())

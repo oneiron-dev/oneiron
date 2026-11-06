@@ -111,13 +111,20 @@ pub struct AssetBodyPeer<'a> {
     pub window: &'a dyn Fn(&WindowKey) -> Option<LoroDoc>,
     /// The windows this socket moves bodies for now, which a poll scans.
     pub windows: &'a dyn Fn() -> Vec<WindowKey>,
+    /// The machine this client's connection proved as its home, rechecked
+    /// as the socket's call began: a body landed through this peer came from
+    /// it, and its landing records so ([`super::home_proof`], FIX 14534).
+    /// `None` on the server's side, a federation lane and an offline bundle.
+    pub home: Option<EntityId>,
 }
 
 /// Runs `f` over the peer a sync client over `manager` is, on `lane`: its
-/// vault, its lease vault, and the live documents its manager holds.
+/// vault, its lease vault, the live documents its manager holds, and `home`,
+/// the machine it proved as its home ([`AssetBodyPeer::home`]).
 pub(crate) fn with_manager_peer<T>(
     manager: &WindowManager,
     lane: AssetBodyLane,
+    home: Option<EntityId>,
     f: impl FnOnce(&AssetBodyPeer<'_>) -> T,
 ) -> T {
     let window = |key: &WindowKey| manager.window(key).map(|loaded| loaded.doc.clone());
@@ -128,6 +135,7 @@ pub(crate) fn with_manager_peer<T>(
         materializer: manager.materializer(),
         window: &window,
         windows: &windows,
+        home,
     })
 }
 
