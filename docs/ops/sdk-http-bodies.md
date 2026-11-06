@@ -69,6 +69,10 @@ The synchronous SDK parses ordinary success replies and error envelopes
 from a buffered, capped reader instead of collecting the complete raw body
 in a byte vector. Ordinary successes keep the existing 64 MiB read limit and
 unchanged truncation, over-limit and JSON-decode error handling.
+Typed parsing starts while that bounded reader consumes the body. The final
+size and I/O checks still precede returning its result, but typed allocations
+can start before that final check. This is not the old whole-body predecode
+allocation timing or a heap-admission guarantee.
 The existing 64 KiB limit and its one-byte overrun probe still apply. Invalid
 JSON is drained only to that same bound, so over-limit and unreadable errors
 keep their existing transport-error message. Foreign response bytes still
