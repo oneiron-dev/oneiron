@@ -50,7 +50,7 @@ pub(crate) async fn core_context_pack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
-) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
+) -> Result<axum::response::Response, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     // A facet-narrowed credential reads a facet-narrowed pack (FIX 646): every
     // row, count and handle the pack echoes passes the admitted read, the
@@ -58,7 +58,10 @@ pub(crate) async fn core_context_pack(
     let req = json_payload(payload)?;
     req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
     let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
-    Ok(Json(response))
+    Ok(super::output_memory::context_json_response(
+        &response,
+        &server.memory,
+    ))
 }
 
 /// The shared context-pack pipeline behind `/v1/core/context-pack` and the
@@ -329,6 +332,7 @@ pub(crate) async fn run_context_pack(
     .map_err(|error| core_engine_error("disclosure receipt failed", error))?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     response.limit_clamped = req.limit_clamped;
+    response.retain_disclosure_output(&server.memory);
     Ok((response, memories, cursor))
 }
 
@@ -587,9 +591,9 @@ fn read_reaction_signals(
         .as_deref()
         .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
         .transpose()?;
-    let deadline = req
-        .signals_deadline_ms
-        .map(|ms| oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms)));
+    let deadline = req.signals_deadline_ms.map(|ms| {
+        oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms))
+    });
     let signal_error = |error: oneiron::Error| match &error {
         oneiron::Error::Io(error)
             if error.get_ref().is_some_and(|source| {

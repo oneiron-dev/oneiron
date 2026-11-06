@@ -12,6 +12,8 @@ mod egress;
 pub(crate) use egress::PromptBoard;
 mod explain;
 mod history;
+mod http_output;
+pub(crate) use http_output::context_board_hydrate_http;
 mod memories;
 mod prefix;
 mod reply;
@@ -765,10 +767,10 @@ async fn hydrate_inner(
                 &parts.authority,
                 &mut response,
                 layout_candidate,
-                within_standing_budget,
+                |response| within_standing_budget(response, &server.memory),
             )?;
         }
-        None => within_standing_budget(&response)?,
+        None => within_standing_budget(&response, &server.memory)?,
     }
     // The response is final: each hook block it carried spends a delivery. A
     // failed record leaves the block to show again, never to vanish unseen.
@@ -901,14 +903,18 @@ fn rider_admits(
 }
 
 /// A standing session's response must fit its whole token budget.
-fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::error::ApiError> {
+fn within_standing_budget(
+    response: &ContextBoardResponse,
+    memory: &crate::machine::MachineMemory,
+) -> Result<(), crate::error::ApiError> {
     let Some(prefix) = &response.standing else {
         return Ok(());
     };
-    let wire = serde_json::to_string(response).map_err(|_| {
-        crate::error::ApiError::internal_server_error("context serialization failed")
-    })?;
-    if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
+    let wire = super::context_pack::output_memory::ContextJsonBytes::serialize(response, memory)
+        .map_err(|_| {
+            crate::error::ApiError::internal_server_error("context serialization failed")
+        })?;
+    if oneiron::count_context_pack_tokens(wire.as_str()) > prefix.total_tokens {
         return Err(crate::error::ApiError::bad_request(
             "session prefix and retrieval exceed the token budget",
             Some("standing.token_budget"),
