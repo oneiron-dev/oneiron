@@ -95,26 +95,38 @@ fn claim_texts<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
 }
 
 /// `value` with each lifted key `keys` names as its handle, in its strings
-/// and its object keys alike.
+/// and its object keys alike. An object two of whose member names would read
+/// as one handle is redacted whole, so no member silently replaces another.
 fn mask_claim_json(keys: &LiftedKeys, value: &mut serde_json::Value) {
-    match value {
+    let collided = match value {
         serde_json::Value::String(text) => {
             if let Some(masked) = keys.masked(text) {
                 *text = masked;
             }
+            false
         }
         serde_json::Value::Array(items) => {
             items
                 .iter_mut()
                 .for_each(|item| mask_claim_json(keys, item));
+            false
         }
         serde_json::Value::Object(fields) => {
+            let mut masked = serde_json::Map::new();
+            let mut collided = false;
             for (key, mut item) in std::mem::take(fields) {
                 mask_claim_json(keys, &mut item);
-                fields.insert(keys.masked(&key).unwrap_or(key), item);
+                collided |= masked
+                    .insert(keys.masked(&key).unwrap_or(key), item)
+                    .is_some();
             }
+            *fields = masked;
+            collided
         }
-        _ => {}
+        _ => false,
+    };
+    if collided {
+        *value = serde_json::Value::String("[redacted]".to_owned());
     }
 }
 
