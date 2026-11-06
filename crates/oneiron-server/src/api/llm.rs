@@ -90,6 +90,9 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
         LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "auth"),
         // The model's answer failed a read check: an upstream fault, never a p = 0.
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => (StatusCode::BAD_GATEWAY, "label_read"),
+        LlmError::Fatal(FatalLlmError::HostStore { .. }) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "host_store")
+        }
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")

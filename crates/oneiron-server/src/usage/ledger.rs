@@ -12,6 +12,11 @@ impl UsageLedger {
     pub fn new(vault: Arc<oneiron::Vault>) -> Self {
         Self { vault }
     }
+
+    /// The same vault whose writer owns this ledger's pending and final rows.
+    pub(crate) fn vault(&self) -> Arc<oneiron::Vault> {
+        Arc::clone(&self.vault)
+    }
     /// Records `event` once under its idempotency key, billed as `source`
     /// and written by `origin`, the engine or a usage post. A posted event
     /// names no row its facts were read from: its rows stay unknown.
