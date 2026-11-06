@@ -233,12 +233,38 @@ impl Memory<'_> {
     }
 
     pub fn graph_fs_find(&self, input: GraphFsFindRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_find_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same file search, with cooperative container-mask checkpoints.
+    pub fn graph_fs_find_with_pacing(
+        &self,
+        input: GraphFsFindRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_find_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_find_with_reader(
+        &self,
+        input: GraphFsFindRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.find", (&input.path, input.newer_than))?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.find(&input.path, input.newer_than, cursor.as_deref())?;
+        let result =
+            tree.find_with_reader(&input.path, input.newer_than, cursor.as_deref(), reader)?;
         Ok(output(&tree, &input.mount, input.path, &call, result))
     }
 

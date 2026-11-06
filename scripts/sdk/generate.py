@@ -930,7 +930,7 @@ def mcp_input_dispatch(row):
         if 'mcp_served' in row:
             # The rows the verb reads by name: a continuation of its result is released only while they may leave.
             body += f'served.extend({row["mcp_served"]});\n'
-        if name in ('graph_fs.read_file', 'graph_fs.cat', 'graph_fs.head', 'graph_fs.wc', 'graph_fs.grep', 'graph_fs.ls'):
+        if name in ('graph_fs.read_file', 'graph_fs.cat', 'graph_fs.head', 'graph_fs.wc', 'graph_fs.grep', 'graph_fs.ls', 'graph_fs.find'):
             body += (f'let (output, listed) = Box::pin(mcp_graph_fs_bytes(server, actor, surface, input, move |memory, input, pacing| memory.{method}_with_pacing(input, pacing))).await?;\n'
                      'served.extend(listed);\n'
                      'let output = output.map_err(mcp_facade_error)?;\n')
@@ -1484,7 +1484,7 @@ def facade_dispatch(facade_rows):
                 ).into())
             }\n'''
             continue
-        if name in ('graph_fs.read_file', 'graph_fs.cat', 'graph_fs.head', 'graph_fs.wc', 'graph_fs.grep', 'graph_fs.ls'):
+        if name in ('graph_fs.read_file', 'graph_fs.cat', 'graph_fs.head', 'graph_fs.wc', 'graph_fs.grep', 'graph_fs.ls', 'graph_fs.find'):
             dispatch += f"""async fn {method}({DISPATCH_SIGNATURE}) -> Result<FacadeCallOutput, FacadeApiError> {{
                 super::graph_fs_doors::graph_fs_bytes(server, call, input, {json.dumps(name)}, move |memory, input, pacing| memory.{method}_with_pacing(input, pacing)).await
             }}
