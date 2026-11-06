@@ -138,17 +138,27 @@ fn calendar_timezone<'c>(calendar: &'c icalendar::parser::Component<'_>) -> Opti
         })
 }
 
-/// The zone the VCALENDAR in `input` names its own (`X-WR-TIMEZONE`), the
-/// zone [`parse_ics_feed`] gives that calendar's all-day events (fix list
-/// row 17868); `None` when it names none or does not parse.
-pub(crate) fn ics_calendar_timezone(input: &[u8]) -> Option<String> {
+/// The zone the VCALENDAR in `input` that carries the VEVENT `uid` names
+/// its own (`X-WR-TIMEZONE`), the zone [`parse_ics_feed`] gives that
+/// calendar's all-day events (fix list row 17868); `None` when that
+/// calendar names none, no calendar carries `uid`, or `input` does not
+/// parse. A feed of several calendars gives each event its own calendar's.
+pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
     let text = std::str::from_utf8(input).ok()?;
     let unfolded = icalendar::parser::unfold(text);
     let roots = icalendar::parser::read_components(&unfolded).ok()?;
     roots
         .iter()
         .filter(|root| is_named(root, "VCALENDAR"))
-        .find_map(calendar_timezone)
+        .find(|calendar| {
+            calendar.components.iter().any(|component| {
+                is_named(component, "VEVENT")
+                    && component
+                        .find_prop("UID")
+                        .is_some_and(|prop| prop.val.as_str() == uid)
+            })
+        })
+        .and_then(calendar_timezone)
         .map(str::to_owned)
 }
 
