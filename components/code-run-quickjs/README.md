@@ -143,8 +143,10 @@ positional strings; any other row that lands on a host import refuses the
 component. A bare row that is also a root (`reveal`, with `reveal.wait` and
 `reveal.describe`) is one global, the verb carrying the root's verbs; each
 global is installed once, and a second value under a set name refuses the
-component. A
-verb input is encoded once and the call sends that text. One holding a
+component. A verb that also holds child verbs is guarded as a namespace:
+missing children use the same host refusal path as other namespaces, while
+the parent and its known children stay callable.
+A verb input is encoded once and the call sends that text. One holding a
 non-finite number, boxed or not, is refused before the call
 (`non_finite_verb_input`), since JSON would carry it as null; one JSON
 cannot carry at all is `invalid_verb_input`; both throw at the call itself.
