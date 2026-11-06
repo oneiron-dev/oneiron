@@ -11,7 +11,7 @@ pub(super) struct StagedMarkers {
 /// P5: audit the put and stage the body — claim attachments, markers, the
 /// entity body row, and the ASSET body file arm.
 pub(super) fn audit_and_stage_body(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -20,6 +20,7 @@ pub(super) fn audit_and_stage_body(
     previous_skill_record: &Option<crate::write_envelope::skill_record::SkillRecord>,
     markers: StagedMarkers,
 ) -> Result<()> {
+    let store = write.store;
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {
         if fixed.replicated {
             store
@@ -39,9 +40,9 @@ pub(super) fn audit_and_stage_body(
     if fixed.replicated {
         crate::tagging::release_held_id_in_txn(store, wtxn, &fixed.id)?;
     }
-    crate::ports::withdraw_before_rewrite_in_txn(store, wtxn, &fixed.id)?;
+    crate::ports::withdraw_before_rewrite_in_txn(write, wtxn, &fixed.id)?;
     crate::ingest::invalidate_docs_source_before_put(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -49,7 +50,7 @@ pub(super) fn audit_and_stage_body(
         fixed.options.storage.asset_file,
     )?;
     crate::ports::keep_worlds_of_unmade_epoch_in_txn(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -88,7 +89,7 @@ pub(super) fn audit_and_stage_body(
         crate::dreamer_consolidation::mark_person_about_moved_in_txn(store, wtxn, fixed.id, body)?;
     }
     stage_claim_projection(
-        store,
+        write,
         wtxn,
         fixed.id,
         dispatch.decoded_claim_body.as_ref(),
@@ -96,7 +97,7 @@ pub(super) fn audit_and_stage_body(
     )?;
     stage_optional_side_row(store, wtxn, markers.hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
-        store,
+        write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
@@ -153,6 +154,21 @@ pub(super) fn audit_and_stage_body(
         row_version,
         data,
     )?;
+    // FIX 12113: which machine wrote the MESSAGE row just staged, for the
+    // reverse scan to vouch for its exact bytes beside it: this one for a
+    // local put, the lane's verified writer for a replicated one.
+    #[cfg(feature = "sync")]
+    if fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+        crate::sync::note_message_put_in_txn(
+            store,
+            wtxn,
+            &fixed.id,
+            fixed.replicated,
+            fixed
+                .own_device
+                .and_then(|lane| lane.proof_for(&fixed.id, data)),
+        )?;
+    }
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(
             store,

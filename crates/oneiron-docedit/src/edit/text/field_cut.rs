@@ -8,7 +8,7 @@
 //! receipt says the dynamic field became static text. Anything else keeps
 //! the caller's own rebuild.
 use super::build::{broken_run, insert_paragraphs, new_run};
-use super::{Action, BREAK, Kind, Paragraph, paragraphs};
+use super::{Action, BREAK, Kind, Paragraph, cell_paragraphs};
 use crate::edit::xml::{self, A, Splice};
 use crate::ooxml::XmlTree;
 
@@ -30,7 +30,7 @@ pub(crate) fn cell_text_cut(
     }
     // As `cell_text` builds it: a paragraph whose text reads as before,
     // its line breaks aside, keeps them.
-    let old = paragraphs(tree, body);
+    let old = cell_paragraphs(tree, body);
     let new: Vec<Vec<char>> = value
         .split('\n')
         .enumerate()
@@ -65,7 +65,7 @@ fn rewrite_body_cut(
     body: usize,
     new: &[Vec<char>],
 ) -> Option<(Vec<Splice>, Vec<String>)> {
-    let old = paragraphs(tree, body);
+    let old = cell_paragraphs(tree, body);
     let mut head = 0;
     while head < old.len() && head < new.len() && old[head].text == new[head] {
         head += 1;
@@ -102,9 +102,9 @@ fn rewrite_body_cut(
 /// One paired paragraph with whole fields cut out (FIX 12227): as the
 /// mapping's paired-paragraph rewrite, except a field the changed span
 /// covers whole is removed, its `type` recorded, instead of refusing.
-/// `None` when the cut does not apply: an opaque paragraph, a field the
-/// span covers only partly (cutting it whole would lose kept text), new
-/// text with no adjacent run to hold it, or a cut field without a `type`.
+/// `None` when the cut does not apply: an opaque item or a field the span
+/// covers only partly (cutting it whole would lose kept text), new text
+/// with no adjacent run to hold it, or a cut field without a `type`.
 /// The written paragraph is checked to read exactly `new`.
 fn rewrite_paragraph_cut(
     bytes: &[u8],

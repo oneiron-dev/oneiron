@@ -46,10 +46,28 @@ pub(crate) fn team_shape_root_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<EntityId> {
-    if let Some(holder) = vault.default_hub_skill_in_txn(txn, TEAM_SHAPE_SKILL_NAME)? {
-        return Ok(holder);
+    team_shape_root_sourced_in_txn(vault, txn).map(|(root, _)| root)
+}
+
+/// The same root with the actual default-hub alias and pin its lookup
+/// consulted in `txn`: `Some` even when no installed holder matched that
+/// alias, `None` only when no live hub consulted any alias. The root keeps
+/// [`team_shape_root_in_txn`] behavior bit for bit; the lookup is audit
+/// metadata only, never a read grant or a complete entity-source set.
+///
+/// # Errors
+///
+/// Storage errors, or an id derivation failure.
+pub(crate) fn team_shape_root_sourced_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(EntityId, Option<crate::skill_hub::HubRef>)> {
+    let (holder, lookup) =
+        vault.default_hub_skill_with_source_in_txn(txn, TEAM_SHAPE_SKILL_NAME)?;
+    if let Some(holder) = holder {
+        return Ok((holder, lookup));
     }
-    team_shape_skill()
+    Ok((team_shape_skill()?, lookup))
 }
 
 /// The team-shape workflow default in its own read transaction: the

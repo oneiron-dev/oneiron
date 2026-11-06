@@ -31,7 +31,7 @@ mod unit;
 
 pub use unit::MeetingAudioSeats;
 
-const PROTOCOL: &str = "oneiron.meeting_audio.host.v2";
+const PROTOCOL: &str = "oneiron.meeting_audio.host.v3";
 
 /// How long a native host process may write nothing (no unit, progress,
 /// end or reply) before its stage faults (CALLS, FIX 3765). A recording runs
@@ -50,6 +50,62 @@ pub struct CommandAudioConfig {
     pub model_snapshot: PathBuf,
 }
 
+impl CommandAudioConfig {
+    fn validate(&self) -> AudioResult<()> {
+        let files = [&self.python, &self.bridge, &self.ffmpeg];
+        let dirs = [&self.workspace, &self.model_snapshot];
+        if files.iter().any(|p| !p.is_absolute() || !p.is_file())
+            || dirs.iter().any(|p| !p.is_absolute() || !p.is_dir())
+        {
+            return Err(AudioError::InvalidOptions);
+        }
+        Ok(())
+    }
+
+    /// Read actual local model bindings before constructing admission seats.
+    /// The optional runtime profile is an absolute path and its SHA-256.
+    /// This hashes configured files; it neither loads nor runs a model.
+    pub fn inspect_capabilities(
+        &self,
+        runtime_profile: Option<(&Path, &str)>,
+    ) -> AudioResult<NativeAudioCapabilities> {
+        self.validate()?;
+        let reply = native_call(
+            self,
+            runtime_profile,
+            "capabilities",
+            &[],
+            json!({}),
+            |_, _, _| Err(host_error("capabilities", "UnexpectedUnit")),
+        )?;
+        let capabilities: NativeAudioCapabilities = serde_json::from_value(reply.result)
+            .map_err(|_| host_error("capabilities", "InvalidCapabilities"))?;
+        let script = std::fs::read(&self.bridge)
+            .map_err(|_| host_error("capabilities", "BridgeReadFailed"))?;
+        if capabilities.script_sha256 != sha256(&script)
+            || Path::new(&capabilities.asr_snapshot) != self.model_snapshot
+        {
+            return Err(host_error("capabilities", "CapabilityBindingMismatch"));
+        }
+        if capabilities.runtime_profile_sha256.as_deref()
+            != runtime_profile.map(|(_, digest)| digest)
+        {
+            return Err(host_error("capabilities", "RuntimeProfileBindingMismatch"));
+        }
+        if let Some(expected) = &capabilities.runtime_helper_sha256 {
+            let helper = self.bridge.with_file_name("meeting_audio_runtime.py");
+            let bytes = std::fs::read(helper)
+                .map_err(|_| host_error("capabilities", "RuntimeHelperReadFailed"))?;
+            if &sha256(&bytes) != expected {
+                return Err(host_error("capabilities", "RuntimeHelperBindingMismatch"));
+            }
+        } else if runtime_profile.is_some() {
+            return Err(host_error("capabilities", "RuntimeHelperBindingMismatch"));
+        }
+        Ok(capabilities)
+    }
+}
+
 /// Capability data reported by a configured bridge. This is not qualification
 /// or an authorization to run a model or change the ASR role's default.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -58,6 +114,9 @@ pub struct NativeAudioCapabilities {
     pub packages: std::collections::BTreeMap<String, Option<String>>,
     pub asr_model_id: String,
     pub asr_snapshot: String,
+    /// Actual local model bindings by unit kind: model ID plus the SHA-256
+    /// of its checked model-file manifest, not an execution attestation.
+    pub unit_models: std::collections::BTreeMap<String, Vec<String>>,
     pub operations: Vec<String>,
     pub artifact_capable: bool,
     pub missing: Vec<String>,
@@ -122,11 +181,8 @@ impl CommandMeetingAudioHost {
         route: AsrRoute,
         seats: MeetingAudioSeats,
     ) -> AudioResult<Self> {
-        let files = [&config.python, &config.bridge, &config.ffmpeg];
-        let dirs = [&config.workspace, &config.model_snapshot];
-        if files.iter().any(|p| !p.is_absolute() || !p.is_file())
-            || dirs.iter().any(|p| !p.is_absolute() || !p.is_dir())
-            || route.tier != ProcessingTier::Local
+        config.validate()?;
+        if route.tier != ProcessingTier::Local
             || route.model_id.trim().is_empty()
             || route.route_receipt_ref.trim().is_empty()
             || !seats.on_device()
@@ -152,103 +208,34 @@ impl CommandMeetingAudioHost {
         Ok(self)
     }
 
-    /// Inspect the native bridge without inference. A configured profile may
-    /// hash local model files, but does not load a model or acquire any bytes.
+    /// Inspect the native bridge and match its actual model files to this
+    /// host's admission seats. No inference or consent is implied.
     pub fn inspect_capabilities(&self) -> AudioResult<NativeAudioCapabilities> {
-        let reply = self.call("capabilities", &[], json!({}))?;
-        let capabilities: NativeAudioCapabilities = serde_json::from_value(reply.result)
-            .map_err(|_| host_error("capabilities", "InvalidCapabilities"))?;
-        let script = std::fs::read(&self.config.bridge)
-            .map_err(|_| host_error("capabilities", "BridgeReadFailed"))?;
-        if capabilities.script_sha256 != sha256(&script)
-            || capabilities.asr_model_id != self.route.model_id
-            || Path::new(&capabilities.asr_snapshot) != self.config.model_snapshot
+        let capabilities = self.config.inspect_capabilities(
+            self.runtime_profile
+                .as_ref()
+                .map(|(path, digest)| (path.as_path(), digest.as_str())),
+        )?;
+        if capabilities.asr_model_id != self.route.model_id
+            || !self.seats.matches_models(&capabilities.unit_models)
         {
             return Err(host_error("capabilities", "CapabilityBindingMismatch"));
-        }
-        if capabilities.runtime_profile_sha256.as_ref()
-            != self.runtime_profile.as_ref().map(|(_, digest)| digest)
-        {
-            return Err(host_error("capabilities", "RuntimeProfileBindingMismatch"));
-        }
-        if let Some(expected) = &capabilities.runtime_helper_sha256 {
-            let helper = self
-                .config
-                .bridge
-                .with_file_name("meeting_audio_runtime.py");
-            let bytes = std::fs::read(helper)
-                .map_err(|_| host_error("capabilities", "RuntimeHelperReadFailed"))?;
-            if &sha256(&bytes) != expected {
-                return Err(host_error("capabilities", "RuntimeHelperBindingMismatch"));
-            }
-        } else if self.runtime_profile.is_some() {
-            return Err(host_error("capabilities", "RuntimeHelperBindingMismatch"));
         }
         Ok(capabilities)
     }
 
-    /// One native call. No recording, request or reply is refused by its size
-    /// (Rule 5): the request goes through a private file and the reply is read
-    /// whole. Each unit the process names runs on its own permit, and the
-    /// call runs while the process makes progress.
+    /// One native call, with every physical unit admitted on its exact model.
     fn call(&self, stage: &str, body: &[u8], options: Value) -> AudioResult<Reply> {
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let header = json!({
-            "protocol": PROTOCOL, "request_id": request_id, "operation": stage,
-            "input_bytes": body.len(), "input_sha256": sha256(body), "options": options,
-        });
-        let mut encoded = serde_json::to_vec(&header).map_err(|_| AudioError::Serialization)?;
-        encoded.push(b'\n');
-        // A private request file avoids blocking-pipe write/read deadlocks for
-        // full recordings. Unique, create_new, 0600 on Unix; removed on every
-        // normal return. This scratch area is not the vault or an import door.
-        let (scratch, mut input) = RequestFile::create(&self.config.workspace, stage)?;
-        input
-            .write_all(&encoded)
-            .and_then(|()| input.write_all(body))
-            .and_then(|()| input.flush())
-            .map_err(|_| host_error(stage, "RequestIo"))?;
-        drop(input);
-        let mut command = oneiron_spawn::command(&self.config.python);
-        command
-            .arg(&self.config.bridge)
-            .arg("--request")
-            .arg(&scratch.0)
-            .arg("--workspace")
-            .arg(&self.config.workspace)
-            .arg("--ffmpeg")
-            .arg(&self.config.ffmpeg)
-            .arg("--model-snapshot")
-            .arg(&self.config.model_snapshot)
-            .env("HF_HUB_OFFLINE", "1")
-            .env("TRANSFORMERS_OFFLINE", "1")
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .current_dir(&self.config.workspace);
-        if let Some((path, digest)) = &self.runtime_profile {
-            validate_runtime_profile(path, digest)?;
-            command
-                .arg("--runtime-profile")
-                .arg(path)
-                .arg("--runtime-profile-sha256")
-                .arg(digest);
-        }
-        let mut session = process::Session::spawn(&mut command, UNIT_PROGRESS_TIMEOUT)
-            .map_err(|code| host_error(stage, code))?;
-        let output = loop {
-            match session.next().map_err(|code| host_error(stage, code))? {
-                process::Frame::Reply(output) => break output,
-                process::Frame::Event(event) => match unit::event_name(&event, &request_id) {
-                    Some("unit") => {
-                        self.run_unit(stage, &request_id, &mut session, &event["unit"])?;
-                    }
-                    Some("progress") => {}
-                    _ => return Err(host_error(stage, "InvalidResponse")),
-                },
-            }
-        };
-        let success = session.finish().map_err(|code| host_error(stage, code))?;
-        drop(scratch);
-        parse_reply(stage, &request_id, success, output)
+        native_call(
+            &self.config,
+            self.runtime_profile
+                .as_ref()
+                .map(|(path, digest)| (path.as_path(), digest.as_str())),
+            stage,
+            body,
+            options,
+            |request_id, session, unit| self.run_unit(stage, request_id, session, unit),
+        )
     }
 
     fn pcm_call(
@@ -414,6 +401,77 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
             provenance: receipt(&reply.result)?,
         })
     }
+}
+
+/// The shared native process path. No recording, request or reply is refused
+/// by size: private request files avoid pipe deadlocks, and replies are read
+/// whole. Units keep the process alive through their existing progress clock.
+/// Metadata inspection never admits a unit.
+fn native_call(
+    config: &CommandAudioConfig,
+    runtime_profile: Option<(&Path, &str)>,
+    stage: &str,
+    body: &[u8],
+    options: Value,
+    mut unit: impl FnMut(&str, &mut process::Session, &Value) -> AudioResult<()>,
+) -> AudioResult<Reply> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let header = json!({
+        "protocol": PROTOCOL, "request_id": request_id, "operation": stage,
+        "input_bytes": body.len(), "input_sha256": sha256(body), "options": options,
+    });
+    let mut encoded = serde_json::to_vec(&header).map_err(|_| AudioError::Serialization)?;
+    encoded.push(b'\n');
+    // A private request file avoids blocking-pipe write/read deadlocks for
+    // full recordings. Unique, create_new, 0600 on Unix; removed on every
+    // normal return. This scratch area is not the vault or an import door.
+    let (scratch, mut input) = RequestFile::create(&config.workspace, stage)?;
+    input
+        .write_all(&encoded)
+        .and_then(|()| input.write_all(body))
+        .and_then(|()| input.flush())
+        .map_err(|_| host_error(stage, "RequestIo"))?;
+    drop(input);
+    let mut command = oneiron_spawn::command(&config.python);
+    command
+        .arg(&config.bridge)
+        .arg("--request")
+        .arg(&scratch.0)
+        .arg("--workspace")
+        .arg(&config.workspace)
+        .arg("--ffmpeg")
+        .arg(&config.ffmpeg)
+        .arg("--model-snapshot")
+        .arg(&config.model_snapshot)
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .current_dir(&config.workspace);
+    if let Some((path, digest)) = runtime_profile {
+        validate_runtime_profile(path, digest)?;
+        command
+            .arg("--runtime-profile")
+            .arg(path)
+            .arg("--runtime-profile-sha256")
+            .arg(digest);
+    }
+    let mut session = process::Session::spawn(&mut command, UNIT_PROGRESS_TIMEOUT)
+        .map_err(|code| host_error(stage, code))?;
+    let output = loop {
+        match session.next().map_err(|code| host_error(stage, code))? {
+            process::Frame::Reply(output) => break output,
+            process::Frame::Event(event) => match unit::event_name(&event, &request_id) {
+                Some("unit") => {
+                    unit(&request_id, &mut session, &event["unit"])?;
+                }
+                Some("progress") => {}
+                _ => return Err(host_error(stage, "InvalidResponse")),
+            },
+        }
+    };
+    let success = session.finish().map_err(|code| host_error(stage, code))?;
+    drop(scratch);
+    parse_reply(stage, &request_id, success, output)
 }
 
 fn validate_runtime_profile(path: &Path, digest: &str) -> AudioResult<()> {
