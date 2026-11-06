@@ -2471,7 +2471,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/browser_programs/induction/checks_verify.rs` | src | s | 2 crate-vis | — | Alignment of a candidate's checks and reproduction of its solved runs |
 | `src/dreamer_runner/maintenance/browser_programs/induction/mod.rs` | src | m | 6 crate-vis | — | Deterministic induction for the Coach's browser programs (CUA E8): one candidate program from two solved… |
 | `src/dreamer_runner/maintenance/calibration_asks.rs` | src | s | 1 const · 1 crate-vis | — | Calibration asks (OF-420; ARCH-0053 #the-judge, ARCH-0042's judge re-pin protocol): "On uncertainty… |
-| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 11 fn · 34 const · 6 re-export · 13 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
+| `src/dreamer_runner/maintenance/coach.rs` | src | m | 1 trait · 11 fn · 36 const · 6 re-export · 13 crate-vis | PersonThresholdPolicy | The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and… |
 | `src/dreamer_runner/maintenance/coach/eval_measurement.rs` | src | s | 1 fn · 1 crate-vis | — | The Coach's eval measurement job (FIX 574, OF-578): one per request digest, queued when the measurement is… |
 | `src/dreamer_runner/maintenance/coach/person_threshold.rs` | src | s | 1 fn | — | Q3 tuning as the Coach (ARCH-0076 #ask, FIX 8708): every requested override record is read, a page at a… |
 | `src/dreamer_runner/maintenance/coach/think_threshold.rs` | src | s | 1 trait · 2 fn · 2 crate-vis | ThinkThresholdPolicy | Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later… |
@@ -2533,6 +2533,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/identity/settle_undo/erase.rs` | src | s | 3 crate-vis | — | The erase scrub of one automatic settle's inverse, and the checks its revert makes before it holds a… |
 | `src/dreamer_runner/maintenance/identity/settlement.rs` | src | s | 10 crate-vis | — | Settles an ask: applies a choice, keeps the names separate, or escalates |
 | `src/dreamer_runner/maintenance/judge_label_rechecks.rs` | src | s | 1 fn | — | The judge labels' re-check after a rubric edit, run (ARCH-0042 "A human edits the rubric at any time |
+| `src/dreamer_runner/maintenance/layout_suggestions.rs` | src | s | 1 crate-vis | — | Board layout suggestions per agent type (FIX 12572, layout half; owner 2026-11-03 20:31, ledger… |
 | `src/dreamer_runner/maintenance/mod.rs` | src | m | 1 fn · 3 const · 22 mod · 10 re-export · 17 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
 | `src/dreamer_runner/maintenance/optimize.rs` | src | m | 2 struct · 2 crate-vis | CoachLiveSlice, CoachSkillOptimizer | The Coach's skill-maintenance body on the shared wake runner |
 | `src/dreamer_runner/maintenance/person_threshold.rs` | src | s | 1 fn | — | The accepted PersonThreshold row (Q3) |
@@ -3740,7 +3741,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/run_admission/media.rs` | src | m | 2 struct · 20 fn · 2 crate-vis | MediaGate, MediaStreamLease | The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its… |
 | `src/llm/run_admission/media_job.rs` | src | s | 3 crate-vis | — | A media job's polls and its cancel, bound to the call that started the job (FIX 9923) |
 | `src/llm/run_admission/mod.rs` | src | s | 1 mod · 14 re-export | — | The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through… |
-| `src/llm/run_admission/permit.rs` | src | m | 1 struct · 7 fn · 5 crate-vis | RunPermit | Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the… |
+| `src/llm/run_admission/permit.rs` | src | m | 1 struct · 8 fn · 5 crate-vis | RunPermit | Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the… |
 | `src/llm/run_admission/person_billing.rs` | src | s | 1 struct · 3 fn · 1 const · 1 re-export | BillingAccountFiling | A PERSON's own billing account, as that PERSON filed it (FIX 3332) |
 | `src/llm/run_admission/receipt.rs` | src | s | 8 struct · 2 enum · 1 trait · 1 fn | CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunOverageSource, RunReceipt, RunReceiptSink, RunStreamUsage +3 | The run admission's receipts: every admission, refusal, dispatch, settlement and revision, keyed by lease |
 | `src/llm/run_admission/resident.rs` | src | s | 1 struct · 1 trait · 1 re-export · 6 crate-vis | ResidentLedger, ResidentStanding | Each resident's share of the vault's host-paid allocation (ARCH-0011 `#budget-lease`, FIX 7767) |
