@@ -219,6 +219,31 @@ impl<'v> ScopedRead<'v> {
         self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
     }
 
+    /// Reads every target in ordered frames under one snapshot and receipt.
+    ///
+    /// `offset` is the first input slot in the frame. The callback runs inside
+    /// the original read transaction and body pin; use only in-hand projection
+    /// and accounting, not new vault reads, writes, hooks or model waits.
+    /// Existing body projection may sample host memory telemetry while this
+    /// read is held; the callback is not a blanket no-I/O or no-blocking port.
+    /// Frames use the existing native batch geometry, not a result-count cap.
+    /// A caller that retains rows across callbacks still retains their bodies.
+    pub fn read_frames<S, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        state: S,
+        mut project: impl FnMut(usize, Vec<Option<ReadRow>>, &mut S) -> std::result::Result<(), E>,
+    ) -> std::result::Result<ScopedReadResult<S>, E> {
+        self.read_projected_frames(
+            reads,
+            requested,
+            state,
+            |_, offset, rows, state| project(offset, rows, state),
+            |_, state| Ok(state),
+        )
+    }
+
     /// [`Self::read`] under an as-of temporal selection (unix seconds),
     /// applied to each admitted row before any caller composes it.
     ///
