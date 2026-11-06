@@ -2645,7 +2645,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/recipe_wake.rs` | src | s | 1 crate-vis | — | The wake policy's recipe lane (ARCH-0026 #wake) |
 | `src/dreamer_wake/recipes.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | WakeRecipePolicy | Row-backed spending for the three wake recipes |
 | `src/dreamer_wake/refusal_dial.rs` | src | s | 1 fn | — | An agent's diary notes a change of its refusal dial (OF-533) |
-| `src/dreamer_wake/scheduling.rs` | src | m | 1 enum · 5 fn · 6 crate-vis | WakeTurnSubject | The host-facing enqueue doors; the engine owns no timer |
+| `src/dreamer_wake/scheduling.rs` | src | m | 1 enum · 6 fn · 6 crate-vis | WakeTurnSubject | The host-facing enqueue doors; the engine owns no timer |
 | `src/dreamer_wake/settlement.rs` | src | m | 9 crate-vis | — | What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish |
 | `src/dreamer_wake/sieve/audit_windows.rs` | src | m | 5 struct · 2 enum · 2 fn · 9 crate-vis | SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding, SieveAuditWindow, SieveUnlocatedCause, SieveUnlocatedDiscovery, SieveWindowAudit | The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so… |
 | `src/dreamer_wake/sieve/audit_windows/finding_identity.rs` | src | s | 3 fn · 1 crate-vis | — | A window audit's discovery identity (FIX 7903) |
