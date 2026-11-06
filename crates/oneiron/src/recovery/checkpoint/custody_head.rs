@@ -23,6 +23,8 @@
 mod backup_folder;
 mod drain;
 mod home_fetch;
+mod issuer_transfer;
+pub use issuer_transfer::IssuerSeedTransferReport;
 mod pad_worlds;
 mod status;
 

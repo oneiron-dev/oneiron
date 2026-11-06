@@ -1,4 +1,7 @@
-//! Credential filtering at memory serve and export serialization boundaries.
+//! Core half of `batch::export::credential_filter`: its store-layer items live in `oneiron_store::batch::export::credential_filter` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::export::credential_filter::*;
 
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
@@ -129,6 +132,34 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     } else {
         Ok(bytes)
     }
+}
+
+/// One scoped export record (its metadata header, then its body) as an
+/// export releases it (FIX 8742; ARCH-0038: an export never carries a
+/// credential-like field that survived by bug, legacy import or a vault that
+/// ran with the scan off). The body is read as [`redacted_memory_payload`]
+/// reads a raw transport: each credential replaced in place, the safe bytes
+/// and their types as stored. `None` withholds the record: an ASSET whose
+/// body the filter would change, since a file leaves whole or not at all and
+/// its id may be its bytes' own hash.
+///
+/// # Errors
+/// A record shorter than its header, or a failed re-encoding.
+pub(crate) fn export_released_record(
+    entity_type: u8,
+    mut record: Vec<u8>,
+) -> Result<Option<Vec<u8>>> {
+    if record.len() < ENTITY_METADATA_HEADER_LEN {
+        return Err(Error::CorruptedIndex("scoped export record header"));
+    }
+    let body = record.split_off(ENTITY_METADATA_HEADER_LEN);
+    let stored = blake3::hash(&body);
+    let released = redacted_memory_payload(body)?;
+    if entity_type == crate::registry::ENTITY_TYPE_ASSET && blake3::hash(&released) != stored {
+        return Ok(None);
+    }
+    record.extend_from_slice(&released);
+    Ok(Some(record))
 }
 
 /// Stored bytes go back as they are only when the write door's reading of
