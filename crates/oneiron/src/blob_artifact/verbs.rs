@@ -657,7 +657,8 @@ impl Memory<'_> {
         Ok(self.vault().pending_proposals_scoped(&lane, &artifact)?)
     }
 
-    /// `slides` of the head `snapshot` holds as `renderer` draws them, each
+    /// `slides`, numbered as `snapshot`'s shown deck numbers them, as
+    /// `renderer` draws them, each
     /// with the renderer's name, in order, beside the bytes admitted to
     /// `renderer` for the copy the review makes of each (FIX 8244). They are
     /// drawn from the deck the review reads the units' text from, the live
@@ -774,9 +775,16 @@ impl Memory<'_> {
             .filter(|(_, image, _)| image.is_none())
             .map(|(target, _, _)| target.slide)
             .collect();
+        // Each is drawn at its own slide's place in the deck its text is read
+        // from; one that deck no longer holds is drawn nowhere and abstains.
+        let shown_numbers = self
+            .vault()
+            .slide_review_shown_numbers(&snapshot, &unrendered);
+        let drawn: Vec<u64> = shown_numbers.iter().flatten().copied().collect();
+        let mut shown = shown_numbers.into_iter();
         let (renders, admitted) = match renderer {
-            Some(renderer) if !unrendered.is_empty() => {
-                self.render_head_slides(&snapshot, renderer, &unrendered)
+            Some(renderer) if !drawn.is_empty() => {
+                self.render_head_slides(&snapshot, renderer, &drawn)
             }
             _ => None,
         }
@@ -792,7 +800,10 @@ impl Memory<'_> {
                 },
                 // An empty image abstains after the unit's structure is read.
                 None => {
-                    let (image, renderer) = renders.next().unwrap_or_default();
+                    let (image, renderer) = match shown.next().flatten() {
+                        Some(_) => renders.next().unwrap_or_default(),
+                        None => Default::default(),
+                    };
                     SlideReviewUnit {
                         target,
                         image: SlideReviewImage::Rendered(image),
