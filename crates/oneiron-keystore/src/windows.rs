@@ -57,6 +57,18 @@ impl WindowsDpapiKeystore {
     fn path(&self, slot: &KeystoreSlot) -> PathBuf {
         self.dir.join(format!("{}.dpapi", slot.name()))
     }
+
+    /// A fresh temporary file name beside `slot`'s, as `create` names one.
+    fn temp_path(&self, slot: &KeystoreSlot) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        self.dir.join(format!(
+            ".{}.{}.{nanos}.tmp",
+            slot.name(),
+            std::process::id()
+        ))
+    }
 }
 
 impl DeviceKeystore for WindowsDpapiKeystore {
@@ -107,6 +119,38 @@ impl DeviceKeystore for WindowsDpapiKeystore {
             Err(e) if e.kind() == ErrorKind::AlreadyExists => Err(KeystoreError::AlreadyExists),
             Err(e) => Err(io(e)),
         }
+    }
+
+    /// Seals `secret` into a private temporary file, then renames it over the
+    /// filled slot (FIX 5886): one rename, which on Windows replaces the
+    /// existing file, so a reader opens the old file or the new one, never
+    /// none. An empty slot is `Ok(false)` and nothing is written; a delete
+    /// racing the rename may leave the slot holding `secret`, as on the file
+    /// keystore.
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let path = self.path(slot);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Err(KeystoreError::Corrupt("the slot is not a file")),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(io(e)),
+        }
+        let sealed = protect(secret, slot.name().as_bytes())?;
+        let tmp = self.temp_path(slot);
+        let renamed = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .and_then(|mut file| {
+                file.write_all(&sealed)?;
+                file.sync_all()
+            })
+            .and_then(|()| fs::rename(&tmp, &path));
+        if renamed.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        renamed.map_err(io)?;
+        Ok(true)
     }
 
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
