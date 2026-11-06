@@ -211,9 +211,9 @@ impl SyncClient {
                     return Ok(Vec::new());
                 };
                 if held == epoch && Some(seq) == last.checked_add(1) {
-                    self.take_sealed_update(sealed);
+                    let answers = self.take_sealed_update(sealed);
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
-                    return Ok(Vec::new());
+                    return Ok(answers);
                 }
                 // A live update past a gap, or under another epoch: ask for
                 // what lies between, once per catch-up.
@@ -235,11 +235,12 @@ impl SyncClient {
                     Some((held, last)) if held == epoch => last,
                     _ => 0,
                 };
+                let mut answers = Vec::new();
                 if seq > last {
-                    self.take_sealed_update(sealed);
+                    answers = self.take_sealed_update(sealed);
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
                 }
-                Ok(Vec::new())
+                Ok(answers)
             }
             SealedUpdateFrame::CaughtUp {
                 epoch,
@@ -286,14 +287,22 @@ impl SyncClient {
     /// Opens `sealed` under a key of a world this machine reads and takes
     /// its message once whole; a part of a world it does not read is passed
     /// over. A fault is logged: the daily sealed bundle still carries the
-    /// world, and an update that still lacks its history asks again.
-    fn take_sealed_update(&mut self, sealed: &[u8]) {
-        if let Err(error) = self.import_sealed_update(sealed) {
+    /// world, and an update that still lacks its history asks again. Returns
+    /// what answers a sealed window update deferred here that its import let
+    /// in (FIX 10474), for the home on this connection.
+    fn take_sealed_update(&mut self, sealed: &[u8]) -> Vec<Vec<u8>> {
+        let mut answers = Vec::new();
+        if let Err(error) = self.import_sealed_update(sealed, &mut answers) {
             tracing::warn!(%error, "sealed world update not taken");
         }
+        answers
     }
 
-    fn import_sealed_update(&mut self, sealed: &[u8]) -> Result<(), String> {
+    fn import_sealed_update(
+        &mut self,
+        sealed: &[u8],
+        answers: &mut Vec<Vec<u8>>,
+    ) -> Result<(), String> {
         let vault_id = self
             .vault
             .sealed_update_vault_id()
@@ -340,7 +349,7 @@ impl SyncClient {
                     self.want_sealed_snapshot(world, window_key);
                     return Ok(());
                 }
-                self.import_sealed_window(window_key, &bytes)
+                self.import_sealed_window(window_key, &bytes, answers)
                     .inspect_err(|_| self.want_sealed_snapshot(world, window_key))
             }
         }
@@ -427,10 +436,20 @@ impl SyncClient {
     /// held the world's key, not which machine it was: the bytes take the
     /// import a tier with no connection takes. Bytes the import refused stay
     /// nowhere, so no later world import on this connection waits behind
-    /// them.
-    fn import_sealed_window(&mut self, window_key: &str, bytes: &[u8]) -> Result<(), String> {
-        let imported =
-            self.import_own_device_window_update(window_key, bytes, PeerMachine::Unknown);
+    /// them. What answers a deferred sealed update the import let in goes
+    /// into `answers` (FIX 10474).
+    fn import_sealed_window(
+        &mut self,
+        window_key: &str,
+        bytes: &[u8],
+        answers: &mut Vec<Vec<u8>>,
+    ) -> Result<(), String> {
+        let imported = self.import_own_device_window_update(
+            window_key,
+            bytes,
+            PeerMachine::Unknown,
+            Some(answers),
+        );
         if imported.is_err() {
             self.staged_world_updates.retain(|(key, staged, _)| {
                 key.as_str() != window_key || staged.as_slice() != bytes
