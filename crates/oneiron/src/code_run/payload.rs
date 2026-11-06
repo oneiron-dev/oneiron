@@ -185,6 +185,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 SelfStoredReplyKind::InferenceDefaults => "inference_defaults",
                 SelfStoredReplyKind::TaskAskSettled => "task_ask_settled",
                 SelfStoredReplyKind::TaskAskWorldPrivacy => "task_ask_world_privacy",
+                SelfStoredReplyKind::TeamStartReceipt => "team_start_receipt",
             };
             request_map(vec![
                 ("kind", Value::from("stored_reply")),
@@ -415,6 +416,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 "inference_defaults" => SelfStoredReplyKind::InferenceDefaults,
                 "task_ask_settled" => SelfStoredReplyKind::TaskAskSettled,
                 "task_ask_world_privacy" => SelfStoredReplyKind::TaskAskWorldPrivacy,
+                "team_start_receipt" => SelfStoredReplyKind::TeamStartReceipt,
                 _ => {
                     return Err(invalid_code_run_replay("unknown stored reply source kind"));
                 }
