@@ -13,6 +13,7 @@ pub(super) struct HistoryValidation {
     next: usize,
     texts: Vec<String>,
     text_builder: Option<CanonicalDocumentTexts>,
+    head_byte: usize,
     reached: Vec<bool>,
     metadata: MetadataRows,
     parent_next: usize,
@@ -144,8 +145,24 @@ impl HistoryValidation {
                         .len()
                         .checked_sub(1)
                         .ok_or(invalid("entity document history has no head"))?;
-                    if self.texts[head] != row.text
-                        || history.versions[head].metadata != row.metadata
+                    let text = self.texts[head].as_bytes();
+                    let expected = row.text.as_bytes();
+                    if text.len() != expected.len() {
+                        return Err(invalid("entity document head version"));
+                    }
+                    let end = self
+                        .head_byte
+                        .saturating_add(blake3::CHUNK_LEN)
+                        .min(text.len());
+                    if text[self.head_byte..end] != expected[self.head_byte..end] {
+                        return Err(invalid("entity document head version"));
+                    }
+                    self.head_byte = end;
+                    if end != text.len() {
+                        return Ok(false);
+                    }
+                    self.head_byte = 0;
+                    if history.versions[head].metadata != row.metadata
                         || history.versions[head].native_skill_state != row.native_skill_state
                     {
                         return Err(invalid("entity document head version"));
