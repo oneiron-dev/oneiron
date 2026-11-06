@@ -71,6 +71,22 @@ impl SessionWitnessBinding {
         self.route.target() == RouteTarget::Discard
     }
 
+    /// Rechecks this original caller and exact captured session route.
+    pub fn revalidate(&self, vault: &crate::Vault) -> MemoryResult<()> {
+        self.context(vault)?.revalidate()
+    }
+
+    /// Claims a request in the actual session-owned RAM keep, never a durable
+    /// invocation store. Revalidate again after a wait and before release.
+    pub fn claim_invocation(
+        &self,
+        vault: &crate::Vault,
+        invocation: crate::runtime_hooks::InvocationId,
+        body: [u8; 32],
+    ) -> MemoryResult<crate::runtime_hooks::verb::InvocationEntry> {
+        self.context(vault)?.claim_invocation(invocation, body)
+    }
+
     /// Witnesses through the captured caller route after native asynchronous
     /// work. `author` still supplies its own write authority and envelopes.
     /// No stored receipt is invented for an Anonymous route.

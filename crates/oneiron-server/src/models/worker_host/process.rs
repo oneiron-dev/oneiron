@@ -54,7 +54,9 @@ pub(in crate::models) struct ProcessPeer {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl std::fmt::Debug for ProcessPeer {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("ProcessPeer").finish_non_exhaustive()
+        formatter
+            .debug_struct("ProcessPeer")
+            .finish_non_exhaustive()
     }
 }
 

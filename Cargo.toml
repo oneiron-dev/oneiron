@@ -156,7 +156,7 @@ pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
 # lopdf 0.44.0 snapshot with the additive DecodeAdmission hook (FIX 7654); see
 # crates/oneiron-seal/vendor/README.md. Matches .cargo/config.toml.
 lopdf = { path = "crates/oneiron-seal/vendor/lopdf-0.44.0" }
-# formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.15): the owned error-concatenation
+# formualizer 0.9.3 from the org fork, pinned by rev below: the owned error-concatenation
 # patch, Excel parity work, resource checkpoints and matrix builtin polls on `oneiron/parity`.
 # See docs/ops/forked-dependencies.md.
 formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f" }
