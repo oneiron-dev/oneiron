@@ -62,7 +62,7 @@ use crate::{EntityId, Vault};
 pub const MICROSOFT365_CONNECTOR_EFFECTOR: &str = "connector:microsoft365";
 
 const GRAPH_ORIGIN: &str = "https://graph.microsoft.com/";
-const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
+pub(super) const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
 const GRAPH_PAGE_SIZE: u32 = 100;
 const PREFER_IMMUTABLE_IDS: &str = "IdType=\"ImmutableId\"";
 const PREFER_TEXT_BODY: &str = "IdType=\"ImmutableId\", outlook.body-content-type=\"text\"";
@@ -809,7 +809,7 @@ fn folder_label(folder: &str) -> String {
 
 /// The Graph user `me` is the mailbox `source` names (its `mail` or
 /// `userPrincipalName`).
-fn reads_mailbox(me: &Value, source: &MailSyncSource) -> Result<()> {
+pub(super) fn reads_mailbox(me: &Value, source: &MailSyncSource) -> Result<()> {
     let wanted = source.address.trim();
     let reads = ["mail", "userPrincipalName"].iter().any(|field| {
         me.get(*field)

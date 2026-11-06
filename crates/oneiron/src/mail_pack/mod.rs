@@ -60,10 +60,14 @@ mod mime;
 mod pack;
 mod provider_delete;
 mod reply;
+mod reply_mime;
+mod reply_send;
 mod rest;
 mod share;
+mod smtp_client;
 mod source;
 mod state;
+mod tls_stream;
 mod wire;
 
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
@@ -106,6 +110,7 @@ pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
+pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,

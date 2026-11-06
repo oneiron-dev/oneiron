@@ -108,7 +108,7 @@ impl GmailSendPlan {
     }
 
     /// Drops the row kept under `content_ref`, once its send was delivered.
-    pub(super) fn drop_kept(vault: &Vault, content_ref: &str) -> Result<()> {
+    pub(crate) fn drop_kept(vault: &Vault, content_ref: &str) -> Result<()> {
         vault.with_write_txn_grouped(|txn| {
             SEND_PLANS.delete(&vault.store, txn, &content_ref.to_owned())?;
             Ok(())
