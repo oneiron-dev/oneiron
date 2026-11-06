@@ -29,7 +29,8 @@ pub(crate) fn validate_document_kind(kind: u8) -> Result<(), TransportError> {
         | document_sub_tags::NOTE_RECEIPT
         | document_sub_tags::ARTIFACT_PUBLICATION
         | document_sub_tags::ARTIFACT_RECEIPT
-        | document_sub_tags::WAITED_OUT => Ok(()),
+        | document_sub_tags::WAITED_OUT
+        | document_sub_tags::PART => Ok(()),
         _ => Err(TransportError::InvalidPayload("unknown document kind")),
     }
 }
