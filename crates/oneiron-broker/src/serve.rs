@@ -205,8 +205,8 @@ fn queue(
 /// is read with its body passed over and its key wiped, nothing is sent,
 /// and it is answered as timed out, within the frame allowance its deadline
 /// keeps for this. The daemon keeps its reservation, as for any timeout. A
-/// git exchange keeps no model deadline: it goes on waiting for its `slot`
-/// by its own idle bound, and is served once it has one.
+/// git or an LFS exchange keeps no model deadline: it goes on waiting for
+/// its `slot` by its own idle bound, and is served once it has one.
 async fn expire<F>(
     mut stream: UnixStream,
     deadline: CallDeadline,
@@ -229,6 +229,12 @@ async fn expire<F>(
         SkippedFrame::Git(header) => {
             if let Ok(Some(permit)) = tokio::time::timeout(header.idle(), slot).await {
                 crate::git_http::serve_git(stream, header, sender).await;
+                drop(permit);
+            }
+        }
+        SkippedFrame::Lfs(header) => {
+            if let Ok(Some(permit)) = tokio::time::timeout(header.idle(), slot).await {
+                crate::lfs_http::serve_lfs(stream, header, sender).await;
                 drop(permit);
             }
         }
@@ -277,9 +283,9 @@ fn hung_up(stream: &UnixStream) -> bool {
 }
 
 /// Serves one call within its `deadline`. A frame that cannot be read gets
-/// no reply: the daemon counts the call as lost. A git exchange runs on its
-/// own terms from its header on: no call deadline, an idle bound and the
-/// daemon's hang-up (`git_http`).
+/// no reply: the daemon counts the call as lost. A git or an LFS exchange
+/// runs on its own terms from its header on: no call deadline, an idle
+/// bound and the daemon's hang-up (`git_http`, `lfs_http`).
 async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline) {
     let Ok(Ok(frame)) = tokio::time::timeout_at(deadline.frame_by(), read_frame(&mut stream)).await
     else {
@@ -289,6 +295,10 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
         ReadFrame::Model(call) => call,
         ReadFrame::Git(header) => {
             crate::git_http::serve_git(stream, header, sender).await;
+            return;
+        }
+        ReadFrame::Lfs(header) => {
+            crate::lfs_http::serve_lfs(stream, header, sender).await;
             return;
         }
     };

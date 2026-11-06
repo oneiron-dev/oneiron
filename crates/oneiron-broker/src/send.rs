@@ -8,6 +8,7 @@
 //! follow or reply guard (OF-603).
 
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -51,11 +52,15 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
-    /// The client a git exchange sends through: the same verified TLS and
-    /// the same no-redirect, no-retry, no-proxy, no-decoding rules, and no
-    /// timer of its own, so each exchange's idle bound times its connect
-    /// and its send (OSH-3), never a model send's timeout.
-    git: Client,
+    /// The client a git exchange and an LFS batch send through: the same
+    /// verified TLS and the same no-redirect, no-retry, no-proxy,
+    /// no-decoding rules, and no timer of its own, so each exchange's idle
+    /// bound times its connect and its send (OSH-3), never a model send's
+    /// timeout.
+    exchange: Client,
+    /// The policy's private-CA roots, parsed once: an LFS action's client,
+    /// built for the addresses its host was admitted at, trusts them too.
+    roots: Vec<Certificate>,
     ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
@@ -68,16 +73,18 @@ pub(crate) struct Sender {
 
 impl Sender {
     pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
-        let client = client_builder(policy)?
+        let roots = extra_roots(policy)?;
+        let client = client_builder(&roots)
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
             .timeout(policy.timeout)
             .build()
             .map_err(io::Error::other)?;
-        let git = client_builder(policy)?.build().map_err(io::Error::other)?;
+        let exchange = client_builder(&roots).build().map_err(io::Error::other)?;
         let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
             client,
-            git,
+            exchange,
+            roots,
             ws_tls,
             timeout: policy.timeout,
             gzip: AtomicBool::new(true),
@@ -89,10 +96,24 @@ impl Sender {
         CallDeadline::start(self.timeout)
     }
 
-    /// The verified client a git exchange sends through, under its own
-    /// idle bound, never this policy's timeout.
-    pub(crate) fn git_client(&self) -> &Client {
-        &self.git
+    /// The verified client a git exchange and an LFS batch send through,
+    /// under the exchange's own idle bound, never this policy's timeout.
+    pub(crate) fn exchange_client(&self) -> &Client {
+        &self.exchange
+    }
+
+    /// A verified client like [`Self::exchange_client`] that reaches `host`
+    /// at `addresses` alone, never resolving it again: an LFS action's,
+    /// whose host was admitted at those addresses.
+    pub(crate) fn pinned_exchange_client(
+        &self,
+        host: &str,
+        addresses: &[SocketAddr],
+    ) -> io::Result<Client> {
+        client_builder(&self.roots)
+            .resolve_to_addrs(host, addresses)
+            .build()
+            .map_err(io::Error::other)
     }
 
     /// Sends `body` to `url` once with the key in the shape's auth header,
@@ -457,9 +478,9 @@ impl Sender {
 }
 
 /// The rules every client of the broker shares: rustls with the WebPKI, the
-/// platform and the policy's private-CA roots, `https` only, no redirect,
-/// no retry, no proxy and no automatic decoding.
-fn client_builder(policy: &SendPolicy) -> io::Result<reqwest::ClientBuilder> {
+/// platform and the policy's private-CA roots (`roots`), `https` only, no
+/// redirect, no retry, no proxy and no automatic decoding.
+fn client_builder(roots: &[Certificate]) -> reqwest::ClientBuilder {
     let mut builder = Client::builder()
         .use_rustls_tls()
         .https_only(true)
@@ -471,12 +492,19 @@ fn client_builder(policy: &SendPolicy) -> io::Result<reqwest::ClientBuilder> {
         .no_brotli()
         .no_deflate()
         .no_zstd();
-    for pem in &policy.extra_roots {
-        for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
-            builder = builder.add_root_certificate(root);
-        }
+    for root in roots {
+        builder = builder.add_root_certificate(root.clone());
     }
-    Ok(builder)
+    builder
+}
+
+/// The policy's private-CA roots, each PEM bundle parsed.
+fn extra_roots(policy: &SendPolicy) -> io::Result<Vec<Certificate>> {
+    let mut roots = Vec::new();
+    for pem in &policy.extra_roots {
+        roots.extend(Certificate::from_pem_bundle(pem).map_err(io::Error::other)?);
+    }
+    Ok(roots)
 }
 
 /// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
@@ -516,9 +544,9 @@ pub(crate) fn watchable(secret: &[u8]) -> bool {
     secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
 }
 
-/// Whether a git credential's watched token is one the broker sends: any
-/// bytes, up to [`MAX_SECRET`]. The git reply's echo watch searches the
-/// token's literal forms and never rewrites a reply, which every byte
+/// Whether a git or LFS-batch credential's watched token is one the broker
+/// sends: any bytes, up to [`MAX_SECRET`]. The reply's echo watch searches
+/// the token's literal forms and never rewrites a reply, which every byte
 /// supports, so a Basic password with a `%`, or one shorter than a model
 /// key, goes as it did before the broker ([`git_echo_form`] says which
 /// forms a short one is watched by).
@@ -526,8 +554,8 @@ pub(crate) fn git_watchable(token: &[u8]) -> bool {
     !token.is_empty() && token.len() <= MAX_SECRET
 }
 
-/// The literal forms of a git credential's `token` the git reply watch
-/// searches for, in its headers and its body: each of at least
+/// The literal forms of a git or LFS-batch credential's `token` the reply
+/// watch searches for, in its headers and its body: each of at least
 /// [`git_echo_form`]'s length.
 pub(crate) fn git_echo_forms(token: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     let mut forms = crate::strip::forms(token);
@@ -536,11 +564,12 @@ pub(crate) fn git_echo_forms(token: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     forms
 }
 
-/// A git reply's headers as the daemon gets them: each one whose name or
-/// value holds one of `forms` ([`git_echo_forms`]) is left out whole, and
-/// every other passes byte for byte, under the model reply's count and byte
-/// bounds. Nothing is rewritten: the model strip would redact a short
-/// token's text inside git's own values (a password `git` in
+/// A git or LFS reply's headers as the daemon gets them: each one whose
+/// name or value holds one of `forms` ([`git_echo_forms`]; none when no
+/// credential was installed) is left out whole, and every other passes
+/// byte for byte, under the model reply's count and byte bounds. Nothing is
+/// rewritten: the model strip would redact a short token's text inside
+/// git's own values (a password `git` in
 /// `application/x-git-upload-pack-advertisement`), and Git would not know
 /// the reply.
 pub(crate) fn git_reply_headers(

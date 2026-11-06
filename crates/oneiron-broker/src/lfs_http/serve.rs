@@ -1,0 +1,229 @@
+//! The broker's side of an LFS exchange, from its header on (see the parent
+//! module's steps): spool and check the body, admit an action's host,
+//! acknowledge, take the credential segment, send once, and relay the reply
+//! exactly as it came. The spool, the send and the relay are the spooled
+//! exchanges' shared ones (`crate::exchange`); the target, the admission
+//! and the request are LFS's own.
+
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::time::Duration;
+
+use oneiron_sandbox_contract::network::global_address;
+use reqwest::header::{
+    ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING,
+};
+use reqwest::{Body, Client, Method, Url};
+use tokio::net::UnixStream;
+
+use super::{LfsCallHeader, LfsRequestDigest, LfsTarget};
+use crate::deadline::FAR_FUTURE;
+use crate::exchange::credential::{Credential, read_authorization};
+use crate::exchange::idle_bound;
+use crate::exchange::relay::{answer, relay, reply_header};
+use crate::exchange::send::{Sent, send};
+use crate::exchange::spool::{Spool, acknowledge, drain, spool, spool_body};
+use crate::frame::{read_segment, write_stream_end, write_stream_header};
+use crate::send::{Sender, encoded, git_echo_forms, git_reply_headers};
+use crate::{Failure, MAX_SECRET, Outcome, Refusal};
+
+/// Serves one LFS exchange whose header the frame opened with. The
+/// connection is closed at the end; a broken one ends the exchange where it
+/// broke, and nothing is sent once the daemon is gone.
+pub(crate) async fn serve_lfs(mut stream: UnixStream, header: LfsCallHeader, sender: &Sender) {
+    let _ = exchange(&mut stream, &header, sender).await;
+}
+
+async fn exchange(
+    stream: &mut UnixStream,
+    header: &LfsCallHeader,
+    sender: &Sender,
+) -> io::Result<()> {
+    let idle = header.idle();
+    let (call, digest) = (header.call.as_str(), header.digest.as_str());
+    let (url, spooled, pinned) = match admit(stream, header, sender).await? {
+        Ok(admitted) => admitted,
+        Err(reason) => return acknowledge(stream, call, digest, Some(reason), idle).await,
+    };
+    acknowledge(stream, call, digest, None, idle).await?;
+    let secret = idle_bound(idle, read_segment(stream, MAX_SECRET)).await?;
+    let credential = match lfs_credential(&header.target, &secret) {
+        Ok(credential) => credential,
+        Err(reason) => {
+            return answer(stream, call, digest, Outcome::Refused { reason }, idle).await;
+        }
+    };
+    drop(secret);
+    let client = match &pinned {
+        Some(pinned) => pinned,
+        None => sender.exchange_client(),
+    };
+    let progress = Arc::new(AtomicU64::new(0));
+    let body = header
+        .target
+        .carries_body()
+        .then(|| (spooled.len, spool_body(spooled, Arc::clone(&progress))));
+    let request = match request(client, header, url, body, credential.as_ref()) {
+        Ok(request) => request,
+        Err(reason) => {
+            return answer(stream, call, digest, Outcome::Refused { reason }, idle).await;
+        }
+    };
+    let mut response = match send(client, request, stream, &progress, idle).await {
+        Sent::Response(response) => response,
+        Sent::Outcome(outcome) => return answer(stream, call, digest, outcome, idle).await,
+        Sent::Cancelled => return Ok(()),
+    };
+    if encoded(response.headers()) {
+        let outcome = Outcome::Failed {
+            reason: Failure::ReplyEncoded,
+        };
+        return answer(stream, call, digest, outcome, idle).await;
+    }
+    // A batch's credential is watched for; an action carried none, so its
+    // reply goes byte for byte.
+    let forms = credential
+        .as_ref()
+        .map_or_else(Vec::new, |credential| git_echo_forms(&credential.watched));
+    let answered = Outcome::Answered {
+        status: response.status().as_u16(),
+        headers: git_reply_headers(response.headers(), &forms),
+    };
+    idle_bound(
+        idle,
+        write_stream_header(stream, &reply_header(call, digest, answered)),
+    )
+    .await?;
+    let cut = relay(&mut response, stream, forms, idle).await?;
+    idle_bound(idle, write_stream_end(stream, cut)).await
+}
+
+/// Checks the header, spools the body, and for an action admits its host.
+/// Returns the URL, the spool and, for an action, the client pinned to its
+/// host's admitted addresses; or the refusal, the body read to its end
+/// either way.
+async fn admit(
+    stream: &mut UnixStream,
+    header: &LfsCallHeader,
+    sender: &Sender,
+) -> io::Result<Result<(Url, Spool, Option<Client>), Refusal>> {
+    let idle = header.idle();
+    let url = match header.check() {
+        Ok(url) => url,
+        Err(reason) => {
+            drain(stream, idle).await?;
+            return Ok(Err(reason));
+        }
+    };
+    let body = LfsRequestDigest::new(&header.target, &header.headers, header.body_len).into_body();
+    let spooled = match spool(stream, header.body_len, body, &header.digest, idle).await? {
+        Ok(spooled) => spooled,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    if header.target.is_batch() {
+        return Ok(Ok((url, spooled, None)));
+    }
+    let pinned = match pinned_action_client(sender, &url, idle).await {
+        Ok(pinned) => pinned,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    Ok(Ok((url, spooled, Some(pinned))))
+}
+
+/// An action's client: its host resolved now, within `idle`, every address
+/// it resolves to a global one, and the client reaching those addresses
+/// alone, so the name is never resolved again after its admission. A batch
+/// goes to its repository's own host through the shared client, as it
+/// always has.
+async fn pinned_action_client(
+    sender: &Sender,
+    url: &Url,
+    idle: Duration,
+) -> Result<Client, Refusal> {
+    let host = url.host_str().ok_or(Refusal::Origin)?.to_owned();
+    let lookup = url.clone();
+    // An `https` URL always has a port: its own, or the scheme's.
+    let resolved = tokio::time::timeout(
+        idle,
+        tokio::task::spawn_blocking(move || lookup.socket_addrs(|| None)),
+    )
+    .await;
+    let Ok(Ok(Ok(addresses))) = resolved else {
+        return Err(Refusal::Connect);
+    };
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| !global_address(address.ip()))
+    {
+        return Err(Refusal::Origin);
+    }
+    sender
+        .pinned_exchange_client(&host, &addresses)
+        .map_err(|_| Refusal::Connect)
+}
+
+/// The credential the exchange carries, from its credential segment
+/// `secret`: for a batch, the `Authorization` value it holds, or none when
+/// it is empty (an anonymous batch); for an action, none, and a segment
+/// that holds anything is refused, since an action never carries the
+/// repository credential.
+fn lfs_credential(target: &LfsTarget, secret: &[u8]) -> Result<Option<Credential>, Refusal> {
+    match (target.is_batch(), secret.is_empty()) {
+        (_, true) => Ok(None),
+        (true, false) => read_authorization(secret).map(Some),
+        (false, false) => Err(Refusal::Secret),
+    }
+}
+
+/// The exchange's request: its target's method and URL, identity coding,
+/// an action's own headers as given, the media types its target derives
+/// where an action names none of its own, and for a batch the credential
+/// as the one auth header. A body goes at the spool's exact length, unless
+/// an action names its own `Content-Length` (of that length) or
+/// `Transfer-Encoding` (chunked). No total timeout: the send's idle bound
+/// and the daemon's hang-up end it ([`send`]).
+fn request(
+    client: &Client,
+    header: &LfsCallHeader,
+    url: Url,
+    body: Option<(u64, Body)>,
+    credential: Option<&Credential>,
+) -> Result<reqwest::Request, Refusal> {
+    let target = &header.target;
+    let method = Method::from_bytes(target.method().as_bytes()).map_err(|_| Refusal::Method)?;
+    let named = |wanted: &str| {
+        header
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(wanted))
+    };
+    let mut builder = client
+        .request(method, url)
+        .timeout(FAR_FUTURE)
+        .header(ACCEPT_ENCODING, "identity");
+    for (name, value) in &header.headers {
+        builder = builder.header(name.as_str(), value.as_str());
+    }
+    if let Some(accept) = target.accept()
+        && !named(ACCEPT.as_str())
+    {
+        builder = builder.header(ACCEPT, accept);
+    }
+    if let Some(credential) = credential {
+        builder = builder.header(AUTHORIZATION, credential.header.clone());
+    }
+    if let Some((len, body)) = body {
+        if let Some(content_type) = target.content_type()
+            && !named(CONTENT_TYPE.as_str())
+        {
+            builder = builder.header(CONTENT_TYPE, content_type);
+        }
+        if !named(CONTENT_LENGTH.as_str()) && !named(TRANSFER_ENCODING.as_str()) {
+            builder = builder.header(CONTENT_LENGTH, len);
+        }
+        builder = builder.body(body);
+    }
+    builder.build().map_err(|_| Refusal::Header)
+}

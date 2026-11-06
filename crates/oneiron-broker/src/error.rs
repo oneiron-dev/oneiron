@@ -60,8 +60,8 @@ pub enum Refusal {
     /// The provider could not be reached; no request byte was written.
     #[error("provider unreachable")]
     Connect,
-    /// A git exchange's body could not be held for its send: the disk has
-    /// no room for it, or its spool failed.
+    /// A git or an LFS exchange's body could not be held for its send: the
+    /// disk has no room for it, or its spool failed.
     #[error("request body could not be spooled")]
     Spool,
 }
@@ -90,7 +90,7 @@ pub enum Failure {
     /// A streamed reply held a form of the key. A model stream redacts each
     /// form at its bytes and goes on (FIX 6103), so it never sends this; a
     /// git reply, whose pkt-lines and pack checksums a rewrite would break,
-    /// is cut with it instead (OSH-3).
+    /// is cut with it instead (OSH-3), and so is an LFS batch reply.
     #[error("streamed reply holds the key")]
     ReplyHoldsKey,
 }
