@@ -5,8 +5,10 @@
 //! seal, named. Its delete-bearing marker is structure beside it, so the
 //! pair keeps its confirmed-clear rule. A quarantine record holds hashes, lengths and a
 //! reason, never the rejected bytes, and a counter is a number: both are
-//! structure. Any other row of the database (the deletion sweep's jobs) is
-//! no sync family's, and stays as it is.
+//! structure. An embedding job without a carried copy is structure too;
+//! a copy-bearing job needs its owned projection, never a raw metadata claim.
+//! Any other row of the database (the deletion sweep's jobs) is no sync
+//! family's, and stays as it is.
 #![allow(
     dead_code,
     reason = "KS7-5 drives the projection; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -14,10 +16,11 @@
 
 use super::UPDATE_PREFIX;
 use super::codec::{
-    decode_delete_bearing_key, decode_update_key, decode_update_value_parts, encode_update_value,
-    validate_update_row,
+    decode_delete_bearing_key, decode_embed_job_row, decode_update_key, decode_update_value_parts,
+    embed_job_home_claim_copy, encode_embed_job_value, encode_update_value, validate_update_row,
 };
 use crate::error::Result;
+use crate::store::checkpoint_payload::rows::{Captured, OwnerRef, RowDb, RowLocator, bad_part};
 use crate::sync::QuarantineRecord;
 use crate::sync::checkpoint_payload::{Placement, SyncUnclassified};
 
@@ -60,6 +63,13 @@ pub(in crate::sync) fn place(key: &[u8], value: &[u8]) -> Placement {
     if key.starts_with(COUNTER_PREFIX) && value.len() == 8 {
         return structure();
     }
+    if key.starts_with(super::EMBED_PREFIX) {
+        return match embed_job(key, value) {
+            Ok((_, None)) => structure(),
+            Ok((_, Some(_))) => Placement::unclassified(None, SyncUnclassified::NoOwner),
+            Err(_) => undecodable(),
+        };
+    }
     Placement::unclassified(None, SyncUnclassified::NoOwner)
 }
 
@@ -77,4 +87,61 @@ pub(in crate::sync) fn queued_update<'v>(
 /// The queue row's value that carries `update` for `window` again.
 pub(in crate::sync) fn queued_row(window: &str, update: &[u8]) -> Result<Vec<u8>> {
     encode_update_value(window, update)
+}
+
+/// One embedding job split with its own codec. The skeleton keeps the job,
+/// not an opaque copy's length header or any of its bytes.
+pub(in crate::sync) fn embed_job<'v>(
+    key: &[u8],
+    value: &'v [u8],
+) -> Result<(super::QueuedEmbedJob, Option<&'v [u8]>)> {
+    Ok((
+        decode_embed_job_row(key, value)?,
+        embed_job_home_claim_copy(value)?,
+    ))
+}
+
+/// A pending job's metadata-only image, derived from the full row rather
+/// than taking a prefix whose copy length would still be nonzero.
+pub(in crate::sync) fn embed_job_skeleton(key: &[u8], value: &[u8]) -> Result<Vec<u8>> {
+    let (job, _) = embed_job(key, value)?;
+    Ok(encode_embed_job_value(job.priority, job.queued_at))
+}
+
+/// Whether an opened copy-bearing row belongs to the metadata job already
+/// restored at this key. Unavailable content leaves that job intact.
+pub(in crate::sync) fn embed_job_matches_skeleton(
+    key: &[u8],
+    value: &[u8],
+    skeleton: &[u8],
+) -> Result<bool> {
+    let (job, copy) = embed_job(key, value)?;
+    let (pending, pending_copy) = embed_job(key, skeleton)?;
+    Ok(copy.is_some()
+        && pending_copy.is_none()
+        && job.priority == pending.priority
+        && job.queued_at == pending.queued_at)
+}
+
+/// Captures one copy-bearing job after its receive-time source custody was
+/// resolved. The caller supplies that captured home and its dependencies,
+/// never owners inferred from a later current entity row.
+pub(in crate::sync) fn capture_embed_job_copy(
+    key: &[u8],
+    value: &[u8],
+    owner: OwnerRef,
+    dependencies: &[OwnerRef],
+    out: &mut Captured,
+) -> Result<()> {
+    let (_, copy) = embed_job(key, value)?;
+    if copy.is_none() {
+        return Err(bad_part());
+    }
+    let skeleton = embed_job_skeleton(key, value)?;
+    let at = RowLocator::row(RowDb::SyncQueue, key.to_vec());
+    out.projected_exact(owner, at.clone(), value.to_vec(), skeleton);
+    for on in dependencies {
+        out.depends(owner, &at, *on);
+    }
+    Ok(())
 }

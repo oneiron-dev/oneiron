@@ -76,7 +76,7 @@ pub struct SyncClient {
     pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
-    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
+    pub(crate) staged_world_updates: Vec<super::home_claim_copies::StagedWorldUpdate>,
     /// This connection's sealed world updates whose isolated check waits on
     /// an edge endpoint, in their envelopes: their capsules install once the
     /// check passes (FIX 10474). Their bytes share the bound of

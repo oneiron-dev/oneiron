@@ -16,6 +16,7 @@ pub(crate) use scrub::{
 };
 
 pub(crate) use materialize::apply;
+pub(in crate::sync) use materialize::apply_in_txn;
 pub(crate) use mirror::{copy_judged, copy_selected, refresh, refresh_for};
 use workflows::BundleCarrier;
 pub(crate) use workflows::NoteSelection;

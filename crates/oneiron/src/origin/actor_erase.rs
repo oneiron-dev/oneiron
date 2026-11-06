@@ -456,6 +456,8 @@ pub(crate) fn redact_origin_claim_in_txn(
             }
         },
     }
+    #[cfg(feature = "sync")]
+    crate::sync::queue::clear_embed_job_home_claim_copy_in_txn(&vault.store, wtxn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
     let raw = vault.get_raw_in(wtxn, id)?.ok_or(Error::EntityNotFound)?;
     crate::vault::entity_revision::capture_entity_revision(&vault.store, wtxn, id, &raw)

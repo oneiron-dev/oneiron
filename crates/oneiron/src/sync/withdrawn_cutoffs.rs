@@ -524,7 +524,16 @@ pub(super) fn stage_withdrawn_cutoff_map_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
     let carried = carried_cutoff_rows(doc, window);
-    let (newest, floors) = fold_cutoff_rows(&carried);
+    stage_withdrawn_cutoffs_in_txn(vault, &carried, wtxn)
+}
+
+/// Stages the admitted range's cutoffs, including puts absent from the final map.
+pub(super) fn stage_withdrawn_cutoffs_in_txn(
+    vault: &Vault,
+    carried: &[CarriedCutoff],
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let (newest, floors) = fold_cutoff_rows(carried);
     for (session, (epoch, turn_end)) in &floors {
         crate::compaction::raise_session_epoch_floor_in_txn(
             &vault.store,

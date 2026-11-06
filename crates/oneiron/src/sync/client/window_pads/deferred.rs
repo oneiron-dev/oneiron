@@ -228,7 +228,7 @@ impl SyncClient {
         let staged: usize = self
             .staged_world_updates
             .iter()
-            .map(|(_, bytes, _)| bytes.len())
+            .map(|staged| staged.bytes.len())
             .sum();
         let deferred: usize = self
             .deferred_sealed_updates
@@ -251,7 +251,7 @@ impl SyncClient {
         let staged = self
             .staged_world_updates
             .iter()
-            .map(|(key, bytes, _)| (key, bytes.as_slice()));
+            .map(|staged| (&staged.key, staged.bytes.as_slice()));
         let deferred = self
             .deferred_sealed_updates
             .iter()
@@ -368,8 +368,14 @@ impl SyncClient {
                 .into_payload()
                 .try_map_owned(|payload| self.admitted_window_payload(&key, payload))?
             {
-                self.staged_world_updates
-                    .push((key, payload.to_vec(), deferred.from));
+                self.staged_world_updates.push(
+                    super::super::home_claim_copies::StagedWorldUpdate {
+                        key,
+                        bytes: payload.to_vec(),
+                        from: deferred.from,
+                        copies: Vec::new(),
+                    },
+                );
             }
         }
         Ok(progressed)
