@@ -70,8 +70,10 @@ impl ScopedRead<'_> {
             .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
         let result = (|| {
             // One relationship authority for every row this filter checks in
-            // its snapshot, not one per row (FIX 11648).
-            let held = HeldAuthority::default();
+            // its snapshot, not one per row (FIX 11648). Its filter resolved
+            // with no request, so A judges a row B refuses under each of the
+            // reader's own live Grants' floors alone (FIX 7528).
+            let held = HeldAuthority::for_request(None);
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {
@@ -180,7 +182,10 @@ impl ScopedRead<'_> {
             crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
             // A neighbor the reachability cut dropped keeps no entry.
             producers.retain_returned(pack);
-            Ok(self.receipt_for(None, &policy, &filter, suppressed))
+            // The pack's receipt reports the candidates its search ranked,
+            // the key's own rows and its own live Grants' (FIX 7528).
+            let candidates = self.candidate_filter_in(&rtxn, &policy, &filter, None);
+            Ok(self.receipt_for(None, &policy, &candidates, suppressed))
         })();
         self.end_recall_plan()?;
         result
