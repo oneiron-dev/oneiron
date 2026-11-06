@@ -16,6 +16,7 @@ use crate::api::call_receipt::{self, CallStamp};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::protocol::{ProtocolError, TAG_RPC, TAG_SUB};
 
+pub(crate) mod ask_option_link;
 mod budget;
 mod error;
 mod history;
