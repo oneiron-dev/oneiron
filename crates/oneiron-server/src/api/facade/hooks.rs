@@ -43,7 +43,16 @@ pub(crate) async fn row_hooks_pre_with(
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<VerbHookPre, MemoryError> {
     let (pre, _) = row_hooks_pre_decided(
-        server, reader, check, actor, class, invocation, verb, args, resume, turn,
+        server,
+        reader,
+        (check, NativeReadInput::Shared),
+        actor,
+        class,
+        invocation,
+        verb,
+        args,
+        resume,
+        turn,
     )
     .await?;
     Ok(pre)
@@ -60,7 +69,7 @@ pub(crate) async fn row_hooks_pre_with(
 async fn row_hooks_pre_decided(
     server: &Arc<SyncServer>,
     reader: Option<ScopedReadActorKey>,
-    check: Option<RewriteAdmit>,
+    (check, native): (Option<RewriteAdmit>, NativeReadInput),
     actor: EntityId,
     class: EdgeActorClass,
     invocation: Option<InvocationId>,
@@ -86,7 +95,7 @@ async fn row_hooks_pre_decided(
         };
         oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
         let admit = |args: &serde_json::Value| {
-            row_input_check(&verb, args)?;
+            row_input_check(&verb, args, native)?;
             check
                 .as_ref()
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
@@ -107,9 +116,15 @@ async fn row_hooks_pre_decided(
         let mut pre =
             ended.map_err(|stop| verb_hook_boundary::stop_refusal(stop, session.as_ref()))?;
         // A restrictive call's args that fail the row's input check give way
-        // to the caller's own (FIX 5076).
+        // to the caller's own (FIX 5076). A direct HTTP read's input check is
+        // its route's own admission (FIX 1435).
+        let routed = matches!(native, NativeReadInput::Route) && native_read_verb(&verb);
         oneiron::task_verb::revoke_lands::settle(&mut pre, &|args| {
-            row_input_check(&verb, args).is_ok()
+            if routed {
+                admit(args).is_ok()
+            } else {
+                row_input_check(&verb, args, native).is_ok()
+            }
         });
         Ok(pre)
     };
@@ -121,15 +136,30 @@ async fn row_hooks_pre_decided(
     .map_err(|_| hooks_did_not_finish())?
 }
 
+/// Which request grammar a rewrite of a native memory read meets before
+/// its door's own admission (FIX 1435).
+#[derive(Clone, Copy)]
+enum NativeReadInput {
+    /// The native request validation the MCP and code-mode doors share.
+    Shared,
+    /// A direct HTTP route's own decoder and request checks, which its door
+    /// runs as the rewrite's admission. Its grammar is the route's: a
+    /// hydrate ref may pin a revision, which the shared validation refuses.
+    Route,
+}
+
 /// The input check a rewrite of row `verb` meets before its door's own
 /// admission: a native memory read's own request validation, which the verb
-/// table's check does not carry (FIX 1435), else that check.
-fn row_input_check(verb: &str, args: &serde_json::Value) -> Result<(), String> {
-    use oneiron::code_run::vault_read::{VaultReadMethod, VaultReadRequest};
-    match VaultReadMethod::ALL
-        .into_iter()
-        .find(|method| method.tool_name() == verb)
-    {
+/// table's check does not carry (FIX 1435), else that check. A direct HTTP
+/// read's route admits its own grammar instead (`NativeReadInput::Route`).
+fn row_input_check(
+    verb: &str,
+    args: &serde_json::Value,
+    native: NativeReadInput,
+) -> Result<(), String> {
+    use oneiron::code_run::vault_read::VaultReadRequest;
+    match native_read_of(verb) {
+        Some(_) if matches!(native, NativeReadInput::Route) => Ok(()),
         Some(method) => {
             VaultReadRequest::validate_body(method, args).map_err(|error| error.to_string())
         }
@@ -137,6 +167,18 @@ fn row_input_check(verb: &str, args: &serde_json::Value) -> Result<(), String> {
             oneiron::task_verb::sdk::validate_input(verb, args).map_err(|error| error.to_string())
         }
     }
+}
+
+/// The native memory read `verb` names, if it names one.
+fn native_read_of(verb: &str) -> Option<oneiron::code_run::vault_read::VaultReadMethod> {
+    oneiron::code_run::vault_read::VaultReadMethod::ALL
+        .into_iter()
+        .find(|method| method.tool_name() == verb)
+}
+
+/// Whether `verb` names a native memory read.
+fn native_read_verb(verb: &str) -> bool {
+    native_read_of(verb).is_some()
 }
 
 /// The post chain over that row's result, off the async runtime: the
@@ -285,7 +327,9 @@ pub(crate) async fn facade_hooks_pre_admitting(
             ),
         },
     };
-    let check = Some(check);
+    // A direct native HTTP read's rewrite meets its route's own grammar
+    // (FIX 1435); every other row here meets the verb table's check.
+    let check = (Some(check), NativeReadInput::Route);
     // A host-door row holds no task-work turn before its pre chain.
     Ok(row_hooks_pre_decided(
         server, reader, check, actor, class, invocation, verb, value, resume, None,
