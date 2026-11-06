@@ -448,6 +448,11 @@ impl DecisionHost {
         }
     }
 
+    /// The private notification queue's protocol identity, not the durable ask queue.
+    pub(crate) fn private_human_pin(&self) -> super::ProviderPin {
+        super::pin(DecisionRung::Human, "private.human.ask", super::ONE)
+    }
+
     /// The policy safeguard's typed read through this ladder for `principal`,
     /// worded `wording` at `revision`, up to the Big rung, each read on
     /// `budget`: one per enabled plane, held by the plane's policy config.
