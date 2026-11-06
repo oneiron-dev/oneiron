@@ -225,7 +225,11 @@ impl ActorScopedVault {
         let hits = typed_row(
             &memory,
             "vault.search.bm25",
-            QueryBm25Request { query, limit },
+            QueryBm25Request {
+                query,
+                limit,
+                filter: None,
+            },
             |input| memory.query_bm25(&input.query, input.limit),
         )
         .map_err(facade_error)?;
@@ -263,6 +267,7 @@ impl ActorScopedVault {
                     .map_err(caller_input_error)?,
                 limit: opts.limit as usize,
             },
+            filter: None,
         };
         let memory = self.facade()?;
         let hits = typed_row(&memory, "vault.neighbors", request, |input| {
@@ -337,6 +342,7 @@ impl ActorScopedVault {
             media: None,
             query_affect: None,
             telemetry: None,
+            filter: None,
         };
         let memory = self.facade()?;
         let pack = typed_row(&memory, "vault.recall", request, |request| {

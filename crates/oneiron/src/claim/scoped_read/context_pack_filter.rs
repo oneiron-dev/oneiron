@@ -53,7 +53,7 @@ impl ScopedRead<'_> {
             // its snapshot, not one per row (FIX 11648). Its filter resolved
             // with no request, so A judges a row B refuses under each of the
             // reader's own live Grants' floors alone (FIX 7528).
-            let held = HeldAuthority::for_request(None);
+            let held = self.held_for(None);
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {

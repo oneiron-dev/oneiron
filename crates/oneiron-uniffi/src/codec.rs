@@ -787,13 +787,19 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
 
 impl Lower<sdk::HydrateRequest> for Vec<String> {
     fn lower(self) -> Result<sdk::HydrateRequest, OneironError> {
-        Ok(sdk::HydrateRequest { refs: self })
+        Ok(sdk::HydrateRequest {
+            refs: self,
+            filter: None,
+        })
     }
 }
 
 impl Lower<sdk::EntityRequest> for String {
     fn lower(self) -> Result<sdk::EntityRequest, OneironError> {
-        Ok(sdk::EntityRequest { entity_ref: self })
+        Ok(sdk::EntityRequest {
+            entity_ref: self,
+            filter: None,
+        })
     }
 }
 
@@ -803,6 +809,7 @@ impl Lower<sdk::QueryBm25Request> for (String, u32) {
         Ok(sdk::QueryBm25Request {
             query,
             limit: limit.lower()?,
+            filter: None,
         })
     }
 }
@@ -823,6 +830,7 @@ impl Lower<sdk::NeighborsRequest> for (String, NeighborOpts) {
         Ok(sdk::NeighborsRequest {
             entity_ref,
             opts: opts.lower()?,
+            filter: None,
         })
     }
 }

@@ -10604,6 +10604,42 @@ pub struct RecallTelemetry {
     pub turn: Option<RetrievalTurn>,
 }
 
+/// `oneiron_contracts::gate::ReadFilterInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReadFilterInput {
+    #[serde(
+        rename = "entity_types",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub entity_types: Option<Vec<u8>>,
+    #[serde(
+        rename = "max_sensitivity_band",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_sensitivity_band: Option<u8>,
+    #[serde(
+        rename = "include_stale",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_stale: Option<bool>,
+    #[serde(
+        rename = "min_confidence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_confidence: Option<f64>,
+    #[serde(
+        rename = "min_salience",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_salience: Option<f64>,
+}
+
 /// `oneiron::memory::recall::RecallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecallRequest {
@@ -10647,6 +10683,8 @@ pub struct RecallRequest {
     pub query_affect: Option<WireQueryAffect>,
     #[serde(rename = "telemetry", default, skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<RecallTelemetry>,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::verbs::retrieval::RetrievalRunsRequest`.
@@ -12377,6 +12415,8 @@ pub struct VectorSearchRequest {
     pub limit: u64,
     #[serde(rename = "lane", default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<VectorSearchLane>,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron_store::embedding::EmbeddingMatchEvidence`.
@@ -59155,42 +59195,6 @@ pub struct ClaimDemoteView {
     pub receipt_ref: String,
 }
 
-/// `oneiron::memory::claim_stale::ReadFilterInput`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ReadFilterInput {
-    #[serde(
-        rename = "entity_types",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub entity_types: Option<Vec<String>>,
-    #[serde(
-        rename = "max_sensitivity_band",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_sensitivity_band: Option<u8>,
-    #[serde(
-        rename = "include_stale",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub include_stale: Option<bool>,
-    #[serde(
-        rename = "min_confidence",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub min_confidence: Option<f64>,
-    #[serde(
-        rename = "min_salience",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub min_salience: Option<f64>,
-}
-
 /// `oneiron::memory::claim_stale::ClaimFilteredListRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -59534,6 +59538,8 @@ pub struct HybridSearchRequest {
     pub replay: Option<HybridRankReplay>,
     #[serde(rename = "limit")]
     pub limit: u64,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::memory::search_hybrid::HybridSearchHit`.
@@ -59635,6 +59641,8 @@ pub struct TemporalSearchRequest {
     pub learned_range: Option<TemporalSearchRange>,
     #[serde(rename = "limit")]
     pub limit: u64,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
 }
 
 /// `oneiron::memory::search_temporal::TemporalSearchHit`.

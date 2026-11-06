@@ -6,8 +6,6 @@
 //! caller's full retrieval filter into the scoped lane, which narrows it
 //! against the actor ceiling and returns the narrowing receipt.
 
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 
 use super::read_lane::fold_receipt;
@@ -25,42 +23,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 /// Claim ids read per lane read while listing: a bounded list stops early.
 const FILTERED_LIST_READ_CHUNK: usize = 256;
 
-/// Caller-supplied retrieval constraints, the wire form of
-/// [`crate::gate::RetrievalFilter`]. Unset fields inherit the actor
-/// ceiling; a request only narrows, never widens past it.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReadFilterInput {
-    /// Restrict to these entity types, each as its registry kind
-    /// (`CLAIM`, `MESSAGE`, ...), the spelling a read receipt's scope uses.
-    #[serde(default, with = "oneiron_contracts::serialize::type_kinds")]
-    #[schemars(with = "Option<Vec<String>>")]
-    pub entity_types: Option<BTreeSet<u8>>,
-    /// Sensitivity ceiling, in 0..=3.
-    #[serde(default)]
-    pub max_sensitivity_band: Option<u8>,
-    /// Ask for stale claims; the ceiling still decides.
-    #[serde(default)]
-    pub include_stale: Option<bool>,
-    /// Drop claims below this confidence, in [0, 1].
-    #[serde(default)]
-    pub min_confidence: Option<f32>,
-    /// Drop claims below this salience, in [0, 1].
-    #[serde(default)]
-    pub min_salience: Option<f32>,
-}
-
-impl ReadFilterInput {
-    fn to_filter(&self) -> crate::gate::RetrievalFilter {
-        crate::gate::RetrievalFilter {
-            entity_types: self.entity_types.clone(),
-            max_sensitivity_band: self.max_sensitivity_band,
-            include_stale: self.include_stale,
-            min_confidence: self.min_confidence,
-            min_salience: self.min_salience,
-        }
-    }
-}
+pub use oneiron_contracts::gate::ReadFilterInput;
 
 /// One demotion rung, as the caller names it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

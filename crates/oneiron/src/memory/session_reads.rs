@@ -43,12 +43,18 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct HydrateRequest {
     pub refs: Vec<String>,
+    /// The caller's retrieval filter: it only narrows what the refs read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EntityRequest {
     pub entity_ref: String,
+    /// The caller's retrieval filter: it only narrows what the ref reads.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -56,6 +62,10 @@ pub struct EntityRequest {
 pub struct QueryBm25Request {
     pub query: String,
     pub limit: usize,
+    /// The caller's retrieval filter, applied inside the posting scan,
+    /// before the rank and the cut.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
@@ -140,12 +150,14 @@ impl<'s> SessionReadContext<'s> {
         let (output, rows) = match read {
             SessionRead::Get => {
                 let input: EntityRequest = decode(input)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let (read, _) = self.get(&memory, &input.entity_ref)?;
                 let rows = read.value.iter().filter_map(view_id).collect();
                 (encode(&read)?, rows)
             }
             SessionRead::Hydrate => {
                 let input: HydrateRequest = decode(input)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.hydrate(&memory, &input.refs)?;
                 let rows = read.value.iter().filter_map(view_id).collect();
                 (encode(&read)?, rows)
@@ -163,6 +175,7 @@ impl<'s> SessionReadContext<'s> {
                 let input: QueryBm25Request = decode(input)?;
                 caps::check_query(&input.query)?;
                 caps::check_limit_nonzero(input.limit)?;
+                let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.query_bm25(&memory, &input.query, input.limit)?;
                 let rows = read
                     .value
@@ -195,18 +208,24 @@ impl<'s> SessionReadContext<'s> {
         limit: usize,
         claims: ClaimReadStatus,
     ) -> crate::Result<Vec<ScoredEntity>> {
-        let lane = self.lane(claims);
+        let lane = self.lane(claims, None);
         let hits = self
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;
         Ok(lane.filter_scored_entities(hits)?.value)
     }
 
-    /// The key's lane over this call's view, serving `claims`.
-    fn lane(&self, claims: ClaimReadStatus) -> ScopedRead<'_> {
+    /// The key's lane over this call's view, serving `claims`, bound to
+    /// the caller's own retrieval filter `filter` (FIX 3977).
+    fn lane(
+        &self,
+        claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
+    ) -> ScopedRead<'_> {
         self.vault
             .scoped_read_in_session(self.key.clone(), &self.view)
             .with_claim_status(claims)
+            .with_read_filter(filter)
     }
 
     /// `vault.get` in the room, on the Recorded lane (every claim status, as
@@ -217,7 +236,7 @@ impl<'s> SessionReadContext<'s> {
         memory: &Memory<'_>,
         reference: &str,
     ) -> MemoryResult<(ScopedReadResult<Option<EntityView>>, Option<String>)> {
-        let lane = self.lane(ClaimReadStatus::Recorded);
+        let lane = self.lane(ClaimReadStatus::Recorded, memory.read_filter());
         let target = self.target(reference)?;
         let reads: Vec<_> = target
             .iter()
@@ -256,7 +275,7 @@ impl<'s> SessionReadContext<'s> {
         memory: &Memory<'_>,
         refs: &[String],
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let lane = self.lane(ClaimReadStatus::Recorded);
+        let lane = self.lane(ClaimReadStatus::Recorded, memory.read_filter());
         let targets = refs
             .iter()
             .map(|reference| self.target(reference))
@@ -334,7 +353,7 @@ impl<'s> SessionReadContext<'s> {
         query: &str,
         limit: usize,
     ) -> MemoryResult<ScopedReadResult<Vec<LexicalHit>>> {
-        let lane = self.lane(ClaimReadStatus::Surfaceable);
+        let lane = self.lane(ClaimReadStatus::Surfaceable, memory.read_filter());
         let hits = self
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;
@@ -461,7 +480,7 @@ impl<'s> SessionReadContext<'s> {
             .map(|(id, mode)| PointRead::id(*id).at(*mode))
             .collect();
         let mut rows = self
-            .lane(ClaimReadStatus::Recorded)
+            .lane(ClaimReadStatus::Recorded, None)
             .read(&reads, None)?
             .value
             .into_iter();

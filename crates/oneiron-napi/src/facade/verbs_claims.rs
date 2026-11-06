@@ -249,7 +249,8 @@ impl ActorScopedVault {
     #[napi]
     pub fn hydrate(&self, refs: Vec<String>) -> napi::Result<NapiEntityViews> {
         let memory = self.facade()?;
-        let views = typed_row(&memory, "vault.hydrate", HydrateRequest { refs }, |input| {
+        let request = HydrateRequest { refs, filter: None };
+        let views = typed_row(&memory, "vault.hydrate", request, |input| {
             memory.hydrate(&input.refs)
         })
         .map_err(facade_error)?;
@@ -271,7 +272,10 @@ impl ActorScopedVault {
         let view = typed_row(
             &memory,
             "vault.get",
-            EntityRequest { entity_ref },
+            EntityRequest {
+                entity_ref,
+                filter: None,
+            },
             |input| memory.get_entity(&input.entity_ref),
         )
         .map_err(facade_error)?;

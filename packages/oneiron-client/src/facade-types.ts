@@ -1102,8 +1102,10 @@ export type QueryAffect = { valence: number; arousal: number; dominance: number 
 export type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number }
 /** `oneiron::retrieval_depth::controls::RecallTelemetry` */
 export type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null }
+/** `oneiron_contracts::gate::ReadFilterInput` */
+export type ReadFilterInput = { entity_types?: number[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null }
 /** `oneiron::memory::recall::RecallRequest` */
-export type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null }
+export type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null; filter?: ReadFilterInput | null }
 /** `oneiron_store::embedding_vocabulary::InputKind` */
 export type InputKind = "text" | "image" | "audio"
 /** `oneiron_store::embedding::EmbeddingMatchEvidence` */
@@ -1541,7 +1543,7 @@ export type AssetResolved = { asset_ref: string; form: ServedAssetForm; mime_typ
 /** `oneiron::memory::search_vector::VectorSearchLane` */
 export type VectorSearchLane = "ordinary" | "voice_hot"
 /** `oneiron::memory::search_vector::VectorSearchRequest` */
-export type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane }
+export type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane; filter?: ReadFilterInput | null }
 /** `oneiron::memory::search_vector::VectorSearchHit` */
 export type VectorSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; embedding_matches: EmbeddingMatchEvidence[] }
 /** `oneiron_store::vector_refinement::VectorRefinement` */
@@ -7372,8 +7374,6 @@ export type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: numbe
 export type ClaimDemoteRequest = { claim_ref: string; action: ClaimDemoteActionInput }
 /** `oneiron::memory::claim_stale::ClaimDemoteView` */
 export type ClaimDemoteView = { claim_ref: string; short_ref?: string | null; rung: string; stale: boolean; receipt_ref: string }
-/** `oneiron::memory::claim_stale::ReadFilterInput` */
-export type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null }
 /** `oneiron::memory::claim_stale::ClaimFilteredListRequest` */
 export type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null }
 /** `oneiron::memory::claim_stale::ClaimFilteredReadRequest` */
@@ -7403,9 +7403,9 @@ export type ReceiptsRequest = { limit?: number | null }
 /** `oneiron::memory::claims::PendingWrite` */
 export type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null }
 /** `oneiron::memory::session_reads::HydrateRequest` */
-export type HydrateRequest = { refs: string[] }
+export type HydrateRequest = { refs: string[]; filter?: ReadFilterInput | null }
 /** `oneiron::memory::session_reads::EntityRequest` */
-export type EntityRequest = { entity_ref: string }
+export type EntityRequest = { entity_ref: string; filter?: ReadFilterInput | null }
 /** `oneiron::lens::record_ref::ResolveRecordRefRequest` */
 export type ResolveRecordRefRequest = { reference: string }
 /** `oneiron::lens::record_ref::RecordRefPreview` */
@@ -7431,7 +7431,7 @@ export type HybridTemporalQuery = { start: number; end: number }
 /** `oneiron::memory::search_hybrid::HybridRankReplay` */
 export type HybridRankReplay = { now: number; blend_weights: RetrievalBlendWeights }
 /** `oneiron::memory::search_hybrid::HybridSearchRequest` */
-export type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number }
+export type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number; filter?: ReadFilterInput | null }
 /** `oneiron::memory::search_hybrid::HybridSearchHit` */
 export type HybridSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; access_factor?: number | null; components: RetrievalScoreComponent[] }
 /** `oneiron::temporal::TemporalAnchorMode` */
@@ -7439,7 +7439,7 @@ export type TemporalAnchorMode = "occurred" | "learned" | "both" | "auto"
 /** `oneiron::memory::search_temporal::TemporalSearchRange` */
 export type TemporalSearchRange = { start: number; end: number }
 /** `oneiron::memory::search_temporal::TemporalSearchRequest` */
-export type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number }
+export type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number; filter?: ReadFilterInput | null }
 /** `oneiron::memory::search_temporal::TemporalSearchHit` */
 export type TemporalSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; occurred_start: number; occurred_end: number; learned_at: number }
 /** `oneiron::pipeline::temporal_report::TemporalSearchReport` */
@@ -7447,7 +7447,7 @@ export type TemporalSearchReport = { sigma_secs: number; rounds: number }
 /** `oneiron::memory::search_temporal::TemporalSearchResult` */
 export type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null }
 /** `oneiron::memory::session_reads::QueryBm25Request` */
-export type QueryBm25Request = { query: string; limit: number }
+export type QueryBm25Request = { query: string; limit: number; filter?: ReadFilterInput | null }
 /** `oneiron::memory::reads::LexicalHit` */
 export type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null }
 /** `oneiron::verbs::memory_requests::Bm25Search` */
@@ -7455,7 +7455,7 @@ export type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; re
 /** `oneiron::memory::reads::NeighborOpts` */
 export type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number }
 /** `oneiron::verbs::memory_requests::NeighborsRequest` */
-export type NeighborsRequest = { entity_ref: string; opts: NeighborOpts }
+export type NeighborsRequest = { entity_ref: string; opts: NeighborOpts; filter?: ReadFilterInput | null }
 /** `oneiron::memory::reads::NeighborHit` */
 export type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null }
 /** `oneiron::memory::structural::types::TextIndexField` */

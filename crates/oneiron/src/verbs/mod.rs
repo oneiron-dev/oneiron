@@ -799,6 +799,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         format: format.map(str::to_owned),
         as_of: None,
         deadline_ms: None,
+        filter: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

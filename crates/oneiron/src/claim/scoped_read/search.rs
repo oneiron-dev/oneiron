@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::access_gate::HeldAuthority;
 use super::*;
 
@@ -106,7 +108,8 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<RequestExclusions> {
         Ok(RequestExclusions {
-            ceiling: requested
+            ceiling: self
+                .asked_request(requested)
                 .map(|_| self.filter_under(policy, None))
                 .transpose()?,
             ids: Mutex::default(),
@@ -133,7 +136,7 @@ impl ScopedRead<'_> {
             if !plan_row_decodes(store, txn, id)? {
                 return Ok(false);
             }
-            let held = HeldAuthority::for_request(requested);
+            let held = self.held_for(requested);
             if self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)? {
                 return Ok(true);
             }
@@ -331,8 +334,48 @@ impl ScopedRead<'_> {
         }
         self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
-        let filter = self.filter_under(&policy, requested)?;
+        // The bound caller filter meets the door's request after the floor
+        // loads, before any plan, alternative or receipt reads it (FIX 3977).
+        let requested = self.asked_request(requested);
+        let filter = self.filter_under(&policy, requested.as_deref())?;
         Ok((filter, policy))
+    }
+
+    /// This lane bound to the caller's own retrieval filter `request`
+    /// (FIX 3977): a request, never authority. A rebind meets the filter
+    /// already bound, so it only narrows; `None` binds nothing new. Lanes
+    /// this one derives (record, owner and every-status lanes) keep it.
+    #[must_use]
+    pub fn with_read_filter(mut self, request: Option<&RetrievalFilter>) -> Self {
+        self.read_filter = RetrievalFilter::meet_requests(self.read_filter.as_ref(), request);
+        self
+    }
+
+    /// The caller filter this lane is bound to, if any.
+    #[must_use]
+    pub fn read_filter(&self) -> Option<&RetrievalFilter> {
+        self.read_filter.as_ref()
+    }
+
+    /// What this read asks of its rows: its bound caller filter met with
+    /// `requested`, the request its door names. `None` is the floor alone.
+    pub(super) fn asked_request<'r>(
+        &'r self,
+        requested: Option<&'r RetrievalFilter>,
+    ) -> Option<Cow<'r, RetrievalFilter>> {
+        match (self.read_filter.as_ref(), requested) {
+            (None, requested) => requested.map(Cow::Borrowed),
+            (Some(bound), None) => Some(Cow::Borrowed(bound)),
+            (Some(bound), Some(requested)) => Some(Cow::Owned(bound.meet(requested))),
+        }
+    }
+
+    /// The held authority of one serving txn whose rows this read judges
+    /// under `requested` met with its bound caller filter, so each own-Grant
+    /// and owner alternative meets the same request the read's own filter
+    /// did (FIX 3977).
+    pub(super) fn held_for(&self, requested: Option<&RetrievalFilter>) -> HeldAuthority {
+        HeldAuthority::for_request(self.asked_request(requested).as_deref())
     }
 
     /// This key's read filter under `policy`, narrowed by `requested`; with
@@ -393,7 +436,7 @@ impl ScopedRead<'_> {
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One held authority for every hit's checks in this txn (FIX 7462).
-        let held = HeldAuthority::for_request(requested);
+        let held = self.held_for(requested);
         // A withheld row counts only inside the key's own ceiling under both
         // snapshots: a request or pinned projection excluded it. A row the
         // key's baseline authority denies stays opaque (FIX 8670).
@@ -561,11 +604,12 @@ impl ScopedRead<'_> {
         let before = results.len();
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let held = HeldAuthority::for_request(requested);
+        let held = self.held_for(requested);
         // A withheld row counts only inside the key's own ceiling: with no
         // request every withheld row is the key's own denial, which stays
         // opaque (FIX 8670).
-        let ceiling = requested
+        let ceiling = self
+            .asked_request(requested)
             .map(|_| self.filter_under(&policy, None))
             .transpose()?;
         let ceiling_held = HeldAuthority::for_request(None);
@@ -642,7 +686,7 @@ impl<'v> ScopedRead<'v> {
         filter: &'t ResolvedRetrievalFilter,
         requested: Option<&RetrievalFilter>,
     ) -> impl Fn(&EntityId) -> Result<bool> + 't {
-        let held = HeldAuthority::for_request(requested);
+        let held = self.held_for(requested);
         move |id| self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)
     }
 
@@ -715,8 +759,9 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         &'t self,
         txn: &'t heed::RoTxn<'t>,
     ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
-        // A recall plan resolves its filter with no request.
-        let held = HeldAuthority::for_request(None);
+        // A recall plan resolves its filter with no request beyond its
+        // lane's bound caller filter (FIX 3977).
+        let held = self.read.held_for(None);
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
                 self.read
@@ -740,7 +785,7 @@ impl crate::store::retrieval_values::CandidateGate for PlanGate<'_, '_> {
         &'t self,
         txn: &'t heed::RoTxn<'t>,
     ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
-        let held = HeldAuthority::for_request(self.requested);
+        let held = self.read.held_for(self.requested);
         // The key's own ceiling resolves with no request.
         let ceiling_held = HeldAuthority::for_request(None);
         Box::new(

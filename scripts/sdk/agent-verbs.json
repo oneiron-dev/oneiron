@@ -16991,7 +16991,7 @@
       },
       "input": "HydrateRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>",
-      "call": "memory.hydrate(&input.refs)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).hydrate(&input.refs)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -17014,7 +17014,7 @@
       },
       "input": "EntityRequest",
       "output": "crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>",
-      "call": "memory.get_entity(&input.entity_ref)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).get_entity(&input.entity_ref)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -17157,7 +17157,7 @@
       },
       "input": "NeighborsRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>",
-      "call": "memory.neighbors(&input.entity_ref, &input.opts)?",
+      "call": "memory.with_read_filter(input.filter.as_ref()).neighbors(&input.entity_ref, &input.opts)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,

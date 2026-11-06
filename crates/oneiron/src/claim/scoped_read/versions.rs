@@ -301,7 +301,7 @@ impl ScopedRead<'_> {
                     Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
                     Err(error) => return Err(error),
                 };
-            let held = HeldAuthority::for_request(None);
+            let held = self.held_for(None);
             let Some(row) = self.entity_raw_with_mode_held_in(
                 txn,
                 policy,
@@ -368,7 +368,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         Ok(self
             .entity_raw_with_mode_held_in(txn, &policy, &filter, id, ReadMode::Live, &authority)?
             .map(|revision| revision.raw))

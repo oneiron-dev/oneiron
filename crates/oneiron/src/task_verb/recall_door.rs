@@ -121,7 +121,10 @@ pub fn recall_at_door_seeded(
     // Every stage of this recall shares the deletion states it reads in one
     // committed snapshot (L15 recall speed).
     let _deletion_memo = crate::ports::deletion_memo_scope();
-    recall_with_whole_limit(memory, input, embed, door)
+    // The caller's own filter binds this recall's handle once (FIX 3977):
+    // its cut, ready, paid and final packs and every lane they read meet it.
+    let memory = memory.with_read_filter(input.filter.as_ref());
+    recall_with_whole_limit(&memory, input, embed, door)
 }
 
 /// [`recall_at_door`] for the whole requested limit.

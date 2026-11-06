@@ -82,6 +82,7 @@ impl<'v> ScopedRead<'v> {
         lane.own_owner_authority = self.own_owner_authority;
         lane.records_cover = self.records_cover.clone();
         lane.judged_at = self.judged_at;
+        lane.read_filter.clone_from(&self.read_filter);
         Ok(lane)
     }
 }

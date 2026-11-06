@@ -81,7 +81,9 @@ impl Bm25Search {
 /// `vault.search.bm25` on a handle: its own BM25 page, as the device
 /// answers it alone ([`Bm25Search::local`]).
 pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult<Bm25Search> {
-    let page = memory.query_bm25(&input.query, input.limit)?;
+    let page = memory
+        .with_read_filter(input.filter.as_ref())
+        .query_bm25(&input.query, input.limit)?;
     Ok(Bm25Search::local(memory.vault(), page))
 }
 
@@ -90,6 +92,10 @@ pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult
 pub struct NeighborsRequest {
     pub entity_ref: String,
     pub opts: NeighborOpts,
+    /// The caller's retrieval filter: anchor, exact pair and peer each meet
+    /// it before an edge takes one of the limit's slots.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

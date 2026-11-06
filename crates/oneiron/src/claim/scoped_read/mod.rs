@@ -149,6 +149,11 @@ pub struct ScopedRead<'a> {
     /// `as_of`, or `None` for now (FIX 12226). See
     /// `ScopedRead::with_judged_at`.
     judged_at: Option<u64>,
+    /// The caller's own retrieval filter this read is bound to (FIX 3977,
+    /// `ScopedRead::with_read_filter`): a request, never authority. Every
+    /// resolution, own-Grant and owner alternative, candidate envelope and
+    /// receipt of this read meets it with the request its door names.
+    read_filter: Option<RetrievalFilter>,
 }
 
 mod admission;
