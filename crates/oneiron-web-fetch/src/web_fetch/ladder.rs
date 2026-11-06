@@ -131,7 +131,9 @@ impl WebFetcher {
     /// refused the page or anything a rung reached,
     /// [`WebFetchError::CrossSiteRedirect`] when the page or a hop or a
     /// navigation a rung refused is outside a same-site crawl's pinned
-    /// origin, and [`WebFetchError::AllRenderersFailed`] with the ordered
+    /// origin, [`WebFetchError::UnsafeRedirect`] when a rung refused a
+    /// redirect hop that is not credential-free http(s), and
+    /// [`WebFetchError::AllRenderersFailed`] with the ordered
     /// trace when every rung was tried and none produced content.
     pub(super) fn fetch_page(
         &self,
@@ -212,15 +214,26 @@ impl WebFetcher {
 /// The typed failure a rung's `error` ends the ladder of `requested` with,
 /// so that no lower rung is sent after the same destination: a managed
 /// node's guard refused a hop, an address or a landing the rung reached
-/// (FIX 6101, FIX 7657), or the rung refused a hop or a navigation outside
-/// a same-site crawl's pinned origin (FIX 4734).
+/// (FIX 6101, FIX 7657); or the rung refused a hop or a navigation outside
+/// a same-site crawl's pinned origin, or a redirect hop that is not
+/// credential-free http(s) (FIX 4734).
 fn ladder_end(error: &RendererError, requested: &str) -> Option<WebFetchError> {
     if let Some(refused) = error.kind.hosted_refusal() {
         return Some(refused.fetch_error(requested));
     }
-    (error.kind == RendererErrorKind::CrossSiteRedirect).then(|| WebFetchError::CrossSiteRedirect {
-        url: redact_url_credentials(requested),
-    })
+    match error.kind {
+        RendererErrorKind::CrossSiteRedirect => Some(WebFetchError::CrossSiteRedirect {
+            url: redact_url_credentials(requested),
+        }),
+        RendererErrorKind::UnsafeRedirect => Some(WebFetchError::UnsafeRedirect {
+            url: redact_url_credentials(requested),
+        }),
+        RendererErrorKind::Transport
+        | RendererErrorKind::Extraction
+        | RendererErrorKind::InvalidResponse
+        | RendererErrorKind::HostedInfrastructure
+        | RendererErrorKind::HostedPrivateNetwork => None,
+    }
 }
 
 /// Mutable state of one breadth-first walk.
