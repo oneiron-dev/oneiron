@@ -210,6 +210,13 @@ impl Memory<'_> {
                 _ => None,
             },
         )?;
+        // A source landing binds in `effect` every row it marked born, or
+        // commits none of them (fix list row 16256).
+        if matches!(sink, WitnessSink::Base(_)) && plan.source_audience().is_some() {
+            let mut stamped = vec![plan.conversation_id, plan.turn_id];
+            stamped.extend(plan.message_ids());
+            crate::source_audience::refuse_unbound_births_in(self.vault, wtxn, &stamped)?;
+        }
         // FIX 10260: a reply born whole keeps the set its turn asserted,
         // as admitted above, beside each MESSAGE this write landed new; a
         // streamed birth's receipt, which `effect` saved, keeps it there.

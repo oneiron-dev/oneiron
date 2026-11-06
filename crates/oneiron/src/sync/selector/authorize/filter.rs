@@ -141,6 +141,12 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if crate::sync::source_audiences::carries_record(source, &id) {
             return;
         }
+        // Fix list row 16256: and a row whose carried bytes name the
+        // source-audience obligation, judged by the bytes themselves, so a
+        // row with no canonical copy here is withheld whole, never stripped.
+        if crate::source_audience::row_obligation(blob).is_present() {
+            return;
+        }
         match crate::source_audience::withheld_from_replication_in(
             vault,
             &rtxn,

@@ -257,6 +257,19 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
             | crate::source_audience::ReplicaMerge::Written => {}
         }
     }
+    // Fix list row 16256: a row whose own bytes name the source-audience
+    // obligation lands bound, or waits pending with its raw bytes kept until
+    // its binding comes: it is never materialized unbound, whether its
+    // window carries no binding for it or carries no map at all.
+    if let Some(id) = step.written()
+        && crate::source_audience::unbound_obligation_in(ctx.vault, &savepoint, &id)?
+    {
+        step = EntityStep::Quarantine(EntityRefusal {
+            id: Some(id),
+            err: crate::sync::source_audiences::pending_error(),
+            retry: RefusalRetry::DependencyPending,
+        });
+    }
     if let EntityStep::Quarantine(refusal) = &step {
         drop(savepoint);
         quarantine_rejected_op_in_txn(
