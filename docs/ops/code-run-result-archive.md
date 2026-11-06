@@ -56,3 +56,13 @@ Record-scoped and OKF exports still carry no run results. Birth metadata is not
 residence or read authority. Import preserves it but does not create a captured
 execution; any stale same-ID capture is marked incomplete when a result record
 is newly restored. Import never substitutes birth for missing read evidence.
+
+## Heal evidence body reads
+
+A heal's evidence context reads a code run's full output bodies through the reader's own
+scoped lane, in the same snapshot as the replay record that names them: each body is
+admitted against the complete source rows its occurrence and its run record, and withheld
+by the occurrence's secret mark, taint or erase, as an outside-run result read withholds
+one. An unavailable body keeps its manifest and recorded preview, with only its reason
+recorded. The replay record's bridge calls, checkpoints and bindings stay owner-gated as
+before, and the owner's result doors are unchanged.

@@ -22,6 +22,7 @@
 //! What a run cannot reach is the owner's: a checkpoint, a backup or a peer
 //! copy already sent keeps the raw value, and only a HardErase reaches it.
 
+mod accounting;
 mod attempts;
 mod authored;
 mod carriers;
@@ -39,6 +40,8 @@ mod sync_text;
 
 pub(crate) use self::frontier::{propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn};
 pub use self::projection::secret_lift_as_owner_toward;
+/// A masked repo read checks a blob's own record as the sweep does (FIX 8966).
+pub(in crate::batch::secret_scan) use self::proposals::owner_kept_in_txn;
 pub(crate) use self::sync_text::propose_sync_text_in_txn;
 
 use std::borrow::Cow;
@@ -71,7 +74,7 @@ const STATUS_PROPOSALS: usize = 100;
 const PROPOSE_HISTORY: bool = true;
 
 const RUN: SideTable<(), LiftRun, Named> = SideTable::new(&side_table::SECRET_LIFT_RUN);
-const RECEIPTS: SideTable<EntityId, SecretLiftReceipt, Named> =
+const RECEIPTS: SideTable<EntityId, CompletedLift, Named> =
     SideTable::new(&side_table::SECRET_LIFT_RECEIPT);
 const PROPOSALS: SideTable<Vec<u8>, SecretLiftHistoryProposal, Named> =
     SideTable::new(&side_table::SECRET_LIFT_PROPOSAL);
@@ -248,7 +251,6 @@ struct LiftRun {
     family: LiftFamily,
     /// The last key the walk finished in `family`; empty at its start.
     after: Vec<u8>,
-    counts: Vec<LiftCounts>,
     /// Rows to try again once the walk ends.
     retry: Vec<(LiftFamily, Vec<u8>)>,
     /// A known-value pass (FIX 2781): it reads the files among the records
@@ -273,20 +275,42 @@ impl LiftRun {
             epoch: 0,
             family: LiftFamily::Records,
             after: Vec::new(),
-            counts: Vec::new(),
             retry: Vec::new(),
             known_only: true,
             known_pending: false,
         })
     }
+}
 
-    fn counts(&mut self, family: LiftFamily) -> &mut LiftCounts {
-        if let Some(at) = self.counts.iter().position(|row| row.family == family) {
-            return &mut self.counts[at];
-        }
-        self.counts.push(LiftCounts::new(family));
-        let last = self.counts.len() - 1;
-        &mut self.counts[last]
+/// Stored completion metadata; the contribution rows own all counts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CompletedLift {
+    run_id: EntityId,
+    trigger: LiftTrigger,
+    requested_by: Option<EntityId>,
+    requested_at: u64,
+    finished_at: u64,
+}
+
+impl CompletedLift {
+    fn project(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        keep: &dyn Fn(EntityId) -> bool,
+    ) -> Result<SecretLiftReceipt> {
+        let families = accounting::counts(&vault.store, txn, self.run_id, true, keep)?;
+        Ok(SecretLiftReceipt {
+            receipt_id: self.run_id.to_hex(),
+            trigger: self.trigger,
+            requested_by: self.requested_by.map(|owner| owner.to_hex()),
+            requested_at: self.requested_at,
+            finished_at: self.finished_at,
+            masked: families.iter().map(|row| row.masked).sum(),
+            proposals: families.iter().map(|row| row.proposals).sum(),
+            failed: families.iter().map(|row| row.failed).sum(),
+            families,
+        })
     }
 }
 
@@ -441,7 +465,6 @@ pub(crate) fn enqueue_lift_in_txn(
             epoch: 0,
             family: LiftFamily::Records,
             after: Vec::new(),
-            counts: Vec::new(),
             retry: Vec::new(),
             known_only: false,
             known_pending: false,
@@ -518,6 +541,7 @@ impl Done {
 /// where the next page starts (`None` once the family is done).
 struct Page {
     read: u64,
+    known_reads: Vec<accounting::Source>,
     hits: Vec<Vec<u8>>,
     next: Option<Vec<u8>>,
 }
@@ -611,7 +635,31 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
         return Ok(true);
     };
     if current.run_id == run.run_id && current.epoch == run.epoch && current.family == family {
-        current.counts(family).read += page.read;
+        for source in &page.known_reads {
+            accounting::add(
+                &vault.store,
+                &mut txn,
+                current.run_id,
+                source,
+                LiftCounts {
+                    read: 1,
+                    ..LiftCounts::new(family)
+                },
+            )?;
+        }
+        let unmapped = page.read - page.known_reads.len() as u64;
+        if unmapped > 0 || page.read == 0 {
+            accounting::add(
+                &vault.store,
+                &mut txn,
+                current.run_id,
+                &accounting::Source::Unmapped,
+                LiftCounts {
+                    read: unmapped,
+                    ..LiftCounts::new(family)
+                },
+            )?;
+        }
         match page.next {
             Some(next) => current.after = next,
             // A known-value pass ends after the records.
@@ -662,7 +710,7 @@ fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<boo
         }
     }
     let mut txn = vault.store.env.write_txn()?;
-    let Some(mut ended) = RUN.get_lenient(&vault.store, &txn, &())? else {
+    let Some(ended) = RUN.get_lenient(&vault.store, &txn, &())? else {
         return Ok(true);
     };
     if ended.run_id != current.run_id || ended.epoch != current.epoch {
@@ -673,23 +721,15 @@ fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<boo
         return Ok(true);
     }
     let finished_at = crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?;
-    for family in LiftFamily::ALL {
-        ended.counts(family);
-    }
-    ended.counts.sort_by_key(|row| row.family);
-    let total = |pick: fn(&LiftCounts) -> u64| ended.counts.iter().map(pick).sum::<u64>();
-    let receipt = SecretLiftReceipt {
-        receipt_id: ended.run_id.to_hex(),
+    let completed = CompletedLift {
+        run_id: ended.run_id,
         trigger: ended.trigger,
-        requested_by: ended.requested_by.map(|owner| owner.to_hex()),
+        requested_by: ended.requested_by,
         requested_at: ended.requested_at,
         finished_at,
-        masked: total(|row| row.masked),
-        proposals: total(|row| row.proposals),
-        failed: total(|row| row.failed),
-        families: ended.counts.clone(),
     };
-    RECEIPTS.put(&vault.store, &mut txn, &ended.run_id, &receipt)?;
+    let receipt = completed.project(vault, &txn, &|_| true)?;
+    RECEIPTS.put(&vault.store, &mut txn, &ended.run_id, &completed)?;
     // A value custody came to know while the run walked gets its own pass.
     if ended.known_pending {
         let next = LiftRun::known_pass(&vault.store, finished_at)?;
@@ -759,21 +799,32 @@ fn settle(
                     );
                     // A busy seed waits for a later pass, still queued (FIX 2852).
                     if !first && busy(&error) {
-                        progress_in_txn(vault, &mut txn, run, family, key, |_| {})?;
+                        progress_in_txn(vault, &mut txn, run, family, key, |_, _| Ok(()))?;
                         txn.commit()?;
                         return Ok(true);
                     }
-                    progress_in_txn(vault, &mut txn, run, family, key, |current| {
+                    progress_in_txn(vault, &mut txn, run, family, key, |current, txn| {
                         // Every first failure gets its retry (FIX 6674).
                         if first {
                             current.retry.push((family, key.to_vec()));
-                            return;
+                            return Ok(());
                         }
                         current
                             .retry
                             .retain(|(at, held)| !(*at == family && held == key));
-                        current.counts(family).failed += 1;
+                        let source = accounting::source_in_txn(vault, txn, family, key)?;
+                        accounting::add(
+                            &vault.store,
+                            txn,
+                            current.run_id,
+                            &source,
+                            LiftCounts {
+                                failed: 1,
+                                ..LiftCounts::new(family)
+                            },
+                        )?;
                         pass.failed += 1;
+                        Ok(())
                     })?;
                     txn.commit()?;
                     return Ok(true);
@@ -813,20 +864,29 @@ fn settle(
             Some((true, filed))
         }
     };
-    progress_in_txn(vault, &mut txn, run, family, key, |current| {
+    progress_in_txn(vault, &mut txn, run, family, key, |current, txn| {
         if !first {
             current
                 .retry
                 .retain(|(at, held)| !(*at == family && held == key));
         }
         if let Some((masked, filed)) = filed {
-            if masked {
-                current.counts(family).masked += 1;
-                pass.masked += 1;
-            }
-            current.counts(family).proposals += filed;
-            pass.proposals += filed;
+            let source = accounting::source_in_txn(vault, txn, family, key)?;
+            accounting::add(
+                &vault.store,
+                txn,
+                current.run_id,
+                &source,
+                LiftCounts {
+                    masked: u64::from(masked),
+                    proposals: u64::from(filed),
+                    ..LiftCounts::new(family)
+                },
+            )?;
+            pass.masked += u64::from(masked);
+            pass.proposals += u64::from(filed);
         }
+        Ok(())
     })?;
     txn.commit()?;
     Ok(true)
@@ -840,7 +900,7 @@ fn progress_in_txn(
     run: &LiftRun,
     family: LiftFamily,
     key: &[u8],
-    change: impl FnOnce(&mut LiftRun),
+    change: impl FnOnce(&mut LiftRun, &mut RwTxn<'_>) -> Result<()>,
 ) -> Result<()> {
     let Some(mut current) = RUN.get_lenient(&vault.store, txn, &())? else {
         return Ok(());
@@ -848,7 +908,7 @@ fn progress_in_txn(
     if current.run_id != run.run_id {
         return Ok(());
     }
-    change(&mut current);
+    change(&mut current, txn)?;
     if current.epoch == run.epoch
         && current.family == family
         && current.after.as_slice() < key
@@ -1058,7 +1118,7 @@ impl Vault {
     /// The lift sweep's state: the run in progress, the last receipt and the
     /// proposals still open.
     pub fn secret_lift_status(&self) -> Result<SecretLiftStatus> {
-        projection::status_where(self, &|_| true)
+        projection::status_where(self, None)
     }
 
     /// The owner closes one open lift proposal with a reason: `not_a_secret`,

@@ -4,8 +4,8 @@
 //! and snapshot custody keeps out what it keeps out of a captured checkout.
 //! The base encodes as the existing [`StoredRepoSnapshot`] with the commit as
 //! its head, so its hash names it as a captured snapshot's names that one.
-//! A gitlink names another repository's commit and holds no file here, so it
-//! is passed over, as the codebase importer passes over it. The walk names
+//! A gitlink retains only its path, mode and OID, without reading the linked
+//! commit or checkout. The walk names
 //! each blob first and reads them all in a few batched reads (FIX 6946).
 
 use std::collections::BTreeMap;
@@ -16,13 +16,12 @@ use crate::Vault;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitWire, GitWireRepo};
 use crate::repo_mutation::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoForkHash};
+use crate::store::code_tree_blob::MODE_GITLINK;
 
 /// A tree entry's mode for a subtree.
 const MODE_TREE: u32 = 0o040_000;
 /// A tree entry's mode for a symlink.
 const MODE_SYMLINK: u32 = 0o120_000;
-/// A tree entry's mode for a gitlink (a submodule's commit).
-const MODE_GITLINK: u32 = 0o160_000;
 /// The file-type bits of a tree entry's mode.
 const MODE_TYPE_MASK: u32 = 0o170_000;
 /// The file-type bits of a regular file.
@@ -59,11 +58,16 @@ impl Vault {
             wire: &wire,
             repo,
             blobs: BTreeMap::new(),
+            gitlinks: Vec::new(),
         };
         walk.tree(&tree, "")?;
         let mut blobs = walk.blobs;
         let oids: Vec<GitOid> = blobs.keys().cloned().collect();
-        let mut entries = Vec::new();
+        let mut entries: Vec<_> = walk
+            .gitlinks
+            .into_iter()
+            .map(|(path, oid)| custody.gitlink(path, oid))
+            .collect();
         let mut files = BTreeMap::new();
         let mut target_not_utf8 = false;
         let complete = wire.read_blobs(repo, &oids, &mut |oid, content| {
@@ -124,6 +128,7 @@ struct PinnedWalk<'w, 'v> {
     /// Each file or symlink blob the tree names, with every path and mode
     /// that holds it, read after the walk.
     blobs: BTreeMap<GitOid, Vec<(String, u32)>>,
+    gitlinks: Vec<(String, Vec<u8>)>,
 }
 
 impl PinnedWalk<'_, '_> {
@@ -142,7 +147,9 @@ impl PinnedWalk<'_, '_> {
             validate_relative_repo_path(&path)?;
             match entry.mode {
                 MODE_TREE => self.tree(&entry.oid, &path)?,
-                MODE_GITLINK => {}
+                MODE_GITLINK => self
+                    .gitlinks
+                    .push((path, entry.oid.as_str().as_bytes().to_vec())),
                 mode if mode == MODE_SYMLINK || mode & MODE_TYPE_MASK == MODE_REGULAR => {
                     self.blobs.entry(entry.oid).or_default().push((path, mode));
                 }

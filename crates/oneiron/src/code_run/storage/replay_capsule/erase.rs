@@ -1,9 +1,9 @@
 //! The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's
 //! own writer. Each capsule of the actor's steps keeps what the step was and
-//! loses what it held: its request, start and fork answers are released as
-//! the run's occurrences, each with only its own taint and secret marks, so
-//! another holder of the same bytes keeps them and its marks. A soft delete
-//! runs this scrub too, so it retires no body instance: the erase cause
+//! loses what it held: its request, start, replay context, route prompt
+//! (FIX 6255) and fork answers are released as the run's occurrences, each
+//! with only its own taint and secret marks, so another holder of the same
+//! bytes keeps them and its marks. A soft delete runs this scrub too, so it retires no body instance: the erase cause
 //! comes from the provenance door alone (KS-2B1), and a release keeps the
 //! restore window. A restore runs this again for every erased actor, so a
 //! restored capsule stays erased. It is also the one callback the actor's
@@ -19,9 +19,9 @@
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
 use super::super::response_erase::erase_actor_responses_in_txn;
-use super::{CAPSULES, FORKS, ForkRow};
+use super::{CAPSULES, FORKS, ForkValue};
 use crate::compaction::output::OutputRef;
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::EntityStoreRead;
 use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{Erased, ErasedForm, SideKey, SideTableDbs};
 use crate::store::Store;
@@ -64,9 +64,10 @@ pub(crate) fn erase_capsule_actor_in_txn(
 }
 
 /// Every body `actor`'s capsules name, with the run that owns it: each
-/// kept request, each start and each fork answer, read before the erase
-/// releases them, so the provenance door's hard erase retires their
-/// instances (FIX 6278). A capsule erased before names none.
+/// kept request, each start, each replay context, each kept route prompt
+/// (FIX 6255), each fork answer and each fork's executed body, read before the erase releases them, so the
+/// provenance door's hard erase retires their instances (FIX 6278). A
+/// capsule erased before names none.
 ///
 /// # Errors
 ///
@@ -116,8 +117,9 @@ fn owned_capsules_in_txn(
 }
 
 /// The bodies the capsule at `key` names: its request when it kept one
-/// (a withheld request kept none, FIX 6254), its start, and each fork answer
-/// among `answers` that regenerated it.
+/// (a withheld request kept none, FIX 6254), its start, its replay context
+/// (FIX 6351), its route prompt when it kept one (FIX 6255), and each fork
+/// answer among `answers` that regenerated it.
 fn capsule_bodies(
     key: &CapsuleKey,
     capsule: &StepReplayCapsule,
@@ -130,6 +132,14 @@ fn capsule_bodies(
     if let Some(start) = &capsule.start {
         bodies.push((start.body, start.path.clone()));
     }
+    if let Some(context) = &capsule.context {
+        bodies.push((context.body, context.path.clone()));
+    }
+    if let Some(binding) = &capsule.binding
+        && let Some(CapsuleRequest::Kept { body, path, .. }) = &binding.prompt
+    {
+        bodies.push((*body, path.clone()));
+    }
     bodies.extend(
         answers
             .iter()
@@ -141,7 +151,8 @@ fn capsule_bodies(
 
 use crate::dreamer_runner::step_replay::erased;
 
-/// Every fork answer the contribution rows keep, by the capsule its fork
+/// Every fork answer the contribution rows keep, and every body an engine
+/// step's fork's program left (FIX 3607), by the capsule its fork
 /// regenerated: its body and path. A row that does not decode names none.
 fn fork_answers_in_txn(
     dbs: &impl SideTableDbs,
@@ -150,13 +161,19 @@ fn fork_answers_in_txn(
     let mut answers = Vec::new();
     for row in FORKS.iter_raw_from(dbs, txn, &[])? {
         let (_, bytes) = row?;
-        if let Ok(ForkRow::Fork(receipt)) = FORKS.decode_value(&bytes) {
+        if let Ok(row) = FORKS.decode_value(&bytes)
+            && let ForkValue::Fork(receipt) = row.value
+        {
             let at = (
                 receipt.attempt,
                 u64::from(receipt.lease_generation),
                 receipt.step,
             );
             answers.push((at, receipt.response, receipt.response_path));
+            if let Some(execution) = &receipt.execution {
+                let executed = execution.bodies();
+                answers.extend(executed.map(|body| (at, body.body, body.stored_path.clone())));
+            }
         }
     }
     Ok(answers)
@@ -209,15 +226,17 @@ pub(in crate::code_run::storage) fn names_no_actor(
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
 pub(crate) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    let gone = (|| -> Result<bool> {
-        Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, actor)?)
-    })();
+    actor_gone_in_store(&vault.store, txn, actor)
+}
+
+/// [`actor_gone_in_txn`] on the vault's canonical store `store`, for a
+/// reader that holds only a room session's composed view, whose base it is.
+pub(crate) fn actor_gone_in_store(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> bool {
+    let gone = crate::ports::owner_gone_in_txn(store, txn, actor);
     gone.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),

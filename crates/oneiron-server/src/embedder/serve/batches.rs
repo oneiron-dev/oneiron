@@ -180,11 +180,16 @@ async fn embed_request_batches(
             return Err(BatchFailure::Embedding);
         }
     };
-    if embedded.rows.len() != range.len() {
+    if embedded.rows.len() != range.len() || embedded.tokens_per_item.len() != range.len() {
         return Err(BatchFailure::Embedding);
     }
     let mut rows = Fixed(Vec::with_capacity(encoding_bytes(range.len(), dimensions)));
-    for (offset, row) in embedded.rows.into_iter().enumerate() {
+    for (offset, (row, input_tokens)) in embedded
+        .rows
+        .into_iter()
+        .zip(embedded.tokens_per_item)
+        .enumerate()
+    {
         if start + offset > 0 && std::io::Write::write_all(&mut rows, b",").is_err() {
             return Err(BatchFailure::Encoding);
         }
@@ -197,6 +202,7 @@ async fn embed_request_batches(
             } else {
                 Encoded::Float(row)
             },
+            input_tokens,
         };
         if serde_json::to_writer(&mut rows, &row).is_err() {
             return Err(BatchFailure::Encoding);

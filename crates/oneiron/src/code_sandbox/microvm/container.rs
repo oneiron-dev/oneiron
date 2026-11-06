@@ -158,8 +158,16 @@ impl MicroVmBackend for ContainerBackend {
         image: &GuestImage,
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
+        output: &mut dyn super::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        self.run_with_proxy_cancellable(vm, image, budget, proxy, &StepCancellation::never())
+        self.run_with_proxy_cancellable(
+            vm,
+            image,
+            budget,
+            proxy,
+            &StepCancellation::never(),
+            output,
+        )
     }
     /// Runs one guest under its step's token (FIX 600). A watcher holds this
     /// run's own session: once `cancel` fires it cuts the protocol stream
@@ -174,6 +182,7 @@ impl MicroVmBackend for ContainerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn super::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         cancel.check()?;
         if !budget.is_bounded() || !proxy.is_armed() {
@@ -234,14 +243,14 @@ impl MicroVmBackend for ContainerBackend {
             .get_mut(vm.id())
             .ok_or_else(|| failed("unknown handle"))?
             .manifest = Some(manifest.clone());
-        let (mut input, mut output) = guest
+        let (mut input, mut guest_output) = guest
             .take_stdio()
             .ok_or_else(|| failed("container stdio missing"))?;
         let (stream, mut bridge) =
             std::os::unix::net::UnixStream::pair().map_err(|e| failed(e.to_string()))?;
         let mut reader = bridge.try_clone().map_err(|e| failed(e.to_string()))?;
         std::thread::spawn(move || {
-            let _ = std::io::copy(&mut output, &mut bridge);
+            let _ = std::io::copy(&mut guest_output, &mut bridge);
             let _ = bridge.shutdown(std::net::Shutdown::Write);
         });
         std::thread::spawn(move || {
@@ -253,6 +262,13 @@ impl MicroVmBackend for ContainerBackend {
         // the slot's lock across the exchange, a removal or a wait.
         let session = Mutex::new(Some(guest));
         let (finish, finished) = mpsc::channel();
+        let mut output_failed = false;
+        let mut output_frame = |stream: crate::engine_executor::JsCodeModeStream<'_>,
+                                frame: Vec<u8>| {
+            let result = output.write_output_frame(stream, frame);
+            output_failed |= result.is_err();
+            result
+        };
         let (result, killed_abandoned) = std::thread::scope(|scope| {
             let session = &session;
             let watcher = scope.spawn(move || watch_guest(session, &watched, &finished, cancel));
@@ -269,6 +285,7 @@ impl MicroVmBackend for ContainerBackend {
                 self.transport.as_deref(),
                 self.spool.as_deref(),
                 cancel,
+                &mut output_frame,
             );
             let _ = finish.send(());
             (result, watcher.join().unwrap_or(false))
@@ -299,7 +316,7 @@ impl MicroVmBackend for ContainerBackend {
             &result,
             Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::OutOfMemory
         );
-        if abandoned && !at_floor && !out_of_memory {
+        if abandoned && !at_floor && !out_of_memory && !output_failed {
             return Err(crate::Error::Code(
                 crate::error::CodeError::SandboxAbandoned {
                     backend: CONTAINER_BACKEND_NAME,

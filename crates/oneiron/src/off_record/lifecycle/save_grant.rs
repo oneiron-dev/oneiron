@@ -270,7 +270,7 @@ impl OffRecordSession<'_> {
             authority(self.vault, &txn)?;
             grant.initiator_in_txn(self.vault, &txn)?
         };
-        self.save_talk(initiator, Some(room), authority, answering)
+        self.save_talk(initiator, Some(room), grant.class, authority, answering)
     }
 
     /// The owner's whole-talk save on their proof; with `answering`, only
@@ -299,6 +299,7 @@ impl OffRecordSession<'_> {
         self.save_talk(
             PromoteInitiator::owner(self.vault, owner)?,
             room,
+            EdgeActorClass::Human,
             authority,
             answering,
         )

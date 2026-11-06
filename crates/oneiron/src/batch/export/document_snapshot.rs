@@ -72,6 +72,9 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
+    /// The row's birth envelope, read in this snapshot (FIX 1178); `None`
+    /// outside an archive cut, and for a row no door stamped.
+    pub(crate) birth: Option<crate::provenance::birth::RowBirth>,
 }
 
 impl Vault {
@@ -495,6 +498,14 @@ impl Vault {
             if let ExportSnapshotEntityBody::Bytes(body) = &body {
                 thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, body));
             }
+            // FIX 1178: the row's birth, read in this snapshot. The writer
+            // holds it until the carried set is final and masks it then; the
+            // lossy OKF cut carries no birth.
+            let birth = if cut == ExportCut::Archive {
+                crate::provenance::birth::row_birth_in_txn(&self.store, &rtxn, &id)?
+            } else {
+                None
+            };
             writer.entity(ExportSnapshotEntity {
                 id,
                 short_ref,
@@ -505,6 +516,7 @@ impl Vault {
                 pack_source,
                 task_receipts,
                 archived_receipts,
+                birth,
             })?;
         }
         for entry in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.store, &rtxn)? {

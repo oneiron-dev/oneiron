@@ -159,7 +159,6 @@ pub(super) fn anchor_text(
             }
             Ok(char_slice(&block.text, *char_start, *char_end))
         }
-        _ => Ok(None),
     }
 }
 

@@ -2,7 +2,6 @@
 use super::editor_auth::{EditorDesk, EditorIngress};
 use super::parse_lease;
 use super::*;
-use axum::body::HttpBody as _;
 use axum::extract::{FromRequest, Request};
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
 use oneiron::blob_artifact::esign::{EsignField, FieldValue};
@@ -42,11 +41,11 @@ fn laid_out(request: LayoutRequest) -> Response {
     }
 }
 
-/// `POST /sign/layout`. With no editor header it is the door it was: JSON
-/// under the router's 3 MiB body limit and `EditorBudget`'s window. An
-/// admitted editor's body (FIX 5618) spools whole and parses on the worker
-/// that holds its slot; its size is the `[limits] esign_body_bytes` row,
-/// which asks the vault owner past it and never refuses the body.
+/// `POST /sign/layout`. Capability-free JSON spools under the disk floor
+/// and is admitted to memory before the original JSON extractor reads it;
+/// `EditorBudget`'s window and permit still cover the computation. An
+/// admitted editor's body (FIX 5618) keeps its existing spool and worker;
+/// its `[limits] esign_body_bytes` row asks the owner, never refusing size.
 pub(super) async fn layout(
     State(server): State<Arc<SyncServer>>,
     ingress: EditorIngress,
@@ -54,6 +53,36 @@ pub(super) async fn layout(
 ) -> Response {
     let slot = match ingress {
         EditorIngress::Anonymous => {
+            let permit = request
+                .extensions()
+                .get::<Arc<OwnedSemaphorePermit>>()
+                .cloned();
+            let spool_permit = permit.clone();
+            let memory = server.memory.clone();
+            let (parts, body) = request.into_parts();
+            let read = super::ingress::anonymous_editor_spooled(
+                &server,
+                &parts.headers,
+                body,
+                move |file, bytes| {
+                    let _permit = spool_permit;
+                    let deadline = Instant::now() + super::ingress::MEMORY_WAIT;
+                    let mut lease = memory
+                        .lease(bytes, deadline)
+                        .map_err(super::ingress::memory_refused)?;
+                    let body = super::ingress::whole_body(file, bytes, &lease)
+                        .map_err(super::ingress::whole_body_refused)?;
+                    lease.materialized(bytes, body.capacity() as u64);
+                    Ok::<_, Response>((body, lease))
+                },
+            )
+            .await;
+            let (body, _lease) = match read {
+                Ok(Ok(read)) => read,
+                Ok(Err(refusal)) | Err(refusal) => return refusal,
+            };
+            let _permit = permit;
+            let request = Request::from_parts(parts, Body::from(body));
             return match Json::<LayoutRequest>::from_request(request, &server).await {
                 Ok(Json(request)) => laid_out(request),
                 Err(rejection) => rejection.into_response(),
@@ -187,15 +216,12 @@ pub(super) async fn editor_script() -> Response {
         .into_response()
 }
 /// `POST /sign/geometry`: byte-only inspection, no template parse, blob
-/// write, or outbound effects. With no editor header it is the door it was:
-/// the PDF under the route's 16 MiB body limit and `EditorBudget`'s window,
-/// inspected as an admitted editor's is (FIX 12230). An admitted editor's
-/// PDF (FIX 5618) spools whole and is inspected on the worker that holds its
-/// slot; its size is the `[limits] esign_geometry_body_bytes` row, which asks
-/// the vault owner past it and never refuses the PDF. The PDF's bytes are
-/// leased from this machine's memory before it is read into memory (FIX
-/// 7649), and the lease grows for its parse's own memory as the parse
-/// proceeds (FIX 8065, `parse_lease`).
+/// write, or outbound effects. Every PDF spools under the disk floor and is
+/// inspected on a worker holding its editor permit. Capability-free calls
+/// keep `EditorBudget`'s window; admitted calls (FIX 5618) keep the
+/// `[limits] esign_geometry_body_bytes` ask-only row. The PDF's bytes are
+/// leased before they are read into memory (FIX 7649), and that same lease
+/// and deadline cover the parse's growth (FIX 8065, `parse_lease`).
 pub(super) async fn upload_geometry(
     State(server): State<Arc<SyncServer>>,
     ingress: EditorIngress,
@@ -210,59 +236,43 @@ pub(super) async fn upload_geometry(
                 .extensions()
                 .get::<Arc<OwnedSemaphorePermit>>()
                 .cloned();
-            // The native HTTP/1 decoder bounds this body by Content-Length.
-            // A transfer-encoded or unknown-length body keeps its existing path.
-            let exact_bytes = if matches!(
-                request.version(),
-                axum::http::Version::HTTP_10 | axum::http::Version::HTTP_11
-            ) && !request.headers().contains_key(header::TRANSFER_ENCODING)
-            {
-                request
-                    .headers()
-                    .get(header::CONTENT_LENGTH)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .filter(|bytes| *bytes <= ANONYMOUS_GEOMETRY_BODY_BYTES as u64)
-                    .filter(|bytes| request.body().size_hint().exact() == Some(*bytes))
-            } else {
-                None
-            };
-            let reserved = if let Some(bytes) = exact_bytes {
-                let input_memory = memory.clone();
-                let deadline = Instant::now() + super::ingress::MEMORY_WAIT;
-                match tokio::task::spawn_blocking(move || input_memory.lease(bytes, deadline)).await
-                {
-                    Ok(Ok(lease)) => Some((lease, deadline, bytes)),
-                    Ok(Err(refusal)) => return super::ingress::memory_refused(refusal),
-                    Err(_) => return refused(),
-                }
-            } else {
-                None
-            };
-            let body = match axum::body::Bytes::from_request(request, &server).await {
-                Ok(body) => body,
-                Err(rejection) => return rejection.into_response(),
-            };
-            return match tokio::task::spawn_blocking(move || {
-                let _permit = permit;
-                match reserved {
-                    Some((mut lease, deadline, bytes)) => {
-                        lease.materialized(bytes, body.len() as u64);
-                        parse_lease::inspected(lease, deadline, &body, stream_decode_bytes)
+            let (parts, body) = request.into_parts();
+            let inspection_server = Arc::clone(&server);
+            return super::ingress::anonymous_editor_spooled(
+                &server,
+                &parts.headers,
+                body,
+                move |file, bytes| {
+                    let _permit = permit;
+                    let deadline = Instant::now() + super::ingress::MEMORY_WAIT;
+                    let mut lease = match memory.lease(bytes, deadline) {
+                        Ok(lease) => lease,
+                        Err(refusal) => return super::ingress::memory_refused(refusal),
+                    };
+                    let pdf = match super::ingress::whole_body(file, bytes, &lease) {
+                        Ok(pdf) => pdf,
+                        Err(refusal) => return super::ingress::whole_body_refused(refusal),
+                    };
+                    lease.materialized(bytes, pdf.capacity() as u64);
+                    match parse_lease::inspected_with_worker(
+                        &inspection_server,
+                        lease,
+                        deadline,
+                        &pdf,
+                        stream_decode_bytes,
+                    ) {
+                        Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
+                        Err(response) => response,
                     }
-                    None => parse_lease::inspected_in_memory(&memory, &body, stream_decode_bytes),
-                }
-            })
+                },
+            )
             .await
-            {
-                Ok(Ok(pages)) => Json(serde_json::json!({"pages":pages})).into_response(),
-                Ok(Err(response)) => response,
-                Err(_) => refused(),
-            };
+            .unwrap_or_else(|refusal| refusal);
         }
         EditorIngress::Admitted(slot) => slot,
     };
     let (parts, body) = request.into_parts();
+    let inspection_server = Arc::clone(&server);
     super::ingress::editor_spooled(
         &server,
         EngineLimit::EsignGeometryBodyBytes,
@@ -283,7 +293,13 @@ pub(super) async fn upload_geometry(
             // The read bytes are held now, so the live reading is not
             // charged them twice while the lease lives (FIX 9345).
             lease.materialized(bytes, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
-            match parse_lease::inspected(lease, deadline, &pdf, stream_decode_bytes) {
+            match parse_lease::inspected_with_worker(
+                &inspection_server,
+                lease,
+                deadline,
+                &pdf,
+                stream_decode_bytes,
+            ) {
                 Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
                 Err(response) => response,
             }

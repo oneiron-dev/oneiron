@@ -6,12 +6,15 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use heed::types::Bytes;
-use oneiron_crypto::backup::{BackupEvidence, CheckpointFact, SignedCheckpointFact};
+use oneiron_crypto::backup::{
+    BackupEvidence, CheckpointFact, HostHoldsAvailability, SignedCheckpointFact,
+};
 
 use super::watermark::SnapshotMark;
 use super::{
-    ArtifactKind, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT,
-    RecoveryWriteBudget, artifact, carried_bodies, codec_error, commitment, payload, rebuild,
+    ArtifactKind, BackupSelection, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC,
+    INDEX_SOURCE_TEXT, RecoveryWriteBudget, artifact, carried_bodies, codec_error, commitment,
+    payload, rebuild,
 };
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::store::DB_MANIFEST;
@@ -24,6 +27,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        selection: BackupSelection,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<BackupSnapshotReceipt> {
@@ -71,7 +75,9 @@ impl Vault {
             // outside any writer (KS-2A). A body written since is bound by
             // the next pass, and the snapshot taken again.
             self.bind_carried_bodies()?;
-            if let Some(id) = self.snapshot_once(path, created_at, owner, kind, registry, budget)? {
+            if let Some(id) =
+                self.snapshot_once(path, created_at, owner, kind, selection, registry, budget)?
+            {
                 tracing::info!(
                     stage = "done",
                     pass,
@@ -99,6 +105,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        selection: BackupSelection,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<Option<BackupSnapshotReceipt>> {
@@ -143,10 +150,10 @@ impl Vault {
         // runtime-only. Other explicit vectors must not silently disappear.
         self.validate_checkpoint_rebuild_sources(&txn)?;
         // What the image takes, the payload projection's rule too (FIX 6377).
-        let filter = payload::ImageFilter::of_snapshot(&self.store, &txn)?;
+        let filter = payload::ImageFilter::of_snapshot(self, &txn, selection)?;
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
-        let mut credential_keys_unavailable = Vec::new();
+        let mut credential_source_keys = Vec::new();
         // Window snapshots kept as they rest, warned by count (FIX 7107).
         let mut kept_windows = 0;
         // Pad rows the image carries with their pad, counted in its receipt
@@ -158,14 +165,14 @@ impl Vault {
                     return Ok(None);
                 }
                 if entry.name == "entities"
-                    && let Some(observed) = super::credential_custody::source_key_unavailable_in_txn(
+                    && let Some(observed) = super::credential_custody::source_key_observation_in_txn(
                         &self.store,
                         &txn,
                         key,
                         value,
                     )
                 {
-                    credential_keys_unavailable.push(observed);
+                    credential_source_keys.push(observed);
                 }
                 // Every body a row names goes with it, sealed under its
                 // instance: a result body's file, a file-plane ASSET's (FIX
@@ -279,12 +286,16 @@ impl Vault {
         };
         // Do not expose an owner-compartment row's identity or key state
         // beside it under the image's wider seal.
-        credential_keys_unavailable.retain(|observed| {
+        credential_source_keys.retain(|observed| {
             databases
                 .get("entities")
                 .is_some_and(|rows| observed.matches_rows(rows))
         });
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
+        // Each window the payload split rides as its carrier (FIX 10277).
+        let window_carriers = payload
+            .as_ref()
+            .map_or_else(Vec::new, |payload| payload.window_carriers.clone());
         // The artifact's snapshot id, minted before anything is sealed to
         // it: the host-order member binds it, never the image's digest.
         let mut snapshot = [0u8; 32];
@@ -295,13 +306,14 @@ impl Vault {
             version: super::image::IMAGE_VERSION,
             created_at,
             databases,
-            credential_keys_unavailable,
+            credential_source_keys,
             bodies,
             sealed_bodies,
             inline_bodies,
             checkpoint_sequence: None,
             host_holds,
             snapshot: None,
+            window_carriers,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         tracing::info!(
@@ -392,7 +404,7 @@ impl Vault {
         // checkpoint fact is signed with the keys that signed it (FIX 7326).
         // A checkpoint publishes none.
         let checkpoint_fact = (kind == ArtifactKind::Backup)
-            .then(|| sign_fact(&link.keys, id, &evidence))
+            .then(|| sign_fact(&link.keys, id, &evidence, host_holds_availability))
             .flatten();
         tracing::info!(
             stage = "receipt",
@@ -406,7 +418,7 @@ impl Vault {
             .unwrap_or_default();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
-            covered: mark.covered(),
+            covered: mark.covered(selection),
             evidence,
             checkpoint_fact,
             host_holds: host_holds_availability,
@@ -489,6 +501,7 @@ fn sign_fact(
     keys: &commitment::SigningKeys,
     id: [u8; 32],
     evidence: &BackupEvidence,
+    host_holds: HostHoldsAvailability,
 ) -> Option<SignedCheckpointFact> {
     let fact = CheckpointFact {
         engine_vault_id: evidence.engine_vault_id,
@@ -496,6 +509,7 @@ fn sign_fact(
         commitment_digest: evidence.commitment_digest,
         outer_blake3: evidence.outer_blake3,
         size: evidence.size,
+        host_holds,
     };
     match keys.sign_checkpoint_fact(&fact) {
         Ok(signed) => Some(signed),

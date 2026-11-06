@@ -184,9 +184,10 @@ impl Vault {
         if storage.vault_id() != self.vault_id() {
             return Err(invalid("a run seat's route is another vault's"));
         }
-        let Some(room) = storage.session_ref() else {
+        let ExecutorStorage::Session(binding) = storage else {
             return self.birth_model_seat(run_id, task, decisions, parent_at);
         };
+        let room = binding.session.overlay_conversation_shell()?;
         let task = SeatTask {
             warm_scope: room_warm_scope(room, &task.warm_scope),
             ..task.clone()
@@ -359,7 +360,7 @@ fn checked_pin(row: Option<StoredRunSeat>) -> Result<Option<StoredRunSeat>> {
 }
 
 /// The warm scope a session-bound run's seat is born under: its run's own,
-/// qualified by its room, so no seat of one room is warm for another's.
-fn room_warm_scope(room: &str, scope: &str) -> String {
-    format!("{scope}@room:{room}")
+/// qualified by its bound room incarnation, not a reusable room name.
+fn room_warm_scope(room: EntityId, scope: &str) -> String {
+    format!("{scope}@room:{}", room.to_hex())
 }

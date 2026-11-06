@@ -339,9 +339,7 @@ pub(crate) fn device_only_withholds_run(
     if flagged.contains(&birth_world) {
         return Ok(true);
     }
-    let Some(capture) =
-        crate::code_run::storage::closed_read_world_capture_in_txn(vault, txn, run)?
-    else {
+    let Some(capture) = crate::code_run::closed_read_world_capture_in_txn(vault, txn, run)? else {
         return Ok(true);
     };
     if !capture.worlds.is_disjoint(flagged) {

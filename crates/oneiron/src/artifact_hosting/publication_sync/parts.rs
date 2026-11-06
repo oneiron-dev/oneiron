@@ -44,7 +44,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::document_frame_tags::document_sub_tags;
-use crate::sync::transport::encode_document;
+use crate::store::framing::encode_document;
 
 /// The most bytes of a serialized publication one part carries. A part's
 /// frame is this, its 68-byte header and the 18-byte document frame, well
@@ -167,7 +167,6 @@ fn publication_receipt_frame(
     payload.extend_from_slice(&digest);
     payload.push(outcome.byte());
     encode_document(entity, document_sub_tags::ARTIFACT_RECEIPT, &payload)
-        .into_result()
         .map_err(|_| Error::InvariantViolation("artifact receipt exceeds wire limit"))
 }
 
@@ -467,7 +466,6 @@ fn sent_part_in_txn(
         document_sub_tags::ARTIFACT_PUBLICATION,
         &part.encode()?,
     )
-    .into_result()
     .map_err(|_| Error::InvariantViolation("artifact publication part exceeds wire limit"))?;
     Ok(ArtifactPublicationPart {
         key: key.clone(),

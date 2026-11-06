@@ -92,7 +92,7 @@ pub(super) async fn judge(
 ) -> Result<(MatchDecision, SavedQueryJudgeReceipt)> {
     let candidate = evidence.entity_ref;
     let decisions = binding.decisions;
-    let backend = (binding.backend_for)(sources);
+    let backend = (binding.backend_for)(sources.clone());
     let rubric_hash = blake3::hash(&canonical_json_bytes(rubric)?);
     let question = SAVED_QUERY_MATCH.question(
         &[rubric_hash.as_bytes(), rubric_version.as_bytes()],
@@ -141,7 +141,7 @@ pub(super) async fn judge(
             &rung,
             &[&question],
             owner,
-            &[query_ref, candidate],
+            sources.as_deref().unwrap_or(&[query_ref, candidate]),
             &state,
             decisions.dial,
             &decisions.bands,
@@ -178,7 +178,7 @@ pub(super) async fn judge(
         membership_why(binding, &*backend, shell, verdict, &decisions.why_wording).await?;
     let mut generations: Vec<_> = steps
         .into_iter()
-        .map(|(hash, usage)| SavedQueryGenerationReceipt {
+        .map(|(hash, usage, _)| SavedQueryGenerationReceipt {
             request_hash: super::support::hex_lower(&hash),
             usage,
         })
