@@ -513,3 +513,18 @@ identities, candidate trees and receipt references are unchanged.
 This changes no native schema parser, oracle, queue state, review or settlement,
 authority, inputs, clients, hooks or public records. It does not prove end-to-end
 depth, memory or runtime bounds; the existing parser depth bound is unchanged.
+
+## Model catalog diff output metadata
+
+`vault.models.catalog.diff` consumes all metadata values from each change's
+present previous and current model rows before the first conversion error.
+The original whole-result codec converts the finite diff, then restores the
+metadata in change order, previous before current. Missing rows remain missing;
+empty metadata maps still read as absent, and null map values remain present.
+
+The revision refresh/get results share the same concrete metadata conversion
+without changing their traversal order or result shape. Revision and model
+identities, other model fields, prices, scores, source rows and finite
+conversion diagnostics are unchanged. This changes no native diff, persistence,
+authority, inputs, clients, hooks or public records. It does not prove end-to-end
+depth, memory or runtime bounds.

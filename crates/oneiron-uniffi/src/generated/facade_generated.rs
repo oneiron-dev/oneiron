@@ -4654,7 +4654,7 @@ export_facade! {
 "vault.models.catalog.diff" => fn vault_models_catalog_diff(&self, input: ModelCatalogDiffRequest) -> ModelCatalogDiff = |client| {
     let input: oneiron::llm::catalog_doors::ModelCatalogDiffRequest = crate::codec::lower_record("vault.models.catalog.diff", input)?;
     let output = client.vault_models_catalog_diff(&input)?;
-    crate::codec::lift_record("vault.models.catalog.diff", &output)
+    crate::codec::lift_model_catalog_diff("vault.models.catalog.diff", output)
 };
 "vault.models.trials.nominate" => fn vault_models_trials_nominate(&self, input: ModelTrialNominate) -> ModelTrialView = |client| {
     let input: oneiron::llm::catalog_doors::ModelTrialNominate = crate::codec::lower_record("vault.models.trials.nominate", input)?;
