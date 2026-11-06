@@ -335,10 +335,8 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<Visited> {
         match verb {
             WalkVerb::Find => {
-                let mut line = path.to_owned();
-                line.push('\n');
                 let from = lines.map_or(0, |lines| lines.printed);
-                match walk.out.push_line(&line, from) {
+                match walk.out.push_line_parts(&[path, "\n"], from) {
                     None => {
                         walk.total += 1;
                         Ok(Visited::Done)
@@ -363,7 +361,7 @@ impl GraphFsResolver<'_, '_> {
                     reader,
                     self.options.page_byte_cap,
                     pattern,
-                    || format!("{path}:"),
+                    path,
                 )?;
                 walk.total += matched;
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))

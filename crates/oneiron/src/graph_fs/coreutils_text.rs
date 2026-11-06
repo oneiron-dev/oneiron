@@ -21,7 +21,7 @@ pub(super) fn page_head_lines(
     let mut at = from;
     while at.line < bytes.len() && finished < max_lines {
         let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
-        let cut = push_lossy_line(line, "", at.printed, out, reader, scan_bytes)?;
+        let cut = push_lossy_line(line, &[], at.printed, out, reader, scan_bytes)?;
         if let Some(printed) = cut {
             at.printed = printed;
             return Ok((finished, Some(at)));
@@ -44,16 +44,15 @@ pub(super) fn page_grep_lines(
     reader: &ContainerReader,
     scan_bytes: usize,
     pattern: &str,
-    mut prefix: impl FnMut() -> String,
+    path: &str,
 ) -> Result<(usize, Option<LinePosition>)> {
     let mut finished = 0;
     let mut at = from;
     while at.line < bytes.len() && finished < max_lines {
         let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
         if contains_lossy_literal(line, pattern, reader, scan_bytes)? {
-            let prefix = prefix();
             if let Some(printed) =
-                push_lossy_line(line, &prefix, at.printed, out, reader, scan_bytes)?
+                push_lossy_line(line, &[path, ":"], at.printed, out, reader, scan_bytes)?
             {
                 at.printed = printed;
                 return Ok((finished, Some(at)));
@@ -115,14 +114,22 @@ fn contains_lossy_literal(
 
 fn push_lossy_line(
     line: &[u8],
-    prefix: &str,
+    prefix: &[&str],
     printed: usize,
     out: &mut CommandOutputBuilder,
     reader: &ContainerReader,
     scan_bytes: usize,
 ) -> Result<Option<usize>> {
-    let mut len = prefix.len();
-    let mut boundary = prefix.is_char_boundary(printed);
+    let mut len = 0;
+    let mut boundary = printed == 0;
+    for part in prefix {
+        if let Some(offset) = printed.checked_sub(len)
+            && offset <= part.len()
+        {
+            boundary |= part.is_char_boundary(offset);
+        }
+        len += part.len();
+    }
     lossy_for_each(line, reader, scan_bytes, |chunk| {
         if let Some(offset) = printed.checked_sub(len)
             && offset <= chunk.len()
@@ -155,7 +162,9 @@ fn push_lossy_line(
                 offset = end;
                 Ok(())
             };
-            copy_chunk(prefix)?;
+            for part in prefix {
+                copy_chunk(part)?;
+            }
             lossy_for_each(line, reader, scan_bytes, &mut copy_chunk)?;
         }
         if !truncated && remaining > 0 && printed <= offset {
