@@ -17,9 +17,10 @@ use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::{
-    AskTo, DecisionWireLabels, GeneratedDecisions, GeneratedRung, GeneratedStep, TypedDecision,
+    AskTo, DecisionCallContext, DecisionWireLabels, GeneratedDecisions, GeneratedRung,
+    GeneratedStep, TypedDecision,
 };
-use crate::llm::run_admission::RunAdmission;
+use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::model_decision::{
     DecisionQuestion, DecisionRung, EvidenceVersion, HumanAskReason, ProviderPin, Reversibility,
 };
@@ -111,6 +112,45 @@ impl Decider<'_> {
         spent: &mut Vec<([u8; 32], LlmUsage)>,
         run: Option<&RunAdmission>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
+        let mut receipts = Vec::new();
+        self.decide_scoped_common(read, questions, labels, spent, run, None, &mut receipts)
+            .await
+    }
+
+    /// Carry one invocation's admission and native stronger-provider settlements
+    /// through the same scoped read, including a failure after paid work.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the scoped read retains its invocation context and settlements"
+    )]
+    pub(in crate::dreamer_consolidation) async fn decide_scoped_captured_on_run(
+        &self,
+        read: ScopedRead<'_>,
+        questions: &[DecisionQuestion],
+        labels: &CallLabelMap,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        run: Option<&RunAdmission>,
+        context: &DecisionCallContext<'_>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
+        self.decide_scoped_common(read, questions, labels, spent, run, Some(context), receipts)
+            .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the scoped read shares one optional native capture path"
+    )]
+    async fn decide_scoped_common(
+        &self,
+        read: ScopedRead<'_>,
+        questions: &[DecisionQuestion],
+        labels: &CallLabelMap,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        run: Option<&RunAdmission>,
+        context: Option<&DecisionCallContext<'_>>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();
         let asked = questions
@@ -158,25 +198,52 @@ impl Decider<'_> {
         // Each rung past the generated read shows the pack's choices alike.
         let rungs = LabelledRungs::of(&held, wire);
         let ladder = rungs.ladder(&held);
-        let decided = ladder
-            .run_pack_generated_spent_with_run(
-                &rung,
-                &pack,
-                principal,
-                read.evidence,
-                read.state,
-                dial,
-                &self.decisions.bands,
-                Reversibility::ReversibleRead,
-                &RetrievalDeadline::hard(
-                    Instant::now(),
-                    Duration::from_millis(read.pass.remaining_ms()),
-                ),
-                spent,
-                Some(wire),
-                run,
-            )
-            .await;
+        let decided = match context {
+            Some(context) => {
+                ladder
+                    .run_pack_generated_spent_captured(
+                        &rung,
+                        &pack,
+                        principal,
+                        read.evidence,
+                        read.state,
+                        dial,
+                        &self.decisions.bands,
+                        Reversibility::ReversibleRead,
+                        &RetrievalDeadline::hard(
+                            Instant::now(),
+                            Duration::from_millis(read.pass.remaining_ms()),
+                        ),
+                        spent,
+                        Some(wire),
+                        run,
+                        context,
+                        receipts,
+                    )
+                    .await
+            }
+            None => {
+                ladder
+                    .run_pack_generated_spent_with_run(
+                        &rung,
+                        &pack,
+                        principal,
+                        read.evidence,
+                        read.state,
+                        dial,
+                        &self.decisions.bands,
+                        Reversibility::ReversibleRead,
+                        &RetrievalDeadline::hard(
+                            Instant::now(),
+                            Duration::from_millis(read.pass.remaining_ms()),
+                        ),
+                        spent,
+                        Some(wire),
+                        run,
+                    )
+                    .await
+            }
+        };
         let decisions = match decided? {
             GeneratedDecisions::Decided { decisions, .. } => decisions,
             GeneratedDecisions::Trapped => return Ok(None),

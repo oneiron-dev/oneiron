@@ -4,6 +4,7 @@ use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
     LlmResponse,
 };
+use super::generation::GenerationOutcome;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
     step_claim_matches_request, step_index_lookup_in_txn,
@@ -20,6 +21,7 @@ use super::types::{
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, StepTerminal, current_legibility};
 use crate::error::Error;
+use crate::llm::decision::DecisionGenerationAdmission;
 
 /// An execution-completion capability, not a decoded claim or memo index.
 /// Private fields prevent ordinary claim authors and replay from minting it.
@@ -270,6 +272,39 @@ async fn durable_step(
     check: Option<&ReplyCheck>,
     max_retries: usize,
 ) -> DurableStepResult<StepOutcome> {
+    match durable_step_with_generation(
+        ctx,
+        backend,
+        guard,
+        request,
+        fallbacks,
+        check,
+        max_retries,
+        None,
+    )
+    .await?
+    {
+        GenerationOutcome::Completed(outcome) => Ok(outcome),
+        GenerationOutcome::Cut { .. } => {
+            unreachable!("a step without generation admission cannot cut its allowance")
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the original durable step inputs plus optional logical admission"
+)]
+pub(super) async fn durable_step_with_generation(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    fallbacks: &super::super::FallbackRegistry,
+    check: Option<&ReplyCheck>,
+    max_retries: usize,
+    generation: Option<&dyn DecisionGenerationAdmission>,
+) -> DurableStepResult<GenerationOutcome<StepOutcome>> {
     let step_hash = request.canonical_hash()?;
 
     let recovery = {
@@ -277,7 +312,8 @@ async fn durable_step(
         recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, &request)?
     };
     if let Some(recovery) = recovery {
-        return recover_step(ctx, &step_hash, &request, recovery, Some(guard));
+        return recover_step(ctx, &step_hash, &request, recovery, Some(guard))
+            .map(GenerationOutcome::Completed);
     }
 
     // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps
@@ -308,7 +344,8 @@ async fn durable_step(
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
             return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
-                .inspect(|_| step_budget_hit(ctx, guard, &request));
+                .inspect(|_| step_budget_hit(ctx, guard, &request))
+                .map(GenerationOutcome::Completed);
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -362,9 +399,25 @@ async fn durable_step(
                 &capture,
                 check,
                 max_retries,
+                generation,
             ),
         )
         .await;
+    let generated = match generated {
+        Ok(GenerationOutcome::Completed(response)) => Ok(response),
+        Ok(GenerationOutcome::Cut { usage }) => {
+            match &usage {
+                Some(usage) => settle_failed_usage(guard, &admission.lease, usage),
+                None => {
+                    if let Err(denied) = guard.abort(&admission.lease) {
+                        report_unsettled(&admission.lease, denied);
+                    }
+                }
+            }
+            return Ok(GenerationOutcome::Cut { usage });
+        }
+        Err(error) => Err(error),
+    };
     // A corrective call failed: an earlier response was already answered and
     // paid, whatever usage it reported.
     let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
@@ -447,11 +500,13 @@ async fn durable_step(
                 BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
                 _ => BUDGET_PARK_REASON,
             };
-            return budget_trap(ctx, step_hash, reason).inspect(|_| {
-                if denied == BudgetDenied::Exhausted {
-                    step_budget_hit(ctx, guard, &request);
-                }
-            });
+            return budget_trap(ctx, step_hash, reason)
+                .inspect(|_| {
+                    if denied == BudgetDenied::Exhausted {
+                        step_budget_hit(ctx, guard, &request);
+                    }
+                })
+                .map(GenerationOutcome::Completed);
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -555,12 +610,12 @@ async fn durable_step(
     );
     ctx.vault.capture_tier1_executed_step(&witness)?;
 
-    Ok(StepOutcome::Finished {
+    Ok(GenerationOutcome::Completed(StepOutcome::Finished {
         response,
         memoized: false,
         legibility: step_legibility(ctx, guard),
         failure_policy,
-    })
+    }))
 }
 
 /// Verify a persisted step and resolve resident eligibility in the SAME
