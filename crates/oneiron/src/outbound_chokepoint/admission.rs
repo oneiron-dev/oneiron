@@ -6,7 +6,8 @@ use super::budget::{
 };
 use super::dedupe;
 use super::replay::{
-    effect_result, gate_rejection, replay_record, send_admitted, suppression_result,
+    accounting_replay_in_txn, effect_result, gate_rejection, replay_record, send_admitted,
+    suppression_result,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
@@ -208,6 +209,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             OutboundEffectCommand::Resume(_) => None,
         };
         return replay_record(vault, authority, record, prepared, now_ms, transport);
+    }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of
+    // replays as the owner's erase left it, never gated, asked or sent again.
+    if let Some(result) = accounting_replay_in_txn(vault, &wtxn, &command, intent_id)? {
+        drop(wtxn);
+        return Ok(result);
     }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
@@ -499,7 +506,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
-    let (budget_accounting, budget_charge, exhausted) = charge_once(
+    let (budget_accounting, mut budget_charge, exhausted) = charge_once(
         vault,
         &mut wtxn,
         &mut governance,
@@ -647,7 +654,27 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
+    let ordinary_press = match pinned_approval {
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate =>
+        {
+            Some(approval)
+        }
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
+        {
+            Some(approval)
+        }
+        _ => None,
+    };
+    crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, ordinary_press)?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
+    if let Some(charge) = budget_charge.as_mut() {
+        charge.refresh_read_in_txn(&vault.store, &wtxn, vault.store.clock.now_recorded_at())?;
+    }
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
@@ -670,7 +697,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
-    super::types::keep_spent_presses(vault, pending.id, pinned_approval, co_spent)?;
+    super::types::keep_spent_presses(
+        vault,
+        pending.id,
+        pinned_approval.filter(|_| ordinary_press.is_none()),
+        co_spent,
+    )?;
 
     let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));

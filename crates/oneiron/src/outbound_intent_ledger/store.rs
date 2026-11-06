@@ -8,6 +8,7 @@ use super::types::{
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::connector_key::BudgetBlock;
 use crate::error::Error;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 
@@ -19,9 +20,12 @@ mod remote_task;
 mod transition;
 mod validate;
 
+pub(crate) use self::transition::IntentCompletion;
+use self::transition::transition_record_with_outcome_and;
+
 pub(crate) use self::remote_task::defer_record;
 pub(crate) use self::validate::hash_frozen_payload;
-pub(super) use self::validate::validate_record;
+pub(super) use self::validate::{validate_accounting, validate_record};
 
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
 /// Key: hash32 (the intent id).
@@ -398,6 +402,16 @@ fn insert_intent_in_txn(
             "outbound attempt already has an admitted binding",
         ));
     }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of was
+    // admitted before the restore and its compartment did not open. It is
+    // never asked or paid for again; this writer, and its budget debit, ends.
+    if checkpoint::call_accounting_in_txn(vault, wtxn, pending.attempt_id, pending.call_seq)?
+        .is_some()
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "a call a restore kept only the accounting of is not admitted again",
+        ));
+    }
     if LEDGER.contains(&vault.store, wtxn, &pending.id)? {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent insert target already exists",
@@ -471,7 +485,7 @@ pub(crate) fn complete_record_bridged(
     id: [u8; 32],
     now_ms: u64,
     bridge: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<IntentCompletion> {
     transition_record_with_outcome_and(
         vault,
         id,
@@ -546,7 +560,11 @@ pub(crate) fn reconcile_connector_intent_in_txn(
     now_ms: u64,
 ) -> IntentLedgerResult<Option<super::resolution::IntentResolution>> {
     let Some(mut record) = read_intent_for_attempt_in_txn(vault, &*wtxn, attempt_id, 0)? else {
-        return Ok(None);
+        // KS7-5 (FIX 12117): a send a restore kept only the accounting of
+        // settles as the owner's erase left it.
+        return checkpoint::call_accounting_in_txn(vault, &*wtxn, attempt_id, 0)?
+            .map(|accounting| super::resolution::IntentResolution::from_accounting(&accounting))
+            .transpose();
     };
     binding.verify(&record)?;
     if let Some(reason) = stop
@@ -577,8 +595,12 @@ pub(crate) fn record_definite_non_delivery(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
-        |_, _| Ok(()),
+        |wtxn, record| {
+            super::settlement::release_non_delivery_reservation_in_txn(vault, wtxn, record)?;
+            Ok(BudgetBlock::Open)
+        },
     )
+    .map(|(record, _)| record)
 }
 
 /// A provider's rate or quota refusal (FIX 8818): the send certainly did not
@@ -596,8 +618,13 @@ pub(crate) fn record_provider_refusal(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
-        |wtxn, _| super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive),
+        |wtxn, record| {
+            super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive)?;
+            super::settlement::release_non_delivery_reservation_in_txn(vault, wtxn, record)?;
+            Ok(BudgetBlock::Open)
+        },
     )
+    .map(|(record, _)| record)
 }
 
 /// Renews a Pending retry's admission at `now_ms`, in the caller's
@@ -617,18 +644,20 @@ pub(crate) fn begin_definite_non_delivery_retry(
     vault: &Vault,
     id: [u8; 32],
     now_ms: u64,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+) -> IntentLedgerResult<(IntentLedgerRecord, BudgetBlock)> {
     update_pending_recorded_outcome(
         vault,
         id,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         None,
         now_ms,
-        // The retry this claim opens ends the provider's wait (FIX 8818); a
-        // takeover's abandon gives its reserved budget back (FIX 7964).
         |wtxn, record| {
-            super::settlement::clear_provider_wait_in_txn(vault, wtxn, &id)?;
-            super::settlement::settle_reservation_in_txn(vault, wtxn, record)
+            let block = super::settlement::restore_retry_reservation_in_txn(vault, wtxn, record)?;
+            if block == BudgetBlock::Open {
+                super::settlement::clear_provider_wait_in_txn(vault, wtxn, &id)?;
+                super::settlement::settle_reservation_in_txn(vault, wtxn, record)?;
+            }
+            Ok(block)
         },
     )
 }
@@ -639,8 +668,8 @@ fn update_pending_recorded_outcome(
     expected: Option<RecordedOutboundOutcome>,
     next: Option<RecordedOutboundOutcome>,
     now_ms: u64,
-    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord) -> IntentLedgerResult<()>,
-) -> IntentLedgerResult<IntentLedgerRecord> {
+    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord) -> IntentLedgerResult<BudgetBlock>,
+) -> IntentLedgerResult<(IntentLedgerRecord, BudgetBlock)> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("pending outcome target is missing"),
@@ -663,20 +692,28 @@ fn update_pending_recorded_outcome(
     } else {
         record.recorded_outcome = next;
     }
-    record.updated_ms = now_ms.max(record.created_ms);
-    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
-    also(&mut wtxn, &record)?;
+    // The callback preflights every retry debit before any permit change.
+    // On exhaustion it may apply the owner's suspend policy, but leaves the
+    // released reservation, usage and provider wait untouched.
+    let block = also(&mut wtxn, &record)?;
+    if block == BudgetBlock::Open {
+        record.updated_ms = now_ms.max(record.created_ms);
+        LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    } else {
+        record.recorded_outcome = expected;
+    }
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
-    // A takeover may have abandoned the row: the owner's waiting shed looks
-    // again, as at a terminal transition (FIX 10688).
-    vault.wake_owner_shed();
+    if block == BudgetBlock::Open {
+        // A takeover may have abandoned the row (FIX 10688).
+        vault.wake_owner_shed();
+    }
     // Open only after the state write is durable (FIX 10959), as in
     // `record_possible_delivery`.
     let rtxn = vault.store.custody_snapshot()?;
     open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
-    Ok(record)
+    Ok((record, block))
 }
 
 fn transition_record_with_outcome(
@@ -687,35 +724,7 @@ fn transition_record_with_outcome(
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     transition_record_with_outcome_and(vault, id, next, outcome, now_ms, |_, _| {})
-}
-
-fn transition_record_with_outcome_and(
-    vault: &Vault,
-    id: [u8; 32],
-    next: IntentState,
-    outcome: RecordedOutboundOutcome,
-    now_ms: u64,
-    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
-) -> IntentLedgerResult<IntentLedgerRecord> {
-    let mut wtxn = vault.store.env.write_txn()?;
-    let mut record =
-        match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
-            transition::Transitioned::Moved(record) => record,
-            transition::Transitioned::Replayed(mut record) => {
-                open_payload_in_txn(vault, &wtxn, &mut record)?;
-                drop(wtxn);
-                return Ok(record);
-            }
-        };
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
-    also(&mut wtxn, &record);
-
-    wtxn.commit().map_err(Error::from)?;
-    let synced = force_sync(vault);
-    // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
-    vault.wake_owner_shed();
-    synced?;
-    Ok(record)
+        .map(|completion| completion.record)
 }
 
 /// Writes `record`, which a read door may have opened, back over its row in the stored form the

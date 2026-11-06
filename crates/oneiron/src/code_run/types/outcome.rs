@@ -48,9 +48,43 @@ pub enum SelfDispatchOutcome {
     /// The leader's advice or loaded pattern, as JSON.
     Leader(String),
     /// A team run's start or receipt (OF-540).
-    Team(crate::team::TeamRunAnswer),
+    Team(SelfTeamResult),
     /// A team output submitted for the owner's review (OF-540).
     TeamSubmitted(super::TeamSubmitAnswer),
+    /// A large typed reply already spilled pre-record (FIX449): the SAME
+    /// guest JSON card `store_reply` returned, not the original typed value.
+    StoredReply(SelfStoredReply),
+}
+
+/// A typed reply too large for one message, already spilled as a body of
+/// the run (FIX449): `output` is the SAME already-spilled guest JSON card
+/// `store_reply` returned (tainted, with facets), NOT a reconstructed
+/// original typed value. The guest reads `{"output": card}`; replay never
+/// rehydrates the original. The explicit source kind also distinguishes a
+/// native receipt from reply content; `Changed`/`Pending` never become carriers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfStoredReply {
+    pub kind: SelfStoredReplyKind,
+    pub output: serde_json::Value,
+}
+
+/// Which typed reply a [`SelfStoredReply`] spilled (FIX449): the exact
+/// source kind, kept explicit so readers never guess from card text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfStoredReplyKind {
+    InferenceDefaults,
+    TaskAskSettled,
+    TaskAskWorldPrivacy,
+    /// A direct team start's native receipt, not reply content.
+    TeamStartReceipt,
+}
+
+/// A native team receipt and the source witness its producer assembled.
+/// Unknown sources stay unknown; the guest sees only `answer`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SelfTeamResult {
+    pub answer: crate::team::TeamRunAnswer,
+    pub(crate) source_rows: Option<Vec<EntityId>>,
 }
 
 /// What one callable skill returned: JSON its contract's `returns` shape

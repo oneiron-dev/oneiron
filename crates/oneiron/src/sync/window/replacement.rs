@@ -92,6 +92,7 @@ pub fn prepare_replacement(
         snapshot,
         evidence,
         ReplacementByteBound::NetworkFrame,
+        None,
     )
 }
 
@@ -108,6 +109,68 @@ pub(in crate::sync) enum ReplacementByteBound {
     AuthenticatedSectionLength,
 }
 
+/// The admission door a window's update or snapshot passes, with the staged
+/// world rows that prove its edges.
+type StagedAdmission =
+    fn(&Vault, &LoroDoc, &[u8], &WindowKey, &HashMap<EntityId, (WindowKey, Vec<u8>)>) -> Result<()>;
+
+/// What a replacement `snapshot` of `key` passes before anything of it is
+/// prepared: `bound`, `admit` over a fresh window, and a whole decode that
+/// reaches the snapshot's end. Returns that decode.
+fn admitted_replacement(
+    vault: &Vault,
+    key: &WindowKey,
+    snapshot: &[u8],
+    evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+    bound: ReplacementByteBound,
+    admit: StagedAdmission,
+) -> Result<LoroDoc> {
+    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES
+    {
+        return Err(rejected());
+    }
+    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
+    let base = crate::sync::schema::create_window_doc("replacement", key);
+    // A fault reading this vault's own state is this vault's, never the
+    // peer's rejected snapshot (FIX 5926).
+    admit(vault, &base, snapshot, key, evidence).map_err(|error| {
+        if is_window_admission_read_fault(&error) {
+            error
+        } else {
+            rejected()
+        }
+    })?;
+    // A snapshot decodes into a fresh document whole, with a fresh author peer: the old
+    // window's peer may hold counters the snapshot never saw.
+    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
+    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
+        return Err(rejected());
+    }
+    Ok(candidate)
+}
+
+/// The admission [`prepare_bounded_replacement`] runs before it prepares
+/// anything, without staging the cutoffs `snapshot` carries: a device runs it
+/// before a sealed replacement's capsule installs (FIX 10474). The same
+/// errors: a rejected snapshot, or a fault reading this vault.
+pub(in crate::sync) fn check_bounded_replacement(
+    vault: &Vault,
+    key: &WindowKey,
+    snapshot: &[u8],
+    evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+    bound: ReplacementByteBound,
+) -> Result<()> {
+    admitted_replacement(
+        vault,
+        key,
+        snapshot,
+        evidence,
+        bound,
+        super::check_window_update_with_staged_worlds,
+    )
+    .map(drop)
+}
+
 /// [`prepare_replacement`] for a snapshot up to `bound`. Only the length check
 /// differs: the snapshot passes the same admission, and the install keeps the
 /// same bookkeeping.
@@ -119,29 +182,16 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     snapshot: &[u8],
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
+    positions: Option<crate::sync::origin_positions::OwnDevicePositionImport>,
 ) -> Result<PreparedReplacement> {
-    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES
-    {
-        return Err(rejected());
-    }
-    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
-    let base = crate::sync::schema::create_window_doc("replacement", key);
-    // A fault reading this vault's own state is this vault's, never the
-    // peer's rejected snapshot (FIX 5926).
-    super::validate_window_update_with_staged_worlds(vault, &base, snapshot, key, evidence)
-        .map_err(|error| {
-            if is_window_admission_read_fault(&error) {
-                error
-            } else {
-                rejected()
-            }
-        })?;
-    // A snapshot decodes into a fresh document whole, with a fresh author peer: the old
-    // window's peer may hold counters the snapshot never saw.
-    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
-    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
-        return Err(rejected());
-    }
+    let candidate = admitted_replacement(
+        vault,
+        key,
+        snapshot,
+        evidence,
+        bound,
+        super::validate_window_update_with_staged_worlds,
+    )?;
 
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
@@ -214,6 +264,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, &marker.raw)?;
     }
     candidate.commit();
+    // Reverse rematerialization may remove an uninstalled optional root.
+    // Select only this snapshot's still-chosen values before that scrub.
+    let positions = positions.and_then(|positions| positions.select_replacement(&candidate));
     reverse_rematerialize(vault, &candidate, key)?;
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
@@ -238,6 +291,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
             .filter_map(Result::ok)
             .collect()
     };
+    let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
@@ -255,6 +309,11 @@ pub(in crate::sync) fn prepare_bounded_replacement(
                 matches!(conflict.map.as_str(), "entities" | "edges") && conflict.key == carrier
             })
         })?;
+        if let Some(positions) = &positions
+            && let Err(error) = positions.finish_in_txn(vault, wtxn, &candidate)
+        {
+            tracing::warn!(window = %key, %error, "optional own-device replacement positions did not settle");
+        }
         write_window_svf_in_txn(vault, wtxn, key)
     })?;
     Ok(PreparedReplacement {

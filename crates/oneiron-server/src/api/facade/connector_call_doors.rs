@@ -149,6 +149,7 @@ pub(super) fn narrowed_questions(
         questions,
         live_until_ms,
         reasons,
+        ..
     } = reply
     else {
         return (Ok(ActAnswer::details_on_device()), Some(Vec::new()));
