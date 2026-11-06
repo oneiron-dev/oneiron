@@ -124,3 +124,16 @@ text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
+
+
+## Native deck transaction graphic ceilings (FIX 10653)
+
+A deck transaction may carry `graphics` with the existing `svg_bytes`,
+`raster_bytes`, and `raster_pixels` ceilings. Every `set_picture` step uses that
+same setting through `Picture.limits`. An absent setting uses the unchanged
+`GraphicLimits::default()` values and is omitted from canonical serialization.
+An explicit setting stays in the canonical transaction and therefore the existing
+handoff hash and settlement replay. The asset identity/hash checks, factual-use
+and provenance rules, resource admission, capacity errors, candidate part-diff
+checks, and reports are unchanged. Native deck creation and live export retain
+their existing defaults; this is only the transaction slice of FIX 10653.
