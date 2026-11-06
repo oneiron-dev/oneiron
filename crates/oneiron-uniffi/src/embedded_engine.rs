@@ -51,6 +51,9 @@ use crate::codec::Lower;
 use crate::dto::OpenOptions;
 use crate::error::OneironError;
 
+mod shared_env;
+pub use shared_env::{SharedEnvBootstrapOutcome, SharedEnvEntry, SharedInvitationAcceptance};
+
 /// What the app brings its embedded engine. The engine calls these from its
 /// own threads; an implementation must be safe to call from any thread and
 /// must not call back into the engine.
