@@ -9,8 +9,9 @@ use crate::{EntityId, Result, Vault};
 use sha2::{Digest, Sha256};
 
 /// A preview read's vault error or input-memory refusal. File-plane and plain
-/// inline ASSET bytes reserve memory before their output allocation; record-head
-/// bytes lease it after the read.
+/// inline ASSET bytes reserve memory before their output allocation. UTF-8
+/// record-head output reserves before its final text conversion; native loading
+/// and other record-head projections remain outside that preallocation admission.
 #[derive(Debug)]
 pub enum EsignLeasedReadError {
     Vault(crate::Error),
@@ -220,8 +221,10 @@ impl Vault {
 
     /// [`Self::esign_preview_for_capability_as`] with its PDF bytes leased
     /// from this machine's memory: file-plane and plain inline ASSET bodies
-    /// reserve their exact output length before allocating it. Record-head
-    /// bodies lease their length after reading. The lease rides through inspection.
+    /// reserve their exact output length before allocating it. UTF-8 record-head
+    /// output reserves before its final text conversion; native document loading
+    /// and other projections still allocate before admission. The lease rides
+    /// through inspection.
     pub fn esign_preview_for_capability_leased_as(
         &self,
         token: &EsignCapability,
