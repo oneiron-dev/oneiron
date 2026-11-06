@@ -11,11 +11,16 @@
 //! ran, and the guest gets typed unavailable content in its place (ruling
 //! 4). A whole-vault import's result bodies take the same admission in the
 //! import's own writer.
+//!
+//! A session-bound run's reply takes this same admission ([`ReplySpool`])
+//! in its routed writer (FIX 6647, FIX 5718 part 3). An off-record room
+//! holds no custody of its own yet, so a reply there with a fresh key is
+//! withheld until room-local custody exists.
 
 use std::sync::Arc;
 
 use super::*;
-use crate::batch::secret_scan::{BodySpool, SpoolAdmission, admit_spool_in_txn};
+use crate::batch::secret_scan::{AdmissionCustody, BodySpool, SpoolAdmission, admit_spool_in_txn};
 use crate::secret_custody::KnownValues;
 
 /// Where the custody records the wall mints from a run's reply body name
@@ -33,6 +38,96 @@ pub(crate) enum ReplyBody {
         text: bool,
         reason: &'static str,
     },
+}
+
+/// One reply body spooled raw for admission, as the vault's writer and a
+/// session's routed writer admit it alike (FIX 5718 part 3, FIX 6647): the
+/// occurrence its custody records name, and the inline bound of the
+/// directory it is published into.
+pub(crate) struct ReplySpool {
+    spool: BodySpool,
+    occurrence: EntityId,
+    bound: u64,
+}
+
+/// What admitting a reply body in one writer came to.
+pub(crate) enum ReplyAdmission<'s> {
+    /// The admitted body, to publish in that writer, which holds the
+    /// custody records minted for it.
+    Admitted(SpoolAdmission<'s>),
+    /// A secret no door on the writer's route can place (ruling 4, FIX
+    /// 6647): nothing was minted, and nothing of the answer is stored.
+    Unplaceable(ReplyBody),
+    /// The admitted copy spills past the inline bound where its writer holds
+    /// no instance for it: nothing of the admission stays, and the writer is
+    /// taken again with one reserved first (a writer never mints one).
+    Spills,
+}
+
+impl ReplySpool {
+    /// The reply body `sink` spooled, as run `owner`'s output at `path`,
+    /// for a directory whose inline bound is `bound`.
+    ///
+    /// # Errors
+    ///
+    /// A swept sink, which is no spool, and its filesystem and sealing
+    /// errors.
+    pub(crate) fn of(sink: BodySink, owner: EntityId, path: &str, bound: u64) -> Result<Self> {
+        Ok(Self {
+            spool: sink.into_spool()?,
+            occurrence: ResultOccurrence::owned(owner, path)?.id(),
+            bound,
+        })
+    }
+
+    /// The instances a vault writer that publishes it reserves before it
+    /// opens: one for a spool past the inline bound.
+    pub(crate) fn reserves(&self) -> usize {
+        usize::from(self.spool.len() > self.bound)
+    }
+
+    /// The inline bound its admitted body spills past.
+    pub(crate) const fn bound(&self) -> u64 {
+        self.bound
+    }
+
+    /// Admits the body in `wtxn`, the writer that publishes it, through
+    /// `custody`, with the known values that writer reads from the base
+    /// index (KS-3). With `may_spill` false the writer holds no instance for
+    /// a spilled body, and an admitted copy past the inline bound is
+    /// [`ReplyAdmission::Spills`]. The custody records the admission minted
+    /// stay in `wtxn` only for an admitted body.
+    ///
+    /// # Errors
+    ///
+    /// Storage, custody and the spool's read errors.
+    pub(crate) fn admit_in_txn(
+        &self,
+        custody: AdmissionCustody<'_>,
+        wtxn: &mut heed::RwTxn<'_>,
+        may_spill: bool,
+    ) -> Result<ReplyAdmission<'_>> {
+        let known = custody.known_in_writer(wtxn)?;
+        let at = (REPLY_PLACE, self.occurrence.as_bytes().as_slice());
+        custody.in_savepoint(wtxn, |savepoint| {
+            let admitted =
+                admit_spool_in_txn(custody, savepoint, at, &self.spool, (known.as_ref(), true))?;
+            Ok(match admitted {
+                SpoolAdmission::Unplaceable(reason) => {
+                    let body = ReplyBody::Unplaceable {
+                        bytes: self.spool.len(),
+                        text: self.spool.text(),
+                        reason,
+                    };
+                    (ReplyAdmission::Unplaceable(body), false)
+                }
+                admitted if !may_spill && admitted.len().is_some_and(|len| len > self.bound) => {
+                    (ReplyAdmission::Spills, false)
+                }
+                admitted => (ReplyAdmission::Admitted(admitted), true),
+            })
+        })
+    }
 }
 
 impl Vault {
@@ -65,28 +160,21 @@ impl Vault {
         complete: bool,
         owner: EntityId,
     ) -> Result<ReplyBody> {
-        let spool = spool.into_spool()?;
-        let occurrence = ResultOccurrence::owned(owner, &path)?.id();
-        let at = (REPLY_PLACE, occurrence.as_bytes().as_slice());
-        let bound = self.code_result_inline_bytes();
-        let mut reserved = usize::from(spool.len() > bound);
+        let reply = ReplySpool::of(spool, owner, &path, self.code_result_inline_bytes())?;
+        let mut reserved = reply.reserves();
         loop {
             let mint = self.store.body_mint()?.reserve(reserved)?;
             let mut wtxn = self.store.env.write_txn()?;
-            let known = KnownValues::shared_in_writer(&self.store, &wtxn)?;
-            let admitted = admit_spool_in_txn(self, &mut wtxn, at, &spool, (known.as_ref(), true))?;
-            if let SpoolAdmission::Unplaceable(reason) = admitted {
-                return Ok(ReplyBody::Unplaceable {
-                    bytes: spool.len(),
-                    text: spool.text(),
-                    reason,
-                });
-            }
-            if admitted.len().is_some_and(|len| len > bound) && reserved == 0 {
-                reserved = 1;
-                continue;
-            }
-            let mut sink = BodySink::new(self.store.body_dir()?, bound, Some(mint));
+            let custody = AdmissionCustody::vault(self);
+            let admitted = match reply.admit_in_txn(custody, &mut wtxn, reserved > 0)? {
+                ReplyAdmission::Admitted(admitted) => admitted,
+                ReplyAdmission::Unplaceable(body) => return Ok(body),
+                ReplyAdmission::Spills => {
+                    reserved = 1;
+                    continue;
+                }
+            };
+            let mut sink = BodySink::new(self.store.body_dir()?, reply.bound(), Some(mint));
             admitted.feed(&mut sink)?;
             let finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
                 self.pin_result_body(digest)
@@ -124,7 +212,8 @@ impl Vault {
         let at = (REPLY_PLACE, occurrence.as_bytes().as_slice());
         let bound = self.code_result_inline_bytes();
         let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
-        let copy = match admit_spool_in_txn(self, &mut savepoint, at, &spool, (known, true))? {
+        let custody = AdmissionCustody::vault(self);
+        let copy = match admit_spool_in_txn(custody, &mut savepoint, at, &spool, (known, true))? {
             SpoolAdmission::Copy(copy) if may_spill || copy.len() as u64 <= bound => Some(copy),
             _ => None,
         };
