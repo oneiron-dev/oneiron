@@ -516,6 +516,16 @@ pub(crate) fn watchable(secret: &[u8]) -> bool {
     secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
 }
 
+/// Whether a git credential's watched token is one the git reply's echo
+/// watch can hold back: the same length bounds as [`watchable`], any bytes.
+/// The git watch searches the token's literal forms (raw, `Bearer`,
+/// JSON-escaped, percent-encoded, base64), which every byte has, and never
+/// rewrites a reply, so a Basic password with a `%` or any other byte off
+/// the model strip's alphabet is watched as surely as one without.
+pub(crate) fn git_watchable(token: &[u8]) -> bool {
+    token.len() >= MIN_SECRET && token.len() <= MAX_SECRET
+}
+
 /// The shape's key header value for `secret`, marked sensitive.
 pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
