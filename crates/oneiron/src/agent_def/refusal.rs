@@ -14,42 +14,18 @@
 //! decline stops her own act, never another agent's, a person's, or a policy
 //! hold.
 
-use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::types::AgentDefinition;
 use crate::Vault;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::Result;
 use crate::federation::{SharedVaultCreation, SharedVaultPreset};
 
-pub use crate::store::agent_refusal::{RefusalDial, RefusalLevel};
-
-/// The pinned sub-map keys for a [`RefusalDial`], in encode order. Each is
-/// the wire string of its [`RefusalDomain`].
-pub const REFUSAL_DIAL_KEYS: [&str; 2] = ["bond", "logistics"];
+pub use crate::store::agent_refusal::{
+    REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel,
+};
 
 impl RefusalLevel {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Voice => "voice",
-            Self::Veto => "veto",
-            Self::Full => "full",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "none" => Some(Self::None),
-            "voice" => Some(Self::Voice),
-            "veto" => Some(Self::Veto),
-            "full" => Some(Self::Full),
-            _ => None,
-        }
-    }
-
     /// The one evaluator: what an agent's tagged self-refusal becomes at this
     /// level. Only an explicit self-refusal is evaluated; inability, a
     /// provider's refusal and an owner's "no" never reach here.
@@ -59,35 +35,6 @@ impl RefusalLevel {
             Self::None => RefusalOutcome::Proceed,
             Self::Voice => RefusalOutcome::Object,
             Self::Veto | Self::Full => RefusalOutcome::Decline,
-        }
-    }
-}
-
-/// What a refusal concerns. The agent names it when she refuses, and her dial
-/// may sit differently for each.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefusalDomain {
-    /// The bond itself: what she is asked to be, or to do to it.
-    Bond,
-    /// The mechanics of the work: arrangements, errands, scheduling.
-    Logistics,
-}
-
-impl RefusalDomain {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Bond => REFUSAL_DIAL_KEYS[0],
-            Self::Logistics => REFUSAL_DIAL_KEYS[1],
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "bond" => Some(Self::Bond),
-            "logistics" => Some(Self::Logistics),
-            _ => None,
         }
     }
 }
@@ -102,35 +49,6 @@ pub enum RefusalOutcome {
     Object,
     /// Decline the act, with her reason.
     Decline,
-}
-
-impl RefusalDial {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            bond: None,
-            logistics: None,
-        }
-    }
-
-    /// Sets one domain explicitly; either end of the dial is allowed.
-    #[must_use]
-    pub fn with(mut self, domain: RefusalDomain, level: RefusalLevel) -> Self {
-        match domain {
-            RefusalDomain::Bond => self.bond = Some(level),
-            RefusalDomain::Logistics => self.logistics = Some(level),
-        }
-        self
-    }
-
-    /// The explicit setting for `domain`, if any.
-    #[must_use]
-    pub const fn get(&self, domain: RefusalDomain) -> Option<RefusalLevel> {
-        match domain {
-            RefusalDomain::Bond => self.bond,
-            RefusalDomain::Logistics => self.logistics,
-        }
-    }
 }
 
 /// Which defaults an unset dial takes. This is the vault's existing
@@ -192,61 +110,4 @@ impl Vault {
             self.shared_vault_creation_in_txn(txn)?.as_ref(),
         ))
     }
-}
-
-/// Encodes a [`RefusalDial`] sub-map: the [`REFUSAL_DIAL_KEYS`] in pinned
-/// order, each unset domain elided.
-pub(super) fn encode_refusal_dial(dial: RefusalDial) -> Value {
-    let entries = [
-        (RefusalDomain::Bond, dial.bond),
-        (RefusalDomain::Logistics, dial.logistics),
-    ]
-    .into_iter()
-    .filter_map(|(domain, level)| {
-        level.map(|level| (Value::from(domain.as_str()), Value::from(level.as_str())))
-    })
-    .collect();
-    Value::Map(entries)
-}
-
-/// Strict [`RefusalDial`] decode: a map over [`REFUSAL_DIAL_KEYS`] with no
-/// unknown or duplicate key and at least one domain set.
-pub(super) fn decode_refusal_dial(value: &Value) -> Result<RefusalDial> {
-    let Value::Map(entries) = value else {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "refusal must be a MessagePack map",
-        )));
-    };
-    let mut dial = RefusalDial::new();
-    for (key, level) in entries {
-        let domain = key
-            .as_str()
-            .and_then(RefusalDomain::parse)
-            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "refusal keys must be one of bond|logistics",
-            )))?;
-        if dial.get(domain).is_some() {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "duplicate refusal key",
-            )));
-        }
-        let level = level
-            .as_str()
-            .and_then(RefusalLevel::parse)
-            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                "refusal levels must be one of none|voice|veto|full",
-            )))?;
-        dial = dial.with(domain, level);
-    }
-    validate_refusal_dial(dial)?;
-    Ok(dial)
-}
-
-pub(super) fn validate_refusal_dial(dial: RefusalDial) -> Result<()> {
-    if dial.bond.is_none() && dial.logistics.is_none() {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "refusal must set at least one domain; omit it for the vault defaults",
-        )));
-    }
-    Ok(())
 }

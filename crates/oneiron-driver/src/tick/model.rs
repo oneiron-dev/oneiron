@@ -3,7 +3,7 @@
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::{DreamerConsolidationScope, WakeTrigger};
 
-use crate::session::SessionHint;
+use crate::session::{SessionHint, SessionHintEffect};
 
 /// One wakeup for the supervisor. Every tick names its concrete cause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +65,7 @@ pub(crate) struct SessionHintStamp {
 /// adjacent Activity hints aggregate into a period whose endpoints and count
 /// survive queueing and awaited delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionHintCarrier {
+pub(crate) struct SessionHintCarrier {
     pub(crate) key: SessionKey,
     pub(crate) hint: SessionHint,
     pub(crate) first: SessionHintStamp,
@@ -103,6 +103,39 @@ impl SessionHintCarrier {
     }
 }
 
+/// One queued session-lifecycle fact: the [`Copy`] [`SessionHintCarrier`] the
+/// session decorator applies, plus the completion of a TRACKED app-open hint
+/// ([`None`] is fire-and-forget). The envelope is opaque outside the driver —
+/// publicly nameable, since it crosses the public [`TickSource`] trait, but
+/// with crate-only fields and constructors. Exactly ONE sender travels queue →
+/// delivered/retry → ACK; the channel carries the actual [`SessionHintEffect`],
+/// and a dropped sender reads as [`TickPushError::Closed`](crate::TickPushError)
+/// at the waiter.
+#[derive(Debug)]
+pub struct QueuedSessionHint {
+    pub(crate) carrier: SessionHintCarrier,
+    pub(crate) completion: Option<std::sync::mpsc::Sender<SessionHintEffect>>,
+}
+
+impl QueuedSessionHint {
+    pub(crate) fn untracked(carrier: SessionHintCarrier) -> Self {
+        Self {
+            carrier,
+            completion: None,
+        }
+    }
+
+    pub(crate) fn tracked(
+        carrier: SessionHintCarrier,
+        completion: std::sync::mpsc::Sender<SessionHintEffect>,
+    ) -> Self {
+        Self {
+            carrier,
+            completion: Some(completion),
+        }
+    }
+}
+
 /// One timer lane a tick source arms, as [`TickSource::note_armed`] names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArmedLane {
@@ -137,18 +170,34 @@ pub trait TickSource {
 
     /// Full period-aware form used by the session decorator. The default
     /// adapts the required point triple for sources that do not aggregate.
-    fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<QueuedSessionHint> {
         self.take_buffered_session_hint()
             .map(|(key, hint, claimed_ms, arrival_ms)| {
-                SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms)
+                QueuedSessionHint::untracked(SessionHintCarrier::point(
+                    key, hint, claimed_ms, arrival_ms,
+                ))
             })
     }
 
     /// Retrieves the carrier associated with the session hint most recently
     /// returned by `next_tick`. PushTick uses this sidecar so the public inert
     /// HintSignal shape and the level-triggered pop contract both stay intact.
-    fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<QueuedSessionHint> {
         None
+    }
+
+    /// Waits for a possible buffered session hint without consuming any
+    /// ticks. The lifecycle driver drains before waiting; notifications may
+    /// also come from other push lanes. Sources without a buffer stay quiet.
+    async fn wait_for_buffered_session_hint(&mut self) {
+        std::future::pending::<()>().await;
+    }
+
+    /// Services lifecycle facts and expiry while passes are paused, then
+    /// waits for the next lifecycle event. Never consumes or surfaces an
+    /// ordinary tick. Sources without a lifecycle driver stay quiet.
+    async fn service_session_lifecycle(&mut self) {
+        std::future::pending::<()>().await;
     }
 
     /// Records the wall-clock instant (unix milliseconds) `lane` is armed

@@ -10,8 +10,8 @@
 //! due check and the next wake read the kept second.
 
 use oneiron_vault_contract::{
-    LedgerReport, LedgerReportHead, ManagedTrainingSetting, Schedule, UnixTs, WakeEntry,
-    validate_wake_entries,
+    ArtifactOrigin, LedgerReport, LedgerReportHead, ManagedTrainingSetting, Schedule, UnixTs,
+    WakeEntry, validate_wake_entries,
 };
 use serde::{Deserialize, Serialize};
 use std::{io::Write, os::unix::fs::OpenOptionsExt, path::PathBuf};
@@ -31,6 +31,8 @@ struct Ledger {
     training: Option<ManagedTrainingSetting>,
     /// The report's entries not yet delivered, each with when it fires.
     entries: Vec<ScheduledWake>,
+    /// The same complete report's logical publication origins.
+    artifact_origins: Vec<ArtifactOrigin>,
 }
 
 /// One wake entry as the vault declared it, and the second it fires.
@@ -79,6 +81,7 @@ impl VmWakeSchedule {
                 report: None,
                 training: None,
                 entries: Vec::new(),
+                artifact_origins: Vec::new(),
             },
             Err(error) => return Err(error.into()),
         };
@@ -157,6 +160,7 @@ impl VmWakeSchedule {
             vault: self.ledger.vault.clone(),
             report: Some(report.head),
             training: Some(report.training),
+            artifact_origins: report.artifact_origins,
             entries,
         };
         self.save(&ledger)?;
@@ -191,6 +195,7 @@ impl VmWakeSchedule {
             vault: self.ledger.vault.clone(),
             report: self.ledger.report.clone(),
             training: self.ledger.training.clone(),
+            artifact_origins: self.ledger.artifact_origins.clone(),
             entries: self
                 .ledger
                 .entries

@@ -27,7 +27,6 @@ pub struct CitationPin {
     pub actor: DocActor,
 }
 
-#[cfg(feature = "sync")]
 impl CitationPin {
     /// The quoted entity and the citing record, when the pin is whole: its
     /// ids each in their one spelling, its anchor on its own entity at a

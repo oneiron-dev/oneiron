@@ -12,7 +12,7 @@ use crate::deck::{self, DeckError, DeckView, ShapeView, SlideView};
 use crate::design_plan::{
     AssetBinding, Brief, CompileError, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
-use crate::docx_body::{project_docx, read_docx_blocks};
+use crate::docx_body::{project_docx, read_docx_body};
 use crate::edit::EditRefusal;
 use crate::edit::transaction::{
     AssetRef, Assets, DeckTransaction, Digest, IdMarks, StepRefusal, TransactionError,
@@ -46,10 +46,13 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
         // The DOCX arms read and parse within the operation's port (FIX 8570).
         Op::DocxRead(args) => {
             let document = input(inputs, args.document)?;
-            let blocks = resources
-                .docx(|| read_docx_blocks(document, args.limits.archive()))
+            let read = resources
+                .docx(|| read_docx_body(document, args.limits.archive()))
                 .map_err(docedit)?;
-            Ok(Done::reply(Reply::DocxBlocks { blocks }))
+            Ok(Done::reply(Reply::DocxBlocks {
+                blocks: read.blocks,
+                stories: read.stories,
+            }))
         }
         Op::DocxRevise(args) => {
             let document = input(inputs, args.document)?;

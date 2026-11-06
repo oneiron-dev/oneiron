@@ -4,7 +4,8 @@
 //! was put to are forgotten with it (FIX 4588).
 
 use super::asks::{ASKS, DecisionAsk};
-use super::ladder::AskRole;
+use super::ladder::{AskConsent, AskRole};
+use crate::vault_shape::ShapeGrantBound;
 use crate::{EntityId, Result, Vault};
 
 /// Makes a responsible role name no one when it named `actor`; whether it
@@ -15,6 +16,22 @@ fn forget_role(role: &mut AskRole, actor: EntityId) -> bool {
         AskRole::Responsible { actor: named, .. } => named.forget(actor),
         AskRole::Board { .. } | AskRole::Owner => false,
     }
+}
+
+/// Whether a consent attachment names `actor` as an action subject or an
+/// audience member, including the effect's requirements and its draft bound.
+fn consent_names_actor(consent: &AskConsent, actor: EntityId) -> bool {
+    std::iter::once(&consent.bound)
+        .chain(consent.effect.action.iter())
+        .chain(consent.effect.disclosure.iter())
+        .any(|bound| match bound {
+            ShapeGrantBound::Action { actor: named, .. } => {
+                EntityId::from_hex(named).is_ok_and(|named| named == actor)
+            }
+            ShapeGrantBound::Disclosure { audience, .. } => audience
+                .iter()
+                .any(|named| EntityId::from_hex(named).is_ok_and(|named| named == actor)),
+        })
 }
 
 /// Takes `actor` out of `ask` (FIX 3520, 4588): its principal, the
@@ -38,6 +55,14 @@ fn forget_in_ask(ask: &mut DecisionAsk, actor: EntityId) -> bool {
         named |= answer.by.forget(actor);
         named |= forget_role(&mut answer.role, actor);
     }
+    if ask
+        .consent
+        .as_ref()
+        .is_some_and(|consent| consent_names_actor(consent, actor))
+    {
+        ask.consent = None;
+        named = true;
+    }
     named
 }
 
@@ -47,7 +72,9 @@ use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the asks (FIX 3520): each answer it gave keeps its
 /// value, time, role, kind, reason and rule, and names no one. The ask stays
-/// answered, since clearing the answer would reopen it. A use of the answer
+/// answered, since clearing the answer would reopen it. A consent attachment
+/// naming the erased actor is cleared, not rewritten into a different bound;
+/// the question, answer and withdrawal state stay intact. A use of the answer
 /// still to run takes a live answerer: the e-sign hold refuses an erased
 /// one. An ask for it, or routed or put to it, keeps its question, evidence,
 /// times and answer and names no one (FIX 4588): an ask for no one rebuilds

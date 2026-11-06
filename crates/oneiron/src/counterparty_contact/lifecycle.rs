@@ -81,6 +81,7 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
                     end: now.max(raw.occurred.start),
                 },
                 learned_at: raw.learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: true,
@@ -162,6 +163,7 @@ impl ClaimHeadWriter<'_> {
                     end: now.max(raw.occurred.start),
                 },
                 learned_at: raw.learned_at,
+                row_version: None,
                 data: crate::claim::encode_claim_body(&body)?,
                 allow_maintenance: false,
                 allow_reserved_predicate: true,
@@ -400,8 +402,22 @@ fn contact_claim_bodies_in_txn(
     contact_id: &EntityId,
 ) -> Result<Vec<crate::claim::ClaimBody>> {
     let mut bodies = Vec::new();
+    let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
+    let mut duplicate = false;
+    // Keep the first duplicate for the fold, but read every claim so later
+    // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
         if let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? {
+            if duplicate || !is_live_contact_head(&body) {
+                continue;
+            }
+            let Some(index) = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
+                .iter()
+                .position(|predicate| *predicate == body.predicate)
+            else {
+                continue;
+            };
+            duplicate = std::mem::replace(&mut seen[index], true);
             bodies.push(body);
         }
     }
@@ -527,6 +543,17 @@ fn counterparty_contact_record_from_heads(
     decode_counterparty_contact_value(&Value::Map(entries))
 }
 
+fn fold_party_opt_out_heads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    record: &mut CounterpartyContactRecord,
+) -> Result<()> {
+    vault
+        .store
+        .record_hooks
+        .fold_party_opt_out_heads_in_txn(vault, rtxn, record)
+}
+
 /// OR-folds every live `comm.opt_out` head for this record's party that COVERS
 /// this record's channel class into it.
 ///
@@ -547,12 +574,15 @@ fn counterparty_contact_record_from_heads(
 /// re-derives the row. A contact whose identity resolves to no class is UNKNOWN,
 /// and unknown matches EVERY head: the same CA-01 uncertainty rule
 /// [`counterparty_contact_matches_channel_class`] states, resolved restrictively.
-fn fold_party_opt_out_heads_in_txn(
+pub(crate) fn fold_party_opt_out_heads_for_store_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     record: &mut CounterpartyContactRecord,
 ) -> Result<()> {
-    let Some(party_ref) = crate::comm::resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
+    let Some(party_ref) = vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
         .map_err(comm_fold_error)?
     else {
         return Ok(());

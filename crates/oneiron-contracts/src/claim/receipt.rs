@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::gate::RetrievalFilter;
 
+const GRANT_SCOPE_REPLAN_HINT: &str = "grant_scope";
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadScope {
     /// Admitted entity types; absent means every registered type. On the
@@ -48,7 +50,8 @@ pub struct ScopedReadReceipt {
     /// matching posting of a text search, but only the refused nodes a vector
     /// walk visited, not every vector the request excludes.
     pub suppressed_count: usize,
-    /// Machine-readable re-plan hint: names axes, not prose to parse.
+    /// Machine-readable re-plan hints: narrowed axes and an independent
+    /// `grant_scope` hint when the reader's own grant bounds its scope.
     pub replan_hint: Vec<String>,
 }
 
@@ -98,6 +101,17 @@ impl ReadScope {
 }
 
 impl ScopedReadReceipt {
+    /// Records a static grant boundary, independently of observed row exclusions.
+    pub fn record_grant_scope(&mut self) {
+        if !self
+            .replan_hint
+            .iter()
+            .any(|hint| hint == GRANT_SCOPE_REPLAN_HINT)
+        {
+            self.replan_hint.push(GRANT_SCOPE_REPLAN_HINT.to_owned());
+        }
+    }
+
     /// Add existing rows withheld by a consumer projection, not missing refs or page limits.
     /// The row-authority axis and re-plan hint stay consistent with the new count.
     pub fn add_suppressed(&mut self, count: usize) {
@@ -117,14 +131,26 @@ impl ScopedReadReceipt {
                 self.narrowed_axes.push(axis.clone());
             }
         }
+        if later
+            .replan_hint
+            .iter()
+            .any(|hint| hint == GRANT_SCOPE_REPLAN_HINT)
+        {
+            self.record_grant_scope();
+        }
         self.record_axes();
     }
 
     /// Recomputes `narrowed_axes` and `replan_hint` from the three scopes and the
     /// suppressed count. Engine seam: `oneiron`'s scoped-read receipt builder calls it
     /// after assembling the scopes. It only derives the axis lists from fields that are
-    /// already public, so it cannot widen a receipt.
+    /// already public, so it cannot widen a receipt. The independent static grant
+    /// hint survives recomputation and is never added to `narrowed_axes`.
     pub fn record_axes(&mut self) {
+        let grant_scope = self
+            .replan_hint
+            .iter()
+            .any(|hint| hint == GRANT_SCOPE_REPLAN_HINT);
         let differences = [
             (
                 "entity_types",
@@ -155,5 +181,8 @@ impl ScopedReadReceipt {
             }
         }
         self.replan_hint.clone_from(&self.narrowed_axes);
+        if grant_scope {
+            self.record_grant_scope();
+        }
     }
 }

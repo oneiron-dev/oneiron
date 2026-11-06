@@ -205,6 +205,10 @@ pub struct VaultConfig {
     /// from the recipient its supervisor delivered, never from the owner's
     /// settings. Both presets seal none, a self-hosted vault's way.
     pub checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing,
+    /// Operator-provided enterprise/advanced capability allowing this hosted
+    /// vault's owner to choose checkpoint roots without the host. Never an
+    /// owner setting or a request credential; false in both presets.
+    pub allow_host_checkpoint_opt_out: bool,
 }
 
 /// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
@@ -389,6 +393,7 @@ impl VaultConfig {
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
+            allow_host_checkpoint_opt_out: false,
         }
     }
 
@@ -425,6 +430,7 @@ impl VaultConfig {
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
+            allow_host_checkpoint_opt_out: false,
         }
     }
 

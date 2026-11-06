@@ -47,6 +47,7 @@ use crate::write_envelope::WriteActor;
 
 mod live_edit;
 pub(crate) use live_edit::LiveEditAdmission;
+pub(super) use live_edit::revoke_office_edit_grants_naming_in_txn;
 pub(super) use live_edit::{
     admit_live_edit_in_txn, covering_live_grant, identical_live_edit_grant_active_in_txn,
     live_edit_admission_in_txn, live_edit_effect, mint_live_edit_grant_in_txn, office_bound,
@@ -57,7 +58,6 @@ pub(super) use live_edit::{
 /// an artifact without a person's word.
 pub const OFFICE_BODY_EDIT_CLASS: &str = "entity.office.edit";
 const OFFICE_MERGE_OPERATION: &str = "office.body.merge";
-const MAX_REASON_BYTES: usize = 1024;
 
 /// Each proposal by its id. The header's artifact is its home, not its key.
 pub(super) const PROPOSALS: SideTable<EntityId, OfficeBodyProposal, Named> =
@@ -278,18 +278,35 @@ impl Vault {
         ask: ProposalAsk,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
-            let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
-                return Ok(());
-            };
-            if record.settlement.is_some() || record.asks.iter().any(|held| held.ask == ask.ask) {
-                return Ok(());
-            }
-            record
-                .ask_refused
-                .retain(|held| held.artifact != ask.artifact);
-            record.asks.push(ask);
-            PROPOSALS.put(&self.store, wtxn, proposal, &record)
+            self.record_office_proposal_ask_in_txn(wtxn, proposal, ask)
         })
+    }
+
+    /// Keep a proposal's ask link in the ask admission's transaction.
+    pub(super) fn record_office_proposal_ask_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        proposal: &EntityId,
+        ask: ProposalAsk,
+    ) -> Result<()> {
+        let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
+            return Ok(());
+        };
+        if record.settlement.is_some() {
+            return Ok(());
+        }
+        let repeated = record.asks.iter().any(|held| held.ask == ask.ask);
+        let refused = record.ask_refused.len();
+        record
+            .ask_refused
+            .retain(|held| held.artifact != ask.artifact);
+        if repeated && record.ask_refused.len() == refused {
+            return Ok(());
+        }
+        if !repeated {
+            record.asks.push(ask);
+        }
+        PROPOSALS.put(&self.store, wtxn, proposal, &record)
     }
 
     /// Record that ask admission refused one member artifact's holder ask.
@@ -500,8 +517,8 @@ pub(super) fn settle_in_txn(
         return Err(invalid("the proposal is settled"));
     }
     let reason = match request.reason.map(str::trim) {
-        Some(reason) if reason.is_empty() || reason.len() > MAX_REASON_BYTES => {
-            return Err(invalid("a settlement reason is 1 to 1024 bytes"));
+        Some(reason) if reason.is_empty() => {
+            return Err(invalid("a settlement reason is not empty"));
         }
         reason => reason.map(str::to_owned),
     };

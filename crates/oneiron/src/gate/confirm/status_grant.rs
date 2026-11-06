@@ -91,6 +91,7 @@ pub(in crate::gate) fn put_preauthorized_claim_status_in_txn(
             entity_type: ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,

@@ -27,6 +27,7 @@ pub(super) fn create_commit(
     is_new_vault: bool,
     seed_mode: DefaultPolicySeedMode,
     gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     torn_creation_cleanup: &mut TornCreationCleanup,
 ) -> Result<RawDatabases> {
     let raw = RawDatabases {
@@ -72,6 +73,7 @@ pub(super) fn create_commit(
         let temporal_learned = OverlayDb::canonical(raw.temporal_learned);
         seed_default_policy_manifest_in_txn(
             gate_hooks,
+            clock,
             &entities,
             &crate::overlay_db::OverlayStrDb::canonical(raw.sync_state),
             &type_index,

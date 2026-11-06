@@ -426,6 +426,7 @@ impl VaultVm {
     }
 
     pub(super) async fn restore(&mut self, timeout: Duration) -> anyhow::Result<()> {
+        self.observe_snapshot_image_release();
         // Consumed before load: a crash from here on never resumes this RAM
         // a second time, it boots cold from the vault disk instead. A restore
         // that fails, or is dropped, after a rename unlinks the name it took

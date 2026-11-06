@@ -1,7 +1,7 @@
 //! Host-authenticated process declarations and their existing private preview leases.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use oneiron::artifact_hosting::door_types::*;
 use oneiron::artifact_hosting::preview::PreviewSessionManifest;
@@ -12,20 +12,32 @@ use oneiron_vault_contract::host::PreviewPortHost;
 use tokio::sync::Mutex;
 
 use crate::managed::ManagedShutdown;
-use crate::managed::preview::{LocalPreviewHost, PreviewLease, PreviewProcess};
+use crate::managed::preview::{LocalPreviewHost, PreviewLease, PreviewProcess, PreviewRoutes};
 
 #[derive(Default)]
 pub(crate) struct ArtifactPreviews {
     held: Mutex<BTreeMap<(String, String), HostedPreview>>,
+    routes: OnceLock<Arc<PreviewRoutes>>,
 }
 
 struct HostedPreview {
     manifest: PreviewSessionManifest,
     host: LocalPreviewHost,
-    lease: Option<PreviewLease>,
+    lease: Option<Arc<PreviewLease>>,
 }
 
 impl super::SyncServer {
+    /// Bound once before the managed ready byte; this installs no process or lease.
+    pub(crate) fn configure_artifact_preview_routes(
+        &self,
+        routes: Arc<PreviewRoutes>,
+    ) -> anyhow::Result<()> {
+        self.artifact_previews
+            .routes
+            .set(routes)
+            .map_err(|_| anyhow::anyhow!("preview routes already configured"))
+    }
+
     /// The trusted session runtime installs its verified process, connector
     /// and stop signal. No HTTP input can install or replace a connector.
     pub async fn install_artifact_preview_process(
@@ -44,11 +56,12 @@ impl super::SyncServer {
                 "preview lease is already installed",
             ));
         }
+        let host = LocalPreviewHost::new(process, stop);
         held.insert(
             key,
             HostedPreview {
                 manifest,
-                host: LocalPreviewHost::new(process, stop),
+                host,
                 lease: None,
             },
         );
@@ -61,27 +74,30 @@ impl ArtifactPreviews {
         &self,
         manifest: PreviewSessionManifest,
     ) -> MemoryResult<ArtifactPreviewView> {
-        let mut held = self.held.lock().await;
-        let key = (manifest.session_ref.clone(), manifest.lease_ref.clone());
-        let entry = held.get_mut(&key).ok_or_else(unbound)?;
-        if manifest != entry.manifest {
-            return Err(MemoryError::bad_request(
-                "preview manifest does not match the runtime declaration",
-            ));
+        let lease = {
+            let mut held = self.held.lock().await;
+            let key = (manifest.session_ref.clone(), manifest.lease_ref.clone());
+            let entry = held.get_mut(&key).ok_or_else(unbound)?;
+            if manifest != entry.manifest {
+                return Err(MemoryError::bad_request(
+                    "preview manifest does not match the runtime declaration",
+                ));
+            }
+            if entry.lease.is_none() {
+                entry.lease = Some(Arc::new(
+                    entry
+                        .host
+                        .open_preview(manifest.clone())
+                        .await
+                        .map_err(preview_error)?,
+                ));
+            }
+            Arc::clone(entry.lease.as_ref().ok_or_else(unbound)?)
+        };
+        if let Some(routes) = self.routes.get() {
+            lease.bind_hosted(routes).await.map_err(preview_error)?;
         }
-        if entry.lease.is_none() {
-            entry.lease = Some(
-                entry
-                    .host
-                    .open_preview(manifest.clone())
-                    .await
-                    .map_err(preview_error)?,
-            );
-        }
-        view(
-            entry.lease.as_ref().ok_or_else(unbound)?,
-            &manifest.owner_ref,
-        )
+        view(&lease, &manifest.owner_ref)
     }
 
     pub(crate) async fn read(
@@ -113,7 +129,11 @@ impl ArtifactPreviews {
         if entry.manifest.owner_ref != owner {
             return Err(preview_error("preview owner action refused"));
         }
-        // Dropping the existing lease ends all tokens, streams and upgrades.
+        // End the same lease now, even if an in-flight registration holds an
+        // Arc while its supervisor handshake is being cancelled.
+        if let Some(lease) = &entry.lease {
+            lease.close();
+        }
         let closed = held.remove(&key).is_some();
         Ok(ArtifactPreviewClosed { closed })
     }
@@ -163,7 +183,7 @@ fn lease<'a>(
     key: &(String, String),
 ) -> MemoryResult<&'a PreviewLease> {
     held.get(key)
-        .and_then(|entry| entry.lease.as_ref())
+        .and_then(|entry| entry.lease.as_deref())
         .filter(|lease| lease.is_live())
         .ok_or_else(unbound)
 }

@@ -115,8 +115,9 @@ pub(crate) struct RedactionReceiptInput {
 //
 // Signature transcript (byte-exact):
 //   msg = RECEIPT_ATT_DOMAIN || entity_id:16
-//         || envelope_header:25 ([type:1][occurred_start:8 BE]
-//            [occurred_end:8 BE][learned_at:8 BE], exactly the stored bytes)
+//         || envelope_header:33 ([type:1][occurred_start:8 BE]
+//            [occurred_end:8 BE][learned_at:8 BE][row_version:8 BE], exactly
+//            the stored bytes; REDACTION_AUDIT has row_version zero)
 //         || body_msgpack_with_verification_EMPTY
 //
 // The signer encodes with `verification = {}` (those bytes ARE the
@@ -140,12 +141,14 @@ pub(super) const ATT_VERSION: &str = "1";
 /// carries in place of the four att_ entries.
 pub(crate) const ATT_EMPTY_MAP_BYTE: u8 = 0x80;
 
-/// The pinned 25 B REDACTION_AUDIT envelope header: receipts are point
-/// events (`occurred_start == occurred_end == learned_at`), all three
-/// timestamps u64 BE. Shared by the receipt writer and the attestation
-/// transcript so the signed header bytes are EXACTLY the stored bytes.
-pub(crate) fn receipt_envelope_header(learned_at: u64) -> [u8; 25] {
-    let mut header = [0u8; 25];
+/// The REDACTION_AUDIT entity header: receipts are point events
+/// (`occurred_start == occurred_end == learned_at`), all three timestamps
+/// u64 BE and their non-CLAIM row version zero. Shared by the receipt writer
+/// and attestation transcript, so signed and stored header bytes agree.
+pub(crate) fn receipt_envelope_header(
+    learned_at: u64,
+) -> [u8; crate::batch::ENTITY_METADATA_HEADER_LEN] {
+    let mut header = [0u8; crate::batch::ENTITY_METADATA_HEADER_LEN];
     header[0] = crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
     header[1..9].copy_from_slice(&learned_at.to_be_bytes());
     header[9..17].copy_from_slice(&learned_at.to_be_bytes());
@@ -512,7 +515,7 @@ impl Vault {
         // key is the one the delete door loaded before its first txn (P6c);
         // the client id is minted in THIS txn when missing — all receipt-mint
         // paths funnel through here, so this is the single in-txn hook.
-        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
         let hard_purge_complete_at = input.hard_purge_complete_at;
         for entity in &input.scope.entity_ids {
             crate::ports::audit_mutation_in_txn(
@@ -579,17 +582,26 @@ impl Vault {
             hard_purge_complete_at: now,
             sweep_queued_at: cfg!(feature = "sync").then_some(now),
         };
-        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
-        let body =
-            encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)?;
+        let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let custody_retirements = self
+            .store
+            .erase_custody_retirements_in_txn(wtxn, &[*edit])?;
+        let body = encode_redaction_audit_receipt(
+            input,
+            custody_retirements,
+            Vec::new(),
+            &receipt_id,
+            &identity,
+        )?;
         self.put_redaction_audit_receipt_in_txn(wtxn, &receipt_id, now, &body)?;
         #[cfg(feature = "sync")]
-        let sweep_key = crate::sweep::owed::owe_window_compaction_for_receipt_in_txn(
-            self,
-            wtxn,
-            &window,
-            &receipt_id,
-        )?;
+        let sweep_key =
+            crate::deletion::owed_window_compaction::owe_window_compaction_for_receipt_in_txn(
+                self,
+                wtxn,
+                &window,
+                &receipt_id,
+            )?;
         #[cfg(not(feature = "sync"))]
         let sweep_key = {
             let receipt = decode_redaction_audit_receipt(&body)?;

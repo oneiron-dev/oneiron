@@ -3,6 +3,7 @@
 //! Defines its own items.
 
 use super::*;
+use crate::ports::EntityStoreRead;
 
 /// The generic projector write. `evidence` is the audit anchor the outcome
 /// rests on; it rides the claim's evidence, never the three-field value.
@@ -22,6 +23,23 @@ pub(super) fn record_event_outcome_in_txn(
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    // Blind-review P1a (REVIEW-4389): the constructor's scope_facet is the
+    // EVENT's substrate id — a derived id, not a stored FACET — so the CLAIM
+    // birth edge the put stamps would fail InvalidFacet. The outcome takes
+    // the EVENT's own stored birth facet (its put wrote the FacetOf edge in
+    // this txn), else the vault default.
+    let event_facet = crate::federation::record_scope::birth_facet(&vault.store, wtxn, event_ref)?;
+    body.scope_facet = match event_facet {
+        Some(facet)
+            if vault
+                .store
+                .port_entity_record(wtxn, &facet)?
+                .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_FACET) =>
+        {
+            facet
+        }
+        _ => crate::claim::default_facet_in(&vault.store, wtxn)?,
+    };
     body.source = Some(source);
     body.valid_from = Some(value.recorded_at);
     body.evidence = evidence.map(evidence_anchor);

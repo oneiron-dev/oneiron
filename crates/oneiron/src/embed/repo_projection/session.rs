@@ -44,6 +44,7 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
     sources: &BTreeSet<[u8; 32]>,
     affected: &BTreeSet<EntityId>,
 ) -> Result<()> {
+    let prefixes = crate::embed::space::repo_projection::media_row_prefixes();
     for overlay in vault.store.off_record_sessions.live_overlay_handles() {
         let mut ids = affected.clone();
         match overlay.snapshot() {
@@ -61,10 +62,7 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
                     // FIX 9949: an ASSET's bytes are the blob it holds by
                     // reference, read in the writer's snapshot.
                     let hash = super::repo_media_bytes(data, |blob| {
-                        Ok(vault
-                            .store
-                            .port_entity_record(wtxn, blob)?
-                            .map(|blob| blob.body))
+                        super::repo_blob_body_in_txn(vault, wtxn, blob)
                     })?
                     .map(|bytes| blake3::hash(&bytes));
                     if hash.is_some_and(|hash| sources.contains(hash.as_bytes())) {
@@ -80,9 +78,7 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
         if ids.is_empty() {
             continue;
         }
-        let keys =
-            crate::embed::space::repo_projection::media_row_keys_in(&vault.store, wtxn, &ids)?;
-        if let Err(error) = overlay.invalidate_repo_media_copies(&keys, &ids) {
+        if let Err(error) = overlay.invalidate_repo_media_copies(&prefixes, &ids) {
             tracing::warn!(error = %error, "a room's staged media copies stay to its landing check");
         }
     }

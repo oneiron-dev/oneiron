@@ -11,7 +11,8 @@ pub(crate) mod classified;
 mod codec;
 mod decls;
 mod erased;
-mod key;
+use oneiron_store::side_table::key;
+mod raw_reverse;
 #[cfg(test)]
 mod tests;
 

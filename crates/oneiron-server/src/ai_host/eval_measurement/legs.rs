@@ -392,10 +392,10 @@ fn native_served(
         return Ok(NativeServed::Refused(MeasurementUnavailable::PinMoved));
     }
     let served = match seat {
-        EvalSeat::Embedder => server.embedder.as_ref().is_some_and(|slot| {
+        EvalSeat::Embedder => server.embedder_slot().is_some_and(|slot| {
             slot.config().model_id == model.as_str() && slot.admitted_provider().is_some()
         }),
-        EvalSeat::ExtractionTagger => server.tagger.as_ref().is_some_and(|slot| {
+        EvalSeat::ExtractionTagger => server.tagger_slot().is_some_and(|slot| {
             slot.selected_by(vault).is_ok() && slot.tagger().model_id() == &model
         }),
         EvalSeat::Router | EvalSeat::Decision => server.decision_ladder_for_model(&model).is_ok(),
@@ -491,7 +491,7 @@ impl NativeArms {
                 if arm.skill.is_some() {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
                 }
-                let Some(slot) = server.embedder.as_ref() else {
+                let Some(slot) = server.embedder_slot() else {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoExactModelRoute);
                 };
                 let task_vector = match slot.embed_query_exact(&arm.model, &prompt, run) {
@@ -519,7 +519,7 @@ impl NativeArms {
                 }
             }
             EvalSeat::ExtractionTagger => {
-                let Some(slot) = server.tagger.as_ref() else {
+                let Some(slot) = server.tagger_slot() else {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoExactModelRoute);
                 };
                 let context = arm

@@ -94,6 +94,10 @@ pub struct LimitsConfig {
     /// is refused with the typed 413 naming this bound, and raises the
     /// OF-520 question once per caller, door and field.
     pub retrieval_query_bytes: usize,
+    /// Original text bytes one semantic search may carry before its row
+    /// raises the OF-520 question. The query still runs whole past this row;
+    /// only the embedder's own input window cuts it.
+    pub semantic_query_bytes: usize,
     /// Stored body bytes one multi-row read decodes. A row past it is served
     /// with a `bodyOmitted` marker in place of its body; a single-entity read
     /// returns its body whole, whatever its size.
@@ -109,6 +113,10 @@ pub struct LimitsConfig {
     /// How long work may wait for its turn, in milliseconds: a request
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
+    /// How long a verb call a budget window paced waits in its caller's
+    /// line for its turn, in seconds, counted from its hold; past it the
+    /// call ends unrun (FIX 8753, ARCH-0044 C5). A week by default.
+    pub paced_verb_wait_secs: u64,
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
@@ -155,6 +163,20 @@ pub struct LimitsConfig {
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
     pub feedback_inbox_bytes: u64,
+    /// Failed pairing redemptions one client address may make before it
+    /// waits (FIX 12477): each attempt past these waits twice as long as the
+    /// one before, from one second, up to `pairing_redeem_wait_ceiling_ms`.
+    /// Zero makes the first failure wait. A success, or no attempt for
+    /// `pairing_redeem_quiet_ms`, starts the address over. Every address
+    /// counts alike, loopback and mesh peers too; no address ever blocks
+    /// another's pairing.
+    pub pairing_redeem_free_failures: u32,
+    /// The longest wait between one address's pairing redemptions, in
+    /// milliseconds.
+    pub pairing_redeem_wait_ceiling_ms: u64,
+    /// How long, in milliseconds, an address must make no pairing
+    /// redemption before its failures are forgotten.
+    pub pairing_redeem_quiet_ms: u64,
     /// The engine's rows (`oneiron::limit_ask`), which the vault opens with:
     /// work past one is served whole, and the row asks.
     pub engine: EngineLimits,
@@ -182,10 +204,12 @@ impl Default for LimitsConfig {
             // Format bounds far above a question or a page of bodies: 128
             // times the facade's 8 KiB query and 64 times one entity payload.
             retrieval_query_bytes: 1 << 20,
+            semantic_query_bytes: 8_388_608,
             projection_body_bytes: 4 << 20,
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
+            paced_verb_wait_secs: oneiron::runtime_hooks::verb::PACED_VERB_WAIT_DEFAULT_SECS,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
             live_sessions: 4_096,
             live_subscriptions: 65_536,
@@ -195,6 +219,11 @@ impl Default for LimitsConfig {
             media_reply_bytes: memory_floor(),
             chat_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
+            // Room for an owner's typos; past them, a 40-bit code guessed at
+            // one try an hour per address (FIX 12477, CALLS row).
+            pairing_redeem_free_failures: 5,
+            pairing_redeem_wait_ceiling_ms: 3_600_000,
+            pairing_redeem_quiet_ms: 3_600_000,
             engine: EngineLimits::default(),
         }
     }
@@ -251,10 +280,12 @@ impl LimitsConfig {
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
+            semantic_query_bytes,
             projection_body_bytes,
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
+            paced_verb_wait_secs,
             disk_reserve_bytes,
             live_sessions,
             live_subscriptions,
@@ -264,6 +295,9 @@ impl LimitsConfig {
             media_reply_bytes,
             chat_reply_bytes,
             feedback_inbox_bytes,
+            pairing_redeem_free_failures,
+            pairing_redeem_wait_ceiling_ms,
+            pairing_redeem_quiet_ms,
             keyed_filter_json_bytes,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
@@ -345,6 +379,7 @@ impl LimitsConfig {
             seal_answer_bytes,
             seal_memory_asks,
             seal_crl_bytes,
+            seal_ocsp_bytes,
             seal_tsa_bytes,
             seal_report_json_bytes,
             seal_prepared_stream_bytes,
@@ -400,6 +435,15 @@ impl LimitsConfig {
             connector_manifest_entries,
             context_third_parties,
             memory_pinned_refs,
+            codebase_manifest_files,
+            requested_result_rows,
+            embedding_dimensions,
+            shared_merge_evidence_rows,
+            memory_reason_evidence_rows,
+            memory_reason_tokens,
+            context_edge_hops,
+            context_neighbors,
+            context_selected_edges,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -419,6 +463,7 @@ impl LimitsConfig {
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
+        set(&mut self.semantic_query_bytes, semantic_query_bytes);
         set(&mut self.projection_body_bytes, projection_body_bytes);
         set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
         set(
@@ -426,6 +471,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
+        set(&mut self.paced_verb_wait_secs, paced_verb_wait_secs);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
         set(&mut self.live_sessions, live_sessions);
         set(&mut self.live_subscriptions, live_subscriptions);
@@ -435,6 +481,15 @@ impl LimitsConfig {
         set(&mut self.media_reply_bytes, media_reply_bytes);
         set(&mut self.chat_reply_bytes, chat_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        set(
+            &mut self.pairing_redeem_free_failures,
+            pairing_redeem_free_failures,
+        );
+        set(
+            &mut self.pairing_redeem_wait_ceiling_ms,
+            pairing_redeem_wait_ceiling_ms,
+        );
+        set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
@@ -553,6 +608,7 @@ impl LimitsConfig {
             (EngineLimit::SealAnswerBytes, seal_answer_bytes),
             (EngineLimit::SealMemoryAsks, seal_memory_asks),
             (EngineLimit::SealCrlBytes, seal_crl_bytes),
+            (EngineLimit::SealOcspBytes, seal_ocsp_bytes),
             (EngineLimit::SealTsaBytes, seal_tsa_bytes),
             (EngineLimit::SealReportJsonBytes, seal_report_json_bytes),
             (
@@ -650,6 +706,21 @@ impl LimitsConfig {
             ),
             (EngineLimit::ContextThirdParties, context_third_parties),
             (EngineLimit::MemoryPinnedRefs, memory_pinned_refs),
+            (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
+            (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::EmbeddingDimensions, embedding_dimensions),
+            (
+                EngineLimit::SharedMergeEvidenceRows,
+                shared_merge_evidence_rows,
+            ),
+            (
+                EngineLimit::MemoryReasonEvidenceRows,
+                memory_reason_evidence_rows,
+            ),
+            (EngineLimit::MemoryReasonTokens, memory_reason_tokens),
+            (EngineLimit::ContextEdgeHops, context_edge_hops),
+            (EngineLimit::ContextNeighbors, context_neighbors),
+            (EngineLimit::ContextSelectedEdges, context_selected_edges),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -680,10 +751,12 @@ impl LimitsConfig {
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
+            ("semantic_query_bytes", self.semantic_query_bytes as u64),
             ("projection_body_bytes", self.projection_body_bytes as u64),
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("paced_verb_wait_secs", self.paced_verb_wait_secs),
             ("live_sessions", self.live_sessions as u64),
             ("live_subscriptions", self.live_subscriptions as u64),
             ("message_streams", self.message_streams as u64),
@@ -692,6 +765,11 @@ impl LimitsConfig {
             ("media_reply_bytes", self.media_reply_bytes),
             ("chat_reply_bytes", self.chat_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
+            (
+                "pairing_redeem_wait_ceiling_ms",
+                self.pairing_redeem_wait_ceiling_ms,
+            ),
+            ("pairing_redeem_quiet_ms", self.pairing_redeem_quiet_ms),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");

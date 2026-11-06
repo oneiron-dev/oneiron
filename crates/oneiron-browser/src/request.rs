@@ -53,11 +53,19 @@ impl BrowserBody for Cursor<Vec<u8>> {
     }
 }
 
+#[cfg(feature = "driver")]
+impl BrowserBody for Cursor<bytes::Bytes> {
+    fn len(&self) -> u64 {
+        self.get_ref().len() as u64
+    }
+}
+
 /// A handler's response whose body can be read in pieces.
 #[cfg(feature = "driver")]
 pub struct SpooledResponse {
     pub status: u16,
-    pub headers: Vec<(String, String)>,
+    /// HTTP field values as received, without UTF-8 decoding.
+    pub headers: Vec<(String, Vec<u8>)>,
     pub body: Box<dyn BrowserBody>,
 }
 
