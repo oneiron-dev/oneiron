@@ -36,8 +36,8 @@ pub(crate) use self::dispatch::execute_outbound_call;
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 pub(crate) use self::payload::{
-    LedgerPayloadContext, erase_outbound_intent_actor_in_txn, payload_recipient_in_txn,
-    stored_admission_in_txn,
+    LedgerPayloadContext, admitting_actor_in_txn, erase_outbound_intent_actor_in_txn,
+    payload_recipient_in_txn, stored_admission_in_txn,
 };
 pub(crate) use self::pinned_approval::{
     PinnedApproval, PinnedApprovalFamily, keep_pinned_approval_in_txn, keep_press_after_admission,

@@ -20,8 +20,8 @@ use oneiron::attempt_queue::{
 use oneiron::campaign::enrollment::{
     CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, EnrollmentLegDrive,
     audience_programs, campaign_enrollment_event, campaign_home_node_designation,
-    decode_enrollment_attempt_payload, drive_enrollment_outbound_leg,
-    elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
+    decode_enrollment_attempt_payload, elect_campaign_home_node_designation, enroll_audience_wake,
+    local_campaign_home_node_candidate,
 };
 use oneiron::campaign::sender::CampaignChannelSender;
 use oneiron::channel_identity_provider::stalwart::{StalwartClient, StalwartConfig};
@@ -261,7 +261,7 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         move || campaign_stalwart_client(&vault, placement.clone())
     });
     let now_ms = crate::runtime::wall_clock_ms();
-    let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
+    let drive = vault.drive_enrollment_outbound_leg(node, attempt, &mut sender, now_ms);
     Some(match drive {
         Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
             Settlement::Complete

@@ -57,7 +57,10 @@ impl Vault {
             return self.connector_reply_body_text(content_ref);
         }
         if content_ref.starts_with(CAMPAIGN_STEP_BODY_PREFIX) {
-            return self.campaign_step_body_text(content_ref);
+            return self
+                .store
+                .record_hooks
+                .campaign_step_body_text(self, content_ref);
         }
         // The approved content as approved, its approval and sources
         // revalidated by the representation loader itself.

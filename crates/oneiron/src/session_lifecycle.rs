@@ -199,6 +199,13 @@ pub struct EndedSession {
     pub last_activity: u64,
     pub ended_at: u64,
     pub reason: SessionEndReason,
+    /// The sitting's member TURNs the close planned its Meso round over.
+    pub meso_member_turns: usize,
+    /// The Meso partition attempts the close queued.
+    pub meso_partitions_enqueued: usize,
+    /// The Meso partition attempts the close found queued already for the
+    /// same partition and turns; they are the round's as well.
+    pub meso_partitions_existing: usize,
 }
 
 /// Close predicate for [`Vault::end_session_with_wake`], re-validated
@@ -502,6 +509,14 @@ impl Vault {
             }
         };
         if let SessionMintOutcome::Minted(session) = outcome {
+            // On the Dreamer's stage target: from this line on, a TURN this
+            // key witnesses joins the sitting.
+            tracing::info!(
+                target: "oneiron::dreamer::stages",
+                session = %session.to_hex(),
+                started_ms = timestamp.effective_ms,
+                "dreamer sitting open"
+            );
             // The sitting is open whatever a post-hook says.
             let result = json!({
                 "session": session.to_hex(),
@@ -797,7 +812,7 @@ impl Vault {
         let scope = DreamerConsolidationScope::Meso;
         let wake = self.plan_session_end_wake_in_txn(wtxn, &id)?;
         let current = read_watermark_in_txn(self, wtxn, scope)?;
-        enqueue_partition_attempts_in_txn(
+        let partitions = enqueue_partition_attempts_in_txn(
             self,
             wtxn,
             scope,
@@ -806,6 +821,15 @@ impl Vault {
             None,
             now,
         )?;
+        let meso_partitions_enqueued = partitions
+            .iter()
+            .filter(|outcome| {
+                matches!(
+                    outcome,
+                    crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(_)
+                )
+            })
+            .count();
 
         // (g) The sitting's summary (FIX 7509, ARCH-0026: the completion
         // event fires right then), same commit. Nothing is checked or read
@@ -822,6 +846,9 @@ impl Vault {
             last_activity: record.last_activity,
             ended_at,
             reason,
+            meso_member_turns: wake.planned_turn_ids.len(),
+            meso_partitions_enqueued,
+            meso_partitions_existing: partitions.len() - meso_partitions_enqueued,
         }))
     }
 
@@ -862,6 +889,20 @@ impl Vault {
                 return Err(error);
             }
         };
+        if let Some(ended) = &ended {
+            // The round the close owes, on the Dreamer's stage target: a
+            // close that planned no Meso partition says so, so a watcher
+            // never waits for a round that was not queued.
+            tracing::info!(
+                target: "oneiron::dreamer::stages",
+                session = %ended.session.to_hex(),
+                reason = end_reason_word(ended.reason),
+                member_turns = ended.meso_member_turns,
+                meso_partitions = ended.meso_partitions_enqueued + ended.meso_partitions_existing,
+                meso_partitions_enqueued = ended.meso_partitions_enqueued,
+                "dreamer sitting close"
+            );
+        }
         if let (Some(pre), Some(ended)) = (pre, &ended) {
             let result = json!({
                 "session": ended.session.to_hex(),
