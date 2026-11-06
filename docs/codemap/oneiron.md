@@ -1257,7 +1257,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/residence_page.rs` | src | s | 1 crate-vis | — | The home's paged residence search (FIX 8865): one ranked text list as deep as a device's whole request, past… |
 | `src/claim/scoped_read/retrieval_loop.rs` | src | s | 4 crate-vis | — | Scoped admission shared by the read-only retrieval loop's verbs |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 4 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
-| `src/claim/scoped_read/search.rs` | src | m | 7 fn · 18 crate-vis | — | — |
+| `src/claim/scoped_read/search.rs` | src | m | 7 fn · 21 crate-vis | — | — |
 | `src/claim/scoped_read/search/native_query.rs` | src | s | 2 crate-vis | — | The native raw read's scoped pipeline and pack arms: pre-rank authority gates plus the caller's own builder… |
 | `src/claim/scoped_read/selected_search.rs` | src | s | 1 crate-vis | — | A text search narrowed by a device's resolved recall scope (FIX 2905): the home's side of an opened device's… |
 | `src/claim/scoped_read/served_forms.rs` | src | s | 2 fn | — | The served-form receipts a read writes (OF-329): what it served of each asset, recorded under the holder it… |
@@ -1460,6 +1460,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/result_read/chunks.rs` | src | m | 2 crate-vis | — | `chunks`: a result cut into range refs, a page at a time |
 | `src/code_run/result_read/mod.rs` | src | L | 1 re-export · 24 crate-vis | — | Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`… |
 | `src/code_run/result_read/outside.rs` | src | s | 2 fn · 2 crate-vis | — | Reads of a code run's results for a caller outside the run: the cards of its named results, and one read of… |
+| `src/code_run/result_read/outside/diagnostics.rs` | src | s | 1 fn | — | One read of a code run's result through the MCP door, with the feedback of the step whose stored diagnostics… |
 | `src/code_run/result_read/query.rs` | src | XL | 9 crate-vis | — | `query`: the values a JSON path picks out of a result, or the rows of a line table (JSON lines, CSV, TSV)… |
 | `src/code_run/result_read/search.rs` | src | s | 1 crate-vis | — | `search`: the matches of a literal (by default) or a regex in a result, each with its offset, line and… |
 | `src/code_run/result_read/shape.rs` | src | s | 2 crate-vis | — | The shape a result's head shows of its format, for its card and for the way `query` reads it |
@@ -1516,7 +1517,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/session_write.rs` | src | s | 4 crate-vis | — | One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment… |
 | `src/code_run/storage/spawn_erase.rs` | src | s | 3 crate-vis | — | An erase of a spawn's target over the code-run replay rows (FIX 9180, Engine C2) |
 | `src/code_run/storage/speech_identity.rs` | src | s | 14 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
-| `src/code_run/storage/type_diagnostics.rs` | src | m | 1 fn · 19 crate-vis | — | The late-result store of code-mode type feedback (FIX 8277): one row per program step, keyed by its run… |
+| `src/code_run/storage/type_diagnostics.rs` | src | m | 1 fn · 20 crate-vis | — | The late-result store of code-mode type feedback (FIX 8277): one row per program step, keyed by its run… |
 | `src/code_run/storage/wait_delivery.rs` | src | L | 2 struct · 10 fn · 1 re-export · 14 crate-vis | WaitDeliveries, WaitKey | Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it |
 | `src/code_run/storage/wait_delivery/erased_read.rs` | src | s | 2 crate-vis | — | A wait's delivered and settled replies, read before they decode (FIX 9390): a row whose reply never decoded… |
 | `src/code_run/storage/wait_delivery/settle_report.rs` | src | s | 1 fn | — | A settle that says whose reply stands (FIX 4284): the settle a wait's answerer makes when it has to tell its… |
@@ -2744,8 +2745,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/slides_review/tests.rs` | test | L | — | — | — |
 | `src/edit_roundtrip/slides_review/verify.rs` | src | s | 6 crate-vis | — | Verification of retained slide judgment rows |
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
-| `src/edit_settle/carry.rs` | src | XL | 2 struct · 3 enum · 4 fn · 7 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
+| `src/edit_settle/carry.rs` | src | XL | 2 struct · 3 enum · 4 fn · 9 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
 | `src/edit_settle/carry/live.rs` | src | m | 14 crate-vis | — | The live-body half of a held answer proposal's split (FIX 2115) |
+| `src/edit_settle/carry/sheet_keep.rs` | src | s | 3 crate-vis | — | Source revisions that bind a sheet answer split to its settlement transaction |
 | `src/edit_settle/codec.rs` | src | m | 7 crate-vis | — | Row and anchor codec |
 | `src/edit_settle/keys.rs` | src | s | 4 const · 50 crate-vis | — | Pinned ledger keys and receipt fields |
 | `src/edit_settle/mod.rs` | src | s | 7 re-export · 4 crate-vis | — | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
@@ -2870,7 +2872,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/message_parts.rs` | src | m | 1 crate-vis | — | A continuation's ordered-parts append: its stored prefix extended by the terminal's suffix, written as the… |
 | `src/entity_doc/message_stream.rs` | src | s | 5 crate-vis | — | MESSAGE terminal commits join the common EntityDoc storage transaction |
 | `src/entity_doc/metadata.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | MetadataEdit | Editable record fields live in the owning document's meta map |
-| `src/entity_doc/mod.rs` | src | s | 2 mod · 11 re-export · 24 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
+| `src/entity_doc/mod.rs` | src | s | 2 mod · 11 re-export · 25 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `src/entity_doc/office.rs` | src | s | 3 struct · 4 fn · 1 type | DeckBody, DeckReview, ReevalWake | The live deck body bound to a deck entity (OF-510; ARCH-0077 "Multiplayer", ARCH-0075 section 4) |
 | `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 9 fn · 16 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
 | `src/entity_doc/pins/birth.rs` | src | s | 1 crate-vis | — | A MESSAGE quote anchored to the atomic text a document's local birth took (FIX 8942) |
@@ -6780,7 +6782,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/storage.rs` | src | m | 2 fn · 1 re-export · 31 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/storage/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of the revision ledger (KS7-2): each entity's revision state, retained frontiers… |
 | `src/vault/entity_revision/storage/checkpoint/document.rs` | src | m | 8 crate-vis | — | A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE… |
-| `src/vault/entity_revision/storage/history.rs` | src | s | 9 crate-vis | — | Reads retained revisions from their original generic or common document |
+| `src/vault/entity_revision/storage/history.rs` | src | s | 11 crate-vis | — | Reads retained revisions from their original generic or common document |
 | `src/vault/entity_revision/storage/redact.rs` | src | m | 2 struct · 3 crate-vis | ClaimValueRedactionBinding, LocalClaimValueRedaction | Exact-field transforms for CLAIM revision artifacts (BIZ-LEGAL-0004 A9) |
 | `src/vault/entity_revision/storage/retained.rs` | src | s | 2 crate-vis | — | The revisions a row retains, read for a TURN's text revision search |
 | `src/vault/entity_revision/tests.rs` | test | L | — | — | Acceptance laws exercise the existing put/index/read engines, not a side store |
