@@ -359,7 +359,7 @@ pub(crate) fn apply_create(
 }
 
 /// Keep the body's original top-level lookup; named stories also address
-/// direct cell paragraphs by their imported native paragraph id.
+/// cell paragraphs by their imported native paragraph id.
 fn comment_target_mut<'a>(
     blocks: &'a mut [TrackedBlock],
     block_id: &NodeId,
@@ -371,30 +371,27 @@ fn comment_target_mut<'a>(
         return Ok((&mut tracked.block, &tracked.status));
     }
     if cells {
+        // Existing direct matches take priority over newly addressable descendants.
+        let has_direct_target = blocks.iter().any(|tracked| {
+            let BlockNode::Table(table) = &tracked.block else {
+                return false;
+            };
+            table
+                .rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .filter(|cell| cell.v_merge != crate::domain::VerticalMerge::Continue)
+                .flat_map(|cell| &cell.blocks)
+                .any(|block| super::super::block_id_of(block) == block_id)
+        });
         for tracked in blocks {
             let BlockNode::Table(table) = &mut tracked.block else {
                 continue;
             };
-            for row in &mut table.rows {
-                for cell in &mut row.cells {
-                    if cell.v_merge == crate::domain::VerticalMerge::Continue {
-                        continue;
-                    }
-                    for block in &mut cell.blocks {
-                        if super::super::block_id_of(block) != block_id {
-                            continue;
-                        }
-                        let status = [
-                            &tracked.status,
-                            row.tracking_status.as_ref().unwrap_or(&tracked.status),
-                            cell.tracking_status.as_ref().unwrap_or(&tracked.status),
-                        ]
-                        .into_iter()
-                        .find(|status| !matches!(status, TrackingStatus::Normal))
-                        .unwrap_or(&tracked.status);
-                        return Ok((block, status));
-                    }
-                }
+            if let Some(target) =
+                comment_table_target_mut(table, block_id, &tracked.status, !has_direct_target)
+            {
+                return Ok(target);
             }
         }
     }
@@ -402,6 +399,44 @@ fn comment_target_mut<'a>(
         block_id: block_id.clone(),
         step_index,
     })
+}
+
+fn comment_table_target_mut<'a>(
+    table: &'a mut crate::domain::TableNode,
+    block_id: &NodeId,
+    inherited: &'a TrackingStatus,
+    descend: bool,
+) -> Option<(&'a mut BlockNode, &'a TrackingStatus)> {
+    for row in &mut table.rows {
+        for cell in &mut row.cells {
+            if cell.v_merge == crate::domain::VerticalMerge::Continue {
+                continue;
+            }
+            let status = [
+                inherited,
+                row.tracking_status.as_ref().unwrap_or(inherited),
+                cell.tracking_status.as_ref().unwrap_or(inherited),
+            ]
+            .into_iter()
+            .find(|status| !matches!(status, TrackingStatus::Normal))
+            .unwrap_or(inherited);
+            for block in &mut cell.blocks {
+                if super::super::block_id_of(block) == block_id {
+                    return Some((block, status));
+                }
+                if descend {
+                    if let BlockNode::Table(nested) = block {
+                        if let Some(target) =
+                            comment_table_target_mut(nested, block_id, status, true)
+                        {
+                            return Some(target);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Resolve only the addressed native story. A local paragraph id never falls

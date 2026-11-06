@@ -256,3 +256,15 @@ therefore lifted for direct cells in named stories, not BODY or nested cells.
 Comment-content alternatives, structural history and full FIX 14487 remain open.
 No numeric constant, cap, default, schema integer, dependency, old reader,
 migration, test, compiler result or runtime/Word proof is added.
+
+
+## Nested native story-cell comment targets (FIX 14487)
+
+Named-story `CommentCreate` can resolve an imported paragraph id inside nested
+table cells. Existing top-level matches and all existing direct-cell matches keep
+their lookup priority. Deeper lookup visits native table/cell blocks in order,
+keeps the first non-Normal ancestor status, and skips vertical-merge continuation
+cells at every level. The existing block guard, quoted-range selection, visible
+text, marker insertion, comment identity, and reply/delete maintenance are
+unchanged. Body lookup stays top-level only. This is native target lookup, not a
+claim of nested ParagraphAsk inventory, live-pin, or whole FIX 14487 support.
