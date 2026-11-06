@@ -37,18 +37,37 @@ unadmitted. Third-party prepared bytes are never substituted for trusted bytes;
 the first-party organ path and its work limits are unchanged.
 
 This native path has no actual call deadline or stop handle. It uses the
-existing `MachineFloor::lease_untimed` and the pending-preserving
-`FloorLease::grow_pending_untimed` bridge, not the
-configured timeout of an organ call that never ran. The server's `OrganFloor`
-forwards these to the same process memory line. The adapter retains the first
-floor/deadline refusal separately from PDF errors and reports it as a retryable
-preparation failure; it never labels that refusal a malformed input.
+existing `MachineFloor::lease_untimed`, not the configured timeout of an organ
+call that never ran. The server's `OrganFloor` forwards this to the same process
+memory line.
+
+Each parse attempt draws only from its already-reserved complete pool. A
+shortfall cancels that attempt internally and unwinds its buffers and stages;
+its pool lease is dropped too, before any new memory wait. The next attempt
+books a fresh pool of exactly the observed required size on the same FIFO line.
+No parsed buffer, decoded cache or previous pool reservation is held across
+that wait. There is no speculative growth, synthetic deadline or claim of
+materialization.
+
+Before booking, the existing native `check_irreducible_peak` predicate checks
+the caller's `pinned_buffer_bytes` plus the required complete pool. The seal
+producer supplies actual allocated capacities of every original PDF buffer,
+every distinct raster RGBA buffer, and prior sealed output buffers still held
+by that operation. The current original is included once, not added again as a
+slice length. The required Rust field has no invented fallback footprint.
+State/event/container/allocator and other private heap remain outside this
+witness; it is not whole-heap accounting or a global no-hang certificate. The
+predicate neither reserves nor creates a new limit. Real floor/deadline refusals return the existing retryable preparation
+failure, never a malformed input. Each attempt uses the already-replayed audit;
+it does not replay that audit or send an organ call again.
 
 The shared preparation body admits preflight parsing and source stream decodes.
-Cached page streams retain their admission through the cache's lifetime and
-still decode once. Form/pattern buffers, Type 3 glyph aggregates and page-content
+Within one attempt, cached page streams retain their admission through the
+cache's lifetime and each distinct stream decodes once. An unwound attempt's
+cache is discarded; a retry repeats the pure parse and source decoding. Form/pattern buffers, Type 3 glyph aggregates and page-content
 concatenations reserve before growth, including a new allocation while the old
-one lives. Temporary stages release only after their buffers drop. Reservations
+one lives. Temporary stages release only after their buffers drop, returning room to
+that attempt's pool; the machine lease lasts through the attempt. Reservations
 remain pending: this inspection interface supplies no materialization notice.
 This is not whole-heap accounting: input bytes, content-operation parsing, output
 objects, field rendering, audit strings and encoded output are not covered by
