@@ -144,7 +144,7 @@ fn decode_fields(body: &[u8]) -> Result<Vec<(rmpv::Value, rmpv::Value)>> {
 
 fn encode_fields(fields: Vec<(rmpv::Value, rmpv::Value)>) -> Result<Vec<u8>> {
     let mut data = Vec::new();
-    scoped_grants::write_value(&mut data, &rmpv::Value::Map(fields))?;
+    super::value_encoding::write_value(&mut data, &rmpv::Value::Map(fields))?;
     Ok(data)
 }
 
