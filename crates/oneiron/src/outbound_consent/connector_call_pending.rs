@@ -1,7 +1,8 @@
 //! Expiry of held and pending-delivery connector calls (ONE-2510).
 //!
 //! A call nobody settles expires [`CONNECTOR_CALL_PENDING_TTL_MS`] after it
-//! was first held; a retry never moves that deadline. Expiry settles the
+//! was first held; a retry never moves that deadline, and neither does a
+//! count window that paces the call (FIX 8753). Expiry settles the
 //! call's row, so the settler answers its wait and acknowledges it like any
 //! other terminal outcome. A call the ledger never admitted, or whose send
 //! definitely never reached the connector, is refused as
@@ -25,8 +26,9 @@ use super::connector_call::{
 
 /// How long a held or pending-delivery connector call waits for its hold to
 /// clear or its send to settle, from when it was first held: 7 days. One
-/// constant, so a later ruling changes one line.
-pub(super) const CONNECTOR_CALL_PENDING_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+/// constant, so a later ruling changes one line. A connector event wake a
+/// count window paces waits as long (FIX 8753).
+pub(crate) const CONNECTOR_CALL_PENDING_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 /// The stable reason an expired call carries.
 pub(super) const CONNECTOR_CALL_EXPIRED: &str = "connector_call_expired";
@@ -69,19 +71,18 @@ impl Vault {
     /// The outcome `pending` (the unsettled row `call_ref` names) settles
     /// with once its deadline has passed at `now_ms`; `None` while it may
     /// still be resumed. A call whose connector asked for input never
-    /// expires here: its send was delivered (FIX 3837).
+    /// expires here: its send was delivered (FIX 3837). A call a count
+    /// window paces keeps the deadline of its first hold (FIX 8753): pacing
+    /// queues it, and neither a later window nor a re-pace moves that
+    /// deadline, so a window that opens after it finds the call expired,
+    /// never sent.
     pub(super) fn expire_connector_call_if_due(
         &self,
         call_ref: &EntityId,
         pending: &PendingConnectorCall,
         now_ms: u64,
     ) -> Result<Option<ConnectorCallOutcome>, IntentLedgerError> {
-        // A call a budget window paces waits for its window and no longer
-        // (FIX 8686): it has no deadline of its own.
-        if pending.input.is_some()
-            || pending.paced_until.is_some()
-            || now_ms < connector_call_deadline(pending.held_at_ms)
-        {
+        if pending.input.is_some() || now_ms < connector_call_deadline(pending.held_at_ms) {
             return Ok(None);
         }
         let record = {

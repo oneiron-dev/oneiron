@@ -40,7 +40,7 @@ use std::cell::RefCell;
 use serde::{Deserialize, Serialize};
 
 use super::replay::CodeRunReplayRecord;
-use super::storage::{finalize_capsule, put_staged_capsule};
+use super::storage::{finalize_capsule, put_staged_capsule, refresh_staged_request};
 use crate::attempt_queue::AttemptId;
 use crate::llm::ReasoningEffort;
 use crate::vault::VaultId;
@@ -133,7 +133,10 @@ impl CapsuleDraft<'_> {
 struct Awaiting {
     vault: VaultId,
     key: (EntityId, u64, u64),
+    run: EntityId,
     messages: [u8; 32],
+    request_path: String,
+    exposures: Vec<ExposureSlot>,
     binding: Option<CapsuleRungBinding>,
     /// The route the answering rung went out on, beside its binding.
     route_pin: Option<ReplayRoutePin>,
@@ -154,6 +157,88 @@ thread_local! {
 fn messages_digest(messages: &[LlmMessage]) -> Option<[u8; 32]> {
     let bytes = serde_json::to_vec(messages).ok()?;
     Some(*blake3::hash(&bytes).as_bytes())
+}
+
+/// The actual admitted request replacing an unfinalized executor capture.
+pub(crate) struct CapsuleRequestUpdate<'a> {
+    pub(crate) key: (EntityId, u64, u64),
+    pub(crate) run: EntityId,
+    pub(crate) previous_messages: [u8; 32],
+    pub(crate) messages: [u8; 32],
+    pub(crate) request: &'a LlmRequest,
+    pub(crate) path: &'a str,
+    pub(crate) exposures: &'a [ExposureSlot],
+}
+
+/// Keeps the actual request after the host appended browser handoff evidence.
+/// The original prefix identifies only this run's existing staged capture;
+/// its entire post-route request is admitted and committed before the digest
+/// used by the answering rung changes. Failure never fails the live call.
+pub fn refresh_step_capture_request(
+    vault: &Vault,
+    run: EntityId,
+    request: &LlmRequest,
+    staged_len: usize,
+) {
+    if request.messages.len() <= staged_len {
+        return;
+    }
+    let Some(prefix) = request.messages.get(..staged_len) else {
+        return;
+    };
+    let (Some(previous_messages), Some(messages)) =
+        (messages_digest(prefix), messages_digest(&request.messages))
+    else {
+        return;
+    };
+    let vault_id = vault.vault_id();
+    let staged: Vec<_> = AWAITING.with(|awaiting| {
+        awaiting
+            .borrow()
+            .iter()
+            .filter(|entry| {
+                entry.vault == vault_id
+                    && entry.run == run
+                    && entry.messages == previous_messages
+                    && entry.binding.is_none()
+            })
+            .map(|entry| {
+                (
+                    entry.key,
+                    entry.request_path.clone(),
+                    entry.exposures.clone(),
+                )
+            })
+            .collect()
+    });
+    for (key, path, exposures) in staged {
+        let update = CapsuleRequestUpdate {
+            key,
+            run,
+            previous_messages,
+            messages,
+            request,
+            path: &path,
+            exposures: &exposures,
+        };
+        match refresh_staged_request(vault, &update) {
+            Ok(Some(bytes)) => AWAITING.with(|awaiting| {
+                for entry in awaiting.borrow_mut().iter_mut().filter(|entry| {
+                    entry.vault == vault_id
+                        && entry.key == key
+                        && entry.run == run
+                        && entry.messages == previous_messages
+                }) {
+                    entry.messages = messages;
+                    entry.bytes = bytes;
+                }
+            }),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "a routed step request was not captured");
+            }
+        }
+    }
 }
 
 /// Notes the rung that answered `request` for the capture on this thread
@@ -386,7 +471,10 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
     Ok(Some(Awaiting {
         vault: vault.vault_id(),
         key: draft.key(),
+        run: capture.run,
         messages,
+        request_path: draft.request_path,
+        exposures: draft.exposures,
         binding: None,
         route_pin: None,
         bytes: draft.request.len() as u64,
