@@ -27,6 +27,15 @@ const SHARE_SET_ID_LEN: usize = 16;
 /// Most shares a Shamir share set may have.
 const MAX_SHARES: u8 = 16;
 
+fn copy_fallible(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut copied = Vec::new();
+    copied
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| Error::OutOfMemory)?;
+    copied.extend_from_slice(bytes);
+    Ok(copied)
+}
+
 /// The fewest bytes a canonical header takes ([`Header::parse_prefix`]): one-byte
 /// ids, HKDF, no wrap parameters, a 12-byte nonce. Derived from the format; a
 /// reader that must find a header's end reads at least this much.
@@ -455,7 +464,7 @@ impl Header {
     /// `bytes`: the header and its canonical encoding.
     fn decode_canonical(r: &mut Reader<'_>, bytes: &[u8]) -> Result<(Self, Vec<u8>)> {
         let header = Self::decode(r)?;
-        let header_bytes = header.encode();
+        let header_bytes = header.try_encode()?;
         if header_bytes[..] != bytes[..r.position()] {
             return Err(Error::NonCanonical);
         }
@@ -479,9 +488,9 @@ impl Header {
         let purpose = Purpose::from_wire(r.u16("purpose")?)?;
         let epoch = r.u64("epoch")?;
         Suite::require(suite_id, &[SuiteKind::Aead], epoch)?;
-        let key_id = r.lp8("key_id", 1, MAX_ID_LEN)?.to_vec();
-        let recipient = r.lp8("recipient", 1, MAX_ID_LEN)?.to_vec();
-        let vault_id = r.lp8("vault_id", 1, MAX_ID_LEN)?.to_vec();
+        let key_id = copy_fallible(r.lp8("key_id", 1, MAX_ID_LEN)?)?;
+        let recipient = copy_fallible(r.lp8("recipient", 1, MAX_ID_LEN)?)?;
+        let vault_id = copy_fallible(r.lp8("vault_id", 1, MAX_ID_LEN)?)?;
         let kdf = match r.u8("kdf")? {
             1 => Kdf::HkdfSha256 {
                 salt: r.array::<KDF_SALT_LEN>("kdf salt")?,
@@ -509,9 +518,16 @@ impl Header {
                 let kem_suite = SuiteId(r.u16("kem suite")?);
                 Suite::require(kem_suite, &[SuiteKind::Kem], epoch)?;
                 let x25519_ephemeral = r.array::<32>("x25519 ephemeral")?;
-                let mut mlkem_ciphertext = Box::new([0u8; MLKEM1024_CIPHERTEXT_LEN]);
+                let mut mlkem_ciphertext = Vec::new();
                 mlkem_ciphertext
-                    .copy_from_slice(r.take(MLKEM1024_CIPHERTEXT_LEN, "mlkem ciphertext")?);
+                    .try_reserve_exact(MLKEM1024_CIPHERTEXT_LEN)
+                    .map_err(|_| Error::OutOfMemory)?;
+                mlkem_ciphertext
+                    .extend_from_slice(r.take(MLKEM1024_CIPHERTEXT_LEN, "mlkem ciphertext")?);
+                // Exact reservation and fill keep this fixed-size conversion in place.
+                let mlkem_ciphertext =
+                    Box::<[u8; MLKEM1024_CIPHERTEXT_LEN]>::try_from(mlkem_ciphertext)
+                        .expect("the parsed ML-KEM ciphertext has its fixed length");
                 WrapParams::Hybrid {
                     kem_suite,
                     x25519_ephemeral,
@@ -520,7 +536,7 @@ impl Header {
             }
             _ => WrapParams::None,
         };
-        let nonce = r.take(suite.nonce_len(), "nonce")?.to_vec();
+        let nonce = copy_fallible(r.take(suite.nonce_len(), "nonce")?)?;
         let ciphertext_len = r.u32("ciphertext_len")?;
         let header = Self {
             suite: suite_id,
@@ -555,9 +571,7 @@ impl Envelope {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let mut r = Reader::new(bytes);
         let (header, header_bytes) = Header::decode_canonical(&mut r, bytes)?;
-        let ciphertext = r
-            .take(header.ciphertext_len as usize, "ciphertext")?
-            .to_vec();
+        let ciphertext = copy_fallible(r.take(header.ciphertext_len as usize, "ciphertext")?)?;
         r.finish()?;
         Ok(Self {
             header,
