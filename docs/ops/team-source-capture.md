@@ -31,11 +31,13 @@ An absent position changes nothing. An existing/deduped attempt, planned spawn
 or workflow wrapper mints no witness. A later member's failure keeps earlier
 successful enqueues and their publications, as it keeps those members today.
 
-Each publication contains the new attempt's identity and creation time, its
-actor, placed type and project, and team stamp. It contains no briefing,
-private payload, model, manifest or TASK value. The original actual host-turn
-key must admit the fresh claim in the enqueue's savepoint. A capture failure
-discards only that publication and preserves the ordinary enqueue.
+Each publication contains only the new attempt's identity and creation time,
+and this start's explicit team stamp. It contains no inherited actor, placed
+type or project, briefing, private payload, model, manifest or TASK value.
+Those other native facts still need their own original source and policy bounds.
+The original actual host-turn key must admit the fresh claim in the enqueue's
+savepoint. A capture failure discards only that publication and preserves the
+ordinary enqueue.
 
 The native payload retains the source pointer. Its binding hashes the physical
 attempt id, kind, creation time and complete original payload, excluding the

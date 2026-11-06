@@ -336,6 +336,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 selected,
                 self.write_envelope(SelfEffect::AgentsSpawn, None).ok()?,
                 self.host_turn_read_key(),
+                context.team.as_ref()?,
             )
         });
         let dispatcher = AgentDispatcher::new(vault)
