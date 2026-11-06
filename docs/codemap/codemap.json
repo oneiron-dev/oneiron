@@ -40859,7 +40859,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -62991,7 +62992,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ExternalImportRefPlan",
@@ -63003,7 +63004,7 @@
       "const": 3,
       "crate-vis": 6,
       "enum": 2,
-      "fn": 1,
+      "fn": 3,
       "re-export": 2
      }
     },
@@ -92618,7 +92619,7 @@
     "repo_mutation": {
      "files": 54,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Queued repository mutations, recovery snapshots and reviewed proposals"
     },
@@ -93099,7 +93100,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 172,
+   "over_bar": 173,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6565,
    "test_files": 895
@@ -96852,7 +96853,7 @@
      "purpose": "The wire between the daemon and the broker, one connection per call",
      "surface": {
       "const": 4,
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -96871,7 +96872,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 17,
+      "fn": 18,
       "re-export": 1,
       "struct": 4
      }
@@ -97011,7 +97012,7 @@
      "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -116179,7 +116180,17 @@
      "path": "src/api/git_http/import_relay.rs",
      "purpose": "The outside import's per-call transport (FIX 6871, G7 PR1)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/git_http/import_source_relay.rs",
+     "purpose": "An outside import's bound source fetch through the credential broker (ARCH-0069 OSH-3, FIX 15702)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -125917,6 +125928,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/broker_context/git.rs",
+     "purpose": "The vault's broker for git exchanges (ARCH-0069 OSH-3): the same site the vault-secret keys send through…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/broker_context/secret_use.rs",
      "purpose": "A secret-free installed adapter for `self.use`'s broker model listing",
      "surface": {
@@ -130618,7 +130639,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 695,
+     "files": 696,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130975,7 +130996,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 131,
+     "files": 132,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131138,7 +131159,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1657,
+   "source_files": 1659,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -134450,7 +134471,8 @@
      "path": "src/git_wire/import_fetch/profile.rs",
      "purpose": "The fixed process profile of an outside import's Git legs (FIX 6871)",
      "surface": {
-      "fn": 4,
+      "const": 1,
+      "fn": 5,
       "struct": 1
      }
     },
