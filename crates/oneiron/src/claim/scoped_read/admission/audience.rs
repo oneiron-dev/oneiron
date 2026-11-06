@@ -298,10 +298,20 @@ impl<'v> ScopedRead<'v> {
         )? {
             crate::federation::record_scope::ScopedCommRead::Ordinary => Ok(true),
             crate::federation::record_scope::ScopedCommRead::Unavailable => Ok(false),
-            crate::federation::record_scope::ScopedCommRead::Claim { original, raw, .. } => {
+            crate::federation::record_scope::ScopedCommRead::Claim {
+                original,
+                raw,
+                body,
+                frozen_principal,
+                ..
+            } => {
                 // The supplier admits only a live CLAIM, so forwarding cannot
                 // enter another scoped-Comm source edge.
-                self.audience_readable_raw_in(txn, &original, &raw, authority)
+                Ok(
+                    self.principal_admits(crate::claim::claim_principal_id(&body)?)
+                        && self.principal_admits(frozen_principal)
+                        && self.audience_readable_raw_in(txn, &original, &raw, authority)?,
+                )
             }
         }
     }

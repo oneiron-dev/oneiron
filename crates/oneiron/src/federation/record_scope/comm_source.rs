@@ -15,6 +15,7 @@ pub(crate) enum ScopedCommRead {
         raw: Vec<u8>,
         body: ClaimBody,
         frozen_rel: RelationshipScope,
+        frozen_principal: Option<EntityId>,
         record: Scope,
     },
 }
@@ -73,6 +74,7 @@ pub(crate) fn read_scoped_comm_in_txn(
         raw: row.encode(),
         body,
         frozen_rel: source.relationship_scope().clone(),
+        frozen_principal: source.principal(),
         record,
     })
 }

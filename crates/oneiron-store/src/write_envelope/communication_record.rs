@@ -3,7 +3,7 @@
 use std::io::Cursor;
 
 mod source_position;
-pub use source_position::{ScopedTouchScopeForm, ScopedTouchSource};
+pub use source_position::{ScopedTouchPrincipal, ScopedTouchScopeForm, ScopedTouchSource};
 
 use rmpv::Value;
 

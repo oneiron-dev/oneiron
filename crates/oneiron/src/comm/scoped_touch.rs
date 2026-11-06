@@ -8,7 +8,9 @@ use crate::federation::Scope;
 use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use crate::provenance::birth::RowBirth;
 use crate::store::ManifestDbs;
-use crate::write_envelope::communication_record::{ScopedTouchScopeForm, ScopedTouchSource};
+use crate::write_envelope::communication_record::{
+    ScopedTouchPrincipal, ScopedTouchScopeForm, ScopedTouchSource,
+};
 use crate::{EntityId, Error, Result};
 
 pub(crate) struct ScopedTouchRecord {
@@ -71,6 +73,10 @@ impl ScopedTouchRecord {
 
     pub(crate) fn relationship_scope(&self) -> &RelationshipScope {
         &self.source.rel
+    }
+
+    pub(crate) fn principal(&self) -> Option<EntityId> {
+        self.source.principal.as_ref().map(|principal| principal.id)
     }
 
     pub(crate) fn position(&self) -> Scope {
@@ -137,7 +143,7 @@ pub(super) fn capture_scoped_touch_source(
     let sensitivity = crate::claim::claim_sensitivity_band(body)
         .filter(|sensitivity| *sensitivity <= 3)
         .ok_or(Error::InvalidClaimBody("scoped comm source sensitivity"))?;
-    let scope_form = ScopedTouchScopeForm::from_scope(body.scope.as_ref()).ok_or(
+    let (scope_form, principal) = ScopedTouchScopeForm::from_scope(body.scope.as_ref()).ok_or(
         Error::InvalidClaimBody("unsupported scoped comm source context"),
     )?;
     let canonical = touch_scope_body(
@@ -146,6 +152,7 @@ pub(super) fn capture_scoped_touch_source(
         sensitivity,
         &body.rel,
         body.session_tag.as_deref(),
+        principal.as_ref(),
     )
     .map_err(super::generic_put_routing::source_event_error)?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
@@ -170,6 +177,7 @@ pub(super) fn capture_scoped_touch_source(
         scope_form,
         rel: body.rel.clone(),
         session_tag: body.session_tag.clone(),
+        principal,
         origin_digest: *digest.finalize().as_bytes(),
     })
 }
@@ -185,6 +193,16 @@ pub(super) fn scoped_touch_event_id(
     let rel = relationship_scope_transcript(source.rel.as_ref());
     let session_present = u8::from(source.session_tag.is_some());
     let session = source.session_tag.as_deref().unwrap_or_default();
+    let principal_present = u8::from(source.principal.is_some());
+    let principal_index = source
+        .principal
+        .as_ref()
+        .map_or(0, |principal| principal.index);
+    let principal = source
+        .principal
+        .as_ref()
+        .map(|principal| principal.id.as_bytes().as_slice())
+        .unwrap_or_default();
     EntityId::derive(
         COMM_BORN_TOUCH_EVENT,
         &[
@@ -198,6 +216,9 @@ pub(super) fn scoped_touch_event_id(
             &rel,
             &[session_present],
             session.as_bytes(),
+            &[principal_present],
+            &[principal_index],
+            principal,
             party_ref.as_bytes(),
             channel.as_bytes(),
             &occurred_at.to_le_bytes(),
@@ -240,9 +261,10 @@ pub(super) fn touch_scope_body(
     sensitivity: u8,
     rel: &RelationshipScope,
     session_tag: Option<&str>,
+    principal: Option<&ScopedTouchPrincipal>,
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = value.claim_body_with_sensitivity(sensitivity)?;
-    body.scope = scope_form.scope(sensitivity)?;
+    body.scope = scope_form.scope(sensitivity, principal)?;
     body.rel = rel.clone();
     body.session_tag = session_tag.map(str::to_owned);
     Ok(body)
@@ -259,6 +281,7 @@ pub(super) fn touch_slot_body(
             source.sensitivity,
             &source.rel,
             source.session_tag.as_deref(),
+            source.principal.as_ref(),
         )?
     } else {
         value.claim_body()?
