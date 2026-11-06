@@ -157,7 +157,8 @@ impl PipelineBuilder<'_> {
     /// Runs the text channel, the next of `stages_left` deadline stages, and
     /// its HyDE-retry extra queries, admitting each into `acc`. Returns the
     /// index the primary text list took in the ranked lists, `None` when no
-    /// text search is configured or the deadline cut it.
+    /// text search is configured or the deadline cut it, and whether that
+    /// primary scan exhausted its admitted matches without a window cut.
     #[expect(
         clippy::too_many_arguments,
         reason = "the stage count rides beside the channel's existing inputs"
@@ -171,15 +172,16 @@ impl PipelineBuilder<'_> {
         diagnostics: &mut RetrievalDiagnostics,
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
-    ) -> Result<Option<usize>> {
+    ) -> Result<(Option<usize>, bool)> {
         let mut text_channel_index = None;
+        let mut text_exhausted = false;
         let prefix_probe_claim_gate = std::mem::take(&mut inputs.claim_gate_widening_probe);
         let text_search = self
             .text_search
             .as_ref()
             .map(|(query, limit)| (query.as_str(), fusion_fetch_limit(*limit)));
         if let Some((query, limit)) = &text_search
-            && let Some(text_results) =
+            && let Some((text_results, exhausted)) =
                 self.run_stage(RetrievalSignal::Text, stages_left, || {
                     self.text_stage(
                         rtxn,
@@ -191,6 +193,7 @@ impl PipelineBuilder<'_> {
                 })?
         {
             diagnostics.succeeded.push(RetrievalSignal::Text);
+            text_exhausted = exhausted;
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,
                 text_results,
@@ -294,7 +297,10 @@ impl PipelineBuilder<'_> {
                 )?;
             }
         }
-        Ok(text_channel_index)
+        Ok((
+            text_channel_index,
+            text_exhausted && inputs.overrides.extra_text_queries.is_empty(),
+        ))
     }
     /// The text stage itself: the scoped BM25 read, read on while folded
     /// turns are short, then cut to the run's own scope. Every candidate its
@@ -306,7 +312,7 @@ impl PipelineBuilder<'_> {
         inputs: &TextChannelInputs<'_>,
         mut prefix_probe_claim_gate: ClaimStatusGateCache,
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
-    ) -> Result<Vec<ScoredEntity>> {
+    ) -> Result<(Vec<ScoredEntity>, bool)> {
         let scoped_text_limit = self.text_channel_limit(if inputs.overrides.widen_channel_limits {
             retry_channel_limit(limit)
         } else {
@@ -353,7 +359,7 @@ impl PipelineBuilder<'_> {
         let fold_cap = self.text_channel_limit(candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR));
         let mut fold_metadata = EntityMetadataCache::default();
         let mut fetch_limit = candidate_limit;
-        let mut text_results = loop {
+        let (mut text_results, mut text_exhausted) = loop {
             let mut rows = if self.memory_category {
                 self.search_text_candidates(
                     rtxn,
@@ -386,7 +392,7 @@ impl PipelineBuilder<'_> {
             };
             let exhausted = rows.len() < fetch_limit;
             if self.turn_fold == TurnFold::Off || (exhausted && fetch_limit == candidate_limit) {
-                break rows;
+                break (rows, exhausted);
             }
             if let Some(held) = turn_fold::rows_holding_distinct_turns(
                 &rows,
@@ -399,10 +405,10 @@ impl PipelineBuilder<'_> {
                 &mut fold_claim_gate,
             )? {
                 rows.truncate(held);
-                break rows;
+                break (rows, false);
             }
             if exhausted || fetch_limit >= fold_cap || self.deadline_reached() {
-                break rows;
+                break (rows, exhausted && !self.deadline_reached());
             }
             fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
         };
@@ -415,6 +421,7 @@ impl PipelineBuilder<'_> {
             } else {
                 limit
             };
+            let before_truncate = text_results.len();
             self.truncate_widened_text_results(
                 &mut text_results,
                 rtxn,
@@ -423,13 +430,14 @@ impl PipelineBuilder<'_> {
                 metadata_cache,
                 &mut prefix_probe_claim_gate,
             )?;
+            text_exhausted &= text_results.len() == before_truncate;
         }
         import_claim_gate_decisions_for_scores(
             claim_gate,
             &mut prefix_probe_claim_gate,
             &text_results,
         );
-        Ok(text_results)
+        Ok((text_results, text_exhausted))
     }
     /// Keeps the rows of a widened text read that the run's own scope
     /// admits, up to `requested` results. A run that folds each MESSAGE into
