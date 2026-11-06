@@ -107,6 +107,9 @@ fn apply_remote_change(
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
     let system = seat.config.system.as_str();
+    // FIX 4797: the vault's one calendar admission turn, from the echo
+    // classification through the sweep and the remote object row.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
     match change {
         RemoteCalendarChange::Upsert(object) => {
             let feed = super::remote::parse_remote_resource(object)?;
