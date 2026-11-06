@@ -18,7 +18,7 @@ use std::sync::PoisonError;
 
 use loro::LoroDoc;
 
-use super::content::MIRROR;
+use super::content::{MIRROR, MIRROR_ERASES, MIRROR_ERASES_KEY, mirror_erases_in};
 use super::content_landed::{landed_already, landed_mark, mark_landed_in_txn, repair_pending};
 use super::refused;
 use crate::Vault;
@@ -58,32 +58,56 @@ fn mirror_key(world: EntityId, window: &WindowKey) -> String {
     format!("{}:{}", world.to_hex(), window.as_str())
 }
 
-/// The window's mirror, or a fresh document (`true`) when it has none.
-fn load_mirror(vault: &Vault, world: EntityId, window: &WindowKey) -> Result<(LoroDoc, bool)> {
-    let (doc, held) = load_mirror_with_bytes(vault, world, window)?;
-    Ok((doc, held.is_none()))
+/// What a seal or a take read of one mirror, checked again before it writes
+/// the mirror back (FIX 17210): the stored bytes (`None` when it had none)
+/// and how many actor erases had rewritten the mirrors. An actor erase
+/// rewrites them in its own writer without the sealing lock, and a world's
+/// erase purges them, so a writer that finds either moved writes nothing.
+struct MirrorRead {
+    held: Option<Vec<u8>>,
+    erases: u64,
 }
 
-/// The window's mirror, or a fresh document, with the bytes it was read from
-/// (`None` when it has none).
-fn load_mirror_with_bytes(
+impl MirrorRead {
+    /// Whether the mirror `key` and the erase count stand as read, in `txn`.
+    fn stands_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>, key: &str) -> Result<bool> {
+        Ok(MIRROR.get(&vault.store, txn, &key.to_owned())? == self.held
+            && mirror_erases_in(&vault.store, txn)? == self.erases)
+    }
+}
+
+/// The window's mirror, or a fresh document (`held` `None`) when it has
+/// none, with what it was read from.
+fn load_mirror_read(
     vault: &Vault,
     world: EntityId,
     window: &WindowKey,
-) -> Result<(LoroDoc, Option<Vec<u8>>)> {
+) -> Result<(LoroDoc, MirrorRead)> {
     let txn = vault.store.env.read_txn()?;
     let doc = LoroDoc::new();
     let held = MIRROR.get(&vault.store, &txn, &mirror_key(world, window))?;
     if let Some(snapshot) = &held {
         import_doc(&doc, snapshot)?;
     }
-    Ok((doc, held))
+    let erases = mirror_erases_in(&vault.store, &txn)?;
+    Ok((doc, MirrorRead { held, erases }))
 }
 
-fn store_mirror(vault: &Vault, world: EntityId, window: &WindowKey, doc: &LoroDoc) -> Result<()> {
+/// Stores `doc` as `window`'s mirror, as long as it stands as `read` found it.
+fn store_mirror(
+    vault: &Vault,
+    world: EntityId,
+    window: &WindowKey,
+    doc: &LoroDoc,
+    read: &MirrorRead,
+) -> Result<()> {
     let snapshot = export_snapshot(doc)?;
     vault.with_write_txn_grouped(|wtxn| {
-        MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), &snapshot)
+        let key = mirror_key(world, window);
+        if !read.stands_in(vault, wtxn, &key)? {
+            return Err(refused("the sealed mirror changed while it was taken"));
+        }
+        MIRROR.put(&vault.store, wtxn, &key, &snapshot)
     })
 }
 
@@ -99,6 +123,7 @@ impl WindowManager {
         window: &WindowKey,
         mirror: &LoroDoc,
         gained: bool,
+        read: &MirrorRead,
     ) -> Result<()> {
         let vault = self.vault();
         let before = landed_mark(vault, world, window)?;
@@ -111,7 +136,11 @@ impl WindowManager {
         let settled = !repair_pending(vault, window)?;
         vault.with_write_txn_grouped(|wtxn| {
             if let Some(snapshot) = &snapshot {
-                MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), snapshot)?;
+                let key = mirror_key(world, window);
+                if !read.stands_in(vault, wtxn, &key)? {
+                    return Err(refused("the sealed mirror changed while it was taken"));
+                }
+                MIRROR.put(&vault.store, wtxn, &key, snapshot)?;
             }
             if settled {
                 mark_landed_in_txn(&vault.store, wtxn, (world, window), before.as_ref(), mirror)?;
@@ -183,11 +212,11 @@ impl WindowManager {
             .sealing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let (mirror, fresh) = load_mirror(vault, world, window)?;
-        if fresh {
+        let (mirror, read) = load_mirror_read(vault, world, window)?;
+        if read.held.is_none() {
             return Ok(false);
         }
-        self.land_mirror(world, window, &mirror, false)?;
+        self.land_mirror(world, window, &mirror, false, &read)?;
         Ok(true)
     }
 
@@ -212,7 +241,7 @@ impl WindowManager {
             .sealing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let (mirror, held) = load_mirror_with_bytes(vault, world, window)?;
+        let (mirror, read) = load_mirror_read(vault, world, window)?;
         // A delete reaches a taker's mirror as one, where a mirror started
         // over would merge with it as a union (FIX 3360).
         let tombstones = mirror.get_map("tombstones");
@@ -239,17 +268,12 @@ impl WindowManager {
             .then(|| CarrierInventory::of_window(&mirror));
         vault.with_write_txn_grouped(|wtxn| {
             let key = mirror_key(world, window);
-            // An actor erase rewrites the mirrors in its own writer, without
-            // this lock (`rewrite_mirrors_in_txn`), and a world's erase purges
-            // them: a mirror changed since this seal read it stays as that
-            // writer left it, and this seal ships nothing.
-            if MIRROR.get(&vault.store, wtxn, &key)? != held {
+            // A mirror an actor erase or a world purge changed since this
+            // seal read it stays as that writer left it, and an actor erased
+            // since the scrubs ran (its revision, birth or fact still in what
+            // was cut) never ships: this seal ships nothing (FIX 17210).
+            if !read.stands_in(vault, wtxn, &key)? {
                 return Err(refused("the sealed mirror changed while it was sealed"));
-            }
-            // An actor erased since the scrubs ran: a revision naming it is
-            // never kept or shipped.
-            if crate::sync::source_audiences::carries_erased_actor_in(vault, wtxn, &mirror)? {
-                return Err(refused("an actor was erased while the mirror was sealed"));
             }
             // A legal hold keeps every row it names (OF-470): while one
             // stands over what the cut drops, the mirror is kept whole and
@@ -297,7 +321,8 @@ impl WindowManager {
             .sealing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let (mirror, fresh) = load_mirror(vault, world, window)?;
+        let (mirror, mut read) = load_mirror_read(vault, world, window)?;
+        let fresh = read.held.is_none();
         // What the merge brought: its history past here is read for an
         // erased actor below.
         let before = if fresh {
@@ -320,7 +345,8 @@ impl WindowManager {
             // this one holds that it does not written back on top. The
             // mirror the failed import touched is read again first. A legal
             // hold over what this mirror holds keeps it as it is (OF-470).
-            let (old, _) = load_mirror(vault, world, window)?;
+            let (old, reread) = load_mirror_read(vault, world, window)?;
+            read = reread;
             {
                 let rtxn = vault.store.env.read_txn()?;
                 CarrierInventory::of_window(&old).reject_held_in_txn(
@@ -361,9 +387,9 @@ impl WindowManager {
             }
         }
         if materialize {
-            self.land_mirror(world, window, &mirror, gained)?;
+            self.land_mirror(world, window, &mirror, gained, &read)?;
         } else if gained {
-            store_mirror(vault, world, window, &mirror)?;
+            store_mirror(vault, world, window, &mirror, &read)?;
         }
         Ok(gained)
     }
@@ -387,6 +413,10 @@ pub(crate) fn rewrite_mirrors_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     mut rewrite: impl FnMut(&mut heed::RwTxn<'_>, &LoroDoc) -> Result<bool>,
 ) -> Result<()> {
+    // Every actor erase counts, whether it rewrites a mirror or not: a seal
+    // or a take that read the mirrors before it writes nothing after it.
+    let erases = mirror_erases_in(&vault.store, wtxn)?.wrapping_add(1);
+    MIRROR_ERASES.put(&vault.store, wtxn, &MIRROR_ERASES_KEY.to_owned(), &erases)?;
     for key in MIRROR.scan_keys(&vault.store, wtxn, b"")? {
         let Some(snapshot) = MIRROR.get(&vault.store, wtxn, &key)? else {
             continue;
