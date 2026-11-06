@@ -181,7 +181,8 @@ pub(crate) fn redact_fold_answers(
 /// side-row wall. The body each answer spilled to is withdrawn as its run's
 /// occurrence, released with its own marks, and its instance retired, or
 /// owed to another holder's release. A record that does not decode is left
-/// as it is.
+/// as it is. Each capsule body that copies the words retires first, in the
+/// same writer (`replay_capsule::fold_words`).
 ///
 /// # Errors
 ///
@@ -191,6 +192,7 @@ pub(crate) fn retire_fold_answers_in_txn(
     wtxn: &mut RwTxn<'_>,
     source_run: Option<EntityId>,
 ) -> Result<()> {
+    super::replay_capsule::retire_fold_word_capsules_in_txn(store, wtxn, source_run)?;
     let mut records = Vec::new();
     let txn: &RoTxn<'_> = wtxn;
     for row in REPLAY_RECORDS.iter_raw_from(store, txn, &[])? {
