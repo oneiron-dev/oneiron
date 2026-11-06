@@ -25,6 +25,8 @@
 //! ledger's `housekeeping` entry, and [`SharedEnvRegistry::stop`] beside
 //! `DeviceSyncHost::stop` at shutdown.
 
+mod insert;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -180,7 +182,7 @@ impl SharedEnvRegistry {
     ) -> Self {
         let registry = Self::empty();
         for entry in entries {
-            registry
+            let _ = registry
                 .insert(
                     &entry,
                     config,
@@ -191,97 +193,6 @@ impl SharedEnvRegistry {
                 .await;
         }
         registry
-    }
-
-    /// Opens one configured entry, runs its lane unless it has left, and
-    /// inserts it: the singular open behind [`Self::open_all`], and the seam
-    /// the future join flow calls once it has enrolled a new membership. A
-    /// malformed entry, failures, and repeated memberships log and leave the
-    /// registry as it was. A refused first admission defers only the lane run;
-    /// the opened env still joins housekeeping and wake scheduling.
-    pub(crate) async fn insert(
-        &self,
-        entry: &crate::config::SharedEnvConfig,
-        config: &crate::config::ServeConfig,
-        lease_vault_id: u64,
-        admission: crate::server::HousekeepingAdmission,
-        freeze: Option<crate::device_sync::ReapFreeze>,
-    ) {
-        let spec = match SharedEnvSpec::from_config(entry) {
-            Ok(spec) => spec,
-            Err(error) => {
-                tracing::warn!("shared env skipped: {error:#}");
-                return;
-            }
-        };
-        let present = self
-            .lock()
-            .contains_key(&(spec.vault_id, spec.member.clone()));
-        if present {
-            tracing::warn!(
-                vault_id = spec.vault_id,
-                path = %spec.path.display(),
-                "shared env skipped: its membership is already open"
-            );
-            return;
-        }
-        let config = config.clone();
-        let opened =
-            tokio::task::spawn_blocking(move || open_one(&spec, &config, lease_vault_id)).await;
-        match opened {
-            Ok(Ok(env)) => {
-                let lane = if env.left {
-                    // Already left: no run needs an admission.
-                    None
-                } else {
-                    let first = admission();
-                    let (stop, stop_rx) = tokio::sync::oneshot::channel();
-                    let task = tokio::spawn(run_lane(
-                        Arc::clone(&env.connection),
-                        stop_rx,
-                        freeze,
-                        first,
-                        env.key.0,
-                    ));
-                    Some(ActiveLane {
-                        connection: Arc::clone(&env.connection),
-                        stop,
-                        task,
-                        vault_id: env.key.0,
-                    })
-                };
-                // A completed purge stays complete across restarts: the
-                // receipt persists it, so reconfirming never re-owes the
-                // orphan-body collection. An unreadable receipt reads as
-                // incomplete: the idempotent confirmation resumes it.
-                let purge_complete =
-                    match oneiron::sync::shared_leave::leave_purge_complete(&env.vault) {
-                        Ok(complete) => complete,
-                        Err(error) => {
-                            tracing::warn!(
-                                vault_id = env.key.0,
-                                kind = ?error.kind(),
-                                "shared env purge state unreadable; its leave reconfirms"
-                            );
-                            false
-                        }
-                    };
-                self.lock().insert(
-                    env.key,
-                    SharedEnvEntry {
-                        path: env.path,
-                        home_url: env.home_url,
-                        vault: env.vault,
-                        connection: env.connection,
-                        lane,
-                        purge_complete,
-                        last_leave_check: 0,
-                    },
-                );
-            }
-            Ok(Err(reason)) => tracing::warn!("shared env skipped: {reason}"),
-            Err(error) => tracing::warn!("shared env skipped: its open task failed: {error}"),
-        }
     }
 
     /// One clone per open env, under a single short lock: the housekeeping
