@@ -2856,6 +2856,7 @@ ImageContent = ImageContentBase64 | ImageContentUrl
 class ContentPartText(TypedDict):
     kind: Literal["text"]
     text: str
+    signature: NotRequired[str | None]
 class ContentPartReasoning(TypedDict):
     kind: Literal["reasoning"]
     text: str
@@ -17007,6 +17008,7 @@ class LlmStreamEventTextDelta(TypedDict):
 class LlmStreamEventTextEnd(TypedDict):
     event: Literal["text_end"]
     part_id: str
+    signature: NotRequired[str | None]
 class LlmStreamEventReasoningStart(TypedDict):
     event: Literal["reasoning_start"]
     part_id: str

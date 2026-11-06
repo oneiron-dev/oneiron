@@ -141,7 +141,7 @@ fn response_text(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -190,6 +190,7 @@ fn constraint_parse_llm_request(
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: constraint_user_section(request, free_text),
+                    signature: None,
                 }],
             },
         ],
@@ -205,7 +206,7 @@ fn constraint_parse_llm_request(
 fn system_message(text: String) -> LlmMessage {
     LlmMessage {
         role: LlmMessageRole::System,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }
 }
 

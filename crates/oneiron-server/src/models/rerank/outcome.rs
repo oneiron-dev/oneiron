@@ -57,7 +57,7 @@ pub(crate) enum RerankOutcome {
 /// What a rerank call's answer holds: one score per document, in order, or
 /// the partial of a call that stopped short.
 pub(crate) fn rerank_outcome(response: &LlmResponse) -> Option<RerankOutcome> {
-    let [ContentPart::Text { text }] = response.message.content.as_slice() else {
+    let [ContentPart::Text { text, .. }] = response.message.content.as_slice() else {
         return None;
     };
     if let Ok(scores) = serde_json::from_str(text) {

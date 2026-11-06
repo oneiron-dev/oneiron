@@ -25004,6 +25004,8 @@ pub enum ContentPart {
     Text {
         #[serde(rename = "text")]
         text: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "reasoning")]
     Reasoning {
@@ -53577,6 +53579,8 @@ pub enum LlmStreamEvent {
     TextEnd {
         #[serde(rename = "part_id")]
         part_id: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "reasoning_start")]
     ReasoningStart {

@@ -23,8 +23,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
-    AnswerContract, DECISION_IMAGE_EDGE, DecisionAnswer, DecisionCall, DecisionImage,
-    DecisionModel, DecisionRung, ImageBox, ModelDecisionProvider, ProviderCapability,
+    AnswerContract, CapturedDecision, CapturedDecisionPack, DECISION_IMAGE_EDGE, DecisionAnswer,
+    DecisionCall, DecisionCallContext, DecisionImage, DecisionModel, DecisionPack,
+    DecisionReadOutcome, DecisionRung, ImageBox, ModelDecisionProvider, ProviderCapability,
     ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
@@ -124,7 +125,7 @@ impl LocalVisionModel {
             // names, as System One's state holds its asset's.
             let reference = format!("image:{}", image.name);
             state[image.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference });
+            content.push(ContentPart::Text { text: reference, signature: None });
             content.push(ContentPart::Image {
                 media_type: fitted.media_type.clone(),
                 image: ImageContent::Base64 {
@@ -135,10 +136,11 @@ impl LocalVisionModel {
         // The question's criteria triple, as the rubric its contract is
         // judged by (FIX 2181).
         if let Some(rubric) = QuestionCriteria::rubric_in(call.state, &call.question.contract) {
-            content.push(ContentPart::Text { text: rubric });
+            content.push(ContentPart::Text { text: rubric, signature: None });
         }
         content.push(ContentPart::Text {
             text: json!({"question": call.question.text, "state": state}).to_string(),
+            signature: None,
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
@@ -165,26 +167,12 @@ impl LocalVisionModel {
             host_segments: None,
         })
     }
-}
 
-impl DecisionModel for LocalVisionModel {
-    /// It reads a score over its images as a number on the score's scale.
-    fn capability(&self) -> ProviderCapability {
-        ProviderCapability::default()
-    }
-
-    fn reads_images(&self) -> bool {
-        true
-    }
-
-    fn image_edge(&self) -> Option<u32> {
-        Some(DECISION_IMAGE_EDGE)
-    }
-
-    /// Blocks on the server's runtime until the seat answers, so it runs on
-    /// a blocking thread, never on one of that runtime's workers. The call
-    /// waits no longer than the decision's work time.
-    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+    fn decide_with_context(
+        &self,
+        call: &DecisionCall<'_>,
+        context: Option<&DecisionCallContext<'_>>,
+    ) -> oneiron::Result<DecisionReadOutcome<ProviderDecision>> {
         let schema = match &call.question.contract {
             _ if call.images.is_empty() => None,
             AnswerContract::Box | AnswerContract::Point => Some(box_schema()),
@@ -193,23 +181,40 @@ impl DecisionModel for LocalVisionModel {
             AnswerContract::Score { min, max } => Some(score_schema(*min, *max)),
         };
         let Some(schema) = schema else {
-            return Ok(ProviderDecision {
+            return Ok(DecisionReadOutcome::Answered(ProviderDecision {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
                 paired: None,
                 person: None,
                 served: None,
-            });
+            }));
         };
-        let request = self.request(call, schema)?;
-        let admitted = self
-            .ai
-            .admit_role(&self.vault, ROLE, request)
-            .map_err(|refused| failed(&format!("local vision call refused: {refused}")))?;
+        let mut request = self.request(call, schema)?;
+        if let Some(context) = context {
+            request.envelope.scope = context.scope.clone();
+            request.envelope.purpose = context.purpose.clone();
+            request.envelope.tier = TierPrecedence::for_purpose(
+                context.purpose,
+                ModelTierRef("local-vision".into()),
+            );
+        }
+        let admitted = match context {
+            Some(context) => self.ai.model_runtime().admit_role_with_egress(
+                &self.vault,
+                ROLE,
+                request,
+                context.extraction_egress,
+            ),
+            None => self.ai.admit_role(&self.vault, ROLE, request),
+        }
+        .map_err(|refused| failed(&format!("local vision call refused: {refused}")))?;
         // The pin names this seat's model; a route that binds another is not
         // this rung's answer.
         if admitted.request.model != self.model {
             return Err(failed("the local vision route serves another model"));
+        }
+        if context.is_some_and(|context| !context.admit_generation()) {
+            return Ok(DecisionReadOutcome::NotStarted);
         }
         let time_left = call.deadline.decision_time_left();
         // The call's input is its question over the state its producer built
@@ -218,6 +223,11 @@ impl DecisionModel for LocalVisionModel {
         let run = match call.run {
             Some(run) => run.sourced(Some(call.evidence.to_vec())),
             None => self.run.sourced(Some(call.evidence.to_vec())),
+        };
+        let run = if context.is_some() {
+            run.capturing_settlements()
+        } else {
+            run
         };
         let unrecorded = run.is_unrecorded();
         let ladder = admitted.ladder.for_run(&run);
@@ -280,7 +290,7 @@ impl DecisionModel for LocalVisionModel {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>();
@@ -299,6 +309,70 @@ impl DecisionModel for LocalVisionModel {
             AnswerContract::Score { min, max } => score_answer(&text, *min, *max),
         }
         .ok_or_else(|| failed("malformed local vision answer"))
+        .map(DecisionReadOutcome::Answered)
+    }
+}
+
+impl DecisionModel for LocalVisionModel {
+    /// It reads a score over its images as a number on the score's scale.
+    fn capability(&self) -> ProviderCapability {
+        ProviderCapability::default()
+    }
+
+    fn reads_images(&self) -> bool {
+        true
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        Some(DECISION_IMAGE_EDGE)
+    }
+
+    /// Blocks on the server's runtime until the seat answers, so it runs on
+    /// a blocking thread, never on one of that runtime's workers. The call
+    /// waits no longer than the decision's work time.
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_with_context(call, Some(context))
+        });
+        Some(CapturedDecision { result, receipts })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            let mut decisions = Vec::new();
+            let mut stopped = false;
+            for call in (0..pack.questions.len()).filter_map(|index| pack.call(index)) {
+                let outcome = if stopped {
+                    DecisionReadOutcome::NotStarted
+                } else {
+                    self.decide_with_context(&call, Some(context))?
+                };
+                stopped = matches!(
+                    &outcome,
+                    DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped
+                );
+                decisions.push(outcome);
+            }
+            Ok(decisions)
+        });
+        Some(CapturedDecisionPack { result, receipts })
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        self.decide_with_context(call, None).map(|outcome| match outcome {
+            DecisionReadOutcome::Answered(answer) => answer,
+            DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                unreachable!("an ordinary decision has no generation gate")
+            }
+        })
     }
 }
 
