@@ -39,6 +39,7 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{self, Message};
 
 use super::bridge_auth::UpgradeHeaders;
+use super::reply_body::ReplyBody;
 use crate::cli::{McpSurface, McpTransport};
 use oneiron_vault_contract::BINDING_HEADER;
 
@@ -73,7 +74,7 @@ const RPC_ANSWER_ENVELOPE_BYTES: usize = 64;
 pub(super) struct Exchange {
     /// The HTTP status, when there was one.
     pub(super) status: Option<u16>,
-    pub(super) body: Vec<u8>,
+    pub(super) body: ReplyBody,
 }
 
 /// Why a request ended without a whole answer.
@@ -233,7 +234,8 @@ impl HttpLink {
             }) {
                 return Err(Cut::TooLarge);
             }
-            let mut body = Vec::new();
+            let mut chunks = Vec::new();
+            let mut received = 0usize;
             loop {
                 let stalls_at = tokio::time::Instant::now() + bounds.idle;
                 match timeout_at(stalls_at.min(deadline), response.chunk()).await {
@@ -244,16 +246,17 @@ impl HttpLink {
                     }
                     Ok(Ok(None)) => break,
                     Ok(Ok(Some(chunk))) => {
-                        body.extend_from_slice(&chunk);
-                        if body.len() > bounds.max_reply_bytes {
+                        if received.saturating_add(chunk.len()) > bounds.max_reply_bytes {
                             return Err(Cut::TooLarge);
                         }
+                        received += chunk.len();
+                        chunks.push(chunk);
                     }
                 }
             }
             Ok(Exchange {
                 status: Some(status),
-                body,
+                body: ReplyBody::HttpChunks(chunks),
             })
         })
     }
@@ -468,7 +471,7 @@ impl SocketLink {
             }
             Ok(Exchange {
                 status: Some(answer.status),
-                body: answer.body.into_bytes(),
+                body: ReplyBody::Owned(answer.body.into_bytes()),
             })
         })
     }
