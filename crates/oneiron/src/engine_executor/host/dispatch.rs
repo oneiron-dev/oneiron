@@ -9,8 +9,8 @@ impl RecordingJsHost<'_, '_> {
     /// large for one reply, stored whole as a body of the run as it is
     /// encoded. The guest and the replay row get its handle
     /// (`result_handle_json`), never the answer; nothing is refused for size.
-    /// Typed large replies (inference defaults, settled/world-privacy asks)
-    /// spill pre-record below (FIX449), same card the guest's spill gets.
+    /// Typed large replies and direct native team-start receipts spill
+    /// pre-record below (FIX449), same card the guest's spill gets.
     pub(super) fn store_large_answer(
         &mut self,
         seq: u64,
@@ -19,7 +19,9 @@ impl RecordingJsHost<'_, '_> {
         // Typed replies use the guest's sweeping sink and full result card.
         if matches!(
             &outcome,
-            SelfDispatchOutcome::InferenceDefaults(_) | SelfDispatchOutcome::TaskAskStatus(_)
+            SelfDispatchOutcome::InferenceDefaults(_)
+                | SelfDispatchOutcome::TaskAskStatus(_)
+                | SelfDispatchOutcome::Team(_)
         ) {
             return self.store_large_typed_reply(outcome);
         }
@@ -50,9 +52,9 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// A typed reply too large for one message (FIX449): the inference
-    /// defaults, a settled ask, or a world-privacy answer, spilled pre-record
-    /// through the EXISTING `store_reply` (sweeping mask, tainted card with
-    /// facets), never `store_answer`. Under the inline size, or with no
+    /// defaults, a settled ask, a world-privacy answer, or a direct team's
+    /// native receipt, spilled through the sweeping result sink and tainted
+    /// card with facets, never `store_answer`. Under the inline size, or with no
     /// result store, the original outcome stays inline, unchanged.
     fn store_large_typed_reply(
         &mut self,
@@ -82,6 +84,19 @@ impl RecordingJsHost<'_, '_> {
                 SelfStoredReplyKind::TaskAskWorldPrivacy,
                 json!({"output": TaskAskWait::WorldPrivacyReady(request.clone())}),
             ),
+            SelfDispatchOutcome::Team(result)
+                if result.source_rows.is_some()
+                    && matches!(
+                        &result.answer,
+                        crate::team::TeamRunAnswer::Started { .. }
+                            | crate::team::TeamRunAnswer::ProposedWiden { .. }
+                    ) =>
+            {
+                (
+                    SelfStoredReplyKind::TeamStartReceipt,
+                    json!({"output": result.answer}),
+                )
+            }
             _ => return Ok(outcome),
         };
         let mut size = ByteCount::default();
@@ -99,7 +114,18 @@ impl RecordingJsHost<'_, '_> {
         } else {
             &body
         };
-        match self.store_reply(stored)? {
+        let card = if let SelfDispatchOutcome::Team(result) = &outcome {
+            let storage = self.storage.expect("result store checked above");
+            let mut sink = storage.code_run_output_sink()?;
+            write_json(&mut sink, stored)?;
+            Some(
+                self.bind_stored_sourced(storage, sink, None, &[], result.source_rows.clone())?
+                    .1,
+            )
+        } else {
+            self.store_reply(stored)?
+        };
+        match card {
             Some(card) => Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
                 kind,
                 output: card,

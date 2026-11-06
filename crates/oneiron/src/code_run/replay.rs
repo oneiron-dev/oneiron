@@ -246,6 +246,12 @@ impl CodeRunBridgeCall {
                     "leader answer belongs to another effect",
                 ))
             }
+            SelfDispatchOutcome::StoredReply(super::SelfStoredReply {
+                kind: super::SelfStoredReplyKind::TeamStartReceipt,
+                ..
+            }) if self.effect != SelfEffect::Team => Err(invalid_code_run_replay(
+                "stored team receipt belongs to another effect",
+            )),
             SelfDispatchOutcome::Team(_) if self.effect != SelfEffect::Team => Err(
                 invalid_code_run_replay("team answer belongs to another effect"),
             ),
@@ -717,6 +723,51 @@ impl CodeRunReplayGeneration {
 }
 
 impl CodeRunReplayRecord {
+    /// Whether this exact owned output is the stored receipt of a native
+    /// team start. Neither a matching digest nor caller-supplied card text
+    /// alone classifies an output as a receipt.
+    pub(crate) fn output_is_retained_receipt(&self, output: &CodeRunRawOutput) -> bool {
+        self.bridge_calls
+            .iter()
+            .any(|call| self.call_retains_output(call, output))
+    }
+
+    /// The same canonical classification for one call and its actual output.
+    pub(crate) fn call_retains_output(
+        &self,
+        call: &CodeRunBridgeCall,
+        output: &CodeRunRawOutput,
+    ) -> bool {
+        if call.effect != SelfEffect::Team
+            || call.validate_speech_coherence().is_err()
+            || !self.outputs.iter().any(|held| held == output)
+        {
+            return false;
+        }
+        let Ok(occurrence) = ResultOccurrence::owned(self.run_id, &output.path) else {
+            return false;
+        };
+        let Ok(SelfDispatchOutcome::StoredReply(stored)) =
+            decode_self_dispatch_outcome(&call.outcome)
+        else {
+            return false;
+        };
+        let reference = format!("occurrence:{}", occurrence.id().to_hex());
+        stored.kind == super::SelfStoredReplyKind::TeamStartReceipt
+            && stored.output.get("ref").and_then(serde_json::Value::as_str)
+                == Some(reference.as_str())
+            && stored
+                .output
+                .get("handle")
+                .and_then(serde_json::Value::as_str)
+                == Some(output.handle.as_str())
+            && stored
+                .output
+                .get("bytes")
+                .and_then(serde_json::Value::as_u64)
+                == Some(output.raw_len)
+    }
+
     #[must_use]
     pub fn new(run_id: EntityId, determinism: CodeRunDeterminism) -> Self {
         Self::with_determinism(run_id, Some(determinism))
