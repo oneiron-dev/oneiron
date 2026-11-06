@@ -3363,7 +3363,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=8ffa80915667fb3db0a3bef62f36c178f6f54233#8ffa80915667fb3db0a3bef62f36c178f6f54233"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7782a84abc70d33e1d0fa4795477dbc2561cb842#7782a84abc70d33e1d0fa4795477dbc2561cb842"
 dependencies = [
  "chrono",
 ]
@@ -3371,7 +3371,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=8ffa80915667fb3db0a3bef62f36c178f6f54233#8ffa80915667fb3db0a3bef62f36c178f6f54233"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7782a84abc70d33e1d0fa4795477dbc2561cb842#7782a84abc70d33e1d0fa4795477dbc2561cb842"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3398,7 +3398,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=8ffa80915667fb3db0a3bef62f36c178f6f54233#8ffa80915667fb3db0a3bef62f36c178f6f54233"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7782a84abc70d33e1d0fa4795477dbc2561cb842#7782a84abc70d33e1d0fa4795477dbc2561cb842"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3409,7 +3409,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=8ffa80915667fb3db0a3bef62f36c178f6f54233#8ffa80915667fb3db0a3bef62f36c178f6f54233"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7782a84abc70d33e1d0fa4795477dbc2561cb842#7782a84abc70d33e1d0fa4795477dbc2561cb842"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3419,7 +3419,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=8ffa80915667fb3db0a3bef62f36c178f6f54233#8ffa80915667fb3db0a3bef62f36c178f6f54233"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=7782a84abc70d33e1d0fa4795477dbc2561cb842#7782a84abc70d33e1d0fa4795477dbc2561cb842"
 dependencies = [
  "calamine",
  "chrono",
