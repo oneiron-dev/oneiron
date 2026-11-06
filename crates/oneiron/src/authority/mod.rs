@@ -92,6 +92,8 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+#[cfg(feature = "sync")]
+pub(crate) mod shared_replica_bootstrap;
 mod home_candidacy;
 mod home_pick;
 mod host_action;
