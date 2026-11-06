@@ -32,13 +32,14 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 /// under its lease and its door's read lane. `self.skills.call`,
 /// `self.spawn`, `summarize` and `tasks.wait` need the running sandbox (its
 /// bridge, its results, its park). None of those is here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 15] = [
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 16] = [
     RunVerb::TasksConsultResult,
     RunVerb::TasksRefuse,
     RunVerb::SelfReportBlocked,
     RunVerb::SelfAgentsSpawn,
     RunVerb::SelfTeamStart,
     RunVerb::SelfTeamRecord,
+    RunVerb::SelfTeamVote,
     RunVerb::SelfTeamSubmit,
     RunVerb::SelfLeaderAdvice,
     RunVerb::SelfLeaderPattern,
