@@ -333,6 +333,8 @@ pub(crate) use oneiron_store::replay_only_commits;
 pub mod world_authority;
 pub(crate) mod world_pad_rows;
 pub use oneiron_store::world_registration_keys;
+// FIX 12569: a vault's own drafter artifact keys.
+pub(crate) mod drafter_custody;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -423,10 +425,11 @@ pub(crate) use body_envelope::{
     BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope,
     SealedStream, SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn,
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
-    erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
-    prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
-    retire_body_key_in_txn, sealed_body_file_name,
+    erase_bodies_in_txn, instance_id, journal_restored_body_key_in_txn,
+    keep_promoted_body_key_in_txn, pin_body_custody_in_txn, prune_retired_bodies_in_rows,
+    release_body_in_txn, remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
+    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
+    sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.

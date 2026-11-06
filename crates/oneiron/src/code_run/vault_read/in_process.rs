@@ -1,6 +1,7 @@
 //! The in-process adapter: scoped reads against a live vault plus retrieval-budget control.
 
 mod frames;
+mod media_query;
 
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
@@ -8,7 +9,6 @@ use crate::context_pack::{
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
 };
 use crate::memory::repo_secret_reads::masked_asset_body;
-use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::vault::Vault;
@@ -45,6 +45,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
     producers: Option<&'v crate::memory::ProducerRows>,
     media: Option<&'v [EmbeddedMediaSeed]>,
+    media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
 }
 
@@ -57,6 +58,7 @@ pub const MEDIA_UNAVAILABLE_ENGINE_CODE: &str = "EMBEDDER_UNAVAILABLE";
 fn media_unavailable(method: VaultReadMethod) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
+        legal_hold: None,
         method,
         engine_code: MEDIA_UNAVAILABLE_ENGINE_CODE.to_owned(),
         message: "this host serves no ai.embed rung for media; retry without media".to_owned(),
@@ -85,6 +87,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             scoped_read: vault.scoped_read(actor_key),
             producers: None,
             media: None,
+            media_memory: None,
             image_pick: None,
         }
     }
@@ -179,48 +182,6 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     pub fn listing_producers(mut self, producers: &'v crate::memory::ProducerRows) -> Self {
         self.producers = Some(producers);
         self
-    }
-
-    /// Host media seeds, the one-space preset's text-slot seed among them,
-    /// are each one more ranked list beside the text and vector seeds, as on
-    /// the accepted route's `run_core_query`. A query asked in an affect
-    /// rides the seeded search, the one that takes it.
-    fn run_query(
-        &self,
-        query: Option<&str>,
-        vector: Option<&[f32]>,
-        media: &[EmbeddedMediaSeed],
-        limit: usize,
-        affect: Option<oneiron_contracts::affect::Vad>,
-    ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
-        let results = if media.is_empty() && affect.is_none() {
-            match (query, vector) {
-                (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
-                (Some(query), None) => self.scoped_read.search_text(query, limit, None),
-                (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
-                (None, None) => self.scoped_read.read_receipt(None, 0).map(|receipt| {
-                    crate::claim::ScopedReadResult {
-                        value: Vec::new(),
-                        receipt,
-                    }
-                }),
-            }
-        } else {
-            let media: Vec<_> = media
-                .iter()
-                .map(|seed| {
-                    (
-                        seed.space.as_str(),
-                        seed.kind,
-                        seed.vector.as_slice(),
-                        seed.kinds.as_slice(),
-                    )
-                })
-                .collect();
-            self.scoped_read
-                .search_seeded(query, vector, &media, limit, None, affect)
-        };
-        results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
     }
 
     fn query_op(&self, request: &CoreQueryRequest) -> VaultReadResult<CoreQueryResponse> {
@@ -327,6 +288,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .max_neighbors(max_neighbors)
             .field_profile(FieldProfile::Standard)
             .for_destination(self.scoped_read.actor_key().destination());
+        if let Some(memory) = self.media_memory {
+            builder = builder.media_query_memory(memory);
+        }
         if let Some(model) = request.executor_model.as_deref() {
             builder = builder
                 .skill_executor(model)
@@ -770,6 +734,7 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         );
         reader.producers = self.producers;
         reader.media = self.media;
+        reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
         match request.into_inner() {
             VaultReadRequest::Query(request) => {

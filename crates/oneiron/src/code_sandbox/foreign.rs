@@ -47,6 +47,7 @@ pub fn execute_foreign_code(
     budget: ExecutionBudget,
     spool: Arc<dyn ProposalSpoolFloor>,
     floor: Arc<dyn HostNetFloor>,
+    output: &mut dyn super::microvm::MicroVmOutputSink,
 ) -> Result<ForeignCodeOutcome> {
     if !artifact.component.starts_with(b"\0asm\x0d\0\x01\0")
         || <[u8; 32]>::from(Sha256::digest(artifact.component)) != artifact.sha256
@@ -67,6 +68,7 @@ pub fn execute_foreign_code(
         Some(spool),
         budget,
         &StepCancellation::never(),
+        output,
     )
 }
 
@@ -88,6 +90,7 @@ pub(crate) fn execute_foreign_code_on(
     spool: Option<Arc<dyn ProposalSpoolFloor>>,
     budget: ExecutionBudget,
     cancel: &StepCancellation,
+    output: &mut dyn super::microvm::MicroVmOutputSink,
 ) -> Result<ForeignCodeOutcome> {
     cancel.check()?;
     backend.set_egress(Arc::clone(&relay));
@@ -110,7 +113,7 @@ pub(crate) fn execute_foreign_code_on(
         CredentialAllowlist::new(),
     )?
     .with_credential_relay(Arc::clone(&relay));
-    let result = adapter.run_cancellable(&image, budget, cancel);
+    let result = adapter.run_cancellable(&image, budget, cancel, output);
     let manifest = adapter.session_manifest();
     let recorded = manifest
         .as_ref()
