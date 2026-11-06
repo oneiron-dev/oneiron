@@ -23,11 +23,13 @@ use super::work_context::WorkContext;
 mod denied;
 mod media;
 mod origin;
+mod raw;
 mod receipts;
 mod unrecorded;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
+pub use raw::RawDispatch;
 pub(super) use receipts::publish_receipt_to;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
