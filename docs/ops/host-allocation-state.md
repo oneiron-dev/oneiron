@@ -5,9 +5,10 @@ allocation backend. It is not installed by the current `HostAccount` constructor
 Those constructors and their run admission path still use their existing
 in-memory allocation meters. `RunAdmission::with_persistent_allocation` explicitly
 selects the native ledger with a required `AllocationProducer`. It uses no
-reflected allocation meter for admission. The server has not selected this
-constructor yet. No Cloud wallet or price conversion is implemented by this
-backend.
+reflected allocation meter for admission. The server's explicit
+`with_native_usage_metering` binding selects this constructor for its
+`undeclared_run` factory. Ordinary startup and other run constructors remain
+unchanged. No Cloud wallet or price conversion is implemented by this backend.
 
 ## Authority and state
 
@@ -66,7 +67,7 @@ Actor erase removes the stored resident attribution without releasing money or
 pending work; a later terminal cannot recreate that resident row. The existing
 resident-share family and its whole-row erase remain unchanged in ownership.
 
-## Remaining runtime work
+## Runtime integration and remaining work
 
 The opt-in run path reserves and freezes its admitted receipt in the native
 writer before returning its permit. The real `RunInner::begin_dispatch` hook
@@ -86,10 +87,19 @@ They clear the original ownership marker and publish the original observer
 receipt only after the native write commits. Failed entries remain queued;
 other calls can still make progress. No queue, run, meter or resident lock spans
 the vault writer. This is memory custody, not durable terminal crash recovery.
-The server must retain the selected backend and invoke this drain from its
-existing usage lifecycle when it installs the concrete producer.
+The opt-in server binding retains the selected backend for its lifetime and
+invokes this drain before the existing usage flush, including the shutdown
+pass. It reuses the existing meter worker; it adds no timer, retry cap or wait
+loop. Failed writes still retain memory-only terminals, not crash recovery.
 
-This is not server activation. `VaultUsage::allocation_producer` now creates
+The binding creates no allocation and replays no old full grant. Its
+`persistent_allocation_ledger` accessor returns the same authoritative ledger
+for original trusted-host grant, status and retirement operations. Actual
+host-delivered allocation identity, original unit and ordered conversion rates
+must arrive intact; no `HostAccount`, run meter, maximum historical generation
+or reflected balance supplies them.
+
+This is opt-in source integration, not default startup or hosted activation. `VaultUsage::allocation_producer` now creates
 `NativeUsageProducer` from the original usage ledger and its same vault. Its
 freeze callback stores the one original `AdmittedCall`, not a second field list
 or a fake settled usage event. The separate `USAGE_ADMITTED_CALL` family is LIVE
@@ -100,9 +110,21 @@ writer's hard-erasure markers. A later terminal reads those stored facts, never
 an old memory snapshot that could restore erased attribution.
 
 The producer's typed `record_service_cost` updates that original admitted row
-for a service call. A model call's frozen rate snapshot is unchanged. The actual
-native service consumers must be wired to this typed path before activation;
-the existing ordinary memory service-cost method is unchanged. Terminal staging
+for a service call. A model call's frozen rate snapshot is unchanged. The web
+connector's actual backend-key caller now uses the selected server factory
+when it has no existing run, and its cost update selects the original permit's
+native backend before settlement. Ordinary permits keep the existing memory
+service-cost method. Native admission and dispatch storage failures keep their
+host-storage distinction and become an internal facade error, never a spent
+budget or provider-health refusal.
+
+The producer retains the exact content-free provider cost before attempting
+its preliminary row update. If that write fails, the terminal's same-writer
+callback still merges the retained fact into the stored, scrubbed original
+admission. A failed terminal retains both originals for retry. Only the native
+commit acknowledgement releases the memory cost; a postcommit error does not
+undo or reissue the committed event. This memory backstop does not survive a
+process crash. Terminal staging
 uses the existing pure event builder and `UsageLedger` pending pipeline in the
 hold's writer, then removes the admission in that same commit. An undispatched
 terminal removes its admission without creating served usage.
@@ -110,11 +132,17 @@ terminal removes its admission without creating served usage.
 Optional model-call evidence and its NoRecord checks remain separate. This
 producer does not capture a prompt, response or credential, and does not change
 the existing usage path's billing or suppress settlement because an evidence
-write is absent. The actual server still needs to select the persistent backend,
-bind native service-cost failures and retry lifetime, and choose receipt sinks
-that only observe rather than independently bill the same call. Crash recovery
-and accepted-terminal reconciliation remain open; a false dispatch observation
-is never permission to release an old hold.
+write is absent. The selected native run's sink only observes its actual
+committed native admission and terminal; it does not feed those rows through
+`VaultUsage::record` as an independent usage producer. Free and memory-work
+calls on that factory keep the ordinary usage leg, and chosen observers and
+budget-hit hooks remain attached.
+
+Other model, media and House run factories still need their original native
+binding joins; selecting this server factory is not a claim that those paths
+were converted. The original hosted grant-delivery adapter, durable terminal
+crash recovery and accepted-terminal reconciliation remain open. A false
+dispatch observation is never permission to release an old hold.
 
 Cloud accepted-terminal identity, serving-retirement reconciliation and backing
 return remain the hosted control plane's responsibility. Native revisions,

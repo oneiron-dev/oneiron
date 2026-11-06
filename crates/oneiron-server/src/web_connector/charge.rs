@@ -7,7 +7,8 @@
 //! A known provider cost is a separate fact on that event, with its basis.
 //! Calls on the user's own key or through the hub are not ours to charge.
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunAdmission, RunPermit,
+    CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunAdmission, RunDenied,
+    RunPermit,
 };
 use oneiron::web_connector::{
     BACKEND_KEY_ENV, WebCallOutcome, WebConnectorUsage, WebCostBasis, WebProvider, WebTool,
@@ -23,6 +24,20 @@ const WEB_RUN: &str = "web-connector";
 /// A snapshot of the exact content-free provider cost fact, not a billing table.
 const COST_SNAPSHOT_DOMAIN: &[u8] = b"oneiron.usage.web-provider-cost.v1";
 
+pub(super) enum AdmissionError {
+    Refused(&'static str),
+    HostStore { operation: &'static str },
+}
+
+impl From<RunDenied> for AdmissionError {
+    fn from(denied: RunDenied) -> Self {
+        match denied {
+            RunDenied::AllocationStorage { operation } => Self::HostStore { operation },
+            _ => Self::Refused("web_budget_exhausted"),
+        }
+    }
+}
+
 /// Admits one backend-key call of `tool` on `provider` and opens its
 /// dispatch: on `line`, the calling run's own, else on a meter of its own.
 /// The permit settles after the send ([`settle`]). A refusal is the reason
@@ -32,8 +47,9 @@ pub(super) fn admit(
     line: Option<&RunAdmission>,
     provider: WebProvider,
     tool: WebTool,
-) -> Result<RunPermit, &'static str> {
-    let connector = paid_connector(provider, tool).ok_or("web_connector_route_invalid")?;
+) -> Result<RunPermit, AdmissionError> {
+    let connector = paid_connector(provider, tool)
+        .ok_or(AdmissionError::Refused("web_connector_route_invalid"))?;
     let own;
     let run = match line {
         Some(line) => line,
@@ -47,18 +63,18 @@ pub(super) fn admit(
                 1,
                 BudgetExhaustionPolicy::Suspend,
             );
-            own = server.ai.model_runtime().undeclared_run(name, meter);
+            own = server.undeclared_run(name, meter);
             &own
         }
     };
     let permit = run.admit_paid(&connector, 1).map_err(|denied| {
         tracing::warn!(%denied, "a web call's run admission was refused");
-        "web_budget_exhausted"
+        AdmissionError::from(denied)
     })?;
     run.dispatch_paid(permit.lease(), &connector)
         .map_err(|denied| {
             tracing::warn!(%denied, "a web call's dispatch was refused");
-            "web_budget_exhausted"
+            AdmissionError::from(denied)
         })?;
     Ok(permit)
 }
@@ -67,9 +83,9 @@ pub(super) fn admit(
 /// one keeps its reservation as spend, as the request went out.
 pub(super) fn settle(server: &SyncServer, permit: RunPermit, usage: &WebConnectorUsage) {
     if let Some(cost) = service_cost(usage)
-        && let Some(ledger) = server.vault_usage()
+        && let Err(error) = server.record_service_cost(&permit, cost)
     {
-        ledger.record_service_cost(permit.instance(), permit.lease().id(), cost);
+        tracing::error!(%error, "service cost storage failed before settlement");
     }
     let outcome = if matches!(usage.outcome, WebCallOutcome::Ok { .. }) {
         CallOutcome::UsedCounted(1)

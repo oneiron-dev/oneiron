@@ -1,7 +1,8 @@
 //! Original admitted usage custody for the explicitly selected native backend.
 //! Billing follows the existing usage path, independently of optional evidence
 //! capture and its NoRecord checks. No prompt, response or credential is stored.
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use crate::usage::{UsageError, UsageLedger, UsageServiceCost};
 use oneiron::EntityId;
@@ -15,6 +16,7 @@ use super::{AdmittedCall, VaultUsage, settlement::settlement_event};
 pub(crate) struct NativeUsageProducer {
     usage: Arc<VaultUsage>,
     vault: Arc<oneiron::Vault>,
+    service_costs: Mutex<BTreeMap<(EntityId, String), UsageServiceCost>>,
 }
 
 impl VaultUsage {
@@ -24,6 +26,7 @@ impl VaultUsage {
         Arc::new(NativeUsageProducer {
             vault: self.ledger.vault(),
             usage: Arc::clone(self),
+            service_costs: Mutex::default(),
         })
     }
 }
@@ -79,6 +82,12 @@ impl NativeUsageProducer {
         lease: &str,
         cost: UsageServiceCost,
     ) -> Result<(), UsageError> {
+        // Retain the actual provider fact before attempting storage. A terminal
+        // uses the same fact even if this preliminary write could not commit.
+        self.service_costs
+            .lock()
+            .expect("native service costs lock poisoned")
+            .insert((instance, lease.to_owned()), cost.clone());
         let key = key(instance, lease);
         self.vault.try_with_write_txn_grouped(|txn| {
             let mut call = self.read(txn, &key)?;
@@ -110,9 +119,19 @@ impl NativeUsageProducer {
             return Err(invalid("settlement requires the original terminal"));
         };
         let key = key(terminal.instance, lease);
-        let call = self.read(txn, &key)?;
+        let mut call = self.read(txn, &key)?;
         if call.facts.lease != *lease {
             return Err(invalid("the original lease differs"));
+        }
+        if call.facts.model.is_none()
+            && let Some(cost) = self
+                .service_costs
+                .lock()
+                .expect("native service costs lock poisoned")
+                .get(&(terminal.instance, lease.clone()))
+                .cloned()
+        {
+            call.service_cost = Some(cost);
         }
         if let Some((event, source, source_rows)) =
             settlement_event(&self.usage.vault_id, terminal, call)
@@ -133,6 +152,15 @@ impl NativeUsageProducer {
 }
 
 impl AllocationProducer for NativeUsageProducer {
+    fn terminal_committed(&self, terminal: &RunReceipt) {
+        if let RunEvent::Settled { lease, .. } = &terminal.event {
+            self.service_costs
+                .lock()
+                .expect("native service costs lock poisoned")
+                .remove(&(terminal.instance, lease.clone()));
+        }
+    }
+
     fn freeze_in_write_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
