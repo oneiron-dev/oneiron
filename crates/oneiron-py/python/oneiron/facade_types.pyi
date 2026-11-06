@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4584 declarations.
-Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1264 facade rows, 4598 declarations.
+Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5122,6 +5122,98 @@ class WeaveDigestRendered(TypedDict):
     scheduled_for: int
     rendered_at: int
     narrowing: ScopedReadReceipt
+class ProactivityDigestRequest(TypedDict):
+    id: NotRequired[str | None]
+class DigestPrivateSource(TypedDict):
+    root: str
+    turn: str
+class DigestProposal(TypedDict):
+    claim_ref: str
+    revision: list[int]
+    summary: str
+    private_sources: NotRequired[list[DigestPrivateSource]]
+    unverified: NotRequired[bool]
+JudgeAskReason = Literal["revision_disagreement", "uncertainty", "rubric_recheck", "rubric_regrade"]
+class JudgeRegrade(TypedDict):
+    label: list[int]
+    rubric: list[int]
+class JudgeAsk(TypedDict):
+    id: list[int]
+    skill: str
+    responsible: str
+    campaign: str
+    evidence: str
+    reason: JudgeAskReason
+    option_a: str
+    option_b: str
+    delivered_at: NotRequired[int | None]
+    regrade: NotRequired[JudgeRegrade | None]
+class EvalSeatNamed(TypedDict):
+    named: str
+EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
+class EvalLabelAsk(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    case: EntityId
+    decision: str
+    responsible: EntityId
+    option_a: str
+    option_b: str
+    minutes: int
+    asked_at: int
+    delivered_at: NotRequired[int | None]
+    chosen: NotRequired[str | None]
+    answered_at: NotRequired[int | None]
+class DigestOffer(TypedDict):
+    offer: str
+    digest: str
+    summary: str
+class DigestCleanup(TypedDict):
+    decisions: list[str]
+    archived: int
+    skipped: int
+    proposals: list[str]
+    proposed: int
+    view: str
+class DigestNoteTombstones(TypedDict):
+    proposals: list[str]
+    view: str
+class DigestAppliedItem(TypedDict):
+    target: str
+    kind: str
+    facet: str
+    applied_at: int
+    receipt_ref: str
+class DigestApplied(TypedDict):
+    items: list[DigestAppliedItem]
+    view: str
+class DigestDrafterItem(TypedDict):
+    event: str
+    kind: str
+    versions: list[str]
+    reason: NotRequired[str | None]
+    at: int
+class DigestDrafter(TypedDict):
+    items: list[DigestDrafterItem]
+    nights: NotRequired[dict[str, int]]
+    through: str
+    view: str
+class ProactivityDigestView(TypedDict):
+    id: list[int]
+    created_at: int
+    recipient: str | None
+    urgent: bool
+    groups: dict[str, list[DigestProposal]]
+    judge_asks: list[JudgeAsk]
+    eval_label_asks: list[EvalLabelAsk]
+    offers: NotRequired[list[DigestOffer]]
+    cleanup: NotRequired[DigestCleanup | None]
+    note_tombstones: NotRequired[DigestNoteTombstones | None]
+    applied: NotRequired[DigestApplied | None]
+    drafter: NotRequired[DigestDrafter | None]
+    health_cards: NotRequired[list[ConcernCardSummary]]
+    rendered: str
+    voice_style: str
 class InboxLensRequest(TypedDict):
     identity: NotRequired[str | None]
     agent: NotRequired[str | None]
@@ -8544,9 +8636,6 @@ class ResearchGoalPin(TypedDict):
     goal_id: EntityId
     revision: str
     project: NotRequired[tuple[EntityId, EntityId] | None]
-class EvalSeatNamed(TypedDict):
-    named: str
-EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
 class ResearchConfirmationSeat(TypedDict):
     seat: EvalSeat
     cohort: EntityId
@@ -9085,19 +9174,6 @@ class EvalExposureLedger(TypedDict):
 class EvalBlockedLabelsRequest(TypedDict):
     seat: NotRequired[EvalSeat | None]
     decision: NotRequired[str | None]
-class EvalLabelAsk(TypedDict):
-    id: EntityId
-    seat: EvalSeat
-    case: EntityId
-    decision: str
-    responsible: EntityId
-    option_a: str
-    option_b: str
-    minutes: int
-    asked_at: int
-    delivered_at: NotRequired[int | None]
-    chosen: NotRequired[str | None]
-    answered_at: NotRequired[int | None]
 class EvalLabelPickRequest(TypedDict):
     decision: str
     case: EntityId
