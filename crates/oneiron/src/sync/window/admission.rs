@@ -515,6 +515,16 @@ fn validate_window_update(
     if let Some(vault) = vault {
         crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
     }
+    // A source-audience policy revision or change receipt naming an actor
+    // erased here, in any part the update carries, its retained history
+    // included (fix list row 17238): the window is pinned history-free
+    // before the update lands, so no export ships that copy again, and its
+    // refresh takes a live copy down.
+    if let (Some(vault), Some(key)) = (vault, key)
+        && audiences.names_erased()
+    {
+        crate::sync::window::require_history_free_window(vault, key)?;
+    }
     Ok(())
 }
 
