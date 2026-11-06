@@ -82,6 +82,15 @@ impl GraphFsResolver<'_, '_> {
     /// The scope of one listing's cursors: this vault, this reader, and the
     /// listing named by `listing` (its path and any parameter it walks by).
     pub(super) fn cursor_scope(&self, listing: &str) -> CursorScope {
+        self.cursor_scope_with(listing, || Ok(()))
+            .expect("no-op cursor checkpoints cannot fail")
+    }
+
+    pub(super) fn cursor_scope_with(
+        &self,
+        listing: &str,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<CursorScope> {
         let mut hasher = blake3::Hasher::new_keyed(position_key());
         hasher.update(b"oneiron.graph-fs.cursor.v1");
         hasher.update(self.scoped_read.vault().vault_id().as_bytes());
@@ -95,9 +104,15 @@ impl GraphFsResolver<'_, '_> {
         hasher.update(&(self.options.page_byte_cap as u64).to_be_bytes());
         for field in [self.scoped_read.actor_key().actor_ref(), listing] {
             hasher.update(&(field.len() as u64).to_be_bytes());
-            hasher.update(field.as_bytes());
+            for chunk in field
+                .as_bytes()
+                .chunks(self.options.page_byte_cap.max(char::MAX.len_utf8()))
+            {
+                checkpoint()?;
+                hasher.update(chunk);
+            }
         }
-        CursorScope(*hasher.finalize().as_bytes())
+        Ok(CursorScope(*hasher.finalize().as_bytes()))
     }
 }
 

@@ -228,14 +228,8 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
-        self.walk(
-            path,
-            true,
-            WalkVerb::Find,
-            &format!("find {path}"),
-            cursor,
-            reader,
-        )
+        let listing = copy_text_parts(&["find ", path], reader, self.options.page_byte_cap)?;
+        self.walk(path, true, WalkVerb::Find, &listing, cursor, reader)
     }
 
     pub(super) fn grep_walk(
@@ -247,7 +241,12 @@ impl GraphFsResolver<'_, '_> {
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
         let flag = if recursive { " -r" } else { "" };
-        let listing = format!("grep{flag} {}:{pattern} {path}", pattern.len());
+        let prefix = format!("grep{flag} {}:", pattern.len());
+        let listing = copy_text_parts(
+            &[&prefix, pattern, " ", path],
+            reader,
+            self.options.page_byte_cap,
+        )?;
         self.walk(
             path,
             recursive,
@@ -271,7 +270,7 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
-        let scope = self.cursor_scope(listing);
+        let scope = self.cursor_scope_with(listing, || checkpoint(reader))?;
         let mut at = scope
             .open_with(
                 cursor,
