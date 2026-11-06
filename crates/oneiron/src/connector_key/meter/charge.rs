@@ -120,7 +120,8 @@ pub(crate) fn charge_effector_budgets_pooled(
 /// Read-only preflight for a set of connector keys charged in ONE Gate
 /// transaction. Callers preflight every distinct key before writing usage to
 /// any of them, so a later exhausted key cannot partially debit an earlier.
-/// A per-grant key's preflight also reads its catalog's shared pool.
+/// A per-grant key's preflight also reads its catalog's shared pool and
+/// reports the exhausted row [`pool_exhaustion_reported`] selects.
 pub(crate) fn preflight_effector_budgets(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -130,16 +131,14 @@ pub(crate) fn preflight_effector_budgets(
     send_like: bool,
     now: u64,
 ) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
-    if let Some(exhausted) =
-        preflight_key_budgets(store, txn, key_id, record, effect_channel, send_like, now)?
-    {
-        return Ok(Some(exhausted));
-    }
+    let own = key_exhaustion(store, txn, key_id, record, effect_channel, send_like, now)?;
     let Some((catalog_id, catalog, channel)) = catalog_budget_pool_in_txn(store, txn, record)?
     else {
-        return Ok(None);
+        return Ok(own.map(KeyExhaustion::reported));
     };
-    preflight_key_budgets(store, txn, &catalog_id, &catalog, &channel, send_like, now)
+    let pool = key_exhaustion(store, txn, &catalog_id, &catalog, &channel, send_like, now)?
+        .filter(|pool| pool_exhaustion_reported(own.as_ref(), pool));
+    Ok(pool.or(own).map(KeyExhaustion::reported))
 }
 
 fn preflight_key_budgets(
@@ -151,6 +150,35 @@ fn preflight_key_budgets(
     send_like: bool,
     now: u64,
 ) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
+    Ok(
+        key_exhaustion(store, txn, key_id, record, effect_channel, send_like, now)?
+            .map(KeyExhaustion::reported),
+    )
+}
+
+/// The exhausted row one key's preflight finds, and whether it bounds
+/// spend.
+struct KeyExhaustion {
+    location: EffectorBudgetLocation,
+    on_exhaust: EffectorBudgetOnExhaust,
+    spend: bool,
+}
+
+impl KeyExhaustion {
+    const fn reported(self) -> (EffectorBudgetLocation, EffectorBudgetOnExhaust) {
+        (self.location, self.on_exhaust)
+    }
+}
+
+fn key_exhaustion(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+) -> Result<Option<KeyExhaustion>> {
     let states = load_budget_row_states(
         store,
         txn,
@@ -160,13 +188,24 @@ fn preflight_key_budgets(
         send_like,
         now,
     )?;
-    Ok(first_exhausted(&states).map(|state| {
-        let location = EffectorBudgetLocation {
+    Ok(first_exhausted(&states).map(|state| KeyExhaustion {
+        location: EffectorBudgetLocation {
             key_ref: *key_id,
             row: state.row,
-        };
-        (location, state.budget.exhaust_policy())
+        },
+        on_exhaust: state.budget.exhaust_policy(),
+        spend: state.budget.dimension == EffectorBudgetDimension::Spend,
     }))
+}
+
+/// Whether a per-grant key's admission reports its catalog pool's exhausted
+/// row rather than its own (FIX 8753): when its own rows pass, or when the
+/// pool's row bounds spend and its own only counts. Spend comes before
+/// count across both keys, the key's own row first within each, so a
+/// grant's count crossing never hides the pool's money refusal or keeps
+/// its `Suspend` from running on the catalog key.
+fn pool_exhaustion_reported(own: Option<&KeyExhaustion>, pool: &KeyExhaustion) -> bool {
+    own.is_none_or(|own| pool.spend && !own.spend)
 }
 
 /// The exhausted matched row an admission reports: the first exhausted
@@ -199,8 +238,10 @@ fn first_exhausted<'s, 'a>(states: &'s [BudgetRowState<'a>]) -> Option<&'s Budge
 /// side rides `charge.pool` and `charge.read.pool` under the catalog key's
 /// ref (ONE-1794).
 ///
-/// An exhausted catalog pool comes back as `Exhausted` with `Refuse`, after
-/// the catalog row's own on-exhaust has run: a `Suspend` row suspends the
+/// An exhausted catalog pool comes back as `Exhausted` with `Refuse` when
+/// [`pool_exhaustion_reported`] selects it (the key's own rows pass, or the
+/// pool's spend row beats the key's count row), after the catalog row's
+/// own on-exhaust has run: a `Suspend` row suspends the
 /// catalog key, which holds this key with it. The caller then must not
 /// suspend this key in its own name, or the catalog's resume would not
 /// lift it.
@@ -217,9 +258,13 @@ pub(crate) fn charge_effector_budgets(
     else {
         return charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now);
     };
-    if preflight_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?.is_none()
-        && let Some((location, on_exhaust)) =
-            preflight_key_budgets(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
+    let own = key_exhaustion(store, wtxn, key_id, key, effect_channel, send_like, now)?;
+    if let Some(KeyExhaustion {
+        location,
+        on_exhaust,
+        ..
+    }) = key_exhaustion(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
+        .filter(|pool| pool_exhaustion_reported(own.as_ref(), pool))
     {
         let held = on_exhaust == EffectorBudgetOnExhaust::Suspend
             && catalog.status == ConnectorKeyStatus::Active;
