@@ -2,12 +2,17 @@
 
 use crate::pipeline::ScoredEntity;
 
-use super::{EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadMethod, VaultReadResult, engine_failure};
+use super::{
+    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadMethod, VaultReadResult, engine_failure,
+};
 
 impl<'v> InProcessVaultReadAdapter<'v> {
     /// Use the host's memory line for native copies of these media queries.
     #[must_use]
-    pub fn with_media_query_memory(mut self, memory: &'v crate::host_memory::MachineMemory) -> Self {
+    pub fn with_media_query_memory(
+        mut self,
+        memory: &'v crate::host_memory::MachineMemory,
+    ) -> Self {
         self.media_memory = Some(memory);
         self
     }
@@ -48,10 +53,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     )
                 })
                 .collect();
-            self.scoped_read
-                .search_seeded(query, vector, &media, limit, None, affect, self.media_memory)
+            self.scoped_read.search_seeded(
+                query,
+                vector,
+                &media,
+                limit,
+                None,
+                affect,
+                self.media_memory,
+            )
         };
         results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
     }
-
 }
