@@ -278,6 +278,7 @@ projection_body_bytes = 4194304   # body bytes one multi-row read decodes
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
+paced_verb_wait_secs = 604800     # how long a call a budget window paced waits in its caller's line before it ends unrun
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
@@ -512,6 +513,30 @@ protocol = "https"
 host = "github.com"
 username = "x-access-token"
 # path = "owner/repo"       # optional: answer one repository's path alone
+```
+
+`[runtime.seat_model_providers]` sends a seat's model calls through this
+host, with the provider key kept in the vault (T0). Each slot names a
+`[models.providers]` entry with a `key_secret` and the exact wire models a
+seat may ask for. A run whose pinned manifest declares that key gets a fresh
+reference to the slot. Its CLI gets the reference and the slot's loopback URL
+in the variables its SDK reads: `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`
+for an Anthropic slot, `OPENAI_BASE_URL` and `OPENAI_API_KEY` for an OpenAI
+chat slot. The SDK posts to `/v1/seat/model/<slot>/v1/messages` or
+`/v1/seat/model/<slot>/v1/chat/completions`. The host reads the key at the
+custody door for each call and sends the request through the credential
+broker. The CLI never holds the key. The reference works only from this
+device and only while the run's claim holds. A request that names another
+model is refused. A request with `stream: true` gets the provider's events
+as they come, the key stripped from them. Messages also takes Claude Code's
+`?beta=true`; the door takes no other query. With this slot the CLI calls
+the provider on the key, not on the person's own login. The table is empty
+by default, so no seat is offered the door.
+
+```toml
+[runtime.seat_model_providers.anthropic]
+provider = "anthropic"            # a [models.providers] entry with key_secret
+models = ["claude-sonnet-5-5"]    # the wire models a seat may ask for
 ```
 
 ## Prompt layout
