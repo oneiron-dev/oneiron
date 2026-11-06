@@ -1,7 +1,8 @@
 //! A successor attempt's approved continuation of a failed run (FIX 3694,
 //! OF-568): the run it forks from, the step it starts at, the owner's
 //! approval and the exact prompt bytes approved, written once; and the one
-//! transaction that seeds the child run's replay row from that fork.
+//! transaction that seeds the child run's replay row from that fork, with
+//! its read-world ledger from the source's (FIX 7085).
 
 use std::borrow::Cow;
 
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::super::replay::{
     CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
 };
+use super::read_worlds::seed_read_world_prefix_in_txn;
 use super::records::{FinishedOutput, REPLAY_RECORDS, body_drifted, finish_output};
 use super::response_erase::fence_replay_in_txn;
 use super::response_owners::{inherit_response_owner_in_txn, stamp_response_owner_in_txn};
@@ -95,12 +97,17 @@ pub(crate) fn put_run_continuation_row_in_txn(
 
 /// Seeds the child's row in the caller's writer, after its bodies were
 /// published there. Ownership precedes the erase fence; no descriptor is
-/// republished after the fence releases it.
+/// republished after the fence releases it. Before the row, the child's
+/// read-world ledger is seeded from the source's proof of the calls before
+/// `cut`, the proved cut's bridge position, and before every copied call
+/// past it (FIX 7085). A child that copied fewer calls than `cut` begins a
+/// ledger that misses them.
 pub(crate) fn seed_continuation_run(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     child: &CodeRunReplayRecord,
     source: EntityId,
+    cut: u64,
     actor: EntityId,
     inherited: &[CodeRunRawOutput],
 ) -> Result<CodeRunReplayGeneration> {
@@ -114,6 +121,12 @@ pub(crate) fn seed_continuation_run(
     for output in inherited {
         vault.retain_inherited_result_in_txn(txn, child.run_id, source, output)?;
     }
+    // The copied row holds the proved prefix through `cut` and, when the cut
+    // falls after a failed step, that step's recorded calls too: each copied
+    // position is the source's own call, so its proof covers it (FIX 7085).
+    let copied = child.bridge_calls.len() as u64;
+    let copied_cut = (copied >= cut).then_some(copied);
+    seed_read_world_prefix_in_txn(vault, txn, source, copied_cut, child.run_id)?;
     let generation = child.generation()?;
     let child = fence_replay_in_txn(vault, txn, Cow::Borrowed(child))?;
     REPLAY_RECORDS.put(vault, txn, &child.run_id, &child)?;
