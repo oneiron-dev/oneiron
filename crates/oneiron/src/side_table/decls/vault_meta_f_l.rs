@@ -473,6 +473,8 @@ side_tables! {
         => crate::store::actor_scrubs::erase_effect_authorized_actor_in_txn;
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored [accepts: crate::linear_sync::linear_sync_link_accepts_masked];
+    /// Native provider archive version captured by a LINE observation. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine;
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
     /// Owner-reviewed role binding offers with their retained trial evidence. Key: id16.
     LLM_BINDING_PROPOSAL: VaultMeta b"llm:binding_proposal:v1:" Named;
