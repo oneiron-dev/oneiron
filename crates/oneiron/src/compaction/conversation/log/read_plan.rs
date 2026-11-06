@@ -87,11 +87,12 @@ struct Coverage {
 pub(super) fn plan_chat_log(
     memory: &Memory<'_>,
     scoped: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     cut: Option<ChatLogCut>,
 ) -> MemoryResult<ChatLogPlan> {
     for _ in 0..TRANSCRIPT_READ_ATTEMPTS {
-        if let Some(plan) = plan_once(memory, scoped, conversation, cut)? {
+        if let Some(plan) = plan_once(memory, scoped, txn, conversation, cut)? {
             return Ok(plan);
         }
     }
@@ -107,6 +108,7 @@ pub(super) fn plan_chat_log(
 fn plan_once(
     memory: &Memory<'_>,
     scoped: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     cut: Option<ChatLogCut>,
 ) -> MemoryResult<Option<ChatLogPlan>> {
@@ -143,7 +145,7 @@ fn plan_once(
         }
     }
     let ids: Vec<EntityId> = listed.iter().map(|(_, turn)| *turn).collect();
-    let Coverage { standing, covering } = coverage(scoped, conversation, &ids)?;
+    let Coverage { standing, covering } = coverage(scoped, txn, conversation, &ids)?;
     let last_covered = ids.iter().rposition(|turn| covering.contains_key(turn));
     let mut selected: Vec<(u64, EntityId)> = listed
         .iter()
@@ -193,9 +195,12 @@ fn plan_once(
 /// The summaries of `conversation` that stand for `listed` turns as `scoped`
 /// reads them, in SUMMARY order: each one whose evidence names only listed
 /// turns, none covered by an earlier one, while [`standing_words_in`] holds.
-/// Read in one snapshot, opened once grant time is persisted (FIX 6188).
+/// Read in `txn`, the log's one governing snapshot, which its raw pins, its
+/// window and its SESSION are read in too (FIX 5032): its caller persisted
+/// grant time before opening it (FIX 6188).
 fn coverage(
     scoped: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     listed: &[EntityId],
 ) -> MemoryResult<Coverage> {
@@ -207,10 +212,8 @@ fn coverage(
         return Ok(coverage);
     }
     let vault = scoped.vault();
-    scoped.persist_grant_clock()?;
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let listed: BTreeSet<EntityId> = listed.iter().copied().collect();
-    for receipt in conversation_receipts_in(&vault.store, &txn, conversation)? {
+    for receipt in conversation_receipts_in(&vault.store, txn, conversation)? {
         let Some(evidence) = receipt.evidence() else {
             continue;
         };
@@ -225,7 +228,7 @@ fn coverage(
         {
             continue;
         }
-        let Some(text) = standing_words_in(scoped, &txn, &receipt)? else {
+        let Some(text) = standing_words_in(scoped, txn, &receipt)? else {
             continue;
         };
         for span in &evidence.turns {
