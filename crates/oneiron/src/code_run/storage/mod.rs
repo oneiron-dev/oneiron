@@ -64,7 +64,7 @@ pub(crate) use self::replay_capsule::{
     ForkProvenance, ForkRows, actor_gone_in_txn, capsule_request, capsule_start_body,
     erase_capsule_actor_in_txn, erase_contribution_forks_in_txn, finalize_capsule, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
-    step_replay_capsules_in_txn, store_fork_response,
+    refresh_staged_request, step_replay_capsules_in_txn, store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
