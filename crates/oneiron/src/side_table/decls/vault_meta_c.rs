@@ -290,13 +290,15 @@ side_tables! {
     /// Immutable receipt of the file-mode-review proposal ids that promoted a revision. Key: id16.
     CODE_REVISION_PROMOTION: VaultMeta b"code_revision:promotion:v1:" LegacyCompact;
     /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: id16.
-    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw;
+    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw
+        => crate::code_revision::erase_proposal_author_in_txn;
     /// The checked Baseline a tested queue revision's parent chain ends at (value = id16),
     /// written when its seal is finalized, so a read finds the root by key, never by walking
     /// the chain (FIX 7390, 7391). Key: id16.
     CODE_REVISION_QUEUE_ROOT: VaultMeta b"code_revision:queue_root:v1:" Raw;
     /// Finalized code-revision row (hand-rolled MessagePack map). Key: id16.
-    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
+    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw
+        => crate::code_revision::erase_revision_author_in_txn;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
     CODE_REVISION_SESSION_INDEX: VaultMeta b"code_revision:session:v1:" Raw;
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
