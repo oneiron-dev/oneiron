@@ -3378,7 +3378,7 @@
      "path": "src/authority/adopted_fold/settle.rs",
      "purpose": "The tail's seeded fold past an adopted image, settled and projected (OF-469, slice C): what the live fold…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -5110,7 +5110,7 @@
      "path": "src/authority/revoke_proof.rs",
      "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals, a Grant's slip withdrawals, slip…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -131695,7 +131695,7 @@
       "const": 3,
       "enum": 3,
       "fn": 21,
-      "mod": 7,
+      "mod": 8,
       "re-export": 1,
       "struct": 1,
       "type": 1
@@ -131766,6 +131766,17 @@
       "enum": 1,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/sevenz.rs",
+     "purpose": "A 7z archive's members (FIX 11575): each entry with data, by its place in the archive's file list, decoded…",
+     "surface": {
+      "const": 1,
+      "fn": 3
      }
     },
     {
@@ -139979,7 +139990,7 @@
      "purpose": "Fixed base-agent principal rows and their immutable write guards"
     },
     "batch": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -141381,7 +141392,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 631,
+   "source_files": 632,
    "test_files": 4
   },
   "oneiron-uniffi": {
