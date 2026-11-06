@@ -26,7 +26,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use oneiron::engine_executor::{BriefBoundary, BriefCandidateToken, BriefPrefix, SelfBriefPort};
+use oneiron::engine_executor::{
+    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+};
 
 use super::{
     Arc, BriefHostFacts, EntityId, MemoryError, Mutex, PoisonError, RunAdmission, RunHostDoor,
@@ -138,11 +140,11 @@ impl ResidentSelfBrief {
 }
 
 impl SelfBriefPort for ResidentSelfBrief {
-    /// A birth stages turn one from the state its entry installed, or
-    /// carries the delivered prefix of the installed epoch again. A fold
-    /// batch resolves the state afresh from what the door holds now and
-    /// installs it as the next epoch first. `None` when the installation no
-    /// longer holds the key.
+    /// A birth stages the installed epoch (turn one, or a fold that moved it
+    /// and was not yet delivered), or carries the delivered prefix of the
+    /// installed epoch again. A fold restates what the door holds now at the
+    /// epoch `folded` moved to, and stages it. `None` when the installation
+    /// no longer holds the key.
     fn prepare(&self, boundary: BriefBoundary) -> oneiron::Result<Option<BriefPrefix>> {
         let fold = matches!(boundary, BriefBoundary::Fold(_)).then(|| self.door.self_brief_facts());
         let server = Arc::clone(&self.door.server);
@@ -194,6 +196,35 @@ impl SelfBriefPort for ResidentSelfBrief {
         }
     }
 
+    /// Moves the installed brief to its next epoch as the fold batch lands,
+    /// from what the door holds now, so the boundary outlives an entry that
+    /// ends before its next request: the next entry's birth stages that
+    /// epoch, not the prefix delivered before the fold. A miss is logged and
+    /// changes nothing.
+    fn folded(&self, boundary: &FoldBoundary) {
+        let facts = self.door.self_brief_facts();
+        let server = Arc::clone(&self.door.server);
+        let (actor, board, owner) = (self.door.actor, self.door.board.clone(), self.owner);
+        let advanced = on_server(&self.door.runtime, move |handle| {
+            handle.block_on(advance_brief(&server, actor, &board, owner, facts))
+        })
+        .and_then(|advanced| advanced);
+        match advanced {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(
+                ?boundary,
+                run = %self.door.run_id.to_hex(),
+                "a pumped run's self brief is no longer held; its fold did not move it"
+            ),
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                ?boundary,
+                run = %self.door.run_id.to_hex(),
+                "a pumped run's self brief did not move past a fold"
+            ),
+        }
+    }
+
     /// Acknowledges the staged candidate `token` names. A prefix with no
     /// staged candidate, a delivered one carried again, changes nothing. A
     /// stale answer changes nothing either, and is logged.
@@ -241,6 +272,25 @@ impl SelfBriefPort for ResidentSelfBrief {
 /// [`RunHostDoor::install_self_brief`] on the server's runtime: the run's
 /// state as it resolves now, installed afresh with no `held` installation,
 /// else again at `held`'s epoch while it holds the key.
+async fn advance_brief(
+    server: &SyncServer,
+    actor: WriteActor,
+    board: &StreamConnectionId,
+    owner: BriefOwner,
+    facts: DoorFacts,
+) -> oneiron::Result<bool> {
+    let reads = crate::api::run_session_reads(server, actor, board).await;
+    let state =
+        crate::api::run_brief_state(server, actor, facts.line.as_ref(), &reads, &facts.host)
+            .map_err(unresolved)?;
+    let key = brief_key(actor, board);
+    server
+        .self_brief_sessions
+        .lock()
+        .await
+        .advance(&key, owner, state)
+}
+
 async fn install_brief(
     server: &SyncServer,
     actor: WriteActor,
@@ -287,8 +337,10 @@ async fn prepare_prefix(
         .map_err(unresolved)?;
     let key = brief_key(actor, board);
     let mut briefs = server.self_brief_sessions.lock().await;
+    // The fold's epoch moved as the batch landed (`folded`); a fold here
+    // only restates what the door holds now at that epoch.
     let held = match state {
-        Some(state) => briefs.advance(&key, owner, state)?,
+        Some(state) => briefs.holds(&key, owner) && briefs.restate(&key, state)?,
         None => briefs.holds(&key, owner),
     };
     if !held {
