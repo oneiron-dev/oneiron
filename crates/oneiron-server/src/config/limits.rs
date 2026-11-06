@@ -299,6 +299,9 @@ impl LimitsConfig {
             pairing_redeem_wait_ceiling_ms,
             pairing_redeem_quiet_ms,
             keyed_filter_json_bytes,
+            keyed_namespace_segments,
+            keyed_namespace_bytes,
+            keyed_key_bytes,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
             code_result_scan_bytes,
@@ -490,6 +493,9 @@ impl LimitsConfig {
         set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
+            (EngineLimit::KeyedNamespaceSegments, keyed_namespace_segments),
+            (EngineLimit::KeyedNamespaceBytes, keyed_namespace_bytes),
+            (EngineLimit::KeyedKeyBytes, keyed_key_bytes),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,

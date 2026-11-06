@@ -5,8 +5,11 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 145] = [
+    pub const ALL: [Self; 148] = [
         Self::KeyedFilterJsonBytes,
+        Self::KeyedNamespaceSegments,
+        Self::KeyedNamespaceBytes,
+        Self::KeyedKeyBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -157,6 +160,9 @@ impl EngineLimit {
     pub const fn key(self) -> &'static str {
         match self {
             Self::KeyedFilterJsonBytes => "limits.keyed_filter_json_bytes",
+            Self::KeyedNamespaceSegments => "limits.keyed_namespace_segments",
+            Self::KeyedNamespaceBytes => "limits.keyed_namespace_bytes",
+            Self::KeyedKeyBytes => "limits.keyed_key_bytes",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -308,6 +314,9 @@ impl EngineLimit {
     pub fn default_bound(self) -> u64 {
         match self {
             Self::KeyedFilterJsonBytes => 64 << 20,
+            Self::KeyedNamespaceSegments => 65_536,
+            Self::KeyedNamespaceBytes => 1_048_576,
+            Self::KeyedKeyBytes => 1_048_576,
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,
