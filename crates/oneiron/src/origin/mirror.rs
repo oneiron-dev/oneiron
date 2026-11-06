@@ -488,6 +488,7 @@ impl Vault {
         target: &OriginMirrorTarget,
         trigger: MirrorTrigger,
     ) -> Result<Option<(u64, u64, OriginMirrorReadiness)>> {
+        require_plain_mirror_url(&target.url)?;
         let repo_root = origin_repo_dir(self, &target.repo)?;
         let wire = GitWire::new(self)?;
         let Some(handle) = self.mirror_handle(&wire, repo_id, &repo_root)? else {
@@ -617,7 +618,7 @@ fn require_whole_ref_strategy(repo_name: &str, target: &OriginMirrorTarget) -> R
 }
 
 /// An https URL with a host, and no credential, query, fragment, space or
-/// control byte.
+/// control byte, whose path is plain segments ([`require_plain_mirror_url`]).
 fn validate_mirror_url(url: &str) -> Result<()> {
     let Some(rest) = url.strip_prefix("https://") else {
         return Err(invalid("mirror URL must be https"));
@@ -635,7 +636,43 @@ fn validate_mirror_url(url: &str) -> Result<()> {
             "mirror URL must name a host and a path, with no credential, query or fragment",
         ));
     }
-    Ok(())
+    require_plain_mirror_url(url)
+}
+
+/// The code a mirror URL the credential broker sends to no repository at is
+/// refused under: at setup, and on every run or publish of a mirror set up
+/// before the rule (FIX 20091). A served host's mirror relay names the same
+/// code.
+pub const MIRROR_URL_MALFORMED: &str = "mirror_url_malformed";
+
+/// Refuses a mirror URL whose path is not plain segments: `/` alone, or one
+/// holding an empty, `.` or `..` segment. The credential broker's repository
+/// rule takes no other, and a served host's mirror git goes only through the
+/// broker, so one URL rule holds on every host: such a mirror is refused at
+/// setup, and one already set up reports misconfigured under
+/// [`MIRROR_URL_MALFORMED`] on each run and publish, served or embedded,
+/// before any request goes out (FIX 20091).
+///
+/// # Errors
+/// [`Error::Refused`] naming [`MIRROR_URL_MALFORMED`].
+pub(crate) fn require_plain_mirror_url(url: &str) -> Result<()> {
+    let rest = url.strip_prefix("https://").unwrap_or(url);
+    let path = rest.find('/').map_or("", |at| &rest[at..]);
+    let plain = path
+        .trim_end_matches('/')
+        .strip_prefix('/')
+        .is_some_and(|segments| {
+            segments
+                .split('/')
+                .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+        });
+    if plain {
+        return Ok(());
+    }
+    Err(Error::Refused(format!(
+        "{MIRROR_URL_MALFORMED}: a mirror URL's path must be plain segments, with no empty, \
+         '.' or '..' segment, and not '/' alone"
+    )))
 }
 
 fn invalid(reason: &str) -> Error {
