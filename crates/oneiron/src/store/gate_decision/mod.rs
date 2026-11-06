@@ -34,6 +34,7 @@ mod types;
 mod vet;
 
 pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
+// An off-record room's claim decision, in the room (FIX 9967).
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
 #[cfg(feature = "sync")]
@@ -61,6 +62,7 @@ pub(in crate::store) use self::keys::{
 };
 #[cfg(feature = "sync")]
 pub(in crate::store) use self::leave::HeldGateRows;
+pub(crate) use self::ledger::{RoomGateDecision, stage_room_gate_decision_in_txn};
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{
