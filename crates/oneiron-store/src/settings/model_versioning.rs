@@ -312,8 +312,7 @@ pub struct ModelStackDeprecationStatus {
 }
 
 /// Follow the current default, or pin one stack while it is served. A
-/// vault's model pack setting holds one: follow the latest pack, or pin a
-/// season (FIX 5367).
+/// vault's model pack setting is a `ModelPackPreference` (FIX 5367, 5369).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ModelStackPreference {

@@ -426,9 +426,13 @@ impl Vault {
             )?;
         }
         // A model pack's install may change the pack the vault follows; the
-        // change keeps the receipt it replaced (FIX 5367).
+        // change keeps the receipt it replaced and tells the owner, with
+        // its revert (FIX 5367, 5369).
         if receipt.kind == PackKind::Model {
-            self.note_active_model_pack_in_txn(txn)?;
+            self.note_active_model_pack_in_txn(
+                txn,
+                crate::llm::model_pack::ModelPackChangeCause::Install,
+            )?;
         }
         if let Some(old) = prior
             && old.content_hash != receipt.content_hash

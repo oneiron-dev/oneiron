@@ -1,6 +1,8 @@
-//! Model packs at inference (FIX 5365-5367, MODEL PACKS = A): the access a
-//! host can run now, the pack a vault follows, each role's pick from it, and
-//! the owner's follow-or-pin setting.
+//! Model packs at inference (FIX 5365-5369, MODEL PACKS = A): the access a
+//! host can run now, the pack a vault follows, each role's pick from it, the
+//! owner's follow-or-pin setting, the notice of each pack change with its
+//! one-tap revert (`change`), and the retirement notices and the
+//! retirement-day move (`retirement`).
 //!
 //! Precedence for a role's model: an agent's own model list wins on the
 //! seats and raw calls it binds (#agent-models), then the owner's manifest,
@@ -17,18 +19,27 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::settings::model_pack::{
-    ModelPack, ModelPackAccess, ModelPackId, ModelPackVariant, model_pack_recency,
-    select_model_pack,
+    ModelPack, ModelPackAccess, ModelPackId, ModelPackPreference, ModelPackVariant,
+    model_pack_recency, select_model_pack,
 };
-use crate::settings::{ModelStackDeprecationStatus, ModelStackId, ModelStackPreference};
+use crate::settings::{ModelStackDeprecationStatus, ModelStackId};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::InstalledModelPack;
 
-/// The owner's model pack preference: follow the latest pack, or pin a
-/// season. Key: (). Absent follows the latest pack.
-const PREFERENCE: SideTable<(), ModelStackPreference, Named> =
+mod change;
+mod retirement;
+
+pub use change::{
+    MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB, ModelPackChangeCause,
+    ModelPackRevert, ModelPackRevertBlock, ModelPackRevertRequest, model_pack_revert_preference,
+};
+pub use retirement::{MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER, ModelPackRetirementReport};
+
+/// The owner's model pack preference: follow the latest pack, pin a season
+/// or pin one pack. Key: (). Absent follows the latest pack.
+const PREFERENCE: SideTable<(), ModelPackPreference, Named> =
     SideTable::new(&side_table::LLM_MODEL_PACK_PREFERENCE);
-/// The pack the vault followed when its pack last changed, and the one it
+/// The vault's last pack change: the pack it followed since, and the one it
 /// followed before. Key: ().
 const ACTIVE: SideTable<(), ModelPackChange, Named> =
     SideTable::new(&side_table::LLM_MODEL_PACK_ACTIVE);
@@ -128,16 +139,20 @@ pub fn model_pack_role_key(role: ModelRole) -> String {
         .unwrap_or_else(|| format!("{role:?}"))
 }
 
-/// The pack's pick for `role` (FIX 5366): the first variant, in the pack's
-/// order, that runs on the access the host holds.
+/// The pack's pick for `role` on `as_of_epoch_day` (FIX 5366, 5368): the
+/// first variant, in the pack's order, that runs on the access the host
+/// holds, each variant whose model has retired read as its successor
+/// ([`ModelPack::variant_on`]).
 #[must_use]
-pub fn resolve_model_pack_role<'p>(
-    pack: &'p ModelPack,
+pub fn resolve_model_pack_role(
+    pack: &ModelPack,
     role: &str,
     access: &AccessSnapshot,
-) -> Option<&'p ModelPackVariant> {
+    as_of_epoch_day: u32,
+) -> Option<ModelPackVariant> {
     pack.variants(role)
         .iter()
+        .filter_map(|variant| pack.variant_on(variant, as_of_epoch_day))
         .find(|variant| access.runs(variant))
 }
 
@@ -163,6 +178,20 @@ pub fn season_is_pinnable(
     packs.iter().any(|installed| {
         installed.pack.season == *season && installed.pack.is_served_on(as_of_epoch_day)
     })
+}
+
+/// Whether the owner may pin `pack`. An engine call (CALLS, FIX 5369): a
+/// pack is pinnable while it is installed and still served, the bar a
+/// season pin meets.
+#[must_use]
+pub fn pack_is_pinnable(
+    packs: &[InstalledModelPack],
+    pack: &ModelPackId,
+    as_of_epoch_day: u32,
+) -> bool {
+    packs
+        .iter()
+        .any(|installed| installed.pack.id == *pack && installed.pack.is_served_on(as_of_epoch_day))
 }
 
 /// A role's model from the active pack.
@@ -195,6 +224,9 @@ pub struct ModelPackReceipt {
     pub pin_type: String,
     pub pin_value: String,
     pub publisher: String,
+    /// The pack's changelog headline ([`ModelPack::changelog_headline`]),
+    /// which the owner's change notice names (FIX 5369).
+    pub changelog_headline: Option<String>,
 }
 
 impl ModelPackReceipt {
@@ -211,6 +243,7 @@ impl ModelPackReceipt {
             pin_type: receipt.pin_type.clone(),
             pin_value: receipt.pin_value.clone(),
             publisher: receipt.publisher.clone(),
+            changelog_headline: installed.pack.changelog_headline().map(str::to_owned),
         }
     }
 
@@ -218,13 +251,22 @@ impl ModelPackReceipt {
     fn same_pack(&self, other: &Self) -> bool {
         self.pack == other.pack && self.content_hash == other.content_hash
     }
+
+    /// Whether `installed` is this pack at these bytes.
+    fn names(&self, installed: &InstalledModelPack) -> bool {
+        installed.receipt.pack_name == self.pack
+            && installed.receipt.content_hash == self.content_hash
+    }
 }
 
 /// The vault's last pack change: the pack it follows since, and the one it
-/// followed before, which a one-tap way back returns to (FIX 5369).
+/// followed before, which a one-tap revert returns to (FIX 5369).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelPackChange {
+    /// The change's id: its notice and `vault.model_pack.revert` name it.
+    pub change_ref: String,
+    pub cause: ModelPackChangeCause,
     pub active: Option<ModelPackReceipt>,
     pub previous: Option<ModelPackReceipt>,
     /// Unix seconds.
@@ -263,19 +305,16 @@ impl ModelPackView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelPackSetting {
-    /// Follow the latest pack (the default), or pin a season.
-    pub preference: ModelStackPreference,
+    /// Follow the latest pack (the default), pin a season, or pin one pack.
+    pub preference: ModelPackPreference,
     /// The pack the preference selects now; none with no model pack installed.
     pub active: Option<ModelPackView>,
     /// The pack the vault followed before its last pack change.
     pub previous: Option<ModelPackReceipt>,
+    /// The vault's last pack change, which `vault.model_pack.revert` names.
+    pub change_ref: Option<String>,
     /// Every installed model pack, newest first.
     pub installed: Vec<ModelPackView>,
-}
-
-/// Today, in days since the Unix epoch.
-fn today_epoch_day() -> u32 {
-    u32::try_from(crate::unix_seconds_now() / SECONDS_PER_DAY).unwrap_or(u32::MAX)
 }
 
 fn invalid(reason: &'static str) -> Error {
@@ -283,9 +322,15 @@ fn invalid(reason: &'static str) -> Error {
 }
 
 impl Vault {
+    /// Today on this vault's clock, in days since the Unix epoch: the day a
+    /// pack's release and retirement are read against.
+    pub(crate) fn model_pack_today(&self) -> u32 {
+        u32::try_from(self.now_recorded_at() / SECONDS_PER_DAY).unwrap_or(u32::MAX)
+    }
+
     /// The owner's model pack preference; following the latest pack when
     /// the owner set none.
-    pub fn model_pack_preference(&self) -> Result<ModelStackPreference> {
+    pub fn model_pack_preference(&self) -> Result<ModelPackPreference> {
         let txn = self.store.env.read_txn()?;
         Ok(PREFERENCE.get(&self.store, &txn, &())?.unwrap_or_default())
     }
@@ -310,7 +355,7 @@ impl Vault {
             &packs,
             |installed| &installed.pack,
             &preference,
-            today_epoch_day(),
+            self.model_pack_today(),
         )
         .cloned())
     }
@@ -333,13 +378,12 @@ impl Vault {
             return Ok(None);
         };
         let key = model_pack_role_key(role);
-        let choice = resolve_model_pack_role(&active.pack, &key, access).map(|variant| {
-            ModelPackRoleChoice {
+        let choice = resolve_model_pack_role(&active.pack, &key, access, self.model_pack_today())
+            .map(|variant| ModelPackRoleChoice {
                 pack: active.pack.id.clone(),
                 season: active.pack.season.clone(),
-                variant: variant.clone(),
-            }
-        });
+                variant,
+            });
         Ok(choice)
     }
 
@@ -355,7 +399,7 @@ impl Vault {
     }
 
     fn model_pack_setting_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<ModelPackSetting> {
-        let today = today_epoch_day();
+        let today = self.model_pack_today();
         let preference = PREFERENCE.get(&self.store, txn, &())?.unwrap_or_default();
         let mut packs = self.installed_model_packs_in_txn(txn)?;
         let active = select_model_pack(&packs, |installed| &installed.pack, &preference, today)
@@ -363,13 +407,16 @@ impl Vault {
         packs.sort_by(|left, right| {
             model_pack_recency(&right.pack).cmp(&model_pack_recency(&left.pack))
         });
-        let previous = ACTIVE
+        let (previous, change_ref) = ACTIVE
             .get(&self.store, txn, &())?
-            .and_then(|change| change.previous);
+            .map_or((None, None), |change| {
+                (change.previous, Some(change.change_ref))
+            });
         Ok(ModelPackSetting {
             preference,
             active,
             previous,
+            change_ref,
             installed: packs
                 .iter()
                 .map(|installed| ModelPackView::of(installed, today))
@@ -378,37 +425,53 @@ impl Vault {
     }
 
     /// Replaces the owner's model pack preference under the owner proof. A
-    /// pin names a season an installed, still-served pack carries
-    /// ([`season_is_pinnable`]). The returned setting is the one this
+    /// season pin names a season an installed, still-served pack carries
+    /// ([`season_is_pinnable`]); a pack pin names an installed, still-served
+    /// pack ([`pack_is_pinnable`]). A move of the active pack is a change,
+    /// with its notice (FIX 5369). The returned setting is the one this
     /// transaction stored.
     pub fn replace_model_pack_preference_as_owner(
         &self,
         owner: &AuthenticatedOwner,
-        preference: ModelStackPreference,
+        preference: ModelPackPreference,
     ) -> Result<ModelPackSetting> {
-        let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        if let ModelStackPreference::Pinned { stack } = &preference {
-            let packs = self.installed_model_packs_in_txn(&txn)?;
-            if !season_is_pinnable(&packs, stack, today_epoch_day()) {
-                return Err(invalid(
-                    "a pin names a season an installed, still-served pack carries",
-                ));
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let today = self.model_pack_today();
+            match &preference {
+                ModelPackPreference::AutoUpgrade => {}
+                ModelPackPreference::Pinned { stack } => {
+                    let packs = self.installed_model_packs_in_txn(txn)?;
+                    if !season_is_pinnable(&packs, stack, today) {
+                        return Err(invalid(
+                            "a pin names a season an installed, still-served pack carries",
+                        ));
+                    }
+                }
+                ModelPackPreference::PinnedPack { pack } => {
+                    let packs = self.installed_model_packs_in_txn(txn)?;
+                    if !pack_is_pinnable(&packs, pack, today) {
+                        return Err(invalid("a pin names an installed, still-served pack"));
+                    }
+                }
             }
-        }
-        PREFERENCE.put(&self.store, &mut txn, &(), &preference)?;
-        self.note_active_model_pack_in_txn(&mut txn)?;
-        let setting = self.model_pack_setting_in_txn(&txn)?;
-        txn.commit()?;
-        Ok(setting)
+            PREFERENCE.put(&self.store, txn, &(), &preference)?;
+            self.note_active_model_pack_in_txn(txn, ModelPackChangeCause::Preference)?;
+            self.model_pack_setting_in_txn(txn)
+        })
     }
 
     /// Records a change of the pack the vault follows, in the caller's
     /// transaction: when the active pack differs from the one last recorded,
-    /// the record keeps the one it replaced as `previous` (FIX 5367; FIX
-    /// 5369's way back reads it). The install, removal and preference doors
-    /// call it.
-    pub(crate) fn note_active_model_pack_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    /// the record keeps the one it replaced as `previous`, under a new
+    /// change id, and every owner gets the change's notice with its one-tap
+    /// revert (FIX 5367, 5369). The install, removal, preference, revert and
+    /// retirement doors call it, each naming itself as `cause`.
+    pub(crate) fn note_active_model_pack_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        cause: ModelPackChangeCause,
+    ) -> Result<()> {
         let active = self
             .active_model_pack_in_txn(txn)?
             .map(|installed| ModelPackReceipt::of(&installed));
@@ -422,11 +485,17 @@ impl Vault {
         if unchanged {
             return Ok(());
         }
+        let changed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let change_ref =
+            change::model_pack_change_ref(prior.as_ref(), active.as_ref(), changed_at)?;
         let change = ModelPackChange {
+            change_ref,
+            cause,
             previous: prior.and_then(|change| change.active),
             active,
-            changed_at: crate::unix_seconds_now(),
+            changed_at,
         };
-        ACTIVE.put(&self.store, txn, &(), &change)
+        ACTIVE.put(&self.store, txn, &(), &change)?;
+        self.notify_model_pack_change_in_txn(txn, &change)
     }
 }

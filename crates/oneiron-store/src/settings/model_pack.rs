@@ -2,8 +2,9 @@
 //! model stack. A pack maps each role to its variants, one per kind of
 //! access, each a model and when to use it, with a changelog and the bench
 //! evidence behind its picks. Its season is a [`ModelStackId`]; following
-//! the latest pack or pinning a season is a [`ModelStackPreference`]; its
-//! retirement schedule is a [`ModelStackDeprecation`]. The hub's install
+//! the latest pack, pinning a season or pinning one pack is a
+//! [`ModelPackPreference`]; its retirement schedule, and each retiring
+//! model's, is a [`ModelStackDeprecation`] (FIX 5368). The hub's install
 //! receipt and content hash are its signature: this type is only ever read
 //! from an installed pack's bytes.
 
@@ -14,16 +15,30 @@ use serde::{Deserialize, Serialize};
 
 use oneiron_model::llm::ModelId;
 
-use super::model_versioning::{ModelStackDeprecation, ModelStackId, ModelStackPreference};
+use super::model_versioning::{ModelStackDeprecation, ModelStackId};
 
 /// The `knowledge/model-pack.json` format this engine reads. An engine call
 /// (CALLS, FIX 5365): a pack in any other format is refused at its source,
 /// never read loosely.
 pub const MODEL_PACK_FORMAT_VERSION: u32 = 1;
 
+/// The days before a retirement day on which the owner is told: Eiri
+/// DEC-0004 #deprecation's announcement (60), warning (30) and soft
+/// deadline (7); the day itself is the migration. An engine call (CALLS,
+/// FIX 5368): each mark is one inbox notice to each owner, for a retiring
+/// pack and for each retiring model a role resolves to.
+pub const MODEL_PACK_RETIREMENT_NOTICE_DAYS: [u32; 3] = [60, 30, 7];
+
+/// How many successors a retirement follows to find a served pack. An
+/// engine call (CALLS, FIX 5368): a chain longer than this, or one that
+/// loops, finds none, and the vault follows the latest served pack.
+pub const MODEL_PACK_SUCCESSOR_HOPS: usize = 8;
+
 /// A model pack's identity: its hub pack name, author-scoped and lowercase
 /// (`oneiron.season-autumn-2026`), under the hub's own pack name rules.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct ModelPackId(String);
 
@@ -119,6 +134,18 @@ pub struct ModelPackChangelogEntry {
     pub summary: String,
 }
 
+/// A model the pack marks retiring (FIX 5368): when its notices start and
+/// when it stops being served, and the model the roles that use it move to
+/// on that day.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPackModelRetirement {
+    pub model: ModelId,
+    pub retirement: ModelStackDeprecation,
+    #[serde(default)]
+    pub successor: Option<ModelId>,
+}
+
 /// The bench evidence behind one pick: the role and model it measured, what
 /// it found, and where the full result is (a path in the pack or a URL).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +176,8 @@ pub struct ModelPack {
     pub successor: Option<ModelPackId>,
     /// When the pack's notices start and when it stops being served.
     pub retirement: Option<ModelStackDeprecation>,
+    /// The models the pack marks retiring, one entry each.
+    pub retiring_models: Vec<ModelPackModelRetirement>,
 }
 
 /// The data file's shape: everything but the identity, which the pack
@@ -168,6 +197,8 @@ struct ModelPackDocument {
     successor: Option<ModelPackId>,
     #[serde(default)]
     retirement: Option<ModelStackDeprecation>,
+    #[serde(default)]
+    retiring_models: Vec<ModelPackModelRetirement>,
 }
 
 impl ModelPack {
@@ -194,6 +225,7 @@ impl ModelPack {
             bench: document.bench,
             successor: document.successor,
             retirement: document.retirement,
+            retiring_models: document.retiring_models,
         };
         pack.validate()?;
         Ok(pack)
@@ -212,6 +244,52 @@ impl ModelPack {
     #[must_use]
     pub fn variants(&self, role: &str) -> &[ModelPackVariant] {
         self.roles.get(role).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    /// The retirement the pack marks for `model`, if it marks one.
+    #[must_use]
+    pub fn model_retirement(&self, model: &ModelId) -> Option<&ModelPackModelRetirement> {
+        self.retiring_models
+            .iter()
+            .find(|retiring| retiring.model == *model)
+    }
+
+    /// `variant` as it runs on `as_of_epoch_day` (FIX 5368): itself while its
+    /// model is served; from its model's retirement day, the same access and
+    /// words on the model's successor. An engine call (CALLS, FIX 5368): a
+    /// successor the variant's access does not carry (another provider's
+    /// model on a provider-bound access), or no successor, drops the
+    /// variant, and the role's next variant is its pick.
+    #[must_use]
+    pub fn variant_on(
+        &self,
+        variant: &ModelPackVariant,
+        as_of_epoch_day: u32,
+    ) -> Option<ModelPackVariant> {
+        let Some(retiring) = self.model_retirement(&variant.model) else {
+            return Some(variant.clone());
+        };
+        if !retiring.retirement.is_retired(as_of_epoch_day) {
+            return Some(variant.clone());
+        }
+        let successor = retiring.successor.as_ref()?;
+        variant.access.carries(successor).then(|| ModelPackVariant {
+            access: variant.access.clone(),
+            model: successor.clone(),
+            when: variant.when.clone(),
+        })
+    }
+
+    /// The changelog line the owner's notices lead with. An engine call
+    /// (CALLS, FIX 5369): the entry for the pack's own version, else the
+    /// pack's first entry; none for a pack with no changelog.
+    #[must_use]
+    pub fn changelog_headline(&self) -> Option<&str> {
+        self.changelog
+            .iter()
+            .find(|entry| entry.version == self.version)
+            .or_else(|| self.changelog.first())
+            .map(|entry| entry.summary.as_str())
     }
 
     fn validate(&self) -> std::result::Result<(), ModelPackError> {
@@ -273,8 +351,37 @@ impl ModelPack {
                 return Err(ModelPackError::BlankText { field: "bench" });
             }
         }
+        let mut retiring = BTreeSet::new();
+        for entry in &self.retiring_models {
+            if !retiring.insert(&entry.model) {
+                return Err(ModelPackError::DuplicateRetiringModel {
+                    model: entry.model.clone(),
+                });
+            }
+            if entry.successor.as_ref() == Some(&entry.model) {
+                return Err(ModelPackError::OwnModelSuccessor {
+                    model: entry.model.clone(),
+                });
+            }
+        }
         Ok(())
     }
+}
+
+/// The owner's model pack preference (FIX 5367, 5369): follow the latest
+/// pack (the default), pin a season while a served pack of it is installed,
+/// or pin one pack, as a revert to it does.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ModelPackPreference {
+    #[default]
+    AutoUpgrade,
+    Pinned {
+        stack: ModelStackId,
+    },
+    PinnedPack {
+        pack: ModelPackId,
+    },
 }
 
 /// The order packs are newest in. An engine call (CALLS, FIX 5367): the
@@ -285,33 +392,172 @@ pub fn model_pack_recency(pack: &ModelPack) -> (u32, &ModelPackId) {
     (pack.released_epoch_day, &pack.id)
 }
 
-/// The pack a vault follows among `items` on `as_of_epoch_day` (FIX 5367):
-/// the newest served pack, or with a pinned season the newest served pack
-/// of that season. An engine call (CALLS, FIX 5367): a retired pack is
-/// never followed, and a pin whose season no served pack carries follows
-/// the latest pack until the retirement migration (FIX 5368) moves it.
+/// The newest pack among `items`, served or not, that `admits`.
+fn newest<'a, T>(
+    items: &'a [T],
+    pack_of: &impl Fn(&'a T) -> &'a ModelPack,
+    admits: impl Fn(&ModelPack) -> bool,
+) -> Option<&'a T> {
+    items
+        .iter()
+        .filter(|item| admits(pack_of(*item)))
+        .max_by(|left, right| {
+            model_pack_recency(pack_of(*left)).cmp(&model_pack_recency(pack_of(*right)))
+        })
+}
+
+/// The newest served pack among `items` on `as_of_epoch_day` that `admits`.
+fn newest_served<'a, T>(
+    items: &'a [T],
+    pack_of: &impl Fn(&'a T) -> &'a ModelPack,
+    as_of_epoch_day: u32,
+    admits: impl Fn(&ModelPack) -> bool,
+) -> Option<&'a T> {
+    newest(items, pack_of, |pack| {
+        pack.is_served_on(as_of_epoch_day) && admits(pack)
+    })
+}
+
+/// The first served pack on `start`'s successor chain among `items`: its
+/// successor when installed and served, else that one's, at most
+/// [`MODEL_PACK_SUCCESSOR_HOPS`] away.
+fn served_successor<'a, T>(
+    items: &'a [T],
+    pack_of: &impl Fn(&'a T) -> &'a ModelPack,
+    start: &ModelPack,
+    as_of_epoch_day: u32,
+) -> Option<&'a T> {
+    let mut seen = BTreeSet::from([&start.id]);
+    let mut next = start.successor.as_ref();
+    for _ in 0..MODEL_PACK_SUCCESSOR_HOPS {
+        let id = next?;
+        if !seen.insert(id) {
+            return None;
+        }
+        let item = items.iter().find(|item| pack_of(*item).id == *id)?;
+        let pack = pack_of(item);
+        if pack.is_served_on(as_of_epoch_day) {
+            return Some(item);
+        }
+        next = pack.successor.as_ref();
+    }
+    None
+}
+
+/// The pack following the latest pack follows on `as_of_epoch_day` (FIX
+/// 5367, 5368): the newest installed pack while it is served. An engine
+/// call (CALLS, FIX 5368): once that pack has retired, the vault follows
+/// its first served successor, as a vault following the latest moves to
+/// the successor on the retirement day; with none, the newest served pack.
+fn latest_served<'a, T>(
+    items: &'a [T],
+    pack_of: &impl Fn(&'a T) -> &'a ModelPack,
+    as_of_epoch_day: u32,
+) -> Option<&'a T> {
+    let newest_installed = newest(items, pack_of, |_| true)?;
+    let pack = pack_of(newest_installed);
+    if pack.is_served_on(as_of_epoch_day) {
+        return Some(newest_installed);
+    }
+    served_successor(items, pack_of, pack, as_of_epoch_day)
+        .or_else(|| newest_served(items, pack_of, as_of_epoch_day, |_| true))
+}
+
+/// The pack a vault follows among `items` on `as_of_epoch_day` (FIX 5367,
+/// 5368, 5369): following the latest, the newest installed pack, or once it
+/// has retired its first served successor, else the newest served pack;
+/// with a pinned season the newest served pack of that season; with a
+/// pinned pack that pack. An engine call (CALLS, FIX 5367): a retired pack is never
+/// followed, and a pin no served pack meets follows the latest pack until
+/// the retirement migration ([`migrated_model_pack_preference`], FIX 5368)
+/// moves it.
 pub fn select_model_pack<'a, T>(
     items: &'a [T],
     pack_of: impl Fn(&'a T) -> &'a ModelPack,
-    preference: &ModelStackPreference,
+    preference: &ModelPackPreference,
     as_of_epoch_day: u32,
 ) -> Option<&'a T> {
-    let newest = |season: Option<&ModelStackId>| {
-        items
-            .iter()
-            .filter(|item| {
-                let pack = pack_of(*item);
-                pack.is_served_on(as_of_epoch_day)
-                    && season.is_none_or(|season| pack.season == *season)
-            })
-            .max_by(|left, right| {
-                model_pack_recency(pack_of(*left)).cmp(&model_pack_recency(pack_of(*right)))
-            })
-    };
+    let latest = || latest_served(items, &pack_of, as_of_epoch_day);
     match preference {
-        ModelStackPreference::AutoUpgrade => newest(None),
-        ModelStackPreference::Pinned { stack } => newest(Some(stack)).or_else(|| newest(None)),
+        ModelPackPreference::AutoUpgrade => latest(),
+        ModelPackPreference::Pinned { stack } => {
+            newest_served(items, &pack_of, as_of_epoch_day, |pack| {
+                pack.season == *stack
+            })
+            .or_else(latest)
+        }
+        ModelPackPreference::PinnedPack { pack: id } => {
+            newest_served(items, &pack_of, as_of_epoch_day, |pack| pack.id == *id).or_else(latest)
+        }
     }
+}
+
+/// Where a pin moves on `as_of_epoch_day` once what it names has retired
+/// (FIX 5368): `None` when it stays. An engine call (CALLS, FIX 5368):
+/// following the latest pack stores no move, as [`select_model_pack`]
+/// follows a retired newest pack's successor itself; a season pin no
+/// served pack of its season meets moves to the season of the first served
+/// successor of that season's newest pack; a pack pin whose pack retired
+/// moves to its first served successor. A pin whose successor is not
+/// installed and served stays, and the vault follows the latest pack until
+/// a later pass finds the successor.
+pub fn migrated_model_pack_preference<'a, T>(
+    items: &'a [T],
+    pack_of: impl Fn(&'a T) -> &'a ModelPack,
+    preference: &ModelPackPreference,
+    as_of_epoch_day: u32,
+) -> Option<ModelPackPreference> {
+    match preference {
+        ModelPackPreference::AutoUpgrade => None,
+        ModelPackPreference::Pinned { stack } => {
+            if newest_served(items, &pack_of, as_of_epoch_day, |pack| {
+                pack.season == *stack
+            })
+            .is_some()
+            {
+                return None;
+            }
+            let retired = newest(items, &pack_of, |pack| pack.season == *stack)?;
+            let successor = served_successor(items, &pack_of, pack_of(retired), as_of_epoch_day)?;
+            Some(ModelPackPreference::Pinned {
+                stack: pack_of(successor).season.clone(),
+            })
+        }
+        ModelPackPreference::PinnedPack { pack: id } => {
+            let pinned = newest(items, &pack_of, |pack| pack.id == *id)?;
+            if pack_of(pinned).is_served_on(as_of_epoch_day) {
+                return None;
+            }
+            let successor = served_successor(items, &pack_of, pack_of(pinned), as_of_epoch_day)?;
+            Some(ModelPackPreference::PinnedPack {
+                pack: pack_of(successor).id.clone(),
+            })
+        }
+    }
+}
+
+/// The notice mark `retirement` is at on `as_of_epoch_day` (FIX 5368): the
+/// nearest of [`MODEL_PACK_RETIREMENT_NOTICE_DAYS`] at or above the days
+/// left. An engine call (CALLS, FIX 5368): marks wait for the schedule's own
+/// notice start, and a schedule first seen past a mark, or a pass that
+/// missed one, sends the nearest mark's notice alone, never every mark it
+/// passed. `None` before the notice start, more days ahead than the first
+/// mark, and from the retirement day, which migrates instead.
+#[must_use]
+pub fn retirement_notice_mark(
+    retirement: ModelStackDeprecation,
+    as_of_epoch_day: u32,
+) -> Option<u32> {
+    if as_of_epoch_day < retirement.notice_starts_epoch_day
+        || retirement.is_retired(as_of_epoch_day)
+    {
+        return None;
+    }
+    let left = retirement.retires_epoch_day - as_of_epoch_day;
+    MODEL_PACK_RETIREMENT_NOTICE_DAYS
+        .into_iter()
+        .filter(|mark| left <= *mark)
+        .min()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -338,4 +584,8 @@ pub enum ModelPackError {
     AccessProvider { role: String, model: ModelId },
     #[error("model pack role {role} lists {model} twice on one access")]
     DuplicateVariant { role: String, model: ModelId },
+    #[error("model pack marks {model} retiring twice")]
+    DuplicateRetiringModel { model: ModelId },
+    #[error("model pack names {model} as its own successor")]
+    OwnModelSuccessor { model: ModelId },
 }

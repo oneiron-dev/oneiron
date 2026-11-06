@@ -111,6 +111,14 @@ pub enum NotificationKind {
     /// waiting on each member it is for, who approves or denies it.
     /// `source.result` names the root and `source.detail` the op.
     ThreadJoinRequested,
+    /// The model pack the vault follows changed (FIX 5369): an install or
+    /// removal, the owner's setting, a retirement's move or a revert.
+    /// `source.result` names the change and `source.detail` the packs
+    /// before and after with their changelog headlines; the notice's one
+    /// tap, while the change is the vault's last and the pack before it can
+    /// run, is its revert, the owner's own act
+    /// (`Vault::revert_model_pack_change_as_owner`).
+    ModelPackChanged,
 }
 
 impl NotificationKind {

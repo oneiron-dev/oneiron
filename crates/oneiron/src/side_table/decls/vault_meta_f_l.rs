@@ -499,9 +499,13 @@ side_tables! {
     /// before, each as its install receipt named it: what a way back returns to (FIX 5367,
     /// FIX 5369). Key: ().
     LLM_MODEL_PACK_ACTIVE: VaultMeta b"llm:model_pack_active:v1" Named;
-    /// The owner's model pack preference: follow the latest pack, or pin a season (FIX 5367).
-    /// Key: ().
+    /// The owner's model pack preference: follow the latest pack, pin a season or pin one pack
+    /// (FIX 5367, FIX 5369). Key: ().
     LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named;
+    /// Each model pack retirement notice sent to the vault's owners, and when, so a restart or a
+    /// second pass sends none twice (FIX 5368). Key: u64be(retirement epoch day) + u64be(mark,
+    /// days before it) + string(`pack:<pack id>` or `model:<model id>`).
+    LLM_MODEL_PACK_RETIREMENT_NOTICE: VaultMeta b"llm:model_pack_retirement_notice:v1:" Named Engine;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and

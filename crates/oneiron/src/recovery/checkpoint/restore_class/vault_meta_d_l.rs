@@ -374,6 +374,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // names; the owner's follow-or-pin preference stands as the live vault holds it.
     (&t::LLM_MODEL_PACK_ACTIVE, CONTENT),
     (&t::LLM_MODEL_PACK_PREFERENCE, LIVE),
+    // FIX 5368: a retirement notice the owners were sent stays sent; a restore
+    // never sends it again.
+    (&t::LLM_MODEL_PACK_RETIREMENT_NOTICE, LIVE),
     (&t::LLM_MODEL_TRIAL, LIVE),
     (&t::LLM_ONEIRONER_BUNDLE_RECEIPT, LIVE),
     (&t::LLM_PURPOSE_DEFAULT_PROPOSAL, LIVE),
