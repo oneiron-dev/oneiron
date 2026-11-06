@@ -282,12 +282,14 @@ pub(super) async fn handle_window_sync(
             // Client sent its binary VV (SyncStep1) — export ONLY the delta it
             // is missing (ExportMode::updates via the single delta-export entry
             // point). Malformed VV → typed error, fail-closed: never fall back
-            // to a full export.
-            let response = export_frame(server, conn_state, &key, &doc, payload)?;
+            // to a full export. A socket served as a peer is sent the window's
+            // state-only copy instead, or nothing (FIX 4748).
             // Send directly to the requesting client's WebSocket sink, NOT via
             // broadcast. Broadcasting with the requester's conn_id would cause
             // echo suppression to drop the response for the requester.
-            let _ = direct_tx.send(response);
+            if let Some(response) = export_frame(server, conn_state, &key, &doc, payload)? {
+                let _ = direct_tx.send(response);
+            }
             // Reverse SyncStep1: send our VV so the client pushes its local
             // diff back — this is what makes the exchange bidirectional. A
             // window withheld as device-only names only what both sides hold,
@@ -531,8 +533,9 @@ pub(super) async fn handle_window_sync(
         window_sub_tags::VV_RESPONSE => {
             // Client's VV answering our VV_REQUEST — export and send only our
             // local diff. Same fail-closed VV decoding as VV_REQUEST.
-            let response = export_frame(server, conn_state, &key, &doc, payload)?;
-            let _ = direct_tx.send(response);
+            if let Some(response) = export_frame(server, conn_state, &key, &doc, payload)? {
+                let _ = direct_tx.send(response);
+            }
         }
         window_sub_tags::REPLACEMENT_REQUEST => {
             // A device that cannot take this window's history asks for the whole of it.
@@ -581,44 +584,33 @@ fn withhold(
     )
 }
 
-/// Frames this window's answer to the version vector `remote_vv` for this socket. A promoted
-/// residence window answers from its baseline. A peer that holds nothing of the window imports
-/// a replacement as its first update, as before replacements existed; one that holds part of it
-/// installs the replacement, or is refused when its version cannot, since no answer it can apply
-/// exists. A socket served as a peer (FIX 4748) gets the state-only copy of a window its asker
-/// does not hold, never updates since its vector, and the export door records which it chose for
-/// the release door (`peer_serve::exported`).
+/// Frames this window's answer to the version vector `remote_vv` for this socket, or `None` when
+/// nothing goes. A promoted residence window answers from its baseline. A peer that holds nothing
+/// of the window imports a replacement as its first update, as before replacements existed; one
+/// that holds part of it installs the replacement, or is refused when its version cannot, since
+/// no answer it can apply exists. A socket served as a peer (FIX 4748) is answered with the
+/// window's state-only copy alone ([`peer_state_frame`]).
 fn export_frame(
     server: &SyncServer,
     conn_state: &ConnState,
     key: &WindowKey,
     doc: &loro::LoroDoc,
     remote_vv: &[u8],
-) -> Result<Vec<u8>, ProtocolError> {
+) -> Result<Option<Vec<u8>>, ProtocolError> {
     let withheld = peer_withheld(server, conn_state)?;
     let remote =
         VersionVector::decode(remote_vv).map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
-    let baseline = conn_state.promotion_baselines.get(key);
-    let state_only = conn_state.peer_served
-        && oneiron::sync::peer_route::peer_export_is_state_only(doc, &remote, baseline);
-    let export = if state_only {
-        oneiron::sync::window::export_window_state_for(
-            server.vault.as_ref(),
-            key,
-            doc,
-            baseline,
-            withhold(withheld.as_ref()),
-        )
-    } else {
-        oneiron::sync::window::export_window_since_for(
-            server.vault.as_ref(),
-            key,
-            doc,
-            remote_vv,
-            baseline,
-            withhold(withheld.as_ref()),
-        )
+    if conn_state.peer_served {
+        return peer_state_frame(server, conn_state, key, doc, &remote, withheld.as_ref());
     }
+    let export = oneiron::sync::window::export_window_since_for(
+        server.vault.as_ref(),
+        key,
+        doc,
+        remote_vv,
+        conn_state.promotion_baselines.get(key),
+        withhold(withheld.as_ref()),
+    )
     .map_err(map_delta_export_err)?;
     // FIX 7608 slice 4 (C3): a socket last sent another generation of this
     // window's masked repo copies gets the replacement, at any vector.
@@ -635,18 +627,77 @@ fn export_frame(
     .map_err(map_delta_export_err)?;
     let (sub_tag, bytes) = match export {
         WindowExport::Update(bytes) => (window_sub_tags::UPDATE, bytes),
-        WindowExport::Replacement(bytes) if remote.is_empty() => (window_sub_tags::UPDATE, bytes),
-        WindowExport::Replacement(bytes)
-            if protocol::installs_window_replacements(conn_state.protocol_version) =>
-        {
-            (window_sub_tags::REPLACEMENT, bytes)
-        }
-        WindowExport::Replacement(_) => return Err(ProtocolError::ReplacementUnsupported),
+        WindowExport::Replacement(bytes) => (replacement_sub_tag(conn_state, &remote)?, bytes),
     };
-    super::peer_serve::exported(conn_state, key, state_only, &bytes);
     // A catch-up past one frame goes whole to the release door, which sends it
     // as its envelope's bounded parts (FIX 8247).
     oneiron::sync::transport::encode_unsplit_window_sync(key.as_str(), sub_tag, &bytes)
+        .map(Some)
+        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
+}
+
+/// The sub-tag a whole copy of a window goes under to a peer whose vector of it is `remote`: an
+/// `UPDATE` to one that holds nothing of the window, which imports it as its first update, else a
+/// `REPLACEMENT`, which a peer that cannot install one is refused.
+fn replacement_sub_tag(
+    conn_state: &ConnState,
+    remote: &VersionVector,
+) -> Result<u8, ProtocolError> {
+    if remote.is_empty() {
+        Ok(window_sub_tags::UPDATE)
+    } else if protocol::installs_window_replacements(conn_state.protocol_version) {
+        Ok(window_sub_tags::REPLACEMENT)
+    } else {
+        Err(ProtocolError::ReplacementUnsupported)
+    }
+}
+
+/// FIX 4748: the answer a socket served as a peer gets to its asker's vector `remote` of window
+/// `key`. A peer gets state, never operations: the window's state-only copy of its current state
+/// ([`window_replacement`]), whatever `remote` holds, never the updates since it. None goes when
+/// the asker already holds every operation of the window
+/// ([`oneiron::sync::peer_route::peer_state_copy_owed`]), unless the masked repo copies it was
+/// last sent are another generation's (FIX 7608 slice 4, C3), nor for a window withheld from its
+/// machine. Each copy is recorded for the release door (`peer_serve::cut`), which sends no other
+/// window bytes to the socket.
+fn peer_state_frame(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    key: &WindowKey,
+    doc: &loro::LoroDoc,
+    remote: &VersionVector,
+    withheld: Option<&std::collections::BTreeSet<oneiron::EntityId>>,
+) -> Result<Option<Vec<u8>>, ProtocolError> {
+    super::peer_serve::asked(conn_state, key);
+    let copy = || window_replacement(server, conn_state, key, doc, withheld);
+    // An empty update stands for no copy: nothing of it is sent.
+    let owed = if oneiron::sync::peer_route::peer_state_copy_owed(doc, remote) {
+        copy()
+            .map_err(map_delta_export_err)?
+            .map_or(WindowExport::Update(Vec::new()), WindowExport::Replacement)
+    } else {
+        WindowExport::Update(Vec::new())
+    };
+    let export = super::window_copy::bind_generation(
+        server.vault.as_ref(),
+        conn_state,
+        key,
+        doc,
+        remote,
+        owed,
+        protocol::installs_window_replacements(conn_state.protocol_version),
+        copy,
+    )
+    .map_err(map_delta_export_err)?;
+    let WindowExport::Replacement(bytes) = export else {
+        return Ok(None);
+    };
+    let sub_tag = replacement_sub_tag(conn_state, remote)?;
+    super::peer_serve::cut(conn_state, key, &bytes);
+    // A copy past one frame goes whole to the release door, which sends it
+    // as its envelope's bounded parts (FIX 8247).
+    oneiron::sync::transport::encode_unsplit_window_sync(key.as_str(), sub_tag, &bytes)
+        .map(Some)
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
 }
 
@@ -687,7 +738,7 @@ fn window_replacement(
 /// The `REPLACEMENT` frame for a peer that must install this window whole
 /// ([`window_replacement`]). A peer that cannot install one is refused. Nothing goes out for a
 /// window withheld as device-only. On a socket served as a peer it is the state-only copy, and
-/// the export door records it for the release door (FIX 4748).
+/// the export door records it for the release door (FIX 4748, `peer_serve::cut`).
 fn replacement_frame(
     server: &SyncServer,
     conn_state: &ConnState,
@@ -700,7 +751,7 @@ fn replacement_frame(
     let withheld = peer_withheld(server, conn_state)?;
     window_replacement(server, conn_state, key, doc, withheld.as_ref())
         .map_err(map_delta_export_err)?
-        .inspect(|snapshot| super::peer_serve::exported(conn_state, key, true, snapshot))
+        .inspect(|snapshot| super::peer_serve::cut(conn_state, key, snapshot))
         .map(|snapshot| {
             // A snapshot past one frame goes whole to the release door, which
             // sends it as its envelope's bounded parts (FIX 8247).

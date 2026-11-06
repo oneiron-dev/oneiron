@@ -130,13 +130,14 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
     let Some(key) = WindowKey::try_new(window_key) else {
         return Vec::new();
     };
-    // FIX 4748: a socket served as a peer is sent of a window only what the
-    // export door chose for it, the ordinary exchange of a window its asker
-    // holds or the state-only copy of one it does not; never history.
+    // FIX 4748: a socket served as a peer is sent state, never operations:
+    // of a window only a state-only copy the export door cut for it leaves,
+    // and every other window frame, an update since a vector or a live one,
+    // is refused here.
     if !super::peer_serve::releases_window_frame(conn_state, &key, payload) {
         tracing::warn!(
             window = window_key,
-            "window frame withheld: a peer is served state-only copies, never history"
+            "window frame withheld: a peer is served state-only copies, never operations"
         );
         return Vec::new();
     }

@@ -382,6 +382,7 @@ impl SyncConnection {
         client.document_retries = Default::default();
         client.asset_bodies = Default::default();
         client.home_peer = crate::authority::PeerMachine::Unknown;
+        client.kept_out_peer_copies.clear();
         client.residence_acks.clear();
         client.reset_window_pads();
         let (ws_stream, response, binding) = self.open_socket(client).await?;

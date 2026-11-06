@@ -17,14 +17,15 @@
 //! unchanged and vault-local: the slip and machine proofs, the actor bind
 //! (`auth.bind`) its promotion and document admissions judge, the selector
 //! and residence admission, and the world read settings judged for the
-//! machine it proved at every send. It serves state only: a window the asker
-//! does not hold goes as its state-only copy, never as history
-//! ([`PeerExports`], chosen at the export door and checked again at the
-//! socket's release); a window it holds keeps the ordinary exchange; the
-//! root and documents go as today. It never serves the residence lane (owed
-//! machine history, authority log ranges and checkpoints, sealed bundles,
-//! home handoffs), the lease registrar, the sealed update relay, the
-//! leaf-key relay, selector fetches or the NOTE authority
+//! machine it proved at every send. It serves state, never operations: every
+//! window export is the window's state-only copy, whatever vector the asker
+//! sends, and a live change goes as a notice its asker answers by asking
+//! again ([`PeerExports`], cut at the export door and checked again at the
+//! socket's release); the root and documents go as today. It never serves
+//! the residence lane (owed machine history, authority log ranges and
+//! checkpoints, sealed bundles, home handoffs), the lease registrar, the
+//! sealed update relay, the leaf-key relay, selector fetches or the NOTE
+//! authority
 //! ([`refuse_note_authority`]), which are the home's
 //! (`ConnState::peer_served`). Both ends leave a receipt naming the other
 //! machine and the session.
@@ -159,81 +160,102 @@ pub(super) fn refuse_note_authority(state: &ConnState) -> Result<(), ProtocolErr
     Ok(())
 }
 
-/// What a socket served as a peer may be sent of each window (FIX 4748): the
-/// ordinary exchange of a window its asker holds, or the state-only copy the
-/// export door cut for a window it does not hold
-/// ([`oneiron::sync::peer_route::peer_export_is_state_only`]). The export door
-/// records each choice here; the socket's release door
-/// ([`super::window_pads::release`]) sends no other window bytes.
+/// What a socket served as a peer is sent of its windows (FIX 4748): state,
+/// never operations. Every window frame that leaves it is a state-only copy
+/// the export door cut for it ([`super::window_sync`],
+/// `oneiron::sync::window::export_window_state_for`), whatever vector its
+/// asker sent; no update since a vector and no live update goes. The export
+/// door records each copy here, and the socket's release door
+/// ([`super::window_pads::release`]) sends no other window bytes. A live
+/// change reaches the asker as a `WINDOW_INVALIDATE` notice instead
+/// (`connection::window_delivery`), once until it asks again; its ask is
+/// answered with a fresh copy.
 #[derive(Debug, Default)]
 pub(super) struct PeerExports {
-    /// Windows the asker holds: their updates since its vector, and the live
-    /// updates past it, go.
-    held: HashSet<WindowKey>,
-    /// For each window the asker does not hold, the digest of the state-only
-    /// copy cut for it last: those bytes alone go of the window, once.
-    cuts: HashMap<WindowKey, [u8; 32]>,
+    /// For each window, the digests of the state-only copies cut for it that
+    /// have not left yet: those bytes alone go of the window, each once.
+    cuts: HashMap<WindowKey, Vec<[u8; 32]>>,
+    /// Windows whose change the asker was told of and has not asked for
+    /// since: no further notice goes for them until it asks.
+    noticed: HashSet<WindowKey>,
 }
 
 impl PeerExports {
-    /// The asker's vector of `key` holds the window: its ordinary exchange
-    /// goes.
-    fn holds(&mut self, key: &WindowKey) {
-        self.held.insert(key.clone());
+    /// The asker asked for `key` with its vector: the next change of the
+    /// window is noticed to it again.
+    fn asked(&mut self, key: &WindowKey) {
+        self.noticed.remove(key);
     }
 
-    /// The export door cut `bytes`, the state-only copy of `key`, for an asker
-    /// that does not hold the window: until they leave, nothing else of the
-    /// window does.
+    /// The export door cut `bytes`, the state-only copy of `key`: those bytes
+    /// may leave once.
     fn cut(&mut self, key: &WindowKey, bytes: &[u8]) {
-        self.held.remove(key);
+        self.noticed.remove(key);
         self.cuts
-            .insert(key.clone(), *blake3::hash(bytes).as_bytes());
+            .entry(key.clone())
+            .or_default()
+            .push(*blake3::hash(bytes).as_bytes());
     }
 
-    /// Whether a window frame of `key` carrying `payload` may leave: the
-    /// asker holds the window, or `payload` is the state-only copy cut for
-    /// it, after which the asker holds the window at that state.
+    /// Whether a window frame of `key` carrying `payload` may leave: only a
+    /// state-only copy cut for it and not sent yet.
     fn releases(&mut self, key: &WindowKey, payload: &[u8]) -> bool {
-        if self.held.contains(key) {
-            return true;
-        }
         let digest = *blake3::hash(payload).as_bytes();
-        if self.cuts.get(key) == Some(&digest) {
+        let Some(cuts) = self.cuts.get_mut(key) else {
+            return false;
+        };
+        let Some(at) = cuts.iter().position(|cut| *cut == digest) else {
+            return false;
+        };
+        cuts.swap_remove(at);
+        if cuts.is_empty() {
             self.cuts.remove(key);
-            self.held.insert(key.clone());
-            return true;
         }
-        false
+        true
+    }
+
+    /// Whether a change of `key` is noticed to the asker now: it was not told
+    /// of one since it last asked.
+    fn notices(&mut self, key: &WindowKey) -> bool {
+        self.noticed.insert(key.clone())
     }
 }
 
-/// Records on a socket served as a peer what the export door chose for
-/// `key`: the state-only copy `bytes` (`state_only`), or the ordinary exchange
-/// of a window the asker holds. A home's socket records nothing.
-pub(super) fn exported(state: &ConnState, key: &WindowKey, state_only: bool, bytes: &[u8]) {
-    if !state.peer_served {
-        return;
-    }
-    let mut exports = state
+/// This socket's [`PeerExports`], as a panic holding them left them.
+fn peer_exports(state: &ConnState) -> std::sync::MutexGuard<'_, PeerExports> {
+    state
         .peer_exports
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if state_only {
-        exports.cut(key, bytes);
-    } else {
-        exports.holds(key);
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// On a socket served as a peer, its asker asked for `key` with its vector.
+/// A home's socket records nothing.
+pub(super) fn asked(state: &ConnState, key: &WindowKey) {
+    if state.peer_served {
+        peer_exports(state).asked(key);
+    }
+}
+
+/// On a socket served as a peer, the export door cut `bytes`, the state-only
+/// copy of `key`, for it. A home's socket records nothing.
+pub(super) fn cut(state: &ConnState, key: &WindowKey, bytes: &[u8]) {
+    if state.peer_served {
+        peer_exports(state).cut(key, bytes);
     }
 }
 
 /// Whether a window `UPDATE` or `REPLACEMENT` frame of `key` carrying
 /// `payload` may leave this socket: always on a home's socket, and on one
-/// served as a peer only as [`PeerExports`] recorded it, never as history.
+/// served as a peer only when it is a state-only copy [`cut`] for it, never
+/// an operation.
 pub(super) fn releases_window_frame(state: &ConnState, key: &WindowKey, payload: &[u8]) -> bool {
-    !state.peer_served
-        || state
-            .peer_exports
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .releases(key, payload)
+    !state.peer_served || peer_exports(state).releases(key, payload)
+}
+
+/// Whether a change of `key` is noticed to this socket now: always on a home's
+/// socket, and on one served as a peer once until its asker asks for the
+/// window again.
+pub(super) fn notices_change(state: &ConnState, key: &WindowKey) -> bool {
+    !state.peer_served || peer_exports(state).notices(key)
 }

@@ -486,6 +486,7 @@ impl SyncClient {
                         .unwrap_or(false)
                 },
                 ReplacementByteBound::NetworkFrame,
+                crate::sync::window::QueuedSends::Retire,
                 None,
             )
             .map_err(|error| error.to_string())?;
