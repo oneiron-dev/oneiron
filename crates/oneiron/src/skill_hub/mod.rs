@@ -45,7 +45,8 @@ pub use claim_refinement::{
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
 pub(crate) use default_hub::MODEL_PACK_SUBTREE;
 pub use default_hub::{
-    DefaultSkillHub, MODEL_PACK_NAME, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
+    DefaultSkillHub, FIRST_PARTY_PACK_PUBLISHER, MODEL_PACK_NAME, ModelCatalogSync,
+    PRODUCTIVITY_PACK_NAME, PRODUCTIVITY_PACK_SUBTREE, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
     default_skill_hub_commit, default_skill_hub_id,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
