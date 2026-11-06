@@ -461,6 +461,40 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// FIX 4747 slice 6: queues on this machine, under its own id, the live
+    /// try of an agent run another machine ran and this machine takes over:
+    /// the frozen payload, dedupe key, run and realized TASK backlink its
+    /// dispatch queued it with, `retry_of` the try it goes on from, and its
+    /// run-tree row, as [`Self::enqueue_with_task_ref_in_txn`] queues a
+    /// dispatch. A row under that id refuses as a collision; a pending row
+    /// here that holds the dedupe key answers `Existing`, and nothing is
+    /// queued. The caller's commit owes the deadline watch its wake.
+    pub(crate) fn enqueue_handed_over_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        retry_of: Option<AttemptId>,
+    ) -> Result<EnqueueOutcome> {
+        let parent_attempt = decode_dreamer_attempt_payload(&input.payload)?.parent_attempt;
+        let outcome = self
+            .attempts
+            .enqueue_handed_over_in_txn(wtxn, id, input, task_ref, retry_of)?;
+        if let EnqueueOutcome::Enqueued(record) = &outcome {
+            put_run_tree_record_in_txn(
+                self.vault,
+                wtxn,
+                &DreamerRunTreeRecord {
+                    attempt_id: record.id,
+                    parent_attempt,
+                    created_at: record.created_at,
+                },
+            )?;
+        }
+        Ok(outcome)
+    }
+
     /// FIX 5661: queues again, on a new home, a free-time item a home move
     /// carried whose try never started on its old home: under that try's own
     /// attempt id and first queue time, with the payload, dedupe key and run

@@ -72,6 +72,8 @@ mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
 mod resident;
 mod room_join;
+mod run_handover;
+pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
 pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
