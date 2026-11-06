@@ -413,7 +413,13 @@ impl Vault {
             // the chunks derived from it.
             self.require_docs_put_kind(&txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
             if !source_bytes_unchanged {
-                crate::memory::release_asset_blob_in_txn(&self.store, &mut txn, &asset)?;
+                let write = crate::secret_custody::CustodyWrite::of(self);
+                crate::memory::release_asset_blob_in_txn(
+                    &self.store,
+                    &mut txn,
+                    &asset,
+                    &|txn, id| crate::batch::deindex_entity(&write, txn, id),
+                )?;
             }
             self.put_asset_body_in_txn(
                 &mut txn,
