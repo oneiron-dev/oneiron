@@ -45,6 +45,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/connector_event.rs` | src | s | 3 crate-vis | — | The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE… |
 | `src/ai_host/connector_event/worker.rs` | src | m | 2 crate-vis | — | The reply worker's job body (FIX 2405): one connector reply job, run off the Dreamer pass on a blocking… |
 | `src/ai_host/contribution.rs` | src | m | 2 crate-vis | — | The host's replay capsule for the Coach's contribution checks (FIX 3028): the concrete… |
+| `src/ai_host/drafter.rs` | src | m | 4 crate-vis | — | The host's drafter trainer (FIX 14974, FIX 12569 slice 3): the `coach.drafter_retrain` arm, which trains the… |
+| `src/ai_host/drafter/job.rs` | src | m | 19 crate-vis | — | One drafter training job's private directory (FIX 14974): what the host stages for the worker, the receipt… |
+| `src/ai_host/drafter/process.rs` | src | s | 3 crate-vis | — | The drafter trainer's process (FIX 14974), run the way the training pack's connector runs its worker… |
 | `src/ai_host/dreamer.rs` | src | XL | 20 crate-vis | — | The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the… |
 | `src/ai_host/dreamer/claim_authoring.rs` | src | s | 1 crate-vis | — | The claim-authoring campaign a Dreamer pass binds (OF-366 R2, FIX 897): the root its consolidation… |
 | `src/ai_host/dreamer/compaction_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative… |
@@ -84,7 +87,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/question_timer.rs` | src | s | 3 crate-vis | — | The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149) |
 | `src/ai_host/resident_craft.rs` | src | m | 11 crate-vis | — | A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave… |
-| `src/ai_host/scoped_child.rs` | src | m | 2 struct · 11 fn · 3 crate-vis | ReaderParentClock, ReaderParentHost | Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent… |
+| `src/ai_host/scoped_child.rs` | src | m | 2 struct · 12 fn · 3 crate-vis | ReaderParentClock, ReaderParentHost | Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent… |
 | `src/ai_host/self_heal_detectors.rs` | src | m | 1 crate-vis | — | The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418) |
 | `src/ai_host/shadow_runner/arm_store.rs` | src | s | 8 crate-vis | — | A shadow arm's bodies at its host (PR-S1), kept for the caller under an opaque lease: one directory per arm… |
 | `src/ai_host/shadow_runner/mod.rs` | src | m | 1 struct · 5 fn · 1 type | ServerShadowRunner | The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs… |
@@ -134,9 +137,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/ai/chat/assertions.rs` | src | s | 5 crate-vis | — | A chat reply's typed assertions (OF-063, FIX 3416, Engine ruling (a)): the records the reply cited or… |
 | `src/api/ai/chat/compaction.rs` | src | L | 23 crate-vis | — | A self agent's chat turn on its own live fork (FIX 4465 D) |
 | `src/api/ai/chat/delivery.rs` | src | m | 3 crate-vis | — | Chat response delivery and producer driving |
+| `src/api/ai/chat/drafter_example.rs` | src | s | 5 crate-vis | — | The drafter's training example of each answered reply (FIX 15128, FIX 15129): every live chat turn's and… |
 | `src/api/ai/chat/hook_ask.rs` | src | s | 2 crate-vis | — | The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in… |
 | `src/api/ai/chat/hooks.rs` | src | s | 7 crate-vis | — | Chat generation and witness hook boundaries |
-| `src/api/ai/chat/model_call.rs` | src | s | 6 crate-vis | — | Model-call evidence from the actual answering leg, independent of delivery |
+| `src/api/ai/chat/model_call.rs` | src | s | 9 crate-vis | — | Model-call evidence from the actual answering leg, independent of delivery, and the drafter's view of the… |
 | `src/api/ai/chat/next_turn.rs` | src | s | 1 crate-vis | — | What a conversation's next chat turn is known to start with past its committed history (I1 = C, ARCH-0067… |
 | `src/api/ai/chat/recall.rs` | src | m | 7 crate-vis | — | The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the… |
 | `src/api/ai/chat/segments.rs` | src | m | 9 crate-vis | — | A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the call's messages in the order the turn… |
@@ -342,6 +346,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_role_asks.rs` | src | s | 2 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/deck_creation_doors.rs` | src | s | 2 crate-vis | — | The person's outline Keep and Decline use the same proof as other owner doors |
 | `src/api/facade/disclosure_doors.rs` | src | s | 5 crate-vis | — | Owner registry and reveal-settlement doors, shared by HTTP and MCP |
+| `src/api/facade/drafter_doors.rs` | src | s | 6 crate-vis | — | The drafter host doors (FIX 12569): the owner's `vault.drafters.list`, `.status`, `.policy.set` and… |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/errors.rs` | src | m | 8 crate-vis | — | The facade's error envelope: an engine `MemoryError` or an `ApiError` as one HTTP reply |
 | `src/api/facade/eval_doors.rs` | src | s | 12 crate-vis | — | Typed eval doors under the caller's own verified owner credential |
@@ -373,7 +378,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 11 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | s | 167 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | s | 168 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | L | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
@@ -989,17 +994,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
 | `src/config/models/decisions.rs` | src | m | 8 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings, ImagePickSettings, ImportAudienceSettings, SeatPickSettings +1 | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
+| `src/config/models/drafter_trainers.rs` | src | s | 1 struct · 2 crate-vis | DrafterTrainerSettings | `[models.training.drafters]`: the trainer connectors that train a vault's own drafter (FIX 14974) |
 | `src/config/models/drafting.rs` | src | s | 5 crate-vis | — | `[models.dreamer.drafting]`: the role and the budget a stewardship follow-up draft is written on (FIX 1002) |
 | `src/config/models/dreamer_wording.rs` | src | s | 1 struct · 12 fn · 2 crate-vis | DreamerWording | `[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX… |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/media.rs` | src | s | 3 struct · 2 crate-vis | LiveAsrOptions, MediaSeatConfig, MediaSettings | `[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers) |
-| `src/config/models/mod.rs` | src | m | 7 struct · 2 enum · 2 fn · 2 mod · 12 re-export · 5 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, TurnOpener +1 | `[models]`: which model serves each role, at three levels of detail |
+| `src/config/models/mod.rs` | src | m | 7 struct · 2 enum · 2 fn · 2 mod · 13 re-export · 5 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, TurnOpener +1 | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/planner.rs` | src | s | 2 struct · 2 crate-vis | PlannerSeatSetting, PlannerSettings | `[models.planner]`: the seats a leased agent's planned spawns choose among (OF-541, OF-389) |
 | `src/config/models/provider.rs` | src | m | 4 struct · 4 enum · 7 fn · 5 crate-vis | OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression, ResponseFormatWire, ResponsesSocket, SiwcProvider | One provider entry: how to reach a model server, as data |
 | `src/config/models/sessions.rs` | src | s | 1 struct · 1 enum · 1 const · 2 crate-vis | PlannerMode, SessionPreparePolicy | `[models.sessions]`: early computation of a conversation's next turn on this host's native model sessions… |
 | `src/config/models/snapshots.rs` | src | s | 2 struct · 2 fn · 3 const · 2 crate-vis | SnapshotPolicy, VaultSnapshotPolicy | `[models.snapshots]`: the owner's policy for this host's sealed inference snapshots (DESIGN-V2 §7, V2-R3) |
 | `src/config/models/tests.rs` | test | s | — | — | — |
-| `src/config/models/training.rs` | src | s | 2 struct · 1 fn · 1 const · 2 crate-vis | TrainingConnectorSettings, TrainingSettings | `[models.training]`: the trainer connectors this host dispatches an owner-authorized training run through… |
+| `src/config/models/training.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | TrainingConnectorSettings, TrainingSettings | `[models.training]`: the trainer connectors this host dispatches an owner-authorized training run through… |
 | `src/config/models/validation.rs` | src | s | 2 crate-vis | — | — |
 | `src/config/models/voice.rs` | src | s | 1 struct · 3 crate-vis | VoiceSettings | `[models.voice]`: the server's own voice loop (OF-410) |
 | `src/config/models/workers.rs` | src | m | 5 struct · 1 enum · 2 crate-vis | ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope | `[models.workers.<id>]`: the model workers this server supervises or probes (FIX 8315, DESIGN-V2 R2) |
@@ -1403,6 +1409,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/decision_read/tests.rs` | test | m | — | — | The decision read against an in-process llama.cpp: the joint marginals checked against idle-fold test 6's… |
 | `src/models/declared.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | DeclaredRun | A declared run on this server's models (ARCH-0053 `#run-declaration`): the host that states a run's… |
 | `src/models/discovered.rs` | src | s | 3 crate-vis | — | The models the owner's other nodes offer (OF-575, FIX 3229) |
+| `src/models/drafter_evaluator.rs` | src | L | 1 crate-vis | — | The vault's own drafter, evaluated, activated and rolled back (FIX 14975, FIX 12569 slice 5): the host half… |
+| `src/models/drafter_serving.rs` | src | m | 1 struct · 12 crate-vis | VaultLoadSet | The vault's own drafter, served (FIX 14976, FIX 12569 slice 4): the host seam that serves each target's… |
+| `src/models/drafter_training.rs` | src | s | 4 crate-vis | — | A drafter training job's place on its target's device work line (FIX 14974) |
 | `src/models/driven.rs` | src | s | 2 crate-vis | — | A stream whose items an async producer pushes, polled in place |
 | `src/models/exl3_evidence.rs` | src | s | 5 crate-vis | — | What an EXL3 worker's answers must echo to keep a verified-artifacts claim (FIX 9195, FIX 9296): the launch… |
 | `src/models/fallback_tests.rs` | test | L | 9 crate-vis | — | Done means for provider cooldowns and call-time fallback (OF-305, ONEIRON-FALLBACK = A): an offer refused… |
@@ -1447,9 +1456,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/run_replay.rs` | src | s | 8 crate-vis | — | One in-flight media run per replay key, without keeping another durable memo |
 | `src/models/media/video_length.rs` | src | s | 2 crate-vis | — | A video job's length as it is charged (FIX 1816): the length its clips state, as the provider's wire reads… |
 | `src/models/media/voice_reference.rs` | src | s | 5 crate-vis | — | Every reference upload re-reads the bank (FIX 9517) |
-| `src/models/mod.rs` | src | m | 2 struct · 1 fn · 15 re-export · 18 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
+| `src/models/mod.rs` | src | m | 2 struct · 1 fn · 16 re-export · 22 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/native_exl3/buffer.rs` | src | s | 13 crate-vis | — | A native call's regions |
-| `src/models/native_exl3/mod.rs` | src | L | 10 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
+| `src/models/native_exl3/evaluator_ops.rs` | src | s | 2 crate-vis | — | The evaluator op on the house EXL3 worker's socket (FIX 14975), host side: `eval.generate`… |
+| `src/models/native_exl3/mod.rs` | src | L | 12 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
 | `src/models/native_exl3/session_ops.rs` | src | s | 5 crate-vis | — | The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection… |
 | `src/models/native_exl3/transport.rs` | src | L | 20 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
 | `src/models/native_exl3/updates.rs` | src | s | 4 crate-vis | — | In-flight native schedule updates for one device |
@@ -1485,11 +1495,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/voice.rs` | src | s | 2 fn | — | The voice cascade's routes on the media seats (OF-410) |
 | `src/models/voxcpm2_speech.rs` | src | m | 1 crate-vis | — | The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on… |
 | `src/models/walk.rs` | src | m | 19 crate-vis | — | What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the… |
-| `src/models/worker_host.rs` | src | L | 37 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
+| `src/models/worker_host.rs` | src | L | 39 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
 | `src/models/worker_host/bundle.rs` | src | s | 9 crate-vis | — | The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the… |
+| `src/models/worker_host/drafter_binding.rs` | src | m | 8 crate-vis | — | The drafter serving binding's half inside the worker host (FIX 14976): which managed worker serves a drafter… |
+| `src/models/worker_host/evaluator_incarnation.rs` | src | s | 14 crate-vis | — | The drafter evaluator's incarnations (FIX 14975): managed EXL3 workers launched from the vault's own serving… |
 | `src/models/worker_host/install.rs` | src | m | 12 crate-vis | — | A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written… |
 | `src/models/worker_host/launch_manifest.rs` | src | s | 14 crate-vis | — | The supervisor's private per-launch manifest (DESIGN-V2 R2): one file per launch binding the bytes the… |
-| `src/models/worker_host/launcher.rs` | src | m | 6 crate-vis | — | The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]… |
+| `src/models/worker_host/launcher.rs` | src | L | 6 crate-vis | — | The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]… |
 | `src/models/worker_host/llama_metrics.rs` | src | s | 3 crate-vis | — | Bearer binding for a managed llama.cpp worker's `/metrics` route |
 | `src/models/worker_host/media_worker.rs` | src | m | 6 crate-vis | — | The media workers under the owned supervisor (FIX 8318): VoxCPM2 speech and local ASR, each a managed worker… |
 | `src/models/worker_host/probe.rs` | src | m | 7 crate-vis | — | The probes for the house llama.cpp and EXL3 workers (INFERENCE R1 rules, R2 qualification): one actual chat… |
@@ -1617,7 +1629,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/seat_host/child_run.rs` | src | s | 7 crate-vis | — | The one identity a claimed seat run holds everything under (FIX 9319, FIX 9320): its claimed fence |
 | `src/runtime/seat_host/lease.rs` | src | s | 4 crate-vis | — | The claim fence a seat run holds, watched while its CLI runs (FIX 9320) |
 | `src/runtime/seat_host/terminal.rs` | src | s | 1 crate-vis | — | How the seat host settles a claimed run's end (FIX 9320) |
-| `src/runtime/seat_login.rs` | src | m | 9 struct · 6 fn · 1 re-export · 1 crate-vis | OfficialCliSeatExecutor, OfficialRunnerSeatSettings, OfficialSeatDreamerExecutor, RunnerPolicySeatRow, RunnerPolicySurface, RunnerProviderRow, RunnerSeatDreamerExecutor, RunnerSeatPolicySettings +1 | Host surface for official subscription seats (OF-375) |
+| `src/runtime/seat_login.rs` | src | m | 9 struct · 6 fn · 1 re-export · 2 crate-vis | OfficialCliSeatExecutor, OfficialRunnerSeatSettings, OfficialSeatDreamerExecutor, RunnerPolicySeatRow, RunnerPolicySurface, RunnerProviderRow, RunnerSeatDreamerExecutor, RunnerSeatPolicySettings +1 | Host surface for official subscription seats (OF-375) |
 | `src/runtime/seat_login/drain.rs` | src | s | 5 crate-vis | — | An official seat run's output drains: each pipe spooled on its own thread under the disk floor and the run's… |
 | `src/runtime/seat_login/runner_work.rs` | src | s | 3 crate-vis | — | The Dreamer executor's runner work (FIX 9238): each admitted attempt's step is bound to its runner seat… |
 | `src/runtime/seat_login/siwc/credential.rs` | src | s | 6 crate-vis | — | One selected local registration, reopened before each physical send |
@@ -1628,7 +1640,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/seat_login/siwc/record.rs` | src | s | 8 crate-vis | — | Protected, runtime-local credentials for one issued registration |
 | `src/runtime/seat_login/siwc/refresh.rs` | src | s | 1 crate-vis | — | Refresh one already-verified issued registration |
 | `src/runtime/seat_login/surface.rs` | src | s | 3 struct · 4 fn | SeatLoginSurface, SeatRouteRow, SeatSettings | The owner-facing half of an official seat (OF-375): the settings the owner writes, the sign-in surface built… |
-| `src/runtime/secret_destinations.rs` | src | m | 4 struct · 6 fn · 1 const · 1 crate-vis | RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
+| `src/runtime/secret_destinations.rs` | src | m | 5 struct · 8 fn · 1 const · 1 crate-vis | OwnSecretDelivery, RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
 | `src/runtime/staged_input.rs` | src | s | 1 struct | WorkdirStager | The host half of a BYOA run's staged job (`oneiron::dispatch_byoa`'s staged input): the job is written whole… |
 | `src/runtime/usage.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
 | `src/runtime/usage/pricing.rs` | src | s | 4 crate-vis | — | The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that… |
@@ -1636,7 +1648,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/usage/settlement.rs` | src | s | 1 crate-vis | — | Attribution and durable recording of served run receipts |
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 7 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
-| `src/server/board_publisher.rs` | src | s | 5 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
+| `src/server/board_publisher.rs` | src | m | 5 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
 | `src/server/browser_seats.rs` | src | s | 3 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
 | `src/server/browser_seats/handles.rs` | src | s | 3 crate-vis | — | A run browser's live-handle registry, charged to the host's retained-memory line… |
 | `src/server/claim_vad_payment.rs` | src | s | 1 crate-vis | — | The host's claim VAD payment worker (FIX 11702, Engine 10-31 04:1x) |
@@ -1681,8 +1693,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
 | `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 7 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against its byte row, and the OF-520 question a crossing… |
 | `src/server/reader_runner.rs` | src | m | 9 crate-vis | — | The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each… |
-| `src/server/reader_runner/child.rs` | src | m | 2 crate-vis | — | Execution and settlement of claimed reader children and summary jobs |
-| `src/server/reader_runner/scoped.rs` | src | s | 2 crate-vis | — | A host-profiled scoped child at the runner (FIX 7508): a child its own host registered a profile for runs on… |
+| `src/server/reader_runner/child.rs` | src | m | 3 crate-vis | — | Execution and settlement of claimed reader children and summary jobs |
+| `src/server/reader_runner/scoped.rs` | src | s | 5 crate-vis | — | A host-profiled scoped child at the runner (FIX 7508): a child its own host registered a profile for runs on… |
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_hyde.rs` | src | m | 11 crate-vis | — | A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction |
 | `src/server/recall_hyde/wait.rs` | src | s | 2 crate-vis | — | Owned recall workers, so HyDE waits hold no shared blocking-pool thread |
@@ -1755,7 +1767,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/tests/pass_attachment.rs` | test | m | — | — | The voice host attached to a real wake supervisor through the driver's generic pass-attachment seam (moved… |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
 | `src/voice_host/wire.rs` | src | s | 1 struct · 12 crate-vis | VoiceWireBindings | The voice wire's media ops (OF-410) |
-| `src/wake_adapters/board_stream.rs` | src | s | 4 crate-vis | — | STREAM frames for the production host wake handoff |
+| `src/wake_adapters/board_stream.rs` | src | s | 5 crate-vis | — | STREAM frames for the production host wake handoff |
 | `src/wake_adapters/delivery.rs` | src | s | 1 crate-vis | — | The preference/degrade ladder belongs to this host, never the engine |
 | `src/wake_adapters/inbox.rs` | src | s | 6 crate-vis | — | A local handoff inbox and occurrence-id acknowledgements |
 | `src/wake_adapters/mod.rs` | src | s | 4 crate-vis | — | Host-side, per-config-directory wake delivery (OF-385) |
