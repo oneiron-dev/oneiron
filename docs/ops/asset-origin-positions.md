@@ -44,11 +44,16 @@ row-owned payload, with its actual source rows as dependencies. Hashes and
 scope fields are not plaintext skeleton structure. A facet id is a position,
 not necessarily a stored row, so it is not an invented restore dependency.
 
+The private own-device proof now retains its original proven public key.
+Its transaction-composable equality helper compares that key with the native
+authority fold in the caller's transaction. The helper is not called by an
+importer yet; existing MESSAGE admission is unchanged.
+
 The same-vault carrier still needs source publication into the real window,
 canonical/birth-erasure refresh, and an authenticated success hook. Its
 dedicated importer must bind the exact admitted update,
-exclude native peer-origin rows, recheck the original proven machine key in
-its writer, and keep conflicting prior positions unchanged. A connection's
+exclude native peer-origin rows, call the original-key check in its writer,
+and keep conflicting prior positions unchanged. A connection's
 own-device proof is not an origin writer or a read grant.
 
 Missing evidence, raw replay, recovery, held rows, and staged rows keep their
