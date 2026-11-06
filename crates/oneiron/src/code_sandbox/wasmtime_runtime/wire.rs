@@ -711,7 +711,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
             json!({ "output": output })
         }
-        SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
+        SelfDispatchOutcome::Team(result) => json!({ "output": result.answer }),
         SelfDispatchOutcome::TeamSubmitted(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));

@@ -41,10 +41,13 @@ pub mod test_hooks;
 mod tombstones;
 mod withdrawn;
 
-pub(in crate::sync) use self::admission::validate_promotion_snapshot;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
-pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;
+pub(in crate::sync) use self::admission::{
+    check_promotion_snapshot, check_window_update_residence_with_vault,
+    check_window_update_with_staged_worlds, validate_promotion_snapshot,
+    validate_window_update_with_staged_worlds,
+};
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
@@ -78,7 +81,9 @@ pub use self::pad_custody::{
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
-pub(in crate::sync) use self::replacement::{ReplacementByteBound, prepare_bounded_replacement};
+pub(in crate::sync) use self::replacement::{
+    ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,
+};
 pub use self::repo_manifest_conflict::{
     RepoManifestConflictDiscard, RepoManifestConflictReview,
     discard_reviewed_repo_manifest_carrier_as, review_repo_manifest_conflict,
