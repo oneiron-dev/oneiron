@@ -826,14 +826,38 @@ fn stage_context_pack_retrieval_run_finalize(
     record.elapsed_us = elapsed_us;
     record.total_in_scope = total_in_scope;
     record.claims_suppressed = claims_suppressed;
+    let replaced_result_ids_bytes = memory.as_deref_mut().map_or(0, |memory| {
+        let bytes = (record.result_ids.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64);
+        memory.materialized(0, bytes);
+        bytes
+    });
     record.result_ids = surfaced_result_ids.to_vec();
     if let Some(memory) = memory.as_deref_mut() {
+        memory.shrink(replaced_result_ids_bytes);
         memory.materialized(
             0,
             (record.result_ids.capacity() as u64)
                 .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
         );
     }
+    let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
+        entries.iter().fold(
+            (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
+                super::types::RetrievalScoreBreakdown,
+            >() as u64),
+            |bytes, entry| {
+                bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
+                ))
+            },
+        )
+    };
+    let replaced_score_breakdown_bytes = memory.as_deref_mut().map_or(0, |memory| {
+        let bytes = score_breakdown_bytes(&record.score_breakdown);
+        memory.materialized(0, bytes);
+        bytes
+    });
     let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
     for (index, result_id) in surfaced_result_ids.iter().enumerate() {
         if let Some(entry) = record
@@ -847,6 +871,9 @@ fn stage_context_pack_retrieval_run_finalize(
         }
     }
     record.score_breakdown = surfaced_breakdown;
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.shrink(replaced_score_breakdown_bytes);
+    }
     if let Some(trace) = record.trace.as_mut() {
         // Finalization publishes only the caller's post-filter result set.
         // Earlier stages also reach the durable row and its fork index, so
@@ -865,18 +892,6 @@ fn stage_context_pack_retrieval_run_finalize(
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     if let Some(memory) = memory.as_deref_mut() {
-        let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
-            entries.iter().fold(
-                (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
-                    super::types::RetrievalScoreBreakdown,
-                >() as u64),
-                |bytes, entry| {
-                    bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
-                        std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
-                    ))
-                },
-            )
-        };
         let mut bytes = score_breakdown_bytes(&record.score_breakdown);
         if let Some(trace) = &record.trace {
             bytes = bytes.saturating_add(
