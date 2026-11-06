@@ -10,9 +10,10 @@
 //! owner's agent Grants that stand for the agent, the run, credential and
 //! parent ceilings and the communication limits its host holds the facts
 //! for ([`BriefHostFacts`]), the policy's class ceilings, the scratchpad of
-//! the session its host binds, the line the run's entry spends on, the clock
-//! and the skills the run's own session loaded. Every field no host resolves
-//! is left out of the brief and named on one unavailable line
+//! the session its host binds, the result names the run its host binds has
+//! bound, the line the run's entry spends on, the clock and the skills the
+//! run's own session loaded. Every field no host resolves is left out of the
+//! brief and named on one unavailable line
 //! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
 use oneiron::authority::CommReach;
@@ -120,10 +121,12 @@ pub(crate) async fn describe_self_for_run(
 /// `None`; so is the principal when no subject anchor names the person
 /// behind the agent, so are the grants, the parent ceiling, the comm reach
 /// and the class ceilings when their read fails, so are the run and parent
-/// ceilings and the comm reach when the host bound no dispatch attempt, so
-/// are the credential ceiling and the credential's comm reach when it
-/// verified no slip, so is the scratchpad when it binds no session, and so
-/// are the budget lease and budget when no line binds the run's entry.
+/// ceilings, the comm reach and the replay bindings when the host bound no
+/// dispatch attempt, so are the replay bindings when the run holds no
+/// replay record or its read fails, so are the credential ceiling and the
+/// credential's comm reach when it verified no slip, so is the scratchpad
+/// when it binds no session, and so are the budget lease and budget when no
+/// line binds the run's entry.
 /// [`oneiron::context_board::SelfBrief::render`] leaves each `None` field
 /// out and names it unavailable. A credentialed agent's describe(self) with
 /// no installed snapshot resolves its brief here too, over its own
@@ -213,6 +216,36 @@ pub(super) fn resolved_state(
             );
         })
         .ok();
+    // WORKING SET (FIX 17594): the result names the run the host bound has
+    // bound, read from that run's replay record. Only a host-bound run is a
+    // trusted run identity: a session label proves no replay ownership. The
+    // executor writes the record before the run's first step, and only a
+    // step of the run calls its door's describe(self), so a run with no
+    // record is unavailable, never known empty.
+    let replay = host.run_ceiling.as_ref().and_then(|run| {
+        let bindings = server
+            .vault
+            .code_run_result_bindings(&run.run_id)
+            .inspect_err(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the self brief's replay bindings did not read; it names them unavailable"
+                );
+            })
+            .ok()
+            .flatten()?;
+        Some(
+            bindings
+                .into_iter()
+                .map(|binding| BriefWorkingHandle::ReplayResult {
+                    run_id: run.run_id,
+                    name: binding.name,
+                    handle: binding.handle,
+                    path: binding.path,
+                })
+                .collect::<Vec<_>>(),
+        )
+    });
     Ok(SelfBriefState {
         self_ref,
         principal,
@@ -232,7 +265,7 @@ pub(super) fn resolved_state(
         working_set: BriefWorkingSet {
             scratchpad: host.scratchpad.clone(),
             pins: None,
-            replay: None,
+            replay,
         },
     })
 }
