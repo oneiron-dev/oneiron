@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1314 code-mode rows (1274 host rows, 40 run rows), 4642 declarations.
-// Replies: 1125 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4653 declarations.
+// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -77,8 +77,8 @@ declare namespace Sdk {
   type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
   type LiveRunRequest<T> = { live_run: string; spec: T };
   type BoardWakeRequest = Record<string, never>;
-  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null };
-  type BoardWakeReply = { wakes: WakeEnvelope[] };
+  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null; room_ref?: string | null; turn_ref?: string | null };
+  type BoardWakeReply = { wakes: WakeEnvelope[]; opener?: string | null };
   type ScratchpadRecallRequest = { session_id: string; query: string };
   type EntityId = string;
   type ScratchpadRecallMark = "keep" | "scratch";
@@ -399,8 +399,9 @@ declare namespace Sdk {
   type TaskCallReceipt = { handle: TaskHandle; related: TaskHandle[]; outcome: TaskOutcome; receipt_ref?: string | null; lifecycle?: TaskLifecycleRecord | null; idempotent_replay: boolean };
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
-  type FoldKind = "repl_output";
-  type FoldedOutput = { step: number; handles: string[]; ids: string[] };
+  type FoldKind = "repl_output" | "program";
+  type FoldedSpeech = { verb: string; call: number };
+  type FoldedOutput = { step: number; handles: string[]; ids: string[]; said?: FoldedSpeech[] };
   type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[]; kind?: FoldKind | null; note?: string | null; outputs?: FoldedOutput[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type Care = "light" | "medium" | "high" | "xhigh" | "max";
   type BriefIntent = { need: string; care?: Care | null };
@@ -1027,6 +1028,7 @@ declare namespace Sdk {
   type WeaveDigestSettingUndo = { change_ref: string };
   type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
   type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
+  type ProactivityDigestRequest = { id?: string | null };
   type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
   type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern" | "digest";
   type InboxLensPile = "conversations" | "waiting_on_you" | "updates";
@@ -1219,7 +1221,7 @@ declare namespace Sdk {
   type SlateDraftRow = { tool: string; disposition: SlateDisposition; data_class: SlateDataClass; rationale: string };
   type SlateOwnerOverride = { disposition: SlateDisposition };
   type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
-  type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
+  type SlateRow = { settings_act: EntityId; draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
   type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
   type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; staged: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
   type ConnectorPackGetRequest = { connector: string };
@@ -1339,7 +1341,8 @@ declare namespace Sdk {
   type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
   type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean; issue_codes?: string[] };
-  type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
+  type PendingMembershipExecutionRow = { receipt: string; vault_id: string; act?: string | null; cause: string; person: string; member: string; executed_at: number; withdrawn_grants: string[]; handover: boolean };
+  type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[]; pending_membership_executions?: PendingMembershipExecutionRow[] };
   type SignedAuthorityHistory = { entries: string[] };
   type AuthorityHistoryImported = { entry_refs: string[] };
   type AuthorityClockRepairOutcome = "sound" | "repaired" | "unproven";
@@ -1404,7 +1407,7 @@ declare namespace Sdk {
   type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
-  type SharedActExecutionReceipt = { id: string; vault_id: string; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; authorizer?: string | null; completed_at: number };
+  type SharedActExecutionReceipt = { id: string; vault_id: string; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; authority_record_pending?: boolean; authorizer?: string | null; completed_at: number };
   type RemovalExportDelivery = { receipt_id: string; recipient: string; digest: string; delivered_at: number; expires_at: number };
   type SharedActExecuted = { receipt: SharedActExecutionReceipt; delivery?: RemovalExportDelivery | null };
   type SharedReceiptRequest = { receipt_id: string };
@@ -2214,7 +2217,14 @@ declare namespace Sdk {
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
   type SlideReviewPolicyRow = { scope: "precedence"; value: SlideReviewPrecedence } | { scope: "vault"; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "route"; first: DecisionRung; ceiling: DecisionRung } | { scope: "holder"; holder: string; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "holder_route"; holder: string; first: DecisionRung; ceiling: DecisionRung };
-  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null; slide_review_policy?: SlideReviewPolicyRow[] | null };
+  type PolicyGrantMapEntry = { key: PolicyGrantValue; value: PolicyGrantValue };
+  type PolicyGrantExtension = { tag: number; data: number[] };
+  type PolicyGrantValue = { kind: "nil" } | { kind: "boolean"; value: boolean } | { kind: "integer"; value: string } | { kind: "float32"; value: number[] } | { kind: "float64"; value: number[] } | { kind: "string"; value: string } | { kind: "raw_string"; value: number[] } | { kind: "binary"; value: number[] } | { kind: "array"; value: PolicyGrantValue[] } | { kind: "map"; value: PolicyGrantMapEntry[] } | { kind: "extension"; value: PolicyGrantExtension };
+  type PolicyScopedGrantRow = { actor_class?: string | null; actor_ref?: string | null; effector: string; scope: Scope; selectors?: PolicyGrantValue | null; budget?: PolicyGrantValue | null; receipt_required: boolean };
+  type TeacherProbeHolderFloor = { holder_ref: string; min_f1_millionths: number };
+  type TeacherProbePolicy = { probe_id: string; min_f1_millionths: number; holders?: TeacherProbeHolderFloor[] };
+  type SheetAnswerLimit = { artifact_ref?: string | null; sheet?: string | null; max_count: number };
+  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null; slide_review_policy?: SlideReviewPolicyRow[] | null; scoped_grants?: PolicyScopedGrantRow[] | null; teacher_probe?: TeacherProbePolicy | null; sheet_answer_limits?: SheetAnswerLimit[] | null };
   type PolicyManifestView = { manifest_ref: string; body_hash: string; trusted: boolean; quarantined: boolean; manifest: PolicyManifest };
   type PolicyManifestsView = { default_manifest_ref: string; read_frontier_hash: string; manifests: PolicyManifestView[] };
   type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
@@ -2575,10 +2585,11 @@ declare namespace Sdk {
   type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
-  type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; word_ref: EntityId };
+  type CodeWaitRememberScope = "connection" | "asking_lineage";
+  type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; remember_scope?: CodeWaitRememberScope | null; word_ref: EntityId };
   type CodeWaitState = "waiting" | "settling" | "settled" | "consumed";
   type CodeWaitBrowserAction = { act: string; class: string; role: string; name: string; locator: string; page?: string | null; press: string };
-  type CodeWaitAnswerView = { answer: CodeWaitChoice; word_ref: EntityId; decision_ref: string; answered_at_ms: number };
+  type CodeWaitAnswerView = { answer: CodeWaitChoice; word_ref: EntityId; remember_scope?: CodeWaitRememberScope | null; remembered_grant_ref?: string | null; decision_ref: string; answered_at_ms: number };
   type CodeWaitSettleOutcome = "delivered" | "refused" | "delivery_unknown";
   type CodeWaitLedgerLinks = { prior_ref?: string | null; word_ref?: EntityId | null; facts_digest: string };
   type CodeWaitSettlementView = { receipt_ref: string; outcome: CodeWaitSettleOutcome; reason_codes: string[]; settled_at_ms: number; ledger?: CodeWaitLedgerLinks | null };
@@ -4568,7 +4579,7 @@ declare namespace Sdk {
   type FrameKind = { kind: "keyframe"; payload: string } | { kind: "delta"; payload: DeltaRow[] };
   type BoardStreamFrame = { epoch: number; kind: FrameKind };
   type StreamConnectionId = string;
-  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews";
+  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews" | "room_turns";
   type BoardVerbOutputWire = { kind: "expanded"; key: string; lines: string[] } | { kind: "frame"; frame: BoardStreamFrame } | { kind: "subscription"; connection: StreamConnectionId; active: SubscriptionScope[] };
   type BoardVerbOutput = BoardVerbOutputWire;
   type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };
@@ -5904,7 +5915,7 @@ declare const vault: Sdk.VaultHost & {
       resolve(input: Sdk.CodeWaitResolveRequest): Promise<Sdk.CodeWaitReceiptView | StoredResult>;
     };
   };
-  /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
+  /** Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt. */
   commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
   /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
   commit_message(input: Sdk.CommitMessageRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
@@ -7000,7 +7011,8 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   proactivity: {
-    digest: {
+    /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
+    digest: ((input: Sdk.ProactivityDigestRequest) => Promise<Sdk.ProactivityDigestView | null | StoredResult>) & {
       /** Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant. */
       get(input: Sdk.DigestReadRequest): Promise<Sdk.ProactivityDigestView | null | StoredResult>;
     };
