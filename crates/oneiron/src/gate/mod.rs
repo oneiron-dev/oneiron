@@ -28,6 +28,7 @@ pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
 mod default_manifest;
+mod value_encoding;
 pub(crate) mod experiment_selection_policy;
 pub(crate) mod failure_signal_policy;
 pub(crate) mod team_review;

@@ -36,7 +36,7 @@ pub use secret_projection::{
     RepoCopyAliases, RepoSyncAdmission, RepoSyncLandings, admit_repo_sync_frame,
     prepare_repo_sync_frame, prepare_repo_sync_frame_for_home, repo_copy_generation,
     repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
-    repo_document_source,
+    repo_document_source, repo_sync_frame_as_admitted,
 };
 /// The empty root whose deletes retain a held row write's causal unit.
 pub(crate) const HELD_EDIT_CAUSALITY_MAP: &str = "held_edit_causality";

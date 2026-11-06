@@ -69,8 +69,16 @@ impl SyncClient {
         let marker_key = window_key.to_owned();
 
         if !doc_state.is_empty() {
+            let key = WindowKey::new(window_key);
+            // A cold window's durable state, read without opening the window:
+            // a sealed state is checked over it before its pads install (FIX
+            // 10474), and the copied state again below.
+            let cold = match self.window(window_key) {
+                Some(_) => None,
+                None => Some(durable_window_doc(&self.vault, &key)?),
+            };
             // The state comes in its envelope, its pads installed here first (FIX 7107).
-            let state = self.bulk_window_state(&WindowKey::new(window_key), doc_state)?;
+            let state = self.bulk_window_state(&key, doc_state, cold.as_ref())?;
             let doc_state = state.as_slice();
             // FIX 11709: the home this connection proved, if it proved one, sent
             // the state: its MESSAGE rows take the own-device lane as it lands.
@@ -146,16 +154,9 @@ impl SyncClient {
                 // the just-opened window so RAM never runs ahead of
                 // durable state (same discipline as the live arm and the
                 // WindowSync UPDATE arm).
-                let key = WindowKey::new(window_key);
-                let candidate = match load_window_from_state(&self.vault, "local", &key) {
-                    Ok(doc) => doc,
-                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-                        let doc = create_window_doc("local", &key);
-                        apply_pending_window_updates(&self.vault, &doc, &key)
-                            .map_err(|e| TransportError::Storage(e.to_string()))?;
-                        doc
-                    }
-                    Err(e) => return Err(TransportError::Storage(e.to_string())),
+                let candidate = match cold {
+                    Some(doc) => doc,
+                    None => durable_window_doc(&self.vault, &key)?,
                 };
                 crate::sync::window::validate_window_update_residence_with_vault(
                     &self.vault,
@@ -233,5 +234,23 @@ impl SyncClient {
             window_key: window_key.to_string(),
         });
         Ok(())
+    }
+}
+
+/// `key`'s window as its durable rows hold it, outside the window manager:
+/// its stored state, or a fresh window with its surviving updates applied.
+fn durable_window_doc(
+    vault: &crate::Vault,
+    key: &WindowKey,
+) -> std::result::Result<loro::LoroDoc, TransportError> {
+    match load_window_from_state(vault, "local", key) {
+        Ok(doc) => Ok(doc),
+        Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+            let doc = create_window_doc("local", key);
+            apply_pending_window_updates(vault, &doc, key)
+                .map_err(|e| TransportError::Storage(e.to_string()))?;
+            Ok(doc)
+        }
+        Err(e) => Err(TransportError::Storage(e.to_string())),
     }
 }

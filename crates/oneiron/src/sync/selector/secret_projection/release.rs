@@ -133,6 +133,29 @@ pub fn admit_repo_sync_frame<'a>(
     Ok(admitted)
 }
 
+/// [`admit_repo_sync_frame`] with nothing written: `payload` as `window`
+/// would take it now, its copies translated onto the sources this device
+/// holds, for the isolated check a device runs before the payload's pads
+/// install (FIX 10474). No held record is written and no landing is marked;
+/// `None` for a payload that holds on a ruled cause. A copy row whose pad
+/// is not here yet is read as it came, as without its pad.
+///
+/// # Errors
+/// As [`admit_repo_sync_frame`].
+pub fn repo_sync_frame_as_admitted<'a>(
+    vault: &Vault,
+    payload: &'a [u8],
+    context: Option<&LoroDoc>,
+) -> Result<Option<Cow<'a, [u8]>>> {
+    let projection = SyncSecretProjection::read(vault)?;
+    Ok(
+        match projection.admit_window_blob(&vault.store, payload, context)? {
+            WindowAdmission::Admit(bytes, _, _) => Some(bytes),
+            WindowAdmission::Held(_) => None,
+        },
+    )
+}
+
 /// The generation of the masked repo copies `doc`'s state carries; `None`
 /// when it carries no marked repo item. A peer last sent another generation
 /// gets the window's replacement, even at an equal version vector (C3).
