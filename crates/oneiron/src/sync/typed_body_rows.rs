@@ -360,11 +360,21 @@ fn mirror_body_forks(
             let key = fork_key(&carried);
             let copy = map_get_bytes(&map, &key).and_then(|bytes| decode_fork(&bytes).ok());
             if let Some(copy) = &copy {
-                // The same row: its snapshot may ride whole or in parts.
+                // The same row: its snapshot may ride whole or in parts. A
+                // row whose parts have not all landed in the window (a mirror
+                // cut off after its manifest committed) is written again,
+                // which writes only the parts the window lacks; otherwise no
+                // receiver could ever join its snapshot.
                 if copy.birth == carried.birth
                     && copy.record == carried.record
                     && copy.companion == carried.companion
                 {
+                    if snapshot_parts(copy).is_none_or(|parts| {
+                        parts.keys().all(|part| map_contains_binary(&map, &part))
+                    }) {
+                        continue;
+                    }
+                    writes.push((key, carried, None));
                     continue;
                 }
                 match copy.clone().carried_here(vault, &rtxn, owner)? {

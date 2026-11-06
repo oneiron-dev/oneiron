@@ -39,7 +39,7 @@ use loro::{Frontiers, LoroDoc, VersionVector};
 use serde::{Deserialize, Serialize};
 
 use super::lift::{TypedBodyRows, lift_typed_body_in_txn};
-use super::sync_frame::BodyOwner;
+use super::sync_frame::{BodyOwner, CarriedBody};
 use super::{
     BodyActor, FORK_DOCS, FORKS, HEADS, TypedBodyFork, TypedForkState, require_live, snapshot,
 };
@@ -469,22 +469,56 @@ fn checked_document(carried: &CarriedFork) -> Option<LoroDoc> {
 /// imported into the held one, every operation it builds on held. The row is
 /// the held one's, with the joined document's version, and as many commits
 /// as the joined version holds peers past the base: each commit runs under a
-/// fresh peer. `None` when a document does not read, or the carried one
-/// lacks what it builds on.
-fn joined_fork(held: &CarriedFork, carried: &CarriedFork) -> Option<(TypedBodyFork, LoroDoc)> {
-    let doc = held.document()?;
-    checked_document(carried)?;
-    let Some(ForkSnapshot::Whole(bytes)) = &carried.snapshot else {
-        return None;
+/// fresh peer, once the schema owner's merge preflight takes the join.
+/// [`ForkJoin::Conflict`] when the preflight refuses it; [`ForkJoin::Apart`]
+/// when a document does not read, or the carried one lacks what it builds on.
+fn joined_fork(
+    vault: &Vault,
+    schema: &str,
+    owner: &BodyOwner,
+    held: &CarriedFork,
+    carried: &CarriedFork,
+) -> Result<ForkJoin> {
+    let (Some(live), Some(theirs)) = (held.document(), carried.document()) else {
+        return Ok(ForkJoin::Apart);
     };
-    let status = doc.import(bytes).ok()?;
-    if status.pending.is_some() {
-        return None;
+    if checked_document(carried).is_none() {
+        return Ok(ForkJoin::Apart);
+    }
+    let Some(ForkSnapshot::Whole(bytes)) = &carried.snapshot else {
+        return Ok(ForkJoin::Apart);
+    };
+    let doc = live.fork();
+    doc.set_record_timestamp(true);
+    match doc.import(bytes) {
+        Ok(status) if status.pending.is_none() => {}
+        _ => return Ok(ForkJoin::Apart),
+    }
+    // The schema owner's merge preflight judges the join, as it judges a
+    // carried body's (sync_frame): a structure both copies changed (an
+    // XLSX sheet list both edited, which a join would settle by one write)
+    // stands apart as a conflict instead of losing one copy's work.
+    let base = live
+        .vv_to_frontiers(&live.oplog_vv().intersection(&theirs.oplog_vv()))
+        .encode();
+    let head = live.oplog_frontiers().encode();
+    let body = CarriedBody {
+        live: &live,
+        theirs: &theirs,
+        merged: &doc,
+        base: &base,
+        head: &head,
+    };
+    if !(owner.preflight)(vault, schema, &body)? {
+        return Ok(ForkJoin::Conflict);
     }
     let version = doc.oplog_vv();
-    let base = Frontiers::decode(&held.record.base)
+    let Some(base) = Frontiers::decode(&held.record.base)
         .ok()
-        .and_then(|base| doc.frontiers_to_vv(&base))?;
+        .and_then(|base| doc.frontiers_to_vv(&base))
+    else {
+        return Ok(ForkJoin::Apart);
+    };
     let commits = u64::try_from(
         version
             .iter()
@@ -497,7 +531,17 @@ fn joined_fork(held: &CarriedFork, carried: &CarriedFork) -> Option<(TypedBodyFo
         version: version.encode(),
         ..held.record.clone()
     };
-    Some((record, doc))
+    Ok(ForkJoin::Joined(record, doc))
+}
+
+/// What joining two concurrent copies of an open fork gives.
+enum ForkJoin {
+    /// The joined fork's record and document.
+    Joined(TypedBodyFork, LoroDoc),
+    /// The schema owner's preflight refuses the join: both copies stand.
+    Conflict,
+    /// The two documents do not join here.
+    Apart,
 }
 
 /// The key of fork `key`'s document row after its table's prefix: what the
@@ -590,13 +634,26 @@ pub(crate) fn merge_carried_fork_in_txn(
             _ => (Some(carried.record.clone()), ForkDocument::Delete),
         },
         Plan::Join => {
-            let Some((record, doc)) = held.as_ref().and_then(|held| joined_fork(held, &carried))
-            else {
-                return Ok(DocumentMerge::Refused(
-                    "two fork documents that do not join here",
-                ));
+            let joined = match held.as_ref() {
+                Some(held) => joined_fork(vault, &head.schema, owner, held, &carried)?,
+                None => ForkJoin::Apart,
             };
-            (Some(record), ForkDocument::Put(snapshot(&doc)?))
+            match joined {
+                ForkJoin::Joined(record, doc) => (Some(record), ForkDocument::Put(snapshot(&doc)?)),
+                ForkJoin::Conflict => {
+                    tracing::warn!(
+                        entity = %entity.to_hex(),
+                        fork = %carried.fork.to_hex(),
+                        "two copies of an open typed body fork change one structure; both stand"
+                    );
+                    return Ok(DocumentMerge::Conflict);
+                }
+                ForkJoin::Apart => {
+                    return Ok(DocumentMerge::Refused(
+                        "two fork documents that do not join here",
+                    ));
+                }
+            }
         }
         Plan::Settle => (Some(carried.record.clone()), ForkDocument::Delete),
         Plan::EraseActors(joined) => (Some(joined), ForkDocument::Keep),
