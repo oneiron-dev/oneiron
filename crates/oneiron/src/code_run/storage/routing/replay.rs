@@ -5,7 +5,8 @@
 //! same writer runs the full replay fence first (FIX 9180, FIX 11392): a
 //! copy read before an erase writes back its erased form, exactly as on the
 //! owned path. An overlay row stays the room's own: it takes the fold-answer
-//! fence through the room's composed view before its put (FIX 18924).
+//! fence through the room's composed view before its put (FIX 18924), on
+//! the owned put as on the append.
 
 use std::borrow::Cow;
 
@@ -91,7 +92,9 @@ impl SessionBinding<'_> {
     /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
     /// by its owner row, and a write after that erase stays erased. An
     /// overlay row stamps its owner in the overlay, in the same writer, so
-    /// the room's waits know whose run it is (FIX 6586).
+    /// the room's waits know whose run it is (FIX 6586). It also takes the
+    /// fold-answer fence through the room's composed view before its put
+    /// (FIX 18924): a withdrawn fold's answer never lands in the room's row.
     pub(in crate::code_run::storage) fn put_owned_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -102,6 +105,13 @@ impl SessionBinding<'_> {
         use crate::side_table::RoutedDbs;
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
+        let fenced = match self.route.target() {
+            RouteTarget::Base => Cow::Borrowed(record),
+            RouteTarget::Overlay | RouteTarget::Discard => {
+                self.composed_fold_answers(Cow::Borrowed(record))?
+            }
+        };
+        let overlay_record: &CodeRunReplayRecord = &fenced;
         self.answered(|| {
             self.session
                 .routed_side_txn(&self.route, |wtxn, read, write| {
@@ -115,7 +125,7 @@ impl SessionBinding<'_> {
                         }
                         RoutedDbs::Session(_) => {
                             stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
-                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
+                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, overlay_record)
                         }
                     }
                 })

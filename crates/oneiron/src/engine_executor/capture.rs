@@ -9,7 +9,7 @@ use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
-    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, FoldWordRef, StepCapture,
+    CapsuleHost, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage, FoldWordRef, StepCapture,
     StepContextCapture, StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
     push_fold_word, recorded_fold_words,
 };
@@ -80,6 +80,29 @@ impl EngineNativeExecutor<'_> {
             push_fold_word(&mut words, word);
         }
         words
+    }
+
+    /// Records each of `outputs`, which run `record`'s step just published,
+    /// as a dependent of the records whose words the run's fold answers
+    /// copy (FIX 18924): a step's observation, console and files may print
+    /// any answer its program holds. Known dependency edges only, apart
+    /// from each output's input rows.
+    pub(super) fn record_step_fold_dependents(
+        &self,
+        record: &CodeRunReplayRecord,
+        outputs: &[&CodeRunRawOutput],
+    ) -> EngineExecutorResult<()> {
+        let mut sources: Vec<EntityId> = recorded_fold_words(&record.bridge_calls)
+            .into_iter()
+            .flat_map(|word| word.sources)
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        for output in outputs {
+            self.storage
+                .record_code_run_fold_sources(record.run_id, output, &sources)?;
+        }
+        Ok(())
     }
 
     /// Captures `request` before it is sent, with `record`, the run's row as
