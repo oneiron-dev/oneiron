@@ -11,6 +11,8 @@ pub(crate) struct CanonicalValidation {
     document_rows: validation::DocumentRows,
     entity_document_rows: validation::EntityDocumentRows,
     asset_body_refs: asset_body_refs::AssetBodyRefsValidation,
+    row_births: row_births::RowBirthsValidation,
+    withdrawn_cutoffs: withdrawn_cutoffs::WithdrawnCutoffsValidation,
 }
 
 #[derive(Default)]
@@ -70,11 +72,17 @@ impl CanonicalValidation {
                 ValidationStage::RowBirths
             }
             ValidationStage::RowBirths => {
-                row_births::validate(snapshot)?;
+                if !self.row_births.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.row_births = row_births::RowBirthsValidation::default();
                 ValidationStage::WithdrawnCutoffs
             }
             ValidationStage::WithdrawnCutoffs => {
-                withdrawn_cutoffs::validate(snapshot)?;
+                if !self.withdrawn_cutoffs.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.withdrawn_cutoffs = withdrawn_cutoffs::WithdrawnCutoffsValidation::default();
                 ValidationStage::Complete
             }
             ValidationStage::Complete => return Ok(true),
@@ -101,6 +109,13 @@ impl CanonicalValidation {
         }
         if matches!(self.stage, ValidationStage::AssetBodyRefs) {
             return format!("asset body references {}", self.asset_body_refs.position());
+        }
+        if matches!(self.stage, ValidationStage::RowBirths) {
+            return format!("row births {}", self.row_births.position());
+        }
+        if matches!(self.stage, ValidationStage::WithdrawnCutoffs) {
+            let (stage, next) = self.withdrawn_cutoffs.position();
+            return format!("withdrawn cutoffs {stage} {next}");
         }
         match self.stage {
             ValidationStage::Manifest => "manifest",
