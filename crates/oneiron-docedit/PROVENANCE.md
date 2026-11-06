@@ -225,3 +225,16 @@ unknown-coverage cases keep the existing fallback. Known `r`/`fld`/`br` bytes,
 static serializers, alignment and field-removal receipts are unchanged. This is
 a source-only retained-span correction, not full 17480, whole OF-509 or
 PowerPoint fidelity proof, and no Office runtime comparison is claimed.
+
+The whole unchanged field-free paragraph carry (2026-11-06, FIX 17480) keeps a
+rebuilt line's original paragraph span bytes when its full native text, counting
+each direct DrawingML `br` as U+000B, exactly equals the requested line and the
+paragraph holds zero descendant DrawingML `fld`. The keep returns the original
+span in place under the same direct text body with its own attributes, run
+wrappers, inter-child bytes and namespace bindings unchanged, so no binding
+materialization is added. Changed text, partial or unknown coverage, any field
+and omitted BREAK lines keep the existing prefix/suffix, render and fallback
+bytes; nonempty opaque retained segments and field-removal receipts are
+unchanged. This is a source-only whole-paragraph correction, not full 17480,
+whole OF-509 or PowerPoint fidelity proof, and no Office runtime, full-feature
+or build comparison is claimed.

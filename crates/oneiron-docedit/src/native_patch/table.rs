@@ -443,6 +443,11 @@ pub(super) fn set_cell(
 /// Copied properties keep namespace bindings; removed field types are reported.
 /// Whole field-free opaque retained segments keep their original XML and
 /// namespace bindings.
+/// A whole unchanged field-free paragraph keeps its original paragraph XML
+/// bytes in place under the same direct text body when its full native text
+/// (direct breaks as U+000B) equals the requested line and it holds zero
+/// descendant DrawingML fields; omitted breaks still drop through the
+/// existing prefix/suffix path.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -573,6 +578,13 @@ fn rebuilt(
             return None;
         }
         let new: Vec<char> = line.chars().collect();
+        if old == new && !within(tree, para).any(|(_, node)| node.is(DML, "fld")) {
+            return Some(
+                std::str::from_utf8(&bytes[para_node.span.clone()])
+                    .ok()?
+                    .to_owned(),
+            );
+        }
         let mut prefix = 0;
         while prefix < old.len() && prefix < new.len() && old[prefix] == new[prefix] {
             prefix += 1;
