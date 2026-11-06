@@ -36,9 +36,9 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// Field-free paragraph edges carry zero-text child clusters and their gaps beside
 /// positive retained text at the first/last nonempty direct child, bounded by
 /// an original first pPr or last endParaRPr. Skipped children block bridges.
-/// A second render knows the exact newly carried raw source spans; fresh rPr
-/// template copies omit only XML-namespace id attributes whose original rPr
-/// survives in those spans. Original identities, style and relationship refs stay.
+/// A second render knows the exact raw edge, whole-paragraph and whole-run
+/// source spans; fresh rPr template copies omit only XML-namespace id attributes
+/// whose original rPr survives there. Original identities, style and refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
 /// attributes only when it contributes to exactly one retained head/tail piece;
@@ -53,11 +53,11 @@ pub(super) fn rebuilt(
     paragraphs: &[(usize, &Node)],
     value: &str,
 ) -> Result<Vec<u8>, NativeRefusal> {
-    let (out, retained_edges) = rebuilt_pass(bytes, tree, body, paragraphs, value, &[])?;
-    if retained_edges.is_empty() {
+    let (out, retained_sources) = rebuilt_pass(bytes, tree, body, paragraphs, value, &[])?;
+    if retained_sources.is_empty() {
         Ok(out)
     } else {
-        rebuilt_pass(bytes, tree, body, paragraphs, value, &retained_edges).map(|(out, _)| out)
+        rebuilt_pass(bytes, tree, body, paragraphs, value, &retained_sources).map(|(out, _)| out)
     }
 }
 
@@ -67,9 +67,9 @@ fn rebuilt_pass(
     body: usize,
     paragraphs: &[(usize, &Node)],
     value: &str,
-    retained_edges: &[std::ops::Range<usize>],
+    retained_sources: &[std::ops::Range<usize>],
 ) -> Result<(Vec<u8>, Vec<std::ops::Range<usize>>), NativeRefusal> {
-    let mut emitted_edges = Vec::new();
+    let mut emitted_sources = Vec::new();
     let (first, first_node) = paragraphs[0];
     let last_node = paragraphs[paragraphs.len() - 1].1;
     let piece = |node: Option<(usize, &Node)>| {
@@ -90,7 +90,7 @@ fn rebuilt_pass(
             .flatten();
         let r_pr = match property {
             Some((at, node))
-                if retained_edges
+                if retained_sources
                     .iter()
                     .any(|span| span.start <= node.span.start && node.span.end <= span.end) =>
             {
@@ -206,11 +206,11 @@ fn rebuilt_pass(
         let new: Vec<char> = line.chars().collect();
         let field_free = !within(tree, para).any(|(_, node)| node.is(DML, "fld"));
         if old == new && field_free {
-            return Some(
-                std::str::from_utf8(&bytes[para_node.span.clone()])
-                    .ok()?
-                    .to_owned(),
-            );
+            let raw = std::str::from_utf8(&bytes[para_node.span.clone()])
+                .ok()?
+                .to_owned();
+            emitted_sources.push(para_node.span.clone());
+            return Some(raw);
         }
         let mut prefix = 0;
         while prefix < old.len() && prefix < new.len() && old[prefix] == new[prefix] {
@@ -243,7 +243,8 @@ fn rebuilt_pass(
                 position = end;
             }
         }
-        let retained_runs = |from: usize, to: usize| -> Option<String> {
+        let mut original_runs = Vec::new();
+        let mut retained_runs = |from: usize, to: usize| -> Option<String> {
             let mut runs = String::new();
             let mut position = 0;
             let mut previous: Option<(usize, &Node)> = None;
@@ -273,6 +274,7 @@ fn rebuilt_pass(
                         && end == position + text.len()
                     {
                         runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
+                        original_runs.push(node.span.clone());
                     } else if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
                         let mut run = run_xml(Some((*at, *node)), para_node, &part).ok()?;
@@ -404,7 +406,8 @@ fn rebuilt_pass(
             run_xml(selected, para_node, &text).ok()?
         };
         let tail = retained_runs(old.len() - suffix, old.len())?;
-        emitted_edges.extend(edges);
+        emitted_sources.extend(edges);
+        emitted_sources.extend(original_runs);
         Some(format!(
             "<{p}{p_attributes}>{opening}{p_pr}{leading}{head}{middle}{tail}{trailing}{end}{closing}</{p}>"
         ))
@@ -513,7 +516,7 @@ fn rebuilt_pass(
         out.extend_from_slice(rendered.as_bytes());
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
-    Ok((out, emitted_edges))
+    Ok((out, emitted_sources))
 }
 
 /// A fresh template copy borrows style, not an identity carried by its raw source.
