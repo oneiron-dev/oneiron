@@ -99,7 +99,8 @@ pub enum OwnerActKind {
     /// 02:0x). Its `seen` is over the grant's live choices.
     GrantTravel,
     /// A vault-wide policy setting the owner changed: the dreamer's wake
-    /// policy or the inference defaults (Engine 10-19 02:4x). Its `target`
+    /// policy, the inference defaults or the room-thread admin switches
+    /// (Engine 10-19 02:4x). Its `target`
     /// names the setting, its `seen` the setting's live acts
     /// (`PolicySettingSet`, FIX 4624), whose `prior` keeps the setting as
     /// it stood.
@@ -140,6 +141,20 @@ pub enum OwnerActKind {
     /// `target` is the agent the policy is for and its `seen` that
     /// agent's live acts.
     FreeTimePolicy,
+    /// The owner's grant or revoke of a connector witness-read AccessGrant
+    /// (FIX 10980; L02 kind ruling 2026-11-05 00:01 JST). A local typed
+    /// receipt records it, not a signed authority op; its `seen` is zero.
+    /// No agent Grant line names this act.
+    AccessGrant,
+    /// The owner's cut of a repository's origin authority (`OriginCut`; FIX
+    /// 15740). Its `target` is the repository's portable id and its `seen`
+    /// is over that repository's live cuts. No Grant line names it.
+    OriginCut,
+    /// The owner names a device key's successor (`DeviceSuccession`; FIX
+    /// 11135). Its `target` is derived from the predecessor's client id and
+    /// device key, and its `seen` is over that pair's live successions. No
+    /// Grant line names it.
+    DeviceSuccession,
 }
 
 impl OwnerActKind {
@@ -165,6 +180,9 @@ impl OwnerActKind {
             Self::GrantRevoke => "grant_revoke",
             Self::OwnerKeyEnrollment => "owner_key_enrollment",
             Self::FreeTimePolicy => "free_time_policy",
+            Self::AccessGrant => "access_grant",
+            Self::OriginCut => "origin_cut",
+            Self::DeviceSuccession => "device_succession",
         }
     }
 
@@ -190,6 +208,9 @@ impl OwnerActKind {
             "grant_revoke" => Self::GrantRevoke,
             "owner_key_enrollment" => Self::OwnerKeyEnrollment,
             "free_time_policy" => Self::FreeTimePolicy,
+            "access_grant" => Self::AccessGrant,
+            "origin_cut" => Self::OriginCut,
+            "device_succession" => Self::DeviceSuccession,
             _ => return None,
         })
     }

@@ -43,6 +43,7 @@ owner=""
 allowed_origins=""
 artifact_origin=""
 config=""
+models=""
 for word in $(cat /proc/cmdline); do
   case "$word" in
     oneiron.vault=*) vault="${word#oneiron.vault=}" ;;
@@ -50,6 +51,7 @@ for word in $(cat /proc/cmdline); do
     oneiron.allowed_origins=*) allowed_origins="${word#oneiron.allowed_origins=}" ;;
     oneiron.artifact_origin=*) artifact_origin="${word#oneiron.artifact_origin=}" ;;
     oneiron.config=*) config="${word#oneiron.config=}" ;;
+    oneiron.models=*) models="${word#oneiron.models=}" ;;
   esac
 done
 
@@ -92,6 +94,12 @@ if [ "$config" = "1" ]; then
   if [ -f /config/seal/tsa-url ]; then
     set -- "$@" --seal-tsa-url "$(head -n 1 /config/seal/tsa-url)"
   fi
+  if [ -f /config/seal/crl-origins ]; then
+    set -- "$@" --seal-crl-origins "$(head -n 1 /config/seal/crl-origins)"
+  fi
+  if [ -f /config/seal/ocsp-origins ]; then
+    set -- "$@" --seal-ocsp-origins "$(head -n 1 /config/seal/ocsp-origins)"
+  fi
   if [ -f /config/seal/signing-url ]; then
     set -- "$@" --seal-signing-url "$(head -n 1 /config/seal/signing-url)"
   fi
@@ -123,6 +131,18 @@ if [ "$config" = "1" ]; then
   fi
 fi
 
+# Shared model bundles use the next drive after config, before a restore
+# source. The host names the actual device; only this optional drive is
+# mounted here, never the vault's ordinary per-vault model directory.
+if [ -n "$models" ]; then
+  case "$models" in
+    /dev/vdc|/dev/vdd) ;;
+    *) echo "invalid shared model drive device" >&2; exit 1 ;;
+  esac
+  mount -t ext4 -o ro,nosuid,nodev,noexec,noatime "$models" /models
+  set -- "$@" --shared-model-root /models
+fi
+
 # The provision prelude, the credential frame and the ready byte ride the
 # vsock boot port; the host reaches HTTP and ctl through vsock ports the
 # engine bridges onto these paths. oneiron-vm-init refuses the boot when the
@@ -139,6 +159,9 @@ fi
 # vault's key. Ending PID 1 ends the VM.
 sync
 umount /restore 2>/dev/null || true
+if [ -n "$models" ]; then
+  umount /models || true
+fi
 umount /config 2>/dev/null || true
 umount /vault || true
 reboot -f

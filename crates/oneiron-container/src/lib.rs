@@ -9,8 +9,8 @@ mod relay_protocol;
 mod transport;
 pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
-    EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal,
-    LoopbackRefusalReason,
+    CredentialEgressRecord, CredentialEgressStatus, EgressRelay, HttpRequest, HttpResponse,
+    LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason,
 };
 pub use host_net_floor::{
     HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
@@ -30,6 +30,8 @@ mod supervisor;
 mod wire;
 #[cfg(target_os = "linux")]
 pub use launcher::launch as launch_fenced;
+#[cfg(target_os = "linux")]
+pub use linux::{landlock_abi, landlock_restrict, landlock_ruleset};
 #[cfg(target_os = "linux")]
 pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
 
@@ -245,6 +247,7 @@ impl ContainerRuntime {
             image_release::SelectedImage::Oci(&spec.image),
             &image_release::ObservedArtifacts::from_image_ref(&spec.image),
             &image_release::NoVerifierConfigured,
+            crate::image_release::LaunchBackend::Container,
         );
         let mut child = oneiron_spawn::command(&self.program)
             .args(&args)
@@ -345,6 +348,7 @@ impl ContainerRuntime {
                 image_release::SelectedImage::Oci(&spec.image),
                 &image_release::ObservedArtifacts::from_image_ref(&spec.image),
                 &image_release::NoVerifierConfigured,
+                crate::image_release::LaunchBackend::Container,
             );
             let mut child = oneiron_spawn::command(&self.program)
                 .args(&args)

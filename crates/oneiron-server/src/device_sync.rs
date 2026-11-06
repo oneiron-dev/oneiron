@@ -34,14 +34,17 @@
 //! their own-server rows.
 //!
 //! On a managed vault (WILL-PLAN L14 row 14) the reap freeze governs the
-//! connection ([`freeze`], FIX 5127): each run between freezes, and each
-//! catalog refresh, holds an admission of its own, so an idle connection
-//! keeps no reap away. A freeze pauses the run, and the same connection runs
-//! again once the vault thaws; a reap that stops the process ends it as any
-//! stop does. Its enrolment is looked for beside the supervisor's key
+//! connection ([`freeze`], FIX 5127): its opening writes hold one admission,
+//! so a frozen vault starts none; then each batch the connection applies or
+//! sends, each catalog refresh and each candidacy write holds its own (FIX
+//! 12036), so an idle connection keeps no reap away. A freeze pauses the
+//! connection with its socket open, and it runs on once the vault thaws; a
+//! reap that stops the process ends it as any stop does. Its enrolment is looked for beside the supervisor's key
 //! directory alone, never under HOME or XDG (FIX 5768).
 
 use std::sync::Arc;
+
+use oneiron::world_keys::DeviceSyncStart;
 
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -50,21 +53,25 @@ use crate::config::ServeConfig;
 use crate::handler::mesh::MeshHost;
 use crate::server::SyncServer;
 
+mod batch_admission;
 #[cfg(feature = "mesh")]
 mod catalog;
 mod dial;
 mod enrolment;
 mod freeze;
+mod host;
 mod removal_delivery;
 #[cfg(feature = "mesh")]
 mod renewal;
 #[cfg(feature = "mesh")]
 mod route;
+#[cfg(feature = "mesh")]
+mod url;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
-use freeze::Admitted;
 pub(crate) use freeze::ReapFreeze;
+use host::Host;
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -85,16 +92,14 @@ impl DeviceSyncHost {
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Plain)?;
-        let freeze = ReapFreeze::never();
-        let first = freeze.admit()?;
-        Self::open_logged(server, dial, mesh, freeze, first).await
+        Self::open_logged(Host::Served(server), dial, mesh, ReapFreeze::never()).await
     }
 
     /// [`Self::start`] on a managed vault, under its reap `freeze`: the
-    /// opening writes and the first run hold an admission taken before the
-    /// home is held. A frozen vault starts none; it says so, and serve runs
-    /// on without it. Its enrolment is the one beside the supervisor's key
-    /// directory, if any.
+    /// opening writes hold an admission taken before the home is held, and
+    /// each batch, refresh and write after them holds its own (FIX 12036). A
+    /// frozen vault starts none; it says so, and serve runs on without it.
+    /// Its enrolment is the one beside the supervisor's key directory, if any.
     pub(crate) async fn start_admitted(
         server: &Arc<SyncServer>,
         config: &ServeConfig,
@@ -102,46 +107,81 @@ impl DeviceSyncHost {
         freeze: ReapFreeze,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Managed)?;
-        let Some(first) = freeze.admit() else {
+        let Some(_opening) = freeze.admit() else {
             tracing::warn!(
                 "device sync disabled: the vault is paused for reap preparation; it starts with \
                  the next serve"
             );
+            server
+                .vault
+                .record_device_sync_start(DeviceSyncStart::FrozenForReap);
             return None;
         };
-        Self::open_logged(server, dial, mesh, freeze, first).await
+        Self::open_logged(Host::Served(server), dial, mesh, freeze).await
     }
 
     /// What this machine dials, its enrolment looked for where `source`
     /// says, or `None` with the one line that says why.
     fn dial(server: &SyncServer, config: &ServeConfig, source: EnrolmentSource) -> Option<Dial> {
-        match Dial::resolve(server, config, source) {
-            Ok(dial) => dial,
+        Self::dial_result(&server.vault, Dial::resolve(server, config, source))
+    }
+
+    #[cfg(feature = "mesh")]
+    fn dial_for_vault(
+        vault: &Arc<oneiron::Vault>,
+        config: &ServeConfig,
+        source: EnrolmentSource,
+    ) -> Option<Dial> {
+        Self::dial_result(vault, Dial::resolve_for_vault(vault, config, source))
+    }
+
+    fn dial_result(vault: &oneiron::Vault, result: anyhow::Result<Option<Dial>>) -> Option<Dial> {
+        match result {
+            Ok(Some(dial)) => {
+                if let Err(error) = vault.record_configured_device_residence(
+                    oneiron::sync::SyncClientConfig::default().residence_mode,
+                ) {
+                    tracing::warn!(%error, "device sync residence could not be recorded");
+                }
+                Some(dial)
+            }
+            Ok(None) => {
+                vault.record_device_sync_start(DeviceSyncStart::NotConfigured);
+                None
+            }
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
+                vault.record_device_sync_start(DeviceSyncStart::ConfigurationFailed);
                 None
             }
         }
     }
 
     /// The connection to `dial`'s home and its archive receiver, or, with the
-    /// line that says why, the receiver alone or `None`. `first` is the
-    /// first run's admission; `freeze` also admits each archive import (FIX
-    /// 11796).
+    /// line that says why, the receiver alone or `None`. `freeze` admits the
+    /// connection's batches and writes (FIX 12036) and each archive import
+    /// (FIX 11796).
     async fn open_logged(
-        server: &Arc<SyncServer>,
+        host: Host<'_>,
         dial: Dial,
         mesh: Option<&MeshHost>,
         freeze: ReapFreeze,
-        first: Admitted,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396), its
-        // imports admitted under the same freeze as the run (FIX 12038).
-        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, freeze.clone());
-        match open(server, dial, mesh, freeze, first).await {
-            Ok(host) => Some(host.with_removal(removal)),
+        // imports admitted under the same freeze as the connection (FIX 12038),
+        // and those the freeze refused taken in again at its thaw (FIX 12154).
+        let vault = Arc::clone(host.vault());
+        let removal = removal_delivery::Receiver::start(&dial, mesh, &vault, freeze.clone());
+        match open(host, dial, mesh, freeze).await {
+            Ok(host) => {
+                vault.record_device_sync_start(DeviceSyncStart::Started);
+                Some(host.with_removal(removal))
+            }
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
+                vault.record_device_sync_start(DeviceSyncStart::OpenFailed {
+                    archive_receiver_running: removal.is_some(),
+                });
                 removal.map(Self::receiving)
             }
         }
@@ -187,25 +227,23 @@ fn dials(config: &ServeConfig, vault: &oneiron::Vault, source: EnrolmentSource) 
 
 #[cfg(not(feature = "mesh"))]
 async fn open(
-    _server: &Arc<SyncServer>,
+    _host: Host<'_>,
     _dial: Dial,
     _mesh: Option<&MeshHost>,
     _freeze: ReapFreeze,
-    _first: Admitted,
 ) -> anyhow::Result<DeviceSyncHost> {
     anyhow::bail!("this server was built without the `mesh` feature")
 }
 
-/// Holds the home and opens the connection to it. `first` was taken before
-/// anything here writes; it moves into the first run and ends with it, and
-/// a failed open drops it only once its own work has ended.
+/// Holds the home and opens the connection to it. Each batch the connection
+/// applies or sends, each catalog refresh and each candidacy write a catch-up
+/// starts holds an admission of `freeze` (FIX 12036).
 #[cfg(feature = "mesh")]
 async fn open(
-    server: &Arc<SyncServer>,
+    host: Host<'_>,
     dial: Dial,
     mesh: Option<&MeshHost>,
     freeze: ReapFreeze,
-    first: Admitted,
 ) -> anyhow::Result<DeviceSyncHost> {
     use oneiron::sync::SyncDialer;
     use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
@@ -221,10 +259,10 @@ async fn open(
         always_on,
         primary,
     } = dial;
-    let vault = Arc::clone(&server.vault);
-    let macro_ready = server.ai.dreamer_runs();
+    let vault = Arc::clone(host.vault());
+    let candidacy = host.candidacy(always_on, primary);
     let (machine, paired) = tokio::task::spawn_blocking(move || {
-        declare_candidacy(&vault, home_node, always_on, primary, macro_ready)?;
+        declare_candidacy(&vault, home_node, candidacy)?;
         standing(&vault, home, enrolled)
     })
     .await??;
@@ -244,52 +282,43 @@ async fn open(
             .as_ref()
             .map(oneiron::sync::HomeNodeTopology::home_route)
     };
-    let resolve = route::resolver(Arc::clone(&server.vault), home, machine, routes());
+    let resolve = route::resolver(Arc::clone(host.vault()), home, machine, routes());
     let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
+    let mesh_dialer = match mesh {
+        Some(mesh) => Some(
+            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>,
+        ),
+        None => url::dialer(&url)?,
+    };
     let link = Link {
         freeze: freeze.clone(),
-        windows: Arc::clone(&server.reassert_manager),
+        windows: host.windows(),
         topology,
         url,
         worlds,
-        mesh_dialer: mesh.map(|mesh| {
-            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>
-        }),
+        mesh_dialer,
         pin,
         machine,
-        always_on,
-        primary,
-        macro_ready,
+        candidacy,
     };
     let connection = link.connection(link.client_config(&credential)?)?;
     let renewal = renewal::Renewal::new(
         &link.url,
         credential_file,
-        Arc::clone(&server.vault),
+        Arc::clone(host.vault()),
         link.mesh_dialer.clone(),
         moves,
     );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
     let over = if mesh.is_some() { "mesh" } else { "url" };
-    let catalog = mesh.map(|mesh| {
-        catalog::MeshCatalog::new(
-            Arc::clone(&server.vault),
-            mesh.transport(),
-            server
-                .ai
-                .models()
-                .mesh_routes(&server.vault, mesh.transport()),
-            server.model_budgets.mesh_staging(),
-            freeze.admission(),
-        )
-    });
+    let catalog = host.catalog(mesh, &freeze);
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the last connection's run ends.
         let (statuses, status_rx) = tokio::sync::mpsc::unbounded_channel();
-        let dialing = link.run(connection, renewal, stop_rx, statuses, first, &home);
+        let dialing = link.run(connection, renewal, stop_rx, statuses, &home);
         // Off the mesh there are no other nodes to ask, so no catalog.
         let catalog = async {
             match catalog {
@@ -322,8 +351,14 @@ struct Link {
     /// This machine: each connection registers under it, so the owner's
     /// residence rows reach this machine through it (FIX 531).
     machine: oneiron::EntityId,
-    /// This machine's MACRO home candidacy as open declared it: an authority
-    /// catch-up that took rows declares it again (FIX 5572).
+    /// Served hosts re-declare their candidacy after authority catch-up.
+    /// An app-only device never declares itself as a home candidate.
+    candidacy: Option<Candidacy>,
+}
+
+#[cfg(feature = "mesh")]
+#[derive(Clone, Copy)]
+struct Candidacy {
     always_on: bool,
     primary: bool,
     macro_ready: bool,
@@ -367,13 +402,15 @@ impl Link {
         &self,
         client_config: oneiron::sync::SyncClientConfig,
     ) -> anyhow::Result<Arc<oneiron::sync::SyncConnection>> {
-        let connection = Arc::new(oneiron::sync::SyncConnection::new(
+        let connection = oneiron::sync::SyncConnection::new(
             Arc::clone(&self.windows),
             oneiron::sync::ConnectionConfig {
                 client_config,
                 auto_reconnect: true,
             },
-        )?);
+        )?;
+        let freeze = batch_admission::FreezeAdmission(self.freeze.clone());
+        let connection = Arc::new(connection.with_batch_admission(Arc::new(freeze)));
         crate::residence_machines::register(self.machine, &connection);
         Ok(connection)
     }
@@ -387,10 +424,9 @@ impl Link {
         mut renewal: renewal::Renewal,
         stop: oneshot::Receiver<()>,
         statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
-        first: Admitted,
         home: &str,
     ) {
-        self.run_connections(connection, &mut renewal, stop, statuses, first, home)
+        self.run_connections(connection, &mut renewal, stop, statuses, home)
             .await;
         renewal.stop().await;
     }
@@ -400,26 +436,21 @@ impl Link {
     /// built. Each connection's own loop reconnects with backoff. Every
     /// status goes to `statuses`, which closes when the last run ends.
     ///
-    /// Each run holds an admission of the reap freeze, `first` for the
-    /// first. A freeze pauses the run: it ends as a stop ends it, its
-    /// admission drops, and once the vault thaws the same connection runs
-    /// again on a fresh one. A stop while paused ends it there.
+    /// A reap freeze pauses the connection inside its own loop, its socket
+    /// open, until the vault thaws (FIX 12036).
     ///
     /// A renewed credential is written here, never by the request that
     /// fetched it (FIX 3563). A stop sent before the write wins, and the file
     /// stays as it was; a write once begun ends before the stop is seen, and
     /// stays. The old connection stops only once the write has landed.
     async fn run_connections(
-        mut self,
+        self,
         mut connection: Arc<oneiron::sync::SyncConnection>,
         renewal: &mut renewal::Renewal,
         mut stop: oneshot::Receiver<()>,
         statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
-        first: Admitted,
         home: &str,
     ) {
-        // Dropped only once the run it admits has ended; none while paused.
-        let mut _admitted = Some(first);
         loop {
             let (config, committed) = {
                 let (end, ended) = oneshot::channel();
@@ -429,9 +460,7 @@ impl Link {
                         home.to_owned(),
                         statuses.clone(),
                         Arc::clone(self.windows.vault()),
-                        self.always_on,
-                        self.primary,
-                        self.macro_ready,
+                        self.candidacy,
                         self.freeze.admission(),
                     ),
                 );
@@ -444,7 +473,6 @@ impl Link {
                             stopped(home, ran);
                             return;
                         }
-                        () = self.freeze.frozen() => break RunEnd::Pause,
                         candidate = renewal.next() => {
                             // Configured before the write, so a credential
                             // that configures none leaves the file as it was.
@@ -475,20 +503,6 @@ impl Link {
                     RunEnd::Stop => {
                         stopped(home, ran);
                         return;
-                    }
-                    RunEnd::Pause => {
-                        if let Err(error) = ran {
-                            tracing::warn!(%home, %error, "device sync ended at the reap pause");
-                        }
-                        _admitted = None;
-                        tracing::info!(%home, "device sync paused: the vault is frozen for reap");
-                        let Some(admitted) = self.freeze.resumed(&mut stop).await else {
-                            tracing::info!(%home, "device sync stopped");
-                            return;
-                        };
-                        _admitted = Some(admitted);
-                        tracing::info!(%home, "device sync resumes: the vault thawed");
-                        continue;
                     }
                     RunEnd::Renewed(config, committed) => (config, committed),
                 };
@@ -523,22 +537,6 @@ impl Link {
                     tracing::info!(%home, "device sync reconnects on its renewed credential");
                 }
             }
-            // The renewed run takes an admission of its own, as every run
-            // between freezes does: the old one goes first, and a vault
-            // frozen meanwhile is waited out (FIX 5127).
-            _admitted = None;
-            _admitted = match self.freeze.admit() {
-                Some(admitted) => Some(admitted),
-                None => {
-                    tracing::info!(%home, "device sync paused: the vault is frozen for reap");
-                    let Some(admitted) = self.freeze.resumed(&mut stop).await else {
-                        tracing::info!(%home, "device sync stopped");
-                        return;
-                    };
-                    tracing::info!(%home, "device sync resumes: the vault thawed");
-                    Some(admitted)
-                }
-            };
         }
     }
 }
@@ -547,8 +545,6 @@ impl Link {
 #[cfg(feature = "mesh")]
 enum RunEnd {
     Stop,
-    /// The vault froze for reap.
-    Pause,
     Renewed(oneiron::sync::SyncClientConfig, renewal::CommitOutcome),
 }
 
@@ -556,15 +552,13 @@ enum RunEnd {
 /// the log. An authority catch-up that took rows declares this machine's
 /// MACRO home candidacy again off the async thread, so a freshly enrolled
 /// device counts at once, not at its next start: under an admission of its
-/// own from `admit`, as it may outlast the run, and not while frozen.
+/// own from `admit`, and not while frozen.
 #[cfg(feature = "mesh")]
 fn observer(
     home: String,
     statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
     vault: Arc<oneiron::Vault>,
-    always_on: bool,
-    primary: bool,
-    macro_ready: bool,
+    candidacy: Option<Candidacy>,
     admit: crate::server::HousekeepingAdmission,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
@@ -575,6 +569,9 @@ fn observer(
             let _ = statuses.send(status);
         }
         SyncEvent::AuthorityCaughtUp => {
+            let Some(candidacy) = candidacy else {
+                return;
+            };
             let Some(admitted) = admit() else {
                 tracing::debug!(%home, "home candidacy left as it was: the vault is frozen");
                 return;
@@ -582,7 +579,12 @@ fn observer(
             let vault = Arc::clone(&vault);
             tokio::task::spawn_blocking(move || {
                 let _admitted = admitted;
-                crate::home_candidacy::declare(&vault, always_on, primary, macro_ready);
+                crate::home_candidacy::declare(
+                    &vault,
+                    candidacy.always_on,
+                    candidacy.primary,
+                    candidacy.macro_ready,
+                );
             });
         }
         SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
@@ -626,16 +628,21 @@ const fn home_candidate(node: u64) -> oneiron::DreamerHomeNodeCandidate {
 fn declare_candidacy(
     vault: &oneiron::Vault,
     home_node: Option<u64>,
-    always_on: bool,
-    primary: bool,
-    macro_ready: bool,
+    candidacy: Option<Candidacy>,
 ) -> anyhow::Result<()> {
     let store = oneiron::DreamerRunnerStore::new(vault);
     anyhow::ensure!(
         home_node != Some(store.local_home_node_candidate(true, true, false)?.node_id),
         "home_node_id is this machine's own sync node id"
     );
-    crate::home_candidacy::declare(vault, always_on, primary, macro_ready);
+    if let Some(candidacy) = candidacy {
+        crate::home_candidacy::declare(
+            vault,
+            candidacy.always_on,
+            candidacy.primary,
+            candidacy.macro_ready,
+        );
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());

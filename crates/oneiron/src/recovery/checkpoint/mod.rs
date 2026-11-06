@@ -21,6 +21,7 @@ mod artifact;
 mod authority_plane;
 mod body_bind;
 mod carried_bodies;
+mod claim_order;
 mod commitment;
 mod credential_custody;
 mod custody_head;
@@ -29,6 +30,7 @@ mod epochs;
 mod host_holds;
 mod image;
 mod landing;
+pub(crate) use landing::RestoreActorScrubWriter;
 mod landing_lengths;
 mod pad_custody;
 mod pad_objects;
@@ -73,11 +75,12 @@ pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
-    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSnapshotReceipt,
-    BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup, last_backed_up,
-    verify_with_pins,
+    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSelection,
+    BackupSnapshotReceipt, BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup,
+    last_backed_up, verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -94,6 +97,11 @@ const INDEX_SOURCE_PHONETIC: SideTable<EntityId, (), Named> =
 /// `u64be(sequence)`.
 const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
     SideTable::new(&side_table::RESTORE_EPOCH);
+/// How long a restore's swap waits, at most, for the writes queued before it
+/// closed the vault's in-memory nonce spends (FIX 12023 W0, L02 10-31): a
+/// spend whose rows have not landed by then is left to the swap's fence,
+/// which refuses it as it refuses one the swap never waited for.
+const SWAP_SPEND_DRAIN_WAIT: Duration = Duration::from_secs(5);
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
 #[derive(Clone, Copy)]
@@ -327,6 +335,7 @@ impl Vault {
             created_at,
             None,
             ArtifactKind::Checkpoint,
+            BackupSelection::WholeVault,
             None,
             &write_budget::Unfloored,
         )
@@ -352,6 +361,7 @@ impl Vault {
             created_at,
             Some(owner),
             ArtifactKind::Checkpoint,
+            BackupSelection::WholeVault,
             None,
             &write_budget::Unfloored,
         )
@@ -391,10 +401,32 @@ impl Vault {
             created_at,
             owner,
             ArtifactKind::Backup,
+            BackupSelection::WholeVault,
             registry,
             budget,
         )
     }
+    /// Takes an automatic backup, distinct from an explicit whole-vault request.
+    /// Its receipt and watermark retain the automatic selection even when no rows
+    /// were omitted. Unknown world associations keep their existing placement.
+    pub fn snapshot_automatic_backup_within(
+        &self,
+        path: &Path,
+        created_at: u64,
+        registry: Option<&str>,
+        budget: &dyn RecoveryWriteBudget,
+    ) -> Result<BackupSnapshotReceipt> {
+        self.snapshot_checkpoint_checked(
+            path,
+            created_at,
+            None,
+            ArtifactKind::Backup,
+            BackupSelection::Automatic,
+            registry,
+            budget,
+        )
+    }
+
     /// Restore, wake and migrate use the same fail-closed path, with no tail replay.
     /// Model-dependent vectors enter the normal pending-embedding queue; no vector
     /// from another owner or old model can be served while that queue is rebuilt.
@@ -553,12 +585,55 @@ impl Vault {
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
     /// would not know those proofs; so does one that holds an agent id looser
-    /// than this vault now does (H215).
+    /// than this vault now does (H215). Under the same writer, before the
+    /// exchange, the replacement carries this vault's authorization time:
+    /// its committed floor and lease, its journaled bound, the times this
+    /// handle judged and its clock now, journaled in the replacement's own
+    /// lease journal, so the replacement never judges a grant below a time
+    /// this vault already took, a wall stepped back included; a journal that
+    /// does not take it refuses the swap, and nothing moves (FIX 12772).
+    /// From before that time is read until the exchange is done, a decision
+    /// past the committed lease, by any handle on this vault in any process,
+    /// waits on the vault's `clock-swap.lock`, so none judges past it; those
+    /// already past the lease are waited for up to `SWAP_SPEND_DRAIN_WAIT`,
+    /// and one still running then refuses the swap, nothing moved.
+    ///
+    /// First, no admission spends a nonce in memory on this handle any more,
+    /// and the swap waits up to `SWAP_SPEND_DRAIN_WAIT` (5 s) for the writes
+    /// queued before, so the rows of every spend made there have landed when
+    /// its fence reads them (FIX 12023 W0, L02 10-31). A spend whose rows
+    /// failed, or are still queued when the wait ends, refuses the swap as
+    /// above. The spends stay closed on this handle when the swap then
+    /// fails; its admissions take the writer, which refuses none of them.
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
+        // Waited for before the swap's writer opens, never in it: the
+        // queued writes need that writer to commit.
+        let deadline = Instant::now() + SWAP_SPEND_DRAIN_WAIT;
+        let drained = self.spent_nonces.close_for_swap(deadline)
+            && self.store.wait_for_deferred_commits_until(deadline);
+        if !drained {
+            tracing::warn!(
+                wait_secs = SWAP_SPEND_DRAIN_WAIT.as_secs(),
+                "the writes queued before a restore's swap were not all decided in its wait; its fence refuses it if a nonce spend's rows are among them"
+            );
+        }
+        // From here until the exchange is done, a decision past the lease
+        // waits, so none judges past the time the replacement carries
+        // (FIX 12772; REVIEW-5620 P1).
+        let Some(_authorization_held) = self
+            .store
+            .close_authorization_for_swap(Instant::now() + SWAP_SPEND_DRAIN_WAIT)?
+        else {
+            return Err(crate::Error::InvalidConfig(
+                "an authorization decision past this vault's lease did not end in the swap's \
+                 wait; nothing moved, try the swap again"
+                    .into(),
+            ));
+        };
         // The archive the swap parks keeps every body instance its rows
         // name, until its custodian releases it (FIX 6022). Its census and
         // registration hold the custody read guard like a snapshot's, so
@@ -575,7 +650,12 @@ impl Vault {
                     &self.store,
                     txn,
                     &replacement.store,
-                )
+                )?;
+                // The replacement never judges below a time this vault took
+                // (FIX 12772).
+                replacement
+                    .store
+                    .carry_authorization_high(self.store.authorization_high_in_txn(txn)?)
             },
             swap,
         )
@@ -616,7 +696,11 @@ impl Vault {
         let erased = source.erased_ids();
         let expected = pad_objects::expected_of(&archive, &live.pad_objects);
         let (dropped_gate_decisions, erased_pads, credentials, landing) =
-            archive.store.activate_archived(&live, expected.as_ref())?;
+            archive.store.activate_archived(
+                &crate::secret_custody::CustodyWrite::of(&archive),
+                &live,
+                expected.as_ref(),
+            )?;
         let restored_at = archive.now_recorded_at();
         let pad_notes: Vec<_> = erased_pads.iter().map(PadRestoreNote::erased).collect();
         drop(archive);

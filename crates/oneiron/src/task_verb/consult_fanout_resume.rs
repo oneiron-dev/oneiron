@@ -6,7 +6,9 @@
 //! remember acknowledges and persists the receipted policy row AUTO reads
 //! next time, and deny is refused because nothing was held.
 
-use super::consult_fanout_store::{StoredFanout, TxnSurface, load_run, save_run};
+use super::consult_fanout_store::{
+    StoredFanout, TxnSurface, load_run, save_run, verify_scrubbed_run,
+};
 use super::create_validation::consult_refusal;
 use super::{ConsultFanOutChoice, ConsultFanOutReceipt};
 use crate::consent::AuthenticatedOwner;
@@ -91,19 +93,47 @@ impl Memory<'_> {
                         "Resume through its originating actor.",
                     ));
                 }
-                if run.estimate.plan_digest != expected_digest {
-                    return Err(stale_digest());
-                }
-                // Confirm stored input still computes the exact plan. Not a
-                // comparison of two caller-supplied hashes or a mutable draft.
-                let frozen_policy = super::ConsultFanOutPolicy {
-                    mode: run.plan.mode,
-                    ..super::ConsultFanOutPolicy::default()
+                // FIX 4699: a retired check has no re-read path; erasure wins
+                // over the old digest. A marked held run binds the new
+                // scrubbed digest; its re-proof is the scrubbed rebuild.
+                // FIX 12731: a dispatched check acked before its scrub keeps
+                // no retirement marker; re-prove every scrubbed dispatched
+                // check before its recorded ack replays, regardless of
+                // retirement.
+                let scrubbed_dispatched_check = run.recipient_scrub.is_some()
+                    && run.dispatched_at.is_some()
+                    && run.check_row.is_some();
+                let plan = if scrubbed_dispatched_check
+                    || run
+                        .recipient_scrub
+                        .as_ref()
+                        .is_some_and(|marker| marker.retired_check_row.is_some())
+                {
+                    verify_scrubbed_run(&run)?
+                } else {
+                    if run.estimate.plan_digest != expected_digest {
+                        return Err(if run.recipient_scrub.is_some() {
+                            scrub_stale_digest()
+                        } else {
+                            stale_digest()
+                        });
+                    }
+                    if run.recipient_scrub.is_some() {
+                        verify_scrubbed_run(&run)?
+                    } else {
+                        // Confirm stored input still computes the exact plan. Not a
+                        // comparison of two caller-supplied hashes or a mutable draft.
+                        let frozen_policy = super::ConsultFanOutPolicy {
+                            mode: run.plan.mode,
+                            ..super::ConsultFanOutPolicy::default()
+                        };
+                        let plan = run.input.plan(self.actor(), correlation, &frozen_policy)?;
+                        if plan != run.plan || fanout_plan_digest(&plan)? != expected_digest {
+                            return Err(stale_digest());
+                        }
+                        plan
+                    }
                 };
-                let plan = run.input.plan(self.actor(), correlation, &frozen_policy)?;
-                if plan != run.plan || fanout_plan_digest(&plan)? != expected_digest {
-                    return Err(stale_digest());
-                }
                 if run.dispatched_at.is_some() {
                     if let Some(row) = run.check_row.clone() {
                         return self.answer_width_check_in(
@@ -307,6 +337,14 @@ fn stale_digest() -> crate::memory::MemoryError {
         MEMORY_CODE_INVALID_STATE,
         "fan-out approval digest does not match the frozen plan",
         "Read the surfaced digest and rule on that exact plan.",
+    )
+}
+
+fn scrub_stale_digest() -> crate::memory::MemoryError {
+    consult_refusal(
+        MEMORY_CODE_INVALID_STATE,
+        "fan-out changed by erasure",
+        "Re-read and rule on the scrubbed plan.",
     )
 }
 

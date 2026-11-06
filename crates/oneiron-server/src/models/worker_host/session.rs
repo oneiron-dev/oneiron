@@ -34,6 +34,12 @@
 //! session idle after its commit parks: its checkpoint is sealed into the
 //! vault's snapshot store and the device copy released (`park.rs`); a later
 //! turn whose binding has no session restores it (`restore.rs`).
+//!
+//! I1 = C: once a successor is published, the session prepares the part of
+//! the next turn already known (the state-only board its producer renders
+//! now, [`NextTurnSource`]) beside the published checkpoint, as background
+//! work; the next fork reuses only the identical beginning of the real
+//! turn's tokens (`prepare.rs`).
 #[cfg(unix)]
 mod commit;
 #[cfg(unix)]
@@ -42,6 +48,8 @@ mod lifecycle;
 mod park;
 #[cfg(unix)]
 mod policy;
+#[cfg(unix)]
+mod prepare;
 #[cfg(unix)]
 mod registry;
 #[cfg(unix)]
@@ -61,6 +69,8 @@ pub(super) use lifecycle::{
     install as install_snapshots, set_policy as set_snapshot_policy, status as snapshot_status,
 };
 #[cfg(unix)]
+pub(super) use prepare::{set_policy as set_prepare_policy, status as prepared_tail_status};
+#[cfg(unix)]
 pub(super) use registry::Registry;
 #[cfg(unix)]
 pub(in crate::models) use turn::open_turn;
@@ -73,6 +83,8 @@ pub(crate) trait CheckpointAuthority: Send + Sync {
     /// Whether the credential, the read scope and the disclosure ceiling the
     /// path was admitted under hold now, and every source it was read from
     /// (`commit`'s reply among them) still reads. Runs off the runtime.
+    /// The verdict must not depend on [`ReplyCommit::text`]: a park recheck
+    /// names the reply by ids and leaves the text empty (FIX 11285).
     fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict;
 
     /// What a snapshot of the successor `commit` ends is kept under: the
@@ -134,7 +146,9 @@ pub(crate) enum AuthorityVerdict {
 }
 
 /// A reply committed to the conversation: the HEAD it lands at, its
-/// MESSAGE, and its text as it was saved.
+/// MESSAGE, and its text as it was saved. The text may be empty on a park
+/// recheck, where the reply is named by its ids; [`CheckpointAuthority`]
+/// verdicts must not read it.
 pub(crate) struct ReplyCommit {
     pub(crate) head: EntityId,
     pub(crate) message: EntityId,
@@ -160,7 +174,39 @@ pub(crate) fn reply_committed(
     authority: Arc<dyn CheckpointAuthority>,
 ) {
     #[cfg(unix)]
-    commit::reply_committed(manifest, commit, authority);
+    commit::reply_committed(manifest, commit, authority, None);
     #[cfg(not(unix))]
     let _ = (manifest, commit, authority);
 }
+
+/// [`reply_committed`], then, once the successor is published, the next
+/// turn's tail `source` knows prepared beside it (I1 = C).
+pub(crate) fn reply_committed_preparing(
+    manifest: &SegmentManifest,
+    commit: ReplyCommit,
+    authority: Arc<dyn CheckpointAuthority>,
+    source: Arc<dyn NextTurnSource>,
+) {
+    #[cfg(unix)]
+    commit::reply_committed(manifest, commit, authority, Some(source));
+    #[cfg(not(unix))]
+    let _ = (manifest, commit, authority, source);
+}
+
+/// What a conversation's next turn is known to start with past its
+/// canonical path (I1 = C): the messages its producer will put right after
+/// the published path, rendered now from current state for the turn's
+/// reader, the way that turn will render them (the state-only board, after
+/// the resident craft where the layout puts it there). A version-checked
+/// candidate, never authoritative: the worker reuses it only where the real
+/// turn's own tokens equal it, and recomputes from the first that differs.
+pub(crate) trait NextTurnSource: Send + Sync {
+    /// The wire messages (`{"role", "content"}`), or `None` when nothing is
+    /// known or the reader no longer reads.
+    fn next_tail(&self) -> NextTail<'_>;
+}
+
+/// [`NextTurnSource::next_tail`]'s future.
+pub(crate) type NextTail<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Option<Vec<serde_json::Value>>> + Send + 'a>,
+>;

@@ -18,7 +18,7 @@ mod read_items;
 mod retention;
 mod retention_policy;
 mod retention_scope;
-mod write_mode;
+use oneiron_store::gate_decision::write_mode;
 
 #[cfg(test)]
 pub(crate) use super::key_custody::arm_before_retire_lock;
@@ -50,7 +50,7 @@ pub(crate) use self::checkpoint_custody::{
 pub use self::context::{
     GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateDecisionContext,
     GateDecisionReadContext, GateLoopFamily, GateLoopLink, GateLoopOrigin, GateLoopSource,
-    GateReadPosition, GateRiskAxis, GateRiskState,
+    GateReadAnchors, GateReadPosition, GateRiskAxis, GateRiskState, GateThreadAnchor,
 };
 pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,

@@ -21,12 +21,17 @@ mod validate;
 
 pub(crate) use self::remote_task::defer_record;
 pub(crate) use self::validate::hash_frozen_payload;
-pub(super) use self::validate::validate_record;
+pub(super) use self::validate::{validate_accounting, validate_record};
 
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
 /// Key: hash32 (the intent id).
 const LEDGER: SideTable<[u8; 32], IntentLedgerRecord, Raw> =
     SideTable::new(&side_table::OUTBOUND_INTENT_LEDGER_RECORD);
+/// Whether a masked copy of a `OUTBOUND_INTENT_LEDGER_RECORD` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn outbound_intent_ledger_record_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<IntentLedgerRecord, Raw>(bytes)
+}
 
 /// Unique logical call -> immutable intent id, committed with the Pending row.
 /// Key: id16(attempt) + u64be(call seq).
@@ -303,6 +308,26 @@ pub(crate) fn read_intent_for_attempt_in_txn(
     Ok(Some(record))
 }
 
+/// Whether the ledger call (`attempt_id`, `call_seq`) stands erased, for a
+/// keeper that must not resurrect rows beside it (FIX 6835 P1). `false` when
+/// no call row exists yet. A lookup failure errors, and the keeper logs it
+/// and leaves the call on its live rows.
+pub(crate) fn call_row_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::error::Result<bool> {
+    let erased = match read_intent_for_attempt_in_txn(vault, txn, attempt_id, call_seq)
+        .map_err(|_| Error::CorruptedIndex("outbound intent attempt lookup"))?
+    {
+        Some(record) => super::payload::payload_erased(record.payload())
+            .map_err(|_| Error::CorruptedIndex("outbound intent payload"))?,
+        None => false,
+    };
+    Ok(erased)
+}
+
 #[cfg(test)]
 pub(super) fn insert_pending_or_read(
     vault: &Vault,
@@ -371,6 +396,16 @@ fn insert_intent_in_txn(
     {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound attempt already has an admitted binding",
+        ));
+    }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of was
+    // admitted before the restore and its compartment did not open. It is
+    // never asked or paid for again; this writer, and its budget debit, ends.
+    if checkpoint::call_accounting_in_txn(vault, wtxn, pending.attempt_id, pending.call_seq)?
+        .is_some()
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "a call a restore kept only the accounting of is not admitted again",
         ));
     }
     if LEDGER.contains(&vault.store, wtxn, &pending.id)? {
@@ -521,7 +556,11 @@ pub(crate) fn reconcile_connector_intent_in_txn(
     now_ms: u64,
 ) -> IntentLedgerResult<Option<super::resolution::IntentResolution>> {
     let Some(mut record) = read_intent_for_attempt_in_txn(vault, &*wtxn, attempt_id, 0)? else {
-        return Ok(None);
+        // KS7-5 (FIX 12117): a send a restore kept only the accounting of
+        // settles as the owner's erase left it.
+        return checkpoint::call_accounting_in_txn(vault, &*wtxn, attempt_id, 0)?
+            .map(|accounting| super::resolution::IntentResolution::from_accounting(&accounting))
+            .transpose();
     };
     binding.verify(&record)?;
     if let Some(reason) = stop
@@ -726,6 +765,7 @@ pub(super) fn put_erased_record(
         &id,
         crate::side_table::Erased::of(record)?,
     )?;
+    super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 

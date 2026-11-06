@@ -11,10 +11,16 @@ use crate::error::{Error, Result};
 
 use super::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
-    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
-    EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
-    EffectorBudgetWindow, MAX_CONNECTOR_MANIFEST_BYTES, PendingConnectorCharter,
-    PendingConnectorManifest, invalid_body,
+    ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension,
+    EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
+    MAX_CONNECTOR_MANIFEST_BYTES, PendingConnectorManifest, invalid_body,
+};
+
+mod charter;
+
+use self::charter::{
+    decode_optional_charter_block, decode_optional_pending_charter, encode_charter_block,
+    encode_pending_charter,
 };
 
 /// Current ConnectorKeyRecord body schema version.
@@ -27,7 +33,7 @@ pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 4;
 /// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
 /// index must never move, or every stored body silently re-reads as a
 /// different field.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 22] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 23] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -50,6 +56,7 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 22] = [
     "retained_manifest",
     "pending_manifest",
     "qualification_receipt",
+    "staged_slate_ref",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -74,7 +81,8 @@ const KEY_CONSENT_REQUIRED: &str = CONNECTOR_KEY_BODY_KEYS[18];
 const KEY_RETAINED_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[19];
 const KEY_PENDING_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[20];
 const KEY_QUALIFICATION_RECEIPT: &str = CONNECTOR_KEY_BODY_KEYS[21];
-const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
+const KEY_STAGED_SLATE_REF: &str = CONNECTOR_KEY_BODY_KEYS[22];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 12] = [
     KEY_SUGGESTED_BUDGETS,
     KEY_SECRET_REF,
     KEY_KEY_GENERATION,
@@ -86,6 +94,7 @@ const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
     KEY_CONSENT_REQUIRED,
     KEY_RETAINED_MANIFEST,
     KEY_PENDING_MANIFEST,
+    KEY_STAGED_SLATE_REF,
 ];
 
 const CATALOG_ENTRY_KEYS: [&str; 6] = [
@@ -111,22 +120,6 @@ const CALENDAR_WINDOW_KEYS: [&str; 3] = ["kind", "period", "tz"];
 const WINDOW_KIND_ROLLING: &str = "rolling";
 const WINDOW_KIND_CALENDAR: &str = "calendar";
 
-const CHARTER_BLOCK_KEYS: [&str; 7] = [
-    "text",
-    "text_hash",
-    "compiled",
-    "compiled_hash",
-    "stamped_aggregate",
-    "stamped_by",
-    "stamped_at",
-];
-const PENDING_CHARTER_KEYS: [&str; 5] = [
-    "text",
-    "text_hash",
-    "compiled",
-    "compiled_hash",
-    "proposed_at",
-];
 const COMPILED_POLICY_KEYS: [&str; 2] = ["never_list", "channel_caps"];
 
 // --- Encoding ---------------------------------------------------------------
@@ -208,10 +201,7 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
         ),
         (
             Value::from(KEY_SLATE_REF),
-            record
-                .slate_ref
-                .as_ref()
-                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
+            entity_id_value(record.slate_ref.as_ref()),
         ),
         (
             Value::from(KEY_PROTOCOL_REVISION),
@@ -240,6 +230,10 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
         (
             Value::from(KEY_QUALIFICATION_RECEIPT),
             encode_json_option(record.qualification_receipt.as_ref())?,
+        ),
+        (
+            Value::from(KEY_STAGED_SLATE_REF),
+            entity_id_value(record.staged_slate_ref.as_ref()),
         ),
     ]);
 
@@ -332,39 +326,6 @@ pub(super) fn encode_compiled_policy(compiled: &CompiledConnectorPolicy) -> Valu
     ])
 }
 
-fn encode_charter_block(charter: &ConnectorCharterBlock) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(CHARTER_BLOCK_KEYS[0]),
-            Value::from(charter.text.clone()),
-        ),
-        (
-            Value::from(CHARTER_BLOCK_KEYS[1]),
-            Value::Binary(charter.text_hash.to_vec()),
-        ),
-        (
-            Value::from(CHARTER_BLOCK_KEYS[2]),
-            encode_compiled_policy(&charter.compiled),
-        ),
-        (
-            Value::from(CHARTER_BLOCK_KEYS[3]),
-            Value::Binary(charter.compiled_hash.to_vec()),
-        ),
-        (
-            Value::from(CHARTER_BLOCK_KEYS[4]),
-            Value::Binary(charter.stamped_aggregate.to_vec()),
-        ),
-        (
-            Value::from(CHARTER_BLOCK_KEYS[5]),
-            Value::from(charter.stamped_by.clone()),
-        ),
-        (
-            Value::from(CHARTER_BLOCK_KEYS[6]),
-            Value::from(charter.stamped_at),
-        ),
-    ])
-}
-
 fn encode_catalog_entry(entry: &ConnectorCatalogEntry) -> Value {
     Value::Map(vec![
         (
@@ -396,31 +357,6 @@ fn encode_catalog_entry(entry: &ConnectorCatalogEntry) -> Value {
         (
             Value::from(CATALOG_ENTRY_KEYS[5]),
             Value::from(entry.registered_at),
-        ),
-    ])
-}
-
-fn encode_pending_charter(pending: &PendingConnectorCharter) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(PENDING_CHARTER_KEYS[0]),
-            Value::from(pending.text.clone()),
-        ),
-        (
-            Value::from(PENDING_CHARTER_KEYS[1]),
-            Value::Binary(pending.text_hash.to_vec()),
-        ),
-        (
-            Value::from(PENDING_CHARTER_KEYS[2]),
-            encode_compiled_policy(&pending.compiled),
-        ),
-        (
-            Value::from(PENDING_CHARTER_KEYS[3]),
-            Value::Binary(pending.compiled_hash.to_vec()),
-        ),
-        (
-            Value::from(PENDING_CHARTER_KEYS[4]),
-            Value::from(pending.proposed_at),
         ),
     ])
 }
@@ -499,6 +435,8 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             entries,
             KEY_QUALIFICATION_RECEIPT,
         )?)?,
+        staged_slate_ref: optional_value(entries, KEY_STAGED_SLATE_REF)
+            .map_or_else(|| Ok(None), decode_optional_entity_id)?,
     };
     record.validate()?;
     Ok(record)
@@ -626,46 +564,6 @@ fn decode_compiled_policy(value: &Value) -> Result<CompiledConnectorPolicy> {
     })
 }
 
-fn decode_optional_charter_block(value: &Value) -> Result<Option<ConnectorCharterBlock>> {
-    if matches!(value, Value::Nil) {
-        return Ok(None);
-    }
-    let Value::Map(entries) = value else {
-        return Err(malformed());
-    };
-    validate_keys(entries, &CHARTER_BLOCK_KEYS)?;
-    Ok(Some(ConnectorCharterBlock {
-        text: decode_non_empty_string(required_value(entries, CHARTER_BLOCK_KEYS[0])?)?,
-        text_hash: decode_hash32(required_value(entries, CHARTER_BLOCK_KEYS[1])?)?,
-        compiled: decode_compiled_policy(required_value(entries, CHARTER_BLOCK_KEYS[2])?)?,
-        compiled_hash: decode_hash32(required_value(entries, CHARTER_BLOCK_KEYS[3])?)?,
-        stamped_aggregate: decode_hash32(required_value(entries, CHARTER_BLOCK_KEYS[4])?)?,
-        stamped_by: decode_non_empty_string(required_value(entries, CHARTER_BLOCK_KEYS[5])?)?,
-        stamped_at: required_value(entries, CHARTER_BLOCK_KEYS[6])?
-            .as_u64()
-            .ok_or_else(malformed)?,
-    }))
-}
-
-fn decode_optional_pending_charter(value: &Value) -> Result<Option<PendingConnectorCharter>> {
-    if matches!(value, Value::Nil) {
-        return Ok(None);
-    }
-    let Value::Map(entries) = value else {
-        return Err(malformed());
-    };
-    validate_keys(entries, &PENDING_CHARTER_KEYS)?;
-    Ok(Some(PendingConnectorCharter {
-        text: decode_non_empty_string(required_value(entries, PENDING_CHARTER_KEYS[0])?)?,
-        text_hash: decode_hash32(required_value(entries, PENDING_CHARTER_KEYS[1])?)?,
-        compiled: decode_compiled_policy(required_value(entries, PENDING_CHARTER_KEYS[2])?)?,
-        compiled_hash: decode_hash32(required_value(entries, PENDING_CHARTER_KEYS[3])?)?,
-        proposed_at: required_value(entries, PENDING_CHARTER_KEYS[4])?
-            .as_u64()
-            .ok_or_else(malformed)?,
-    }))
-}
-
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
     let mut seen = vec![false; keys.len()];
     for (key, _) in entries {
@@ -763,6 +661,10 @@ fn decode_hash32(value: &Value) -> Result<[u8; 32]> {
 
 fn option_string_value(value: Option<&str>) -> Value {
     value.map_or(Value::Nil, Value::from)
+}
+
+fn entity_id_value(id: Option<&EntityId>) -> Value {
+    id.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec()))
 }
 
 fn encode_json_option<T: serde::Serialize>(value: Option<&T>) -> Result<Value> {

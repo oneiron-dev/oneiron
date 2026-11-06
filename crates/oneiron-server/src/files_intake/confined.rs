@@ -9,7 +9,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
-use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, openat, statat};
+use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, fstat, openat, statat};
 
 fn directory_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
@@ -105,6 +105,26 @@ pub(crate) fn walk_notes(
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     walk(&open_root(root)?, root, NOTES, visit)
+}
+
+/// A notes rescan names folders that do not open or list and goes on, so
+/// their earlier notes stay until a later scan can read them (FIX 10246).
+/// Opening or listing the root, an unreadable file and a walk refusal still
+/// fail as on an initial import.
+pub(crate) fn walk_notes_rescan(
+    root: &Path,
+    unopened_dir: &mut dyn FnMut(&Path),
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut left = NOTES.entries;
+    let mut skips = Skips {
+        excluded: &nothing_excluded,
+        unopened: &mut nothing_unopened,
+        unopened_dir,
+        hold_dirs: true,
+        vault: None,
+    };
+    walk_below(open_root(root)?, root, NOTES, &mut skips, &mut left, visit)
 }
 
 /// Why a walk is refused whole; nothing under it is imported.
@@ -227,6 +247,9 @@ pub(crate) fn walk(
     let mut skips = Skips {
         excluded: &nothing_excluded,
         unopened: &mut nothing_unopened,
+        unopened_dir: &mut nothing_unopened,
+        hold_dirs: false,
+        vault: None,
     };
     walk_below(
         dir.try_clone()?,
@@ -238,11 +261,61 @@ pub(crate) fn walk(
     )
 }
 
+/// The vault's own directory identity, when the walk must pass over it
+/// however it spells now (REVIEW-4381 P1); none for walks with no vault.
+pub(crate) type VaultIdentity = Option<(u64, u64)>;
+
 /// What a walk passes over before it opens it, and whom it names a file
-/// that does not open to.
+/// or folder that does not open to.
 struct Skips<'a> {
     excluded: &'a dyn Fn(&Path) -> bool,
     unopened: &'a mut dyn FnMut(&Path),
+    unopened_dir: &'a mut dyn FnMut(&Path),
+    hold_dirs: bool,
+    vault: VaultIdentity,
+}
+
+/// Whether the open folder `dir` is the vault's own directory.
+fn is_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
+    fstat(dir)
+        .map(|stat| (stat.st_dev as u64, stat.st_ino as u64) == vault)
+        .unwrap_or(false)
+}
+
+/// Whether `dir` sits at or under the vault's directory, walking up through
+/// open descriptors, never path strings: a root swapped, or a vault renamed,
+/// after the caller's strings were read still matches. The walk runs to the
+/// filesystem root with no depth cutoff: a fixed cap would report a deep
+/// source outside the vault, and after a vault rename the stale strings are
+/// gone, so the check must not stop early (REVIEW-4381 P1). Each step
+/// strictly ascends and the parent-equals-self test ends the walk at the
+/// root, so the loop always terminates; on any error the string checks
+/// decide alone.
+pub(crate) fn under_vault_dir(dir: &OwnedFd, vault: (u64, u64)) -> bool {
+    let mut current = match dir.try_clone() {
+        Ok(current) => current,
+        Err(_) => return false,
+    };
+    loop {
+        if is_vault_dir(&current, vault) {
+            return true;
+        }
+        let parent = match openat(&current, "..", directory_flags(), Mode::empty()) {
+            Ok(parent) => parent,
+            Err(_) => return false,
+        };
+        if is_vault_dir(&parent, vault) {
+            return true;
+        }
+        let at_root = fstat(&current)
+            .and_then(|here| fstat(&parent).map(|there| (here, there)))
+            .map(|(here, there)| here.st_dev == there.st_dev && here.st_ino == there.st_ino)
+            .unwrap_or(true);
+        if at_root {
+            return false;
+        }
+        current = parent;
+    }
 }
 
 /// A walk that excludes nothing beyond its own profile.
@@ -258,16 +331,35 @@ fn nothing_unopened(_: &Path) {}
 /// hidden ones too: the path shown, and the file. An entry `excluded` names
 /// by its shown path is passed over before it is opened, a folder before
 /// anything under it is listed. A file that does not open (no read
-/// permission) is named to `unopened` and the walk goes on.
+/// permission) is named to `unopened` and the walk goes on; a folder that
+/// does not open or list is named to `unopened_dir` the same way, so one
+/// unreadable folder never fails the whole read (FIX 10246).
 pub(crate) fn walk_files(
     root: &Path,
+    vault: VaultIdentity,
     excluded: &dyn Fn(&Path) -> bool,
     unopened: &mut dyn FnMut(&Path),
+    unopened_dir: &mut dyn FnMut(&Path),
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let mut left = FILES.entries;
-    let mut skips = Skips { excluded, unopened };
-    walk_below(open_root(root)?, root, FILES, &mut skips, &mut left, visit)
+    let root_dir = open_root(root)?;
+    // The vault's own folder, by the identity the vault retained at open:
+    // when the walk starts at or under it, everything passes over, however
+    // the vault spells now. A root swapped after the caller's canonicalize
+    // took effect in this open, at the descriptor (REVIEW-4381 P1).
+    if vault.is_some_and(|vault| under_vault_dir(&root_dir, vault)) {
+        return Ok(true);
+    }
+    let mut skips = Skips {
+        excluded,
+        unopened,
+        unopened_dir,
+        hold_dirs: true,
+        vault,
+    };
+    walk_below(root_dir, root, FILES, &mut skips, &mut left, visit)?;
+    Ok(false)
 }
 
 /// Every folder of a walk from `dir`, shown as `shown`, passing over what
@@ -365,14 +457,34 @@ impl Traversal {
         // A symbolic link is neither a folder nor a file here.
         match kind(&folder.dir, &name, listed)? {
             FileType::Directory => {
-                let child = openat(&folder.dir, name.as_os_str(), directory_flags(), Mode::empty())
+                let opened = openat(&folder.dir, name.as_os_str(), directory_flags(), Mode::empty())
                     .map_err(|error| {
                         anyhow::anyhow!(
                             "{} changed while it was being read; nothing under it was imported ({error})",
                             path.display()
                         )
-                    })?;
-                self.enter(child, path, wanted, left)?;
+                    })
+                    .and_then(|child| {
+                        // The vault's own directory, by identity: passed over
+                        // before anything under it is listed, however it
+                        // spells now (REVIEW-4381 P1).
+                        if skips.vault.is_some_and(|vault| is_vault_dir(&child, vault)) {
+                            return Ok(());
+                        }
+                        self.enter(child, path.clone(), wanted, left)
+                    });
+                match opened {
+                    Ok(()) => {}
+                    // Files walks and notes rescans name an unreadable
+                    // folder and go on (FIX 10246). A whole-walk refusal
+                    // still refuses; imports and log walks do too.
+                    Err(error)
+                        if skips.hold_dirs && error.downcast_ref::<WalkRefused>().is_none() =>
+                    {
+                        (skips.unopened_dir)(&path);
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             FileType::RegularFile if wanted.visits(&name) => {
                 match open_file(&folder.dir, &name, &path) {

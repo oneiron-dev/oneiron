@@ -1,13 +1,13 @@
 //! The twelve ARCH-0005a ports, with backend-neutral caller-owned transactions.
 use super::{ChangeLogRecord, EdgeDirection, EntityRecord, SourceSpan};
-use crate::attempt_queue::{
-    ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome, FailAttempt, FailOutcome,
-};
+use crate::attempt_queue::{ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome};
 use crate::deletion::{DeleteReason, TombstoneValueV2};
 use crate::edge::EdgeInfo;
 use crate::error::Result;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, HydratedShortId, TimeRange, Vault};
@@ -320,13 +320,16 @@ pub trait BlobStore: Transactions {
     ) -> Result<[u8; 32]>;
     fn port_blob_get(&self, txn: &Self::Read<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>>;
     /// [`Self::port_blob_put`] of the bytes `body` yields, staged as they
-    /// stream rather than held whole where the backend can (FIX 3677). The
-    /// default reads them whole.
+    /// stream rather than held whole where the backend can (FIX 3677). A
+    /// long body files under an instance of `mint`, which its caller took
+    /// before `txn` opened (KS-2A, FIX 6021); with none it stays in its row.
+    /// The default reads them whole.
     fn port_blob_put_staged(
         &self,
         txn: &mut Self::Write<'_>,
         reference: &EntityId,
         body: &mut dyn std::io::Read,
+        _mint: Option<&crate::store::BodyMint>,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<[u8; 32]> {
@@ -396,7 +399,7 @@ pub trait JobQueue: Transactions {
     fn port_job_claim_id(
         &self,
         txn: &mut Self::Write<'_>,
-        id: crate::attempt_queue::AttemptId,
+        id: crate::store::attempt_id::AttemptId,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome>;
     fn port_job_complete(

@@ -19,6 +19,7 @@
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due.
 
+mod claim_vad_payment;
 mod report;
 mod schedule;
 mod sweeps;
@@ -27,6 +28,8 @@ mod sync_work;
 mod tests;
 mod wake;
 
+pub(crate) use self::claim_vad_payment::ClaimVadPayment;
+pub use self::claim_vad_payment::ClaimVadPaymentWorker;
 pub use self::report::{
     HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
 };
@@ -72,7 +75,9 @@ impl Vault {
     /// logged and never fails a sweep.
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         if !budget.deadline().stopped() {
-            crate::comm::run_comm_projector_housekeeping_step(self);
+            self.store
+                .record_hooks
+                .run_comm_projector_housekeeping_step(self);
         }
         self.housekeeping_pass(Selection::Due, budget)
     }
@@ -98,9 +103,11 @@ impl Vault {
     /// lease, a voice print, a critical confirm or a shared act's window, not
     /// before that sweep is next due (a failing sweep waits out its backoff),
     /// and the erasure sweep's due time while an obligation waits, and a left
-    /// env's owed body collection (FIX 2413). Cache and retention hygiene
-    /// never wake a vault. Reads one row per sweep and the schedule, never a
-    /// whole table, so a host can ask every time it stops the vault.
+    /// env's owed body collection (FIX 2413), and the earliest deadline of
+    /// the retained peer work (FIX 11183), and a paced verb call's window or
+    /// deadline (FIX 8753). Cache and retention hygiene never
+    /// wake a vault. Reads one row per sweep, the schedule and the retained
+    /// work queues, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
         let states = schedule::read_states(self)?;
         let noted = {
@@ -118,6 +125,12 @@ impl Vault {
             owed.push((HousekeepingSweep::HardEraseSweep, 0));
         }
         if let Some(at) = sync_work::left_env_body_collect_due_at(self)? {
+            owed.push((HousekeepingSweep::GateDecisionRetention, at));
+        }
+        sync_work::push_retained_work_due_at(self, &mut owed)?;
+        // A paced verb call's window opening or deadline (FIX 8753): the
+        // host's settler runs its turn once the vault is up again.
+        if let Some(at) = self.paced_verb_wake_at()? {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
         let mut earliest: Option<u64> = None;

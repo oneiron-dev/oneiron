@@ -30,7 +30,7 @@ pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
 /// two they are the namespaces a pack may not take: not as its name, not in
 /// a declaration, and on neither side of a shipped migration map. Append a
 /// namespace when the engine starts writing a new family.
-pub const ENGINE_PREDICATE_NAMESPACES: [&str; 44] = [
+pub const ENGINE_PREDICATE_NAMESPACES: [&str; 45] = [
     "affect",
     "agent",
     "annotation",
@@ -42,6 +42,7 @@ pub const ENGINE_PREDICATE_NAMESPACES: [&str; 44] = [
     "channel_identity",
     "charter",
     "code",
+    "clipboard",
     "comm",
     "conversation",
     "coping",
@@ -125,7 +126,8 @@ pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
 
 /// Claim predicate resolving an opaque actor stamp token (FIX 10930): the
 /// claim's id IS the token a commit message and its receipt name in place of
-/// the actor, its subject the actor, its value the actor's class.
+/// the actor, as do a document's birth and authorship entries (FIX 11964),
+/// its subject the actor, its value the actor's class.
 ///
 /// Engine-reserved by its `actor.*` namespace, exactly like
 /// [`PREDICATE_ACTOR_PEER_BINDING`], and written only by the engine's

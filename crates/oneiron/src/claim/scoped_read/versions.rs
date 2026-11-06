@@ -2,6 +2,7 @@
 
 use super::access_gate::HeldAuthority;
 use super::*;
+use crate::retrieval_depth::SessionScope;
 use crate::vault::ReadMode;
 
 /// One admitted revision: the served bytes (the live projection on a live
@@ -35,14 +36,15 @@ enum DenseChannel<'q> {
     },
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        self.search_vector_revisioned_with_rescore(query, limit, requested, false)
+        self.search_vector_revisioned_with_rescore(query, limit, requested, false, session_scope)
     }
 
     /// Voice hot reads share the ordinary dense lane and every one of its gates.
@@ -52,12 +54,14 @@ impl<'v> ScopedRead<'v> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
         skip_rescore: bool,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
         self.search_dense_revisioned(
             DenseChannel::TextIndex(query),
             limit,
             requested,
             skip_rescore,
+            session_scope,
         )
     }
 
@@ -72,8 +76,17 @@ impl<'v> ScopedRead<'v> {
         query: &[f32],
         limit: usize,
         requested: Option<&RetrievalFilter>,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        self.search_space_kinds_revisioned(space_id, query_kind, query, &[], limit, requested)
+        self.search_space_kinds_revisioned(
+            space_id,
+            query_kind,
+            query,
+            &[],
+            limit,
+            requested,
+            session_scope,
+        )
     }
 
     /// The same scoped space search narrowed to its stored input kinds.
@@ -85,6 +98,7 @@ impl<'v> ScopedRead<'v> {
         kinds: &[crate::store::embedding::InputKind],
         limit: usize,
         requested: Option<&RetrievalFilter>,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
         let channel = DenseChannel::Space {
             space_id,
@@ -92,7 +106,7 @@ impl<'v> ScopedRead<'v> {
             query,
             kinds,
         };
-        self.search_dense_revisioned(channel, limit, requested, false)
+        self.search_dense_revisioned(channel, limit, requested, false, session_scope)
     }
 
     /// One dense read over `channel`: the same gates, exclusions and receipt
@@ -103,24 +117,37 @@ impl<'v> ScopedRead<'v> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
         skip_rescore: bool,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        // The key's own filter (B) and the candidates its own live Grants
+        // add (A, FIX 7528): the search ranks both, and each candidate takes
+        // the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let admitted = self.plan_admits(&filter, &policy, &excluded);
+        let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
+        let admitted =
+            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
+                Ok(plan_admits(store, txn, id)?
+                    && self.session_scope_admits_in(txn, &policy, &filter, id, session_scope)?)
+            };
         let pipeline = self
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted);
         let results = match channel {
@@ -146,13 +173,16 @@ impl<'v> ScopedRead<'v> {
             }
             _ => None,
         };
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -174,8 +204,9 @@ impl<'v> ScopedRead<'v> {
         query: &str,
         limit: usize,
         requested: Option<&RetrievalFilter>,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        self.search_text_revisioned_as_of(query, limit, requested, None)
+        self.search_text_revisioned_as_of(query, limit, requested, None, session_scope)
     }
 
     pub(crate) fn search_text_revisioned_as_of(
@@ -184,24 +215,37 @@ impl<'v> ScopedRead<'v> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
         as_of: Option<u64>,
+        session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        // The key's own filter (B) and the candidates its own live Grants
+        // add (A, FIX 7528): the search ranks both, and each candidate takes
+        // the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let admitted = self.plan_admits(&filter, &policy, &excluded);
+        let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
+        let admitted =
+            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
+                Ok(plan_admits(store, txn, id)?
+                    && self.session_scope_admits_in(txn, &policy, &filter, id, session_scope)?)
+            };
         let mut pipeline = self
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .search_text(query, limit)
@@ -210,13 +254,16 @@ impl<'v> ScopedRead<'v> {
             pipeline = pipeline.with_temporal_now(as_of);
         }
         let results = pipeline.run_for_pack()?;
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -229,6 +276,88 @@ impl<'v> ScopedRead<'v> {
             receipt: filtered.receipt,
             revisions,
         })
+    }
+
+    /// Session hints narrow each channel in its ranking snapshot. The final
+    /// result still rechecks current authority and its exact pinned revision.
+    fn session_scope_admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        scope: Option<&SessionScope>,
+    ) -> Result<bool> {
+        let Some(scope) = scope.filter(|scope| !scope.is_empty()) else {
+            return Ok(true);
+        };
+        if let Some(world) = scope.world_ref {
+            let revision =
+                match self
+                    .vault
+                    .indexed_revision_from_in_txn(&self.store_read(), txn, id)
+                {
+                    Ok(Some(revision)) => revision,
+                    Ok(None) | Err(Error::EntityNotFound) => return Ok(false),
+                    Err(error) => return Err(error),
+                };
+            let held = HeldAuthority::for_request(None);
+            let Some(row) = self.entity_raw_with_mode_held_in(
+                txn,
+                policy,
+                filter,
+                id,
+                ReadMode::Pinned(revision),
+                &held,
+            )?
+            else {
+                return Ok(false);
+            };
+            let header = EntityMetadataHeader::parse(&row.raw)
+                .ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || crate::claim::decode_claim_body(&row.raw[ENTITY_METADATA_HEADER_LEN..], true)?
+                    .world
+                    != Some(world)
+            {
+                return Ok(false);
+            }
+        }
+        if let Some(facet) = scope.facet_ref {
+            let admitted = self.admitted_edges_in(
+                txn,
+                policy,
+                filter,
+                id,
+                crate::ports::EdgeDirection::Out,
+                Some(crate::edge::EdgeKind::FacetOf),
+                usize::MAX,
+                usize::MAX,
+                false,
+            )?;
+            if !admitted.source.visible()
+                || !admitted
+                    .edges
+                    .into_iter()
+                    .any(|edge| edge.info().target == facet)
+            {
+                return Ok(false);
+            }
+        }
+        if !scope.document_short_ids.is_empty() {
+            // Match the citation door's base short ref, including its hex
+            // fallback; the hash suffix does not change document identity.
+            let reference = crate::ports::ShortIdStoreRead::port_short_id_reference(
+                &self.vault.store,
+                txn,
+                id,
+            )?
+            .map_or_else(|| id.to_hex(), |(name, hash)| format!("{name}:{hash:02x}"));
+            if !scope.matches_short_ref(&reference) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Same-snapshot, live, policy-gated source for callers that must settle
@@ -255,9 +384,9 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<AdmittedRevision>> {
-        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
+        let Some(raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
         };
         // The short-reference hash names the stored revision, so it is taken
@@ -265,6 +394,11 @@ impl<'v> ScopedRead<'v> {
         // comes from its manifest, never from the manifest's own bytes.
         let content_hash =
             crate::store::short_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
+        // A file-plane ASSET's live row serves its body, not its manifest;
+        // an older revision keeps the manifest it was stored as. It is
+        // materialized while it is still the stored row, so the live
+        // projection below reads the body, never the manifest (FIX 12149).
+        let mut raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -290,9 +424,6 @@ impl<'v> ScopedRead<'v> {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
         }
-        // A file-plane ASSET's live row serves its body, not its manifest;
-        // an older revision keeps the manifest it was stored as.
-        let raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;
         Ok(Some(AdmittedRevision { raw, content_hash }))
     }
 
@@ -306,7 +437,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<Vec<u8>>> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
@@ -363,7 +494,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &ContextEntity,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let mode = entity
             .source_revision_ref

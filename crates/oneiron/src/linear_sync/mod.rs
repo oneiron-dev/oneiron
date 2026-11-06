@@ -82,13 +82,16 @@ mod served;
 mod storage_codec;
 mod webhook;
 
-pub(crate) use self::approval::linear_writer_co_actor_in_txn;
 pub use self::approval::{
     LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval,
+};
+pub(crate) use self::approval::{
+    erase_effect_approval_actor_in_txn, linear_writer_co_actor_in_txn,
 };
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
 pub use self::custody::{LinearBody, LinearBodyRole, LinearFreeze};
+pub(crate) use self::effect::erase_effect_authorized_actor_in_txn;
 pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
 pub use self::facade_types::{

@@ -80,6 +80,7 @@ impl Vault {
         // Each input is a repo blob's copy where it is one (FIX 7608 slice 3).
         let repo_marks = super::repo_projection::pass_marks(self)?;
         let candidates = {
+            let _bodies = self.pin_all_result_bodies();
             let txn = self.store.env.read_txn()?;
             let delay = DEBOUNCE.get(&self.store, &txn, &())?.ok_or_else(|| {
                 Error::InvalidConfig("indexed idle delay manifest row is missing".into())
@@ -96,13 +97,23 @@ impl Vault {
                     continue;
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-                if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
+                // A claim republishes the text its commit indexed, never the
+                // generic string leaves: a non-string value would otherwise
+                // lose its postings at the first idle pass (FIX 12368).
+                let fields = if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
                     let claim = crate::write_envelope::claim_body::decode_claim_body(&body, true)?;
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }
-                }
-                let fields = revision_text_fields(&self.store, &txn, &id, current.live, &body)?;
+                    let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
+                    if text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![("val".to_owned(), text)]
+                    }
+                } else {
+                    revision_text_fields(&self.store, &txn, &id, current.live, &body)?
+                };
                 candidates.push(super::repo_projection::project_revision_input_in_txn(
                     self,
                     &txn,
@@ -125,6 +136,7 @@ impl Vault {
             // The embedding space this work is done in, read with the staged
             // inputs it starts from.
             let (staged, epoch) = {
+                let _bodies = self.pin_all_result_bodies();
                 let txn = self.store.env.read_txn()?;
                 (
                     super::repo_projection::staged_inputs_in_txn(
@@ -305,7 +317,7 @@ impl Vault {
             )?;
             crate::dreamer_wake::mark_on_publication_in_txn(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
-            if self.config.tagging.is_some() {
+            if self.tagging_marker_config().is_some() {
                 self.store.notify_attempt_observers();
             }
             published(IndexedPublication {
@@ -340,6 +352,7 @@ impl Vault {
         let mut gone = Vec::new();
         let repo_marks = super::repo_projection::pass_marks(self)?;
         let (candidates, epoch) = {
+            let _bodies = self.pin_all_result_bodies();
             let txn = self.store.env.read_txn()?;
             let mut candidates = Vec::new();
             for (id, ()) in REFILL.scan(&self.store, &txn)? {
@@ -540,7 +553,10 @@ pub(crate) fn drop_vector_state(
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {
-        crate::sync::queue::delete_embed_job_in_txn(&vault.store, txn, id)?;
+        vault
+            .store
+            .sync_hooks
+            .delete_embed_job_in_txn(&vault.store, txn, id)?;
         crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
     }
     Ok(())

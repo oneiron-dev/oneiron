@@ -22,8 +22,9 @@ use crate::store::Store;
 /// a world it erased or of a pad row it erased, an erased credential's
 /// value and carrier keys (KS-6 part 2), matched by the credential's id as
 /// their items' first 16 bytes, and an erased actor's erasable keys (FIX
-/// 8875), matched by the actor as their parent.
-const ERASE_KINDS: [CustodyKind; 8] = [
+/// 8875), matched by the actor as their parent, and the checkpoint payload
+/// leaves of the entities and attachment occurrences it erased.
+const ERASE_KINDS: [CustodyKind; 9] = [
     CustodyKind::ClaimDecision,
     CustodyKind::KnownValueEntry,
     CustodyKind::BodyInstance,
@@ -32,6 +33,7 @@ const ERASE_KINDS: [CustodyKind; 8] = [
     CustodyKind::CustodyTransition,
     CustodyKind::CustodyRequestInput,
     CustodyKind::ErasableKey,
+    CustodyKind::CheckpointPayload,
 ];
 
 /// Whether `kind` is one an erased credential's id names (KS-6 part 2):
@@ -81,12 +83,68 @@ fn retirement_of_name(name: &str) -> Option<(CustodyKind, Vec<u8>, u64)> {
 /// Whether the pad `item` (its key's full id) is of a world among
 /// `records`, or its key's pad row is one of them.
 fn pad_of(records: &BTreeSet<&[u8]>, item: &[u8]) -> bool {
-    let row = crate::world_keys::pad_row_of_item(item);
+    let row = oneiron_store::world_pad_codec::pad_row_of_item(item);
     matches!(item.get(..16), Some(world) if records.contains(world))
         || matches!(row, Ok(Some(row)) if records.contains(row.as_bytes().as_slice()))
 }
 
 impl Store {
+    /// Native erase names for just these independently captured body
+    /// subjects, not unrelated retirements of the same erased sources.
+    #[cfg(unix)]
+    pub(crate) fn body_erase_retirement_names_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        erased: &[EntityId],
+        expected: &BTreeSet<[u8; 16]>,
+    ) -> Result<Vec<String>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(Vec::new());
+        };
+        let mut items = BTreeSet::new();
+        for instance in expected {
+            let id = crate::store::instance_id(custody.binding(), instance)?;
+            items.insert(id.subject().item().to_vec());
+        }
+        Ok(self
+            .erase_custody_retirements_in_txn(txn, erased)?
+            .into_iter()
+            .filter(|name| {
+                retirement_of_name(name).is_some_and(|(kind, item, _)| {
+                    kind == CustodyKind::BodyInstance && items.contains(&item)
+                })
+            })
+            .collect())
+    }
+
+    /// Whether these actual native retirement names cover every independently
+    /// captured body instance. Empty or unrelated names never prove coverage.
+    #[cfg(unix)]
+    pub(crate) fn erase_retirement_names_cover_body_instances(
+        &self,
+        names: &[String],
+        expected: &BTreeSet<[u8; 16]>,
+    ) -> Result<bool> {
+        if expected.is_empty() {
+            return Ok(false);
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(false);
+        };
+        let covered: BTreeSet<Vec<u8>> = names
+            .iter()
+            .filter_map(|name| retirement_of_name(name))
+            .filter_map(|(kind, item, _)| (kind == CustodyKind::BodyInstance).then_some(item))
+            .collect();
+        for instance in expected {
+            let id = crate::store::instance_id(custody.binding(), instance)?;
+            if !covered.contains(id.subject().item()) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether `name` is a bound custody retirement's name, as an erase
     /// receipt carries it: the receipt grammar's check.
     pub(crate) fn erase_retirement_name_valid(name: &str) -> bool {
@@ -99,7 +157,8 @@ impl Store {
     /// record's claim key or known-value history, or for a pad of a world or
     /// pad row it erased, and each body instance the erase retired or owes
     /// (one another holder keeps waits on that holder, KS-2A), through the
-    /// newest generation it retires, and each erasable key of an actor it
+    /// newest generation it retires, the checkpoint leaves of its entity and
+    /// attachment occurrence compartments, and each erasable key of an actor it
     /// erased (FIX 8875). Each credential it fenced owes its whole erase
     /// too, under its value's name, even with no key found yet (KS-6 part
     /// 2): its discovery and every key its id names, as late as they are
@@ -128,11 +187,33 @@ impl Store {
         }
         #[cfg(not(unix))]
         let _ = custody;
+        // A live rewritten owner's old generation retires after its reseal
+        // lands; bind that obligation even before its intent is staged.
+        for record in erased {
+            for (item, through) in
+                crate::store::checkpoint_payload::instance::purged_generations_in_txn(
+                    self, txn, record,
+                )?
+            {
+                let subject = item.subject(custody.binding())?;
+                let bound = owed.entry(subject).or_insert(through);
+                *bound = (*bound).max(through);
+            }
+        }
         for kind in ERASE_KINDS {
             for intent in retirements_in_txn(self, txn, kind)? {
                 let ours = match kind {
                     CustodyKind::BodyInstance => owed.contains_key(&intent.subject),
                     CustodyKind::WorldPad => pad_of(&records, intent.subject.item()),
+                    CustodyKind::CheckpointPayload => {
+                        use crate::store::checkpoint_payload::{PayloadItem, Subtype};
+                        PayloadItem::decode(intent.subject.item()).is_some_and(|item| {
+                            matches!(
+                                item.subtype(),
+                                Subtype::EntityTree | Subtype::AttachmentOccurrence
+                            ) && records.contains(&item.owner()[..16])
+                        })
+                    }
                     CustodyKind::ErasableKey => ErasableItem::parent_of(&intent.subject)
                         .is_some_and(|parent| records.contains(parent.as_slice())),
                     kind if credential_parent_kind(kind) => intent

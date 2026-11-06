@@ -6,9 +6,14 @@
 //! on its own interval grid, once every field the engine would infer from the
 //! seed is stated: the walk can start at the period that holds the window's
 //! first wall clock and lose nothing the window asked for.
+//!
+//! A rule with `COUNT` numbers its occurrences from the seed, so it moves
+//! only once a walk knows how many occurrences came before the period it
+//! moves to (FIX 12169): a deadline-ended page hands the next page that
+//! period and that count, and the moved rule counts what is left.
 
-use chrono::{DateTime, Datelike, Month, TimeDelta, TimeZone, Timelike};
-use rrule::{Frequency, NWeekday, RRule, Tz, Unvalidated, Validated};
+use chrono::{DateTime, Datelike, Month, Months, TimeDelta, TimeZone, Timelike};
+use rrule::{Frequency, NWeekday, RRule, Tz, Unvalidated, Validated, Weekday};
 
 /// The seed and rule [`super::expand_window`] walks.
 ///
@@ -32,6 +37,69 @@ pub(super) fn reseeded(
         Ok(pinned) => (moved, pinned),
         Err(_) => (seed, rule),
     }
+}
+
+/// The seed and rule a counted walk resumes at: `rule` moved to the period
+/// starting at `period` (its wall clock read as UTC seconds), with `COUNT`
+/// lowered by the `counted` occurrences the series yielded before it.
+///
+/// `None` when nothing is left to count or the moved rule does not
+/// validate; the walk then starts from the seed.
+pub(super) fn resumed_count(
+    parsed: &RRule<Unvalidated>,
+    rule: &RRule<Validated>,
+    period: i64,
+    counted: u32,
+) -> Option<(DateTime<Tz>, RRule<Validated>)> {
+    let left = rule
+        .get_count()?
+        .checked_sub(counted)
+        .filter(|left| *left > 0)?;
+    let moved = Tz::UTC.timestamp_opt(period, 0).single()?;
+    let rule = pinned(parsed, rule).count(left).validate(moved).ok()?;
+    Some((moved, rule))
+}
+
+/// The recurrence period `occurrence` falls in: its start and the start of
+/// the period after it.
+///
+/// The engine builds one period at a time on these boundaries (see
+/// [`period_on_grid`]), so every occurrence it yields lies inside the
+/// period this names, and a walk seeded at its start yields that period's
+/// whole set again. `None` when the arithmetic leaves the carrier's range.
+pub(super) fn period_of(
+    freq: Frequency,
+    week_start: Weekday,
+    occurrence: &DateTime<Tz>,
+) -> Option<(DateTime<Tz>, DateTime<Tz>)> {
+    let start = match freq {
+        Frequency::Yearly => Tz::UTC
+            .with_ymd_and_hms(occurrence.year(), 1, 1, 0, 0, 0)
+            .single()?,
+        Frequency::Monthly => Tz::UTC
+            .with_ymd_and_hms(occurrence.year(), occurrence.month(), 1, 0, 0, 0)
+            .single()?,
+        Frequency::Weekly => {
+            let back = (7 + occurrence.weekday().num_days_from_monday()
+                - week_start.num_days_from_monday())
+                % 7;
+            midnight(occurrence)?.checked_sub_signed(TimeDelta::try_days(i64::from(back))?)?
+        }
+        Frequency::Daily => midnight(occurrence)?,
+        Frequency::Hourly => occurrence.with_minute(0)?.with_second(0)?,
+        Frequency::Minutely => occurrence.with_second(0)?,
+        Frequency::Secondly => *occurrence,
+    };
+    let end = match freq {
+        Frequency::Yearly => start.checked_add_months(Months::new(12))?,
+        Frequency::Monthly => start.checked_add_months(Months::new(1))?,
+        Frequency::Weekly => start.checked_add_signed(TimeDelta::try_weeks(1)?)?,
+        Frequency::Daily => start.checked_add_signed(TimeDelta::try_days(1)?)?,
+        Frequency::Hourly => start.checked_add_signed(TimeDelta::try_hours(1)?)?,
+        Frequency::Minutely => start.checked_add_signed(TimeDelta::try_minutes(1)?)?,
+        Frequency::Secondly => start.checked_add_signed(TimeDelta::try_seconds(1)?)?,
+    };
+    Some((start, end))
 }
 
 /// `parsed` with every field the engine inferred from the seed written out,

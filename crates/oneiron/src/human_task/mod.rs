@@ -22,7 +22,7 @@
 //! one task can never double-notify across follow-up families.
 
 mod followup;
-mod model;
+use oneiron_base::human_task_followup as model;
 mod open_asks;
 mod storage;
 mod wait;

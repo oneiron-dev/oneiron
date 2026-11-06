@@ -31,8 +31,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use oneiron::llm::{CallSchedule, ScheduleAck, ScheduleUpdate, SessionOp};
-use oneiron_driver::{DeviceGrant, WorkerLease};
+use oneiron::llm::{
+    CallSchedule, INFERENCE_CALLS_KEY, InferenceCallReceipt, ScheduleAck, ScheduleUpdate,
+    SchedulingReceipt, SessionOp,
+};
+use oneiron_driver::{DeviceGrant, InferenceWorker, WorkerLease};
 use oneiron_llm_openai::OpenAiCompatTransportError;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
@@ -46,6 +49,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
 use super::wire::{self, Incoming, Outgoing};
+use super::worker_host::{self, NativeLaunch};
 
 /// A send to a worker that has gone fails with EPIPE rather than raising
 /// SIGPIPE; macOS has no such flag, and this process ignores the signal.
@@ -81,6 +85,22 @@ pub(in crate::models) fn next_request_id() -> u64 {
 pub(super) struct Channel {
     reader: BufReader<OwnedReadHalf>,
     writer: Arc<AsyncMutex<OwnedWriteHalf>>,
+    /// The frame a cancelled [`Self::next`] left half-read (FIX 11961): the
+    /// next `next` resumes it instead of rereading its header, so dropping
+    /// a read future never misaligns the stream.
+    pending: Option<PartialFrame>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    peer_pid: Option<u32>,
+}
+
+/// A frame partly read when its read future was dropped: the header bytes
+/// so far, and the payload bytes so far once the header is whole.
+#[derive(Default)]
+struct PartialFrame {
+    header: [u8; wire::HEADER_BYTES],
+    header_read: usize,
+    length: Option<u64>,
+    payload: Vec<u8>,
 }
 
 impl Channel {
@@ -95,11 +115,40 @@ impl Channel {
                 "the worker's socket answers as another user",
             ));
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let peer_pid = peer.pid().and_then(|pid| u32::try_from(pid).ok());
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),
             writer: Arc::new(AsyncMutex::new(writer)),
+            pending: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            peer_pid,
         })
+    }
+
+    /// Checks the connected peer, then reads this launch's hello on the
+    /// same connection before any request body or descriptor can leave it.
+    pub(super) async fn connect_launch(
+        launch: &NativeLaunch,
+        epoch: Option<&str>,
+    ) -> io::Result<(Self, JsonValue)> {
+        let mut channel = Self::connect(launch.socket()).await?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if !launch.peer_matches(channel.peer_pid) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the native peer is not this launch's supervised child",
+            ));
+        }
+        let hello = channel.ask("hello", json!({})).await?;
+        if !launch.hello_agrees(&hello, epoch) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the native hello names another launch, model or epoch",
+            ));
+        }
+        Ok((channel, hello))
     }
 
     fn frame(
@@ -164,30 +213,104 @@ impl Channel {
     }
 
     /// The next frame, or `None` once the worker has closed the connection.
+    /// Cancellation-safe (FIX 11961): every chunk lands in the pending
+    /// frame in `self` before the next await, so a dropped read resumes
+    /// instead of rereading a half-consumed header as a new length.
     pub(super) async fn next(&mut self) -> io::Result<Option<Incoming>> {
-        let mut header = [0_u8; wire::HEADER_BYTES];
-        if let Err(error) = self.reader.read_exact(&mut header).await {
-            return if error.kind() == io::ErrorKind::UnexpectedEof {
-                Ok(None)
-            } else {
-                Err(error)
+        if self.pending.is_none() {
+            self.pending = Some(PartialFrame::default());
+        }
+        loop {
+            enum Need {
+                Header(usize),
+                Payload(usize),
+                Done,
+            }
+            // What the frame still needs; the borrow ends before any await.
+            let need = {
+                let partial = self
+                    .pending
+                    .as_mut()
+                    .expect("channel keeps its pending frame");
+                if partial.header_read < wire::HEADER_BYTES {
+                    Need::Header(partial.header_read)
+                } else {
+                    let length = *partial
+                        .length
+                        .get_or_insert_with(|| u64::from_be_bytes(partial.header));
+                    if u64::try_from(partial.payload.len()).ok() == Some(length) {
+                        Need::Done
+                    } else {
+                        let rest = length.saturating_sub(partial.payload.len() as u64);
+                        Need::Payload(
+                            usize::try_from(rest).map_or(FRAME_CHUNK, |rest| rest.min(FRAME_CHUNK)),
+                        )
+                    }
+                }
             };
+            match need {
+                Need::Done => {
+                    let partial = self
+                        .pending
+                        .take()
+                        .expect("channel keeps its pending frame");
+                    let frame = wire::decode(&partial.payload).map(Some).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "the worker sent a frame this side cannot read",
+                        )
+                    })?;
+                    return Ok(frame);
+                }
+                Need::Header(at) => {
+                    let read = {
+                        let partial = self
+                            .pending
+                            .as_mut()
+                            .expect("channel keeps its pending frame");
+                        self.reader.read(&mut partial.header[at..]).await
+                    };
+                    match read {
+                        Err(error) => return Err(error),
+                        Ok(0) => {
+                            self.pending = None;
+                            return Ok(None);
+                        }
+                        Ok(n) => {
+                            self.pending
+                                .as_mut()
+                                .expect("channel keeps its pending frame")
+                                .header_read += n;
+                        }
+                    }
+                }
+                Need::Payload(want) => {
+                    let read = {
+                        let partial = self
+                            .pending
+                            .as_mut()
+                            .expect("channel keeps its pending frame");
+                        let start = partial.payload.len();
+                        partial.payload.resize(start + want, 0);
+                        self.reader.read(&mut partial.payload[start..]).await
+                    };
+                    match read {
+                        Err(error) => return Err(error),
+                        Ok(0) => {
+                            self.pending = None;
+                            return Err(io::ErrorKind::UnexpectedEof.into());
+                        }
+                        Ok(n) => {
+                            let partial = self
+                                .pending
+                                .as_mut()
+                                .expect("channel keeps its pending frame");
+                            partial.payload.truncate(partial.payload.len() - want + n);
+                        }
+                    }
+                }
+            }
         }
-        let length = u64::from_be_bytes(header);
-        let mut payload = Vec::new();
-        let read = (&mut self.reader)
-            .take(length)
-            .read_to_end(&mut payload)
-            .await?;
-        if u64::try_from(read).ok() != Some(length) {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-        wire::decode(&payload).map(Some).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "the worker sent a frame this side cannot read",
-            )
-        })
     }
 
     /// Sends `op` and returns the body of the worker's frame of the same op
@@ -374,7 +497,12 @@ impl Channel {
     /// deadline: the worker releases at its next pass. False when the
     /// terminal says the worker could not release the call's Job, which it
     /// still charges.
-    async fn cancel(mut self, request_id: u64) -> bool {
+    async fn cancel(
+        mut self,
+        request_id: u64,
+        worker: Option<&InferenceWorker>,
+        epoch: &str,
+    ) -> bool {
         if self
             .send("cancel", request_id, None, json!({}))
             .await
@@ -386,7 +514,14 @@ impl Channel {
             match self.next().await {
                 Ok(Some(frame)) if frame.request_id == request_id => match frame.op.as_str() {
                     "final" => return !release_failed(&frame.body),
-                    "released" | "refused" => return true,
+                    "released" => {
+                        // The call already settled without this body; its
+                        // partial receipt and cheap stats go to the device
+                        // ledger and supervisor only (FIX 9297).
+                        report_released(worker, epoch, &frame.body);
+                        return true;
+                    }
+                    "refused" => return true,
                     "cancel_ack"
                         if frame.body.get("found").and_then(JsonValue::as_bool) == Some(false) =>
                     {
@@ -412,7 +547,9 @@ fn release_failed(body: &JsonValue) -> bool {
 }
 
 /// Holds `lease` until its incarnation ends, on a task of its own: the
-/// worker still charges a call it could not release.
+/// worker still charges a call it could not release. With no runtime on the
+/// caller, a thread of its own with a current-thread runtime waits instead
+/// of dropping the lease (FIX 11328).
 fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
     if lease.is_none() && grant.is_none() {
         return;
@@ -427,6 +564,25 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
             }
             drop((lease, grant));
         });
+    } else {
+        // A failed spawn drops the closure, and the lease and grant with it.
+        let _ = std::thread::Builder::new()
+            .name("exl3-keep-lease".to_owned())
+            .spawn(move || {
+                let wait = async move {
+                    if let Some(lease) = &lease {
+                        lease.revocation().await;
+                    }
+                    drop((lease, grant));
+                };
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(wait),
+                    Err(_) => drop(wait),
+                }
+            });
     }
 }
 
@@ -525,10 +681,51 @@ fn logged(error: OpenAiCompatTransportError) -> OpenAiCompatTransportError {
     error
 }
 
+/// Reports a `released` body's partial receipt and cheap stats to the device
+/// ledger and supervisor (FIX 9297). The call already settled without
+/// them, so they never reach the settlement sink; `physical` stays absent
+/// (host-stamped custody the cancel task cannot re-derive, and worker
+/// JSON is never its source). The worker is the call's actual origin
+/// instance, never a re-resolved id (FIX 13845).
+fn report_released(worker: Option<&InferenceWorker>, epoch: &str, body: &JsonValue) {
+    let Some(worker) = worker else {
+        return;
+    };
+    let worker_id = worker.spec().worker_id.as_str();
+    if let Some(stats) = body.get("stats") {
+        worker_host::report_device_stats(worker, stats);
+        // Released stats feed the same supervisor path as finals (FIX 9297):
+        // without it the queue, open calls and residency go stale until a
+        // later poll.
+        if let Some(activity) = super::activity_of(stats) {
+            worker_host::report_device_activity(worker, activity);
+        }
+    }
+    let receipt = body
+        .get("usage")
+        .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array)
+        .and_then(|calls| {
+            calls
+                .iter()
+                .find_map(|call| serde_json::from_value::<InferenceCallReceipt>(call.clone()).ok())
+        });
+    if let Some(mut receipt) = receipt {
+        receipt.scheduling = body
+            .get("scheduling")
+            .and_then(|value| serde_json::from_value::<SchedulingReceipt>(value.clone()).ok());
+        worker_host::report_receipt(worker_id, epoch, receipt);
+    }
+}
+
 /// One `generate` in flight on its own connection.
 pub(super) struct Call {
     channel: Option<Channel>,
     request_id: u64,
+    /// The worker the call went to, for released-body ledger reports; none
+    /// on a worker-less qualification probe (FIX 9297). The actual origin
+    /// instance, never a re-resolved id (FIX 13845).
+    worker: Option<InferenceWorker>,
     /// The incarnation the call went to, which its updates name.
     epoch: String,
     /// The lease on the incarnation the call went to, held until the call
@@ -540,7 +737,7 @@ pub(super) struct Call {
 }
 
 impl Call {
-    /// Connects to `path`, sends the call with `conversation` as its input
+    /// Connects to `launch`, sends the call with `conversation` as its input
     /// region and `schedule`'s fields at its body's top level, and waits
     /// for the worker to accept or refuse it. A call that names a `session`
     /// working branch goes as `session.generate`, its body otherwise a
@@ -550,7 +747,7 @@ impl Call {
         reason = "each argument is one fact of the call being started"
     )]
     pub(super) async fn start(
-        path: &Path,
+        launch: &NativeLaunch,
         epoch: &str,
         conversation: &JsonValue,
         params: JsonValue,
@@ -558,10 +755,11 @@ impl Call {
         lease: Option<WorkerLease>,
         session: Option<JsonValue>,
         schedule: Option<&CallSchedule>,
+        worker: Option<&InferenceWorker>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
-        let mut channel = Channel::connect(path)
+        let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
             .await
             .map_err(|e| not_sent("connect", e))?;
         let request_id = next_request_id();
@@ -581,6 +779,7 @@ impl Call {
         let mut call = Self {
             channel: Some(channel),
             request_id,
+            worker: worker.cloned(),
             epoch: epoch.to_owned(),
             lease,
             grant: None,
@@ -701,6 +900,12 @@ impl Call {
                 }
                 "released" => {
                     self.ended = true;
+                    // A server-side cancel (a session.generate its session
+                    // dropped, e.g. under vault lock/erase) ends the call
+                    // here, not in the cancel task, so its partial receipt
+                    // and cheap stats go to the device ledger and supervisor
+                    // from this branch; never the settlement sink (FIX 9297).
+                    report_released(self.worker.as_ref(), &self.epoch, &frame.body);
                     return Err(Cut(unexpected("released", "before `final`")));
                 }
                 _ => {}
@@ -720,11 +925,13 @@ impl Drop for Call {
         let lease = self.lease.take();
         let grant = self.grant.take();
         let request_id = self.request_id;
+        let worker = self.worker.clone();
+        let epoch = self.epoch.clone();
         // Outside a runtime the connection's close is the cancel: the worker
         // cancels every call of a connection that goes.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                if !channel.cancel(request_id).await
+                if !channel.cancel(request_id, worker.as_ref(), &epoch).await
                     && let Some(lease) = &lease
                 {
                     // The worker still charges the call: so does the lease.

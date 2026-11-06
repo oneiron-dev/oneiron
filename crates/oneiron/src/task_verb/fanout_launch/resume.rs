@@ -356,7 +356,10 @@ impl Memory<'_> {
     /// The launch under `launch_ref`, with its plan recomputed from the
     /// frozen payload and bound to the digest the owner saw: never a
     /// comparison of two caller-supplied hashes. The original actor must
-    /// still bind; its launch runs as it.
+    /// still bind; its launch runs as it. A scrubbed dispatched width check
+    /// (FIX 4699 retired, FIX 12731 answered) ignores the frozen digest and
+    /// re-proves the scrubbed state before its recorded ack replays; a marked
+    /// held launch binds the new scrubbed digest.
     pub(super) fn frozen_launch_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -367,8 +370,36 @@ impl Memory<'_> {
             .ok_or_else(|| MemoryError::not_found("fan-out launch not found"))?;
         let actor = launch.launcher()?;
         verify_actor_binding_in_txn(self.vault(), txn, actor, launch.class()?)?;
+        // FIX 4699: a retired check has no re-read path; erasure wins over
+        // the old digest. Live launcher only (checked above).
+        // FIX 12731: a dispatched check acked before its scrub keeps no
+        // retirement marker; re-prove every scrubbed dispatched check before
+        // its recorded ack replays, regardless of retirement. Held scrubbed
+        // launches still bind the new digest below.
+        let scrubbed_dispatched_check = launch.recipient_scrub.is_some()
+            && launch.dispatched_at.is_some()
+            && launch.check_row.is_some();
+        if scrubbed_dispatched_check
+            || launch
+                .recipient_scrub
+                .as_ref()
+                .is_some_and(|marker| marker.retired_check_row.is_some())
+        {
+            let plan = verify_scrubbed_launch(&launch)?;
+            return Ok((launch, plan));
+        }
         if launch.estimate.plan_digest != expected_digest {
-            return Err(stale_digest());
+            return Err(if launch.recipient_scrub.is_some() {
+                scrub_stale_digest()
+            } else {
+                stale_digest()
+            });
+        }
+        if launch.recipient_scrub.is_some() {
+            // A marked row's `plan()` cannot reproduce the merged `"erased"`
+            // bucket; re-prove the scrubbed state instead.
+            let plan = verify_scrubbed_launch(&launch)?;
+            return Ok((launch, plan));
         }
         let plan = launch.payload.plan(launch_ref, actor, launch.plan.mode)?;
         if plan != launch.plan || fanout_plan_digest(&plan)? != expected_digest {
@@ -387,6 +418,33 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<()> {
         let (actor, class) = (launch.launcher()?, launch.class()?);
+        // FIX 4699: a held wave whose cut lost an assignee to erasure must
+        // not silently retarget to the default realization; deny and re-cut.
+        if launch
+            .recipient_scrub
+            .as_ref()
+            .is_some_and(|marker| marker.wave_assignees > 0)
+        {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "wave cut changed by erasure",
+                "Deny this launch and re-cut.",
+            ));
+        }
+        // A held ask that lost a holder denies and re-asks (REVIEW-4453
+        // round 2): the scrubbed holder set must never launch reduced,
+        // however the live census reads. Denial stays available.
+        if launch
+            .recipient_scrub
+            .as_ref()
+            .is_some_and(|marker| marker.ask_holders > 0)
+        {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "held ask changed by erasure",
+                "Deny this launch and ask again.",
+            ));
+        }
         let task_refs: Vec<EntityId> = match &launch.payload {
             LaunchPayload::Wave {
                 cut,
@@ -489,6 +547,19 @@ impl Memory<'_> {
             {
                 continue;
             }
+            // An erased recipient's retired width check has no re-read path
+            // (FIX 4699): history keeps the row; the board drops the retired
+            // item. Kept beside the 4698 launcher skip; both landed.
+            if launch
+                .recipient_scrub
+                .as_ref()
+                .is_some_and(|marker| marker.retired_check_row.is_some())
+                && launch.dispatched_at.is_some()
+                && launch.check_row.is_some()
+                && launch.choice_receipt_ref.is_none()
+            {
+                continue;
+            }
             let receipt = self.listed_receipt(&launch);
             if receipt.paused.is_some()
                 || (receipt.check_row_ref.is_some() && receipt.choice_receipt_ref.is_none())
@@ -498,4 +569,12 @@ impl Memory<'_> {
         }
         Ok(pending)
     }
+}
+
+fn scrub_stale_digest() -> MemoryError {
+    consult_refusal(
+        MEMORY_CODE_INVALID_STATE,
+        "fan-out changed by erasure",
+        "Re-read and rule on the scrubbed plan.",
+    )
 }

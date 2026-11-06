@@ -22,7 +22,9 @@ const MAX_RESPONSE_BYTES: u64 = 1_048_576;
 ///
 /// Call it from a blocking context (it owns an internal runtime). The token
 /// the custody door injects is either the bare OAuth access token or a JSON
-/// object carrying `access_token`; refreshing it is the host's custody job.
+/// object carrying `access_token`. A refresh-only grant carrying its OAuth
+/// client is exchanged inside that same custody callback. Existing access
+/// credentials remain unchanged; this wire does not retry an expired token.
 pub struct HttpGmailSendWire {
     client: reqwest::blocking::Client,
 }
@@ -143,7 +145,7 @@ impl GmailSendWire for HttpGmailSendWire {
         }
         let mut outcome = None;
         let door = authority.with_token_at_door(&mut |token: &[u8]| {
-            let auth = bearer_header(token)?;
+            let auth = bearer_header_for_client(&self.client, token)?;
             let mut sent = self.post_send(&auth, &body);
             if let Ok(message) = sent.as_mut() {
                 message.rfc_message_id = self.read_rfc_message_id(&auth, &message.gmail_message_id);
@@ -162,8 +164,30 @@ impl GmailSendWire for HttpGmailSendWire {
     }
 }
 
+/// Keeps every usable access credential unchanged, otherwise exchanges the
+/// stored refresh grant inside the same already-admitted custody callback.
+pub(super) fn bearer_header_for_client(
+    client: &reqwest::blocking::Client,
+    token: &[u8],
+) -> Result<HeaderValue> {
+    match bearer_header(token) {
+        Ok(header) => Ok(header),
+        Err(original) => {
+            let refreshed =
+                crate::connector_key::ProviderConnectionChecks::refresh_stored_google_grant(
+                    client, token,
+                )
+                .map_err(|_| Error::InvalidConfig("gmail_refresh_failed".to_owned()))?;
+            match refreshed {
+                Some(access_token) => bearer_header(access_token.as_bytes()),
+                None => Err(original),
+            }
+        }
+    }
+}
+
 /// The sensitive `Authorization: Bearer` value for one injected credential.
-fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
+pub(super) fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
     let invalid =
         || Error::InvalidConfig("gmail credential is not a usable access token".to_owned());
     let text = std::str::from_utf8(token).map_err(|_| invalid())?.trim();
@@ -187,7 +211,7 @@ fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
     Ok(value)
 }
 
-fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
+pub(super) fn read_bounded_json(response: reqwest::blocking::Response) -> Option<Value> {
     let mut bytes = Vec::new();
     response
         .take(MAX_RESPONSE_BYTES + 1)

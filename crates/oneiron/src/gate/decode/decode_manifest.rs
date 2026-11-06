@@ -14,9 +14,7 @@ use crate::gate::ceiling::{
 };
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 use crate::gate::constants::{
-    ATTRIBUTION_HOLDER_ACTOR_KEY, ATTRIBUTION_HOLDER_MAX_BYTES_KEY,
-    ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
-    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
+    ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
     POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
     POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
     POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
@@ -182,6 +180,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(in crate::gate) entity_resolution_bands:
+        Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,
     pub(in crate::gate) carry_forward_confidence:
         Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
     pub(in crate::gate) judge_calibration:
@@ -307,8 +307,7 @@ fn decode_owner_policy_precedence(entries: &[(Value, Value)]) -> Option<PolicyOw
 }
 
 /// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
-/// refuse the row instead of silently widening its meaning. Holder entries
-/// are narrow-only relative to the vault limit and to other packs.
+/// refuse the row instead of silently widening its meaning.
 fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
     let Value::Map(entries) = value else {
         return None;
@@ -316,10 +315,7 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
     for (key, _) in entries {
         if !matches!(
             key.as_str()?,
-            ATTRIBUTION_REASON_MAX_BYTES_KEY
-                | ATTRIBUTION_RECEIPTS_PER_PASS_KEY
-                | ATTRIBUTION_HOLDER_REASON_BYTES_KEY
-                | ATTRIBUTION_PRECEDENCE_KEY
+            ATTRIBUTION_RECEIPTS_PER_PASS_KEY | ATTRIBUTION_PRECEDENCE_KEY
         ) {
             return None;
         }
@@ -328,45 +324,12 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
         return None;
     }
     let mut limits = AttributionLimits::default();
-    for (key, target) in [
-        (
-            ATTRIBUTION_REASON_MAX_BYTES_KEY,
-            &mut limits.reason_max_bytes,
-        ),
-        (
-            ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
-            &mut limits.receipts_per_pass,
-        ),
-    ] {
-        match single_map_value(entries, key) {
-            MapValue::Missing => {}
-            MapValue::Duplicate => return None,
-            MapValue::Present(value) => *target = value.as_u64().filter(|v| *v > 0)?,
-        }
-    }
-    match single_map_value(entries, ATTRIBUTION_HOLDER_REASON_BYTES_KEY) {
+    match single_map_value(entries, ATTRIBUTION_RECEIPTS_PER_PASS_KEY) {
         MapValue::Missing => {}
         MapValue::Duplicate => return None,
-        MapValue::Present(Value::Array(rows)) => {
-            for row in rows {
-                let Value::Map(fields) = row else { return None };
-                if fields.len() != 2 {
-                    return None;
-                }
-                let actor = required_string(fields, ATTRIBUTION_HOLDER_ACTOR_KEY)?;
-                let holder = crate::EntityId::from_hex(&actor).ok()?;
-                if holder.to_hex() != actor {
-                    return None;
-                }
-                let bytes = required_value(fields, ATTRIBUTION_HOLDER_MAX_BYTES_KEY)?
-                    .as_u64()
-                    .filter(|v| *v > 0)?;
-                if limits.holder_reason_bytes.insert(holder, bytes).is_some() {
-                    return None;
-                }
-            }
+        MapValue::Present(value) => {
+            limits.receipts_per_pass = value.as_u64().filter(|v| *v > 0)?;
         }
-        MapValue::Present(_) => return None,
     }
     Some(limits)
 }

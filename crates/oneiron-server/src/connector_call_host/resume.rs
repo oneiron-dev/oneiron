@@ -93,28 +93,24 @@ enum ResumeNext<S> {
     Stream { request_id: S, last_event_id: S },
 }
 
-/// One round's sealed resume state, until the call's row keeps it.
-pub(super) struct RoundResume {
-    generation: u64,
-    protocol: ConnectorResumeProtocol,
-    state: Zeroizing<Vec<u8>>,
-}
+/// Counts serialized bytes without retaining any of their contents.
+struct EncodedSize(usize);
 
-impl RoundResume {
-    /// Keeps this state on the call `call_ref`'s row, beside its round of
-    /// the questions `handle` names; a write that fails is logged.
-    pub(super) fn keep(&self, vault: &Vault, handle: &str, call_ref: &EntityId) {
-        if let Err(error) = vault.keep_connector_input_resume(
-            call_ref,
-            handle,
-            self.generation,
-            self.protocol,
-            &self.state,
-        ) {
-            tracing::warn!(%error, "connector call resume state not kept");
-        }
+impl std::io::Write for EncodedSize {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or(std::io::ErrorKind::InvalidData)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
+
+pub(super) use oneiron::outbound_consent::ConnectorResumeState as RoundResume;
 
 impl Worker {
     /// This round's resume state, its questions as the caller sees them;
@@ -159,8 +155,10 @@ impl Worker {
             session,
             next,
         };
-        let mut sealed = Zeroizing::new(Vec::new());
-        serde_json::to_writer(&mut *sealed, &state).ok()?;
+        let mut size = EncodedSize(0);
+        serde_json::to_writer(&mut size, &state).ok()?;
+        let mut sealed = Zeroizing::new(vec![0; size.0]);
+        serde_json::to_writer(&mut sealed.as_mut_slice(), &state).ok()?;
         Some(RoundResume {
             generation: self.generation,
             protocol,
@@ -321,7 +319,7 @@ impl ServedConnectorCallHost {
             .ok_or("connector_route_gone")?;
         let presented = self
             .presenting(route)
-            .present_again(&self.vault)
+            .present_again(&self.vault, Some((&binding.key_ref, binding.tool.as_str())))
             .ok_or("credential_not_presented")?;
         let live = LiveSession {
             client: self.client.clone(),
@@ -339,8 +337,8 @@ impl ServedConnectorCallHost {
                 let (tool, arguments, tool_headers) = {
                     let view =
                         FrozenToolCallView::read(&original).map_err(|_| "original_call_unread")?;
-                    let exchange =
-                        Exchange::new(&self.client, &view, None).ok_or("original_call_unread")?;
+                    let exchange = Exchange::new(&self.client, &view, &self.vault, None)
+                        .ok_or("original_call_unread")?;
                     (
                         exchange.tool.to_owned(),
                         exchange.arguments,

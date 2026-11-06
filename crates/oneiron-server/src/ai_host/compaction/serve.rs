@@ -21,7 +21,7 @@ use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability, LlmError,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence,
+    TierPrecedence, WorkClass, WorkContext,
 };
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{BudgetGuard, EntityId, LlmResponse};
@@ -213,6 +213,10 @@ impl ServedCompactionBackend {
         let run = self
             .models
             .funded_run(COMPACTION_RUN, guard.clone(), payer)
+            .with_work_context(WorkContext {
+                class: WorkClass::Foreground,
+                ..Default::default()
+            })
             .sourced(union_source_rows([sources, home_rows]));
         // A run's scope lends this call a live lease, as a reader child's
         // (FIX 11748): its admission meets the room the scope has left now,

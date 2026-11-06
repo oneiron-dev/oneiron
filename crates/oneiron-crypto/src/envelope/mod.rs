@@ -6,6 +6,8 @@ mod seal;
 
 pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad};
 
+use std::io::Write;
+
 use crate::codec::{Reader, check_len, put_lp8};
 use crate::error::{Error, Result};
 use crate::keys::{Argon2Cost, MLKEM1024_CIPHERTEXT_LEN};
@@ -157,6 +159,15 @@ pub enum Purpose {
     /// host's hybrid recipient (FIX 6598). The owner binds the member's
     /// binding digest in `key_id` and the binding again inside the plaintext.
     CheckpointHostOrderHoldsKey = 28,
+    /// One private-world side-table row, sealed under its exact world key. The
+    /// caller binds the world key id in `key_id`, its row family as the recipient,
+    /// and its native row identity and revisions as extra associated data.
+    WorldSideRow = 29,
+    /// One private world's window update, sealed under a key derived from the
+    /// world's key for a home that may not read the world to store and relay
+    /// between the owner's machines (DEC-0005 fix 8). Its `key_id` is a fresh
+    /// salt and a holder-only hint, never the world or the key.
+    SealedWorldUpdate = 30,
 }
 
 impl Purpose {
@@ -190,6 +201,8 @@ impl Purpose {
             26 => Self::ErasableKey,
             27 => Self::CheckpointHostOrderHolds,
             28 => Self::CheckpointHostOrderHoldsKey,
+            29 => Self::WorldSideRow,
+            30 => Self::SealedWorldUpdate,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
@@ -513,10 +526,29 @@ impl Envelope {
 
     /// The canonical bytes: header, then ciphertext.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.header_bytes.len() + self.ciphertext.len());
+        let mut out = Vec::with_capacity(self.len());
         out.extend_from_slice(&self.header_bytes);
         out.extend_from_slice(&self.ciphertext);
         out
+    }
+
+    /// Length of [`Self::to_bytes`]: header, then ciphertext.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.header_bytes.len() + self.ciphertext.len()
+    }
+
+    /// Whether [`Self::to_bytes`] is empty. Every valid envelope has a header.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.header_bytes.is_empty() && self.ciphertext.is_empty()
+    }
+
+    /// Writes the canonical bytes ([`Self::to_bytes`]) without joining them in
+    /// a new Vec.
+    pub fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        writer.write_all(&self.header_bytes)?;
+        writer.write_all(&self.ciphertext)
     }
 
     /// The authenticated header (authentic only after a successful open).

@@ -5,10 +5,6 @@
     "holder_cap": "vault"
   },
   "limits": {
-    "glossary_max_bytes": 262144,
-    "glossary_max_terms": 512,
-    "glossary_max_term_bytes": 1024,
-    "stage_timeout_seconds": 900,
     "cleanup": {
       "language_rules": {
         "English": {

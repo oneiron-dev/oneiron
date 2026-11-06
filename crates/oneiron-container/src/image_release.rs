@@ -27,10 +27,10 @@ pub use host_binding::{
 
 pub use manifest::{
     BinaryHash, Blake3Digest, ContractRevisions, DigestError, DocumentRef, EngineRelease,
-    FileArtifact, GuestBinaries, HostRequirements, IMAGE_RELEASE_KIND, IMAGE_RELEASE_SCHEMA,
-    ImageArch, ImageReleaseManifest, ImageVariant, KernelRef, KernelVersion, ManifestError,
-    ManifestFact, OciArtifacts, ReleaseArtifacts, Sha256Digest, SnapshotCompatibility, SourcePin,
-    StorageAbi, UnversionedContracts, VaultContractRevisions,
+    FileArtifact, GuestBinaries, GuestRequirements, HostRequirements, IMAGE_RELEASE_KIND,
+    IMAGE_RELEASE_SCHEMA, ImageArch, ImageReleaseManifest, ImageVariant, KernelRef, KernelVersion,
+    ManifestError, ManifestFact, OciArtifacts, ReleaseArtifacts, Sha256Digest,
+    SnapshotCompatibility, SourcePin, StorageAbi, UnversionedContracts, VaultContractRevisions,
 };
 pub use signature::{
     NoVerifierConfigured, ReleaseSignatureVerifier, SignatureEnvelope, SignatureOutcome,
@@ -38,7 +38,7 @@ pub use signature::{
 };
 pub use verify::{
     ArtifactCheck, ArtifactRole, CheckOutcome, HostCapabilities, HostCheck, HostOutcome,
-    HostRequirement, ObservedArtifacts, ReleaseVerification, verify_release,
+    HostRequirement, LaunchBackend, ObservedArtifacts, ReleaseVerification, verify_release,
 };
 
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,12 @@ pub const IMAGE_BLAKE3_UNMEASURED: &str = "image_blake3_unmeasured";
 pub const IMAGE_HOST_CAPABILITY_MISSING: &str = "image_host_capability_missing";
 /// The caller did not observe a capability the image needs.
 pub const IMAGE_HOST_CAPABILITY_UNOBSERVED: &str = "image_host_capability_unobserved";
+/// The manifest declares guest needs, but no guest kernel was observed: the
+/// host probe is not evidence of them.
+pub const IMAGE_GUEST_CAPABILITY_UNOBSERVED: &str = "image_guest_capability_unobserved";
+/// The backend the image will launch as was not selected, so no backend's
+/// checks ran.
+pub const IMAGE_LAUNCH_BACKEND_UNOBSERVED: &str = "image_launch_backend_unobserved";
 /// The image's engine writes an older storage ABI than the data it would open.
 pub const IMAGE_STORAGE_ABI_OLDER_THAN_HOST: &str = "image_storage_abi_older_than_host";
 /// No signature envelope exists. Today every image is unsigned.
@@ -98,6 +104,10 @@ pub enum ImageReleaseFact {
     HostCapabilityMissing,
     #[serde(rename = "image_host_capability_unobserved")]
     HostCapabilityUnobserved,
+    #[serde(rename = "image_guest_capability_unobserved")]
+    GuestCapabilityUnobserved,
+    #[serde(rename = "image_launch_backend_unobserved")]
+    LaunchBackendUnobserved,
     #[serde(rename = "image_storage_abi_older_than_host")]
     StorageAbiOlderThanHost,
     #[serde(rename = "image_signature_unavailable")]
@@ -121,6 +131,8 @@ impl ImageReleaseFact {
             Self::Blake3Unmeasured => IMAGE_BLAKE3_UNMEASURED,
             Self::HostCapabilityMissing => IMAGE_HOST_CAPABILITY_MISSING,
             Self::HostCapabilityUnobserved => IMAGE_HOST_CAPABILITY_UNOBSERVED,
+            Self::GuestCapabilityUnobserved => IMAGE_GUEST_CAPABILITY_UNOBSERVED,
+            Self::LaunchBackendUnobserved => IMAGE_LAUNCH_BACKEND_UNOBSERVED,
             Self::StorageAbiOlderThanHost => IMAGE_STORAGE_ABI_OLDER_THAN_HOST,
             Self::SignatureUnavailable => IMAGE_SIGNATURE_UNAVAILABLE,
             Self::SignatureUnverifiable => IMAGE_SIGNATURE_UNVERIFIABLE,
@@ -301,7 +313,9 @@ impl Default for ImageReleaseObservation {
 /// The ONE observe path every launch door and installer calls, before it
 /// starts or imports the image. `release` is the host-owned documents bound
 /// to the selected image; `None` records `image_release_manifest_absent` and
-/// `image_signature_unavailable`. Launch doors reach it through
+/// `image_signature_unavailable`. `backend` is the launch form the checks
+/// run for; `None` is an import with the backend not selected, never an
+/// inferred container. Launch doors reach it through
 /// [`observe_bound_release`], which reads the host's binding. Infallible:
 /// nothing is refused here.
 #[must_use]
@@ -310,6 +324,7 @@ pub fn observe_release(
     observed: &ObservedArtifacts,
     host: &HostCapabilities,
     verifier: &dyn ReleaseSignatureVerifier,
+    backend: Option<LaunchBackend>,
 ) -> ImageReleaseObservation {
     match release {
         None => ImageReleaseObservation::manifest_absent(IMAGE_SIGNATURE_POLICY),
@@ -320,6 +335,7 @@ pub fn observe_release(
                 observed,
                 host,
                 verifier,
+                backend,
             ),
             IMAGE_SIGNATURE_POLICY,
         ),

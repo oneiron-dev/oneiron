@@ -322,6 +322,9 @@ pub enum EngineLimit {
     /// Bytes of one CRL a seal fetches. Past it the row asks and the CRL is read
     /// whole.
     SealCrlBytes,
+    /// Bytes of one OCSP reply a seal fetches. Past it the row asks and the
+    /// reply is read whole.
+    SealOcspBytes,
     /// Bytes of one timestamp reply a seal fetches. Past it the row asks and the
     /// reply is read whole.
     SealTsaBytes,
@@ -370,6 +373,10 @@ pub enum EngineLimit {
     /// signature hole. Past it the row asks; a revision the seal writes grows
     /// its hole to hold it.
     SealContentsBytes,
+    /// Bytes of one seal's caller operation id; past it the row asks (FIX 6271).
+    SealOperationIdBytes,
+    /// Bytes of the operation id a seal sends its backend; past it the row asks.
+    SealBackendOperationIdBytes,
     /// Asks of every verb one organ call makes, against its install grant's own
     /// count, or this row's for a grant that keeps the factory one. Past it the
     /// row asks and each granted ask is answered.
@@ -438,6 +445,10 @@ pub enum EngineLimit {
     /// receipt, while new calls wait for the budget to drain. Measured against
     /// the host's own budget.
     OrganMemoryBytes,
+    /// Bytes of one object a mesh peer stages here; past it the row asks (FIX 6193).
+    OrganMeshObjectBytes,
+    /// Bytes one mesh connection holds staged at once; past it the row asks.
+    OrganMeshStagedBytes,
     /// Deadline jobs one caller has running at once: the recalls and searches
     /// a door answers at their deadline, each counted until its work ends,
     /// after its answer too (SCAN C030). Past it the job runs on and the row
@@ -514,6 +525,41 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Files one legacy codebase snapshot manifest names (FIX 74). Past
+    /// it the row asks whether everything is okay and the manifest is
+    /// kept whole.
+    CodebaseManifestFiles,
+    /// Result rows one search, recall or context-pack door was asked for:
+    /// the caller's requested count, measured where the door serves it.
+    /// Past it the row asks whether everything is okay and the whole
+    /// requested count is served.
+    RequestedResultRows,
+    /// Embedding vector dimensions one vault opened with, measured once
+    /// where its host serves it. Past it the row asks whether everything
+    /// is okay and the vault serves as opened.
+    EmbeddingDimensions,
+    /// Evidence rows one memory-reason question reads, measured where the
+    /// door serves it. A configurable question boundary, not a ceiling:
+    /// past it the row asks whether everything is okay and the whole
+    /// question is served.
+    MemoryReasonEvidenceRows,
+    /// Token budget offered for one memory-reason question, measured where
+    /// the door serves it. A configurable question boundary, not a ceiling:
+    /// past it the row asks whether everything is okay and the whole budget
+    /// is offered to the existing execution path.
+    MemoryReasonTokens,
+    /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
+    /// Past it the row asks whether everything is okay and the pack is
+    /// still served whole; nothing is refused or clamped.
+    ContextEdgeHops,
+    /// Neighbors one context-pack edge walk hydrates (FIX 63). Past it
+    /// the row asks whether everything is okay and the pack is still
+    /// served whole; nothing is refused or clamped.
+    ContextNeighbors,
+    /// Edges one context-pack retrieval budget selects (FIX 64). Past it
+    /// the row asks whether everything is okay and the pack is still
+    /// served whole; nothing is refused or clamped.
+    ContextSelectedEdges,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

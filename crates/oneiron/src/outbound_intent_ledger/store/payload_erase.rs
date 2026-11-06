@@ -78,6 +78,9 @@ pub(crate) fn erase_call_request_in_txn(
         ));
     }
     put_erased_record(vault, wtxn, record)?;
+    crate::campaign::enrollment::drop_enrollment_asks_of_call_in_txn(
+        vault, wtxn, attempt_id, call_seq,
+    )?;
     forget_remote_task_in_txn(vault, wtxn, &id)?;
     if let Some(erased) = get_ledger_record(vault, &*wtxn, &id)? {
         settle_reservation_in_txn(vault, wtxn, &erased)?;
@@ -108,7 +111,35 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
-        force_sync(self)?;
+        let synced = force_sync(self);
+        if erased {
+            self.wake_owner_shed();
+        }
+        synced?;
+        if erased {
+            self.finish_connector_resume_retirements_after_commit();
+            self.store
+                .finish_checkpoint_payload_retirements_after_commit();
+        }
+        Ok(erased)
+    }
+
+    /// The owner's per-call erase, admitted in the erase's own writer.
+    pub(crate) fn erase_outbound_call_request_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        attempt_id: AttemptId,
+        call_seq: u64,
+    ) -> IntentLedgerResult<bool> {
+        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
+        owner.revalidate_in_txn(self, &wtxn)?;
+        let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
+        wtxn.commit().map_err(Error::from)?;
+        let synced = force_sync(self);
+        if erased {
+            self.wake_owner_shed();
+        }
+        synced?;
         if erased {
             self.finish_connector_resume_retirements_after_commit();
             self.store

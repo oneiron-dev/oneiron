@@ -5,8 +5,8 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, Write};
-use std::time::Duration;
 
+use axum::body::Bytes;
 use oneiron_browser::BrowserBody;
 
 use crate::byte_line::{ByteLine, HeldBytes};
@@ -15,10 +15,19 @@ use crate::wire_telemetry::LimitQuestions;
 /// The decoded bytes a body keeps in memory before it spills to disk.
 pub(super) const INLINE_BODY_BYTES: usize = 256 * 1024;
 
-/// How long the producer waits before it asks the retained line again,
-/// once it was full: the same 50 ms poll as the paused-request
-/// driver's byte wait. Only paces; no wait ends a request.
-const BYTE_WAIT: Duration = Duration::from_millis(50);
+/// The converted allocation together with its original retained charge,
+/// pinned as one `Bytes` owner. Field order drops the bytes before the
+/// charge releases.
+struct RetainedBody {
+    bytes: Vec<u8>,
+    _held: Option<HeldBytes>,
+}
+
+impl AsRef<[u8]> for RetainedBody {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
 
 /// A complete response body that can be read back without first assembling
 /// its decoded bytes in memory again. `held` keeps the retained line's room
@@ -36,6 +45,22 @@ pub(super) enum SpooledBody {
 }
 
 impl SpooledBody {
+    /// The body's bytes without a second full copy: an inline body hands
+    /// over its buffer; a spilled body is read back once from its file.
+    /// The returned owner keeps the original retained charge with the bytes.
+    pub(super) fn into_bytes(self) -> io::Result<Bytes> {
+        let (bytes, held) = match self {
+            Self::Inline { bytes, held } => (bytes.into_inner(), held),
+            Self::Spilled { mut file, held, .. } => {
+                file.rewind()?;
+                let mut out = Vec::new();
+                file.read_to_end(&mut out)?;
+                (out, held)
+            }
+        };
+        Ok(Bytes::from_owner(RetainedBody { bytes, _held: held }))
+    }
+
     pub(super) fn len(&self) -> u64 {
         match self {
             Self::Inline { bytes, .. } => bytes.get_ref().len() as u64,
@@ -143,11 +168,11 @@ impl std::error::Error for ProduceBodyError {
 /// Reads a response's decoded chunks into a body that spills past the inline
 /// bound, refusing past `max_response_bytes` (FIX 12222): the count is taken
 /// before each chunk is spooled, so the temporary file never holds more than
-/// the cap, and the one cumulative reservation grows through
-/// [`ByteLine::try_resize`] to the bytes retained as they arrive, held with
-/// the body until it drops. `None` stays unmetered. Over-cap drops the
-/// response and the partial spool. Dropping this future drops the body and
-/// removes any temporary file.
+/// the cap, and the one cumulative reservation is charged through
+/// [`ByteLine::charge`] to the bytes retained as they arrive, never waited
+/// for, held with the body until it drops. `None` stays unmetered. Over-cap
+/// drops the response and the partial spool. Dropping this future drops the
+/// body and removes any temporary file.
 pub(super) async fn produce_body(
     mut response: reqwest::Response,
     max_response_bytes: usize,
@@ -166,7 +191,7 @@ pub(super) async fn produce_body(
             return Err(ProduceBodyError::TooLarge { limit });
         }
         let target = usize::try_from(total.saturating_add(len)).unwrap_or(usize::MAX);
-        hold_bytes(retained, body.held_mut(), target, questions).await;
+        hold_bytes(retained, body.held_mut(), target, questions);
         body.write_chunk(&chunk).map_err(ProduceBodyError::Spool)?;
         total += len;
     }
@@ -174,9 +199,10 @@ pub(super) async fn produce_body(
     Ok(body)
 }
 
-/// Room for `bytes` on the retained line, waited for at [`BYTE_WAIT`]
-/// while the line is full. `None` charges nothing.
-async fn hold_bytes(
+/// Charges `bytes` on the retained line, never waited for: past the free
+/// bytes the line owes the rest, so growth never holds some bytes while it
+/// waits for more. `None` charges nothing.
+fn hold_bytes(
     retained: Option<&ByteLine>,
     held: &mut Option<HeldBytes>,
     bytes: usize,
@@ -188,10 +214,5 @@ async fn hold_bytes(
     let Some(held) = held.as_mut() else {
         return;
     };
-    loop {
-        if line.try_resize(held, bytes, questions) {
-            return;
-        }
-        tokio::time::sleep(BYTE_WAIT).await;
-    }
+    line.charge(held, bytes, questions);
 }

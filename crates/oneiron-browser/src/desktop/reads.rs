@@ -33,7 +33,14 @@ impl DesktopSession {
         let read = match self.walk(key, shot, on, until) {
             Ok(snapshot) => Ok(snapshot),
             Err(error) => {
-                let listed = self.listed()?;
+                // A settle poll past its deadline reports its error,
+                // never a fresh recovery RPC past it: a slow list_windows
+                // kept a poll blocked past its cap (FIX 3782, REVIEW-4454
+                // P1). Other deadline reads keep window recovery.
+                if self.polling && until.is_some_and(|until| Instant::now() >= until) {
+                    return Err(error);
+                }
+                let listed = self.listed_until(if self.polling { until } else { None })?;
                 if listed.iter().any(|window| window.key == key) {
                     return Err(error);
                 }
@@ -94,7 +101,8 @@ impl DesktopSession {
     /// least [`WALK_MS_MOST`] and at most [`WALK_ON_MS_MOST`], with a node
     /// budget past every node it saw, and no longer one after it. With
     /// `until`, a walk asks for no more time than is left before it (at
-    /// least the driver's own second), and none follows once it passed.
+    /// least the driver's own second); no new walk starts once less than
+    /// that second is left, and none follows once it passed.
     pub(super) fn walk(
         &self,
         key: WindowKey,
@@ -125,8 +133,17 @@ impl DesktopSession {
             if !shot {
                 arguments["include_screenshot"] = Value::Bool(false);
             }
-            // The call's bound leaves the walk its whole time.
-            let bound = CALL + Duration::from_millis(asked.unwrap_or(0));
+            // A settle poll's bound leaves the walk its whole time,
+            // never past `until`: a hung walk fails at the deadline instead
+            // of stretching a settle past its cap (FIX 3782). Other reads
+            // (wait_for) keep the whole bound so an in-flight walk finishes
+            // and supplies its cut result.
+            let mut bound = CALL + Duration::from_millis(asked.unwrap_or(0));
+            if self.polling {
+                if let Some(until) = until {
+                    bound = bound.min(until.saturating_duration_since(Instant::now()));
+                }
+            }
             let reply = self
                 .mcp
                 .tool("get_window_state", arguments, Instant::now() + bound)
@@ -139,11 +156,14 @@ impl DesktopSession {
             let seen = count("nodes_visited").saturating_add(count("nodes_pending"));
             let spent = count("timeout_ms").max(asked.unwrap_or(1000));
             let late = until.is_some_and(|until| Instant::now() >= until);
+            // Below the driver's own second no new walk starts: it could
+            // only end past the deadline (FIX 3782).
+            let short = until.is_some_and(|until| ms_left(until) < 1000);
             match cut {
-                Some("node_budget") if !late => {
+                Some("node_budget") if !late && !short => {
                     budget = budget.saturating_mul(2).max(seen.saturating_add(1));
                 }
-                Some("timeout") if spent < most && !late => {
+                Some("timeout") if spent < most && !late && !short => {
                     walk_ms = Some(spent.saturating_mul(4).min(most));
                 }
                 _ => break (reply, asked),
@@ -206,14 +226,19 @@ impl DesktopSession {
         })
     }
 
-    pub(super) fn fingerprint(&mut self) -> Result<blake3::Hash, BrowserError> {
+    pub(super) fn fingerprint(
+        &mut self,
+        until: Option<Instant>,
+    ) -> Result<blake3::Hash, BrowserError> {
         self.polling = true;
-        let read = self.snapshot(false);
+        let read = self.snapshot_on(false, None, until);
         self.polling = false;
         print_of(&read?)
     }
 
     /// Waits for the window to settle after an action that began at `start`.
+    /// Each poll's walk is capped at the settle cap: a slow window's walk no
+    /// longer stretches a settle past [`SETTLE_CAP`] (FIX 3782).
     pub(super) fn settle(
         &mut self,
         before: blake3::Hash,
@@ -221,10 +246,32 @@ impl DesktopSession {
     ) -> Result<(), BrowserError> {
         let mut last = before;
         let mut changed_at = None;
+        let cap = start + SETTLE_CAP;
         loop {
             std::thread::sleep(POLL);
             let now = Instant::now();
-            let print = self.fingerprint()?;
+            if now >= cap {
+                return Ok(());
+            }
+            if ms_left(cap) < 1000 {
+                // Less than a driver's walk left: sleep the cap out
+                // instead of starting a walk that ends past it (FIX 3782).
+                std::thread::sleep(cap.saturating_duration_since(now));
+                return Ok(());
+            }
+            let print = match self.fingerprint(Some(cap)) {
+                Ok(print) => print,
+                // The cap expired under the poll: the settle is done, not
+                // failed (FIX 3782).
+                Err(BrowserError::CallTimeout(_) | BrowserError::Timeout(_))
+                    if Instant::now() >= cap =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
+            // Fresh clock: the fingerprint above takes whole walks.
+            let now = Instant::now();
             if print != last {
                 last = print;
                 changed_at = Some(now);

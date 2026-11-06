@@ -8,7 +8,7 @@
 //! proof, and the inference defaults the caller's Auto ceiling. Nothing here
 //! writes a policy itself.
 //!
-//! The owner's act on either setting is recorded in the commit that changes
+//! The owner's act on each setting is recorded in the commit that changes
 //! it (WILL-PLAN L13 row 01, Engine 10-19 02:4x): an [`OwnerAct`] of kind
 //! [`OwnerActKind::PolicySetting`], on the setting's reserved target
 //! ([`owner_act_target`]), with where the owner said so (audit only), the
@@ -162,6 +162,7 @@ fn run_embedded(
             owner_surface: owner.map(|_| ActSurface::ThisInstall),
             live_run: None,
             planner: None,
+            slip_issuer: None,
         },
     )?;
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)

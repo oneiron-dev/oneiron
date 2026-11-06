@@ -14,6 +14,7 @@ use oneiron::sync::{
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
+pub(crate) use super::selector_scope::selector_grant_scope;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -89,7 +90,7 @@ pub(super) async fn handle_window_sync(
             return Ok(ControlFlow::Continue(()));
         }
         if !protocol::is_residence_version(conn_state.protocol_version)
-            || payload.len() > 4096
+            || payload.len() > server.config.max_update_payload
             || !read_window_list(&server.root_doc).contains(&key)
         {
             return Err(ProtocolError::InvalidPayload(
@@ -185,6 +186,7 @@ pub(super) async fn handle_window_sync(
     if matches!(
         sub_tag,
         window_sub_tags::RESIDENCE_ACK
+            | window_sub_tags::RESIDENCE_HELD
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
             | window_sub_tags::WINDOW_INVALIDATE
@@ -305,6 +307,11 @@ pub(super) async fn handle_window_sync(
             {
                 vv = vv.intersection(&remote);
             }
+            // A held copy edit of this socket's is witnessed as taken, to
+            // this socket only, so its queue retires it (FIX 10598).
+            if let Some(held) = conn_state.held_window_vv.get(&key) {
+                vv.merge(held);
+            }
             let vv_response = protocol::encode_window_sync(
                 window_key,
                 window_sub_tags::VV_RESPONSE,
@@ -386,7 +393,7 @@ pub(super) async fn handle_window_sync(
             // 7107). Pads that did not install leave nothing persisted,
             // imported or relayed: the device is told, and sends the same
             // bytes again as the carrier (KEEP TODAY).
-            let receipt = super::window_pads::admit(server, &key, envelope);
+            let receipt = super::window_pads::admit(server, &key, envelope, &doc);
             if receipt.readiness == oneiron::sync::transport::WindowPadReadiness::NotReady {
                 direct_tx
                     .send(super::window_pads::receipt_frame(
@@ -399,8 +406,8 @@ pub(super) async fn handle_window_sync(
             }
             // FIX 7608 slice 4: a copy edit lands on its source before anything
             // persists, and is admitted again as the source edit it is. A ruled
-            // hold persists, imports, relays and acknowledges nothing: the
-            // device keeps the update and sends it again.
+            // hold persists, imports and relays nothing: its held record is
+            // kept and answered, and it is never applied (FIX 10598).
             let admitted = oneiron::sync::selector::admit_repo_sync_frame(
                 server.vault.as_ref(),
                 window_key,
@@ -408,8 +415,19 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             )
             .map_err(|e| ProtocolError::Persistence(format!("copy translation failed: {e}")))?;
-            let oneiron::sync::selector::RepoSyncAdmission::Admit(update) = admitted else {
-                return Ok(ControlFlow::Continue(()));
+            let oneiron::sync::selector::RepoSyncAdmission::Admit(update, landings) = admitted
+            else {
+                return super::window_copy::acknowledge_held(
+                    conn_state,
+                    &key,
+                    window_key,
+                    sub_tag,
+                    residence_seq,
+                    update,
+                    &doc.oplog_vv(),
+                    &receipt,
+                    direct_tx,
+                );
             };
             if let std::borrow::Cow::Owned(translated) = &update {
                 oneiron::sync::window::validate_window_update_residence_with_vault(
@@ -438,11 +456,26 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             );
             server
-                .persist_imported_update(&key, &persisted, write_auth)
+                .persist_imported_update(&key, &persisted, &landings, write_auth)
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
-            // Client sending Loro update bytes — import with origin for echo suppression
+            // Client sending Loro update bytes — import with origin for echo suppression.
+            // The machine this own-device socket proved sent them: their MESSAGE rows
+            // take the own-device lane as they land (FIX 12112).
             let origin = format!("conn:{conn_id}");
-            let imported = match doc.import_with(update, &origin) {
+            let positions = oneiron::sync::prepare_own_device_push_positions(
+                server.vault(),
+                conn_state.peer_machine(server.vault()),
+                &key,
+                &doc,
+                update,
+            );
+            let imported = match oneiron::sync::with_own_device_push(
+                server.vault(),
+                conn_state.peer_machine(server.vault()),
+                (&key, &doc),
+                update,
+                || doc.import_with(update, &origin),
+            ) {
                 Ok(imported) => imported,
                 Err(e) => {
                     // The accepted update stays durable: the window reloads
@@ -451,6 +484,12 @@ pub(super) async fn handle_window_sync(
                     return Err(ProtocolError::LoroImport(format!("{e}")));
                 }
             };
+            if imported.pending.is_none()
+                && let Some(positions) = positions.as_ref()
+                && let Err(error) = positions.finish(server.vault(), &doc)
+            {
+                tracing::warn!(%error, "optional own-device position import did not settle");
+            }
 
             // Each socket's delivery judges the update for the machine it
             // serves, so a private world's window reaches only the machines
@@ -478,6 +517,15 @@ pub(super) async fn handle_window_sync(
                 direct_tx.send(frame).map_err(|_| {
                     ProtocolError::Persistence("residence acknowledgment channel closed".into())
                 })?;
+            }
+            if imported.pending.is_none()
+                && let Some(positions) = positions
+            {
+                conn_state
+                    .asset_bodies
+                    .get_mut()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .retain_own_device_positions(&server.reassert_manager, &window, positions);
             }
         }
         window_sub_tags::VV_RESPONSE => {
@@ -751,11 +799,4 @@ pub(super) fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     } else {
         ProtocolError::Persistence(format!("selector filter failed: {e}"))
     }
-}
-
-/// The grant scope this single-vault selector server path checks: the one an
-/// owner's own-device grant is minted under (FIX 3134). Distinct from the
-/// lease ABI's internal vault id.
-pub(crate) fn selector_grant_scope() -> oneiron::FederationGrantScope {
-    oneiron::federation::own_device_residence_scope()
 }

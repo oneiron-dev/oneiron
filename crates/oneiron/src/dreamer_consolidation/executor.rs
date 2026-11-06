@@ -11,6 +11,7 @@ pub(super) mod extraction;
 mod failure;
 mod merge_resolution;
 mod partition_run;
+mod partition_window;
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
@@ -532,6 +533,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
         }
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::TYPING_BATCH_ATTEMPT {
+            return self.run_typing_batch(attempt, ctx).await;
+        }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::follower::FOLLOWER_ATTEMPT {
             return self.run_follower(attempt, ctx).await;
         }
@@ -693,39 +697,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 };
             }
         };
-        if plan.attempt_id() != attempt.status.attempt.id
-            || !plan.matches_queued(&attempt.status.payload.input)
-            || (ctx.prepared_wake.is_some()
-                && self.scope.as_ref().is_some()
-                && self.scope.as_ref() != plan.scope())
-        {
-            return Err(invalid_consolidation(
-                "executor scope/identity differs from prepared attempt",
-            ));
-        }
-        let branch_scope = super::branch_scope::pin_execution_scope(
-            ctx.vault,
-            attempt.status.attempt.id,
-            plan.scope(),
-        )?;
-        if branch_scope.as_ref() != plan.scope() {
-            return Err(invalid_consolidation(
-                "prepared branch scope changed after the wake pin",
-            ));
-        }
-        // FIX 7729: a child its preparation narrowed holds only what it runs.
-        let narrowed = plan.branch().bucket_set();
-        if decode_partition_payload(&attempt.status.payload.input)
-            .is_ok_and(|queued| queued.bucket_set() != narrowed)
-        {
-            super::running_buckets::record_running_buckets(
-                ctx.vault,
-                attempt.status.attempt.id,
-                attempt.status.attempt.attempt_count,
-                &narrowed,
-            )?;
-        }
+        self.pin_prepared_partition(attempt, ctx, plan)?;
         self.execute_prepared_partition(attempt, ctx, plan, wake)
             .await
+    }
+
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(
+            &'w crate::dreamer_runner::DreamerAdmittedAttempt,
+            WakeAttemptContext<'w>,
+        )],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.run_partition_window(window).await
     }
 }

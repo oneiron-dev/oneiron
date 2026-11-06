@@ -90,6 +90,11 @@ pub const COACH_TRAINING_RUN_FACET: &str = "coach.training_run";
 /// The nightly offer pass: each pending offer reaches every owner's inbox
 /// once, and each offer whose check date came queues its promise check.
 pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
+/// The nightly drafter retrain (FIX 12569, I5-DRAFTER = A): the vault's own
+/// draft model retrained on its own traffic. The host runs
+/// [`Vault::run_coach_drafter_retrain`], which pins the policy revision and
+/// the night's cutoff and records how the night ended.
+pub const COACH_DRAFTER_RETRAIN_FACET: &str = "coach.drafter_retrain";
 /// Autoresearch (OF-351): one selection round for each bound campaign whose
 /// measured evidence moved, under the campaign's lease. It runs on the host
 /// (FIX 1331), whose judge tells each round whether the campaign's goal is
@@ -146,6 +151,16 @@ pub const COACH_FORK_PROMOTE_FACET: &str = "coach.fork_promote";
 /// when its turns moved, and each quiet thread with open TASKs a Proposed
 /// nudge for the room's host. A closed-form job.
 pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
+/// Fold suggestions per agent type (FIX 12572): which kinds of spans each
+/// agent type folds and keeps folded, as a Proposed fold default for that
+/// type in the owner's run tray. A suggestion only, and a closed-form job
+/// (see [`super::fold_suggestions`]).
+pub const COACH_FOLD_SUGGESTIONS_FACET: &str = "coach.fold_suggestions";
+/// Board layout suggestions per agent type (FIX 12572): what most agents of
+/// one wake role share in their context board layouts, as a Proposed default
+/// layout for that role in the owner's run tray. A suggestion only, and a
+/// closed-form job (see [`super::layout_suggestions`]).
+pub const COACH_LAYOUT_SUGGESTIONS_FACET: &str = "coach.layout_suggestions";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
@@ -156,6 +171,12 @@ pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_thresh
 pub const COACH_THINK_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.think_threshold.proposal";
 /// Predicate of the Coach's Proposed room nudge, its subject the room's host.
 pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
+/// Predicate of the Coach's Proposed fold default, its subject the agent
+/// type's AGENT_DEF row.
+pub const COACH_FOLD_DEFAULT_PREDICATE: &str = "coach.fold_default.suggestion";
+/// Predicate of the Coach's Proposed board layout default for one wake role,
+/// its subject the Coach.
+pub const COACH_LAYOUT_DEFAULT_PREDICATE: &str = "coach.board_layout_default.suggestion";
 /// One room nudge as `read` reads it in `txn`, for the host's own upkeep
 /// read and voice (OF-417); `None` for anything else. It writes nothing.
 pub(crate) fn room_upkeep_nudge_in_txn(
@@ -168,7 +189,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 19] = [
+const HOST_FACETS: [&str; 20] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -190,9 +211,11 @@ const HOST_FACETS: [&str; 19] = [
     // under the fixed dedupe key the owner's run-now door shares.
     crate::feedback::COACH_FEEDBACK_SWEEP_FACET,
     COACH_FEEDBACK_DELIVERY_FACET,
+    // FIX 12569: one pending retrain per vault, under the fixed facet key.
+    COACH_DRAFTER_RETRAIN_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 10] = [
+const MAINTENANCE_FACETS: [&str; 12] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -204,6 +227,8 @@ const MAINTENANCE_FACETS: [&str; 10] = [
     super::agent_health::COACH_HEALTH_TRENDS_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,
+    COACH_FOLD_SUGGESTIONS_FACET,
+    COACH_LAYOUT_SUGGESTIONS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned
@@ -292,8 +317,9 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Atomically admits the next queued host-run Coach job. The host runs it
-    /// through the `Vault::run_coach_*` door its facet names and settles it on
-    /// the queue; the wake driver never calls this.
+    /// through the `Vault::run_coach_*` door its facet names. A separate Coach
+    /// consumer settles it on the queue; an opted-in wake executor instead
+    /// uses the wake driver's normal dispatch and settlement.
     ///
     /// # Errors
     ///
@@ -415,7 +441,9 @@ impl Vault {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)
         })?;
-        crate::task_verb::issue_training_offer_asks(self, now);
+        if training_offers_at_home(self)? {
+            crate::task_verb::issue_training_offer_asks(self, now);
+        }
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
@@ -656,6 +684,20 @@ fn notify_offer_in_txn(
     Ok(())
 }
 
+/// Whether this device should issue training-offer and swap questions. Before
+/// the first home election every device keeps today's behavior; afterwards
+/// only the elected home asks, while every device keeps its idempotent upkeep.
+/// The shared swap-ask issuer enforces this itself, so post-score and nightly
+/// calls alike stay single-issuer.
+pub(crate) fn training_offers_at_home(vault: &Vault) -> Result<bool> {
+    let store = DreamerRunnerStore::new(vault);
+    let Some(home) = store.home_node_designation()? else {
+        return Ok(true);
+    };
+    let local = store.local_home_node_candidate(true, true, false)?;
+    Ok(home.node_id == local.node_id)
+}
+
 /// The nightly offer pass. Each pending offer reaches every owner's inbox as
 /// one NOTIFICATION keyed by offer and owner, so a replayed night delivers
 /// nothing twice and the owner's seen and acked marks stay theirs. Each
@@ -674,6 +716,7 @@ pub(super) fn run_training_offers(
     let parent = Some(attempt.status.attempt.id);
     let run_id = attempt.status.attempt.run_id.as_deref();
     vault.requeue_authorized_training_runs(parent, run_id, now)?;
+    vault.requeue_running_training_runs(parent, run_id, now)?;
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
     for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
@@ -685,6 +728,12 @@ pub(super) fn run_training_offers(
         }
     }
     if pending.is_empty() && due.is_empty() {
+        // No offer work, but a scored run may still wait for its swap ask:
+        // the home asks independently of offers (post-score asks are
+        // suppressed off-home, so this fallback must not depend on them).
+        if training_offers_at_home(vault)? {
+            crate::task_verb::issue_training_swap_asks(vault, now);
+        }
         return Ok(());
     }
     let store = DreamerRunnerStore::new(vault);
@@ -709,8 +758,10 @@ pub(super) fn run_training_offers(
         }
         Ok(())
     })?;
-    crate::task_verb::issue_training_offer_asks(vault, now);
-    crate::task_verb::issue_training_swap_asks(vault, now);
+    if training_offers_at_home(vault)? {
+        crate::task_verb::issue_training_offer_asks(vault, now);
+        crate::task_verb::issue_training_swap_asks(vault, now);
+    }
     Ok(())
 }
 

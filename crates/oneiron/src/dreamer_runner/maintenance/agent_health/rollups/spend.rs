@@ -61,9 +61,16 @@ pub(super) fn read_spend(
             continue;
         };
         let record = &agents[member.index].0;
+        if record.settled_at.is_none() {
+            continue;
+        }
         let newer = newest.get(name.as_str()).is_none_or(|held| {
             let held = &agents[*held].0;
-            (held.updated_at, held.id.as_bytes()) <= (record.updated_at, record.id.as_bytes())
+            held.settled_at
+                .zip(record.settled_at)
+                .is_some_and(|(held_at, at)| {
+                    (held_at, held.id.as_bytes()) <= (at, record.id.as_bytes())
+                })
         });
         if newer {
             newest.insert(name.as_str(), member.index);

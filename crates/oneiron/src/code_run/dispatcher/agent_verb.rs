@@ -8,7 +8,9 @@ use serde_json::Value;
 use crate::EntityId;
 use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
-use crate::code_run::payload::decode_self_dispatch_outcome;
+use crate::code_run::payload::{
+    agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+};
 use crate::code_run::replay::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayGeneration, CodeRunReplayRecord,
 };
@@ -20,6 +22,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
+use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
@@ -46,6 +49,9 @@ const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
 /// (FIX 3194): nothing was written, so the run parks, and a replay of the
 /// step asks the door again.
 const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
+
+/// A media call's admission trapped before its physical effect ran.
+const MEDIA_STEP_TRAPPED: &str = "media_step_trapped";
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -132,15 +138,29 @@ impl HostSelfDispatcher<'_> {
         let origin = origin
             .with_hook_ask(self.parked_ask(&parked, site)?)
             .with_step(site.map(|_| invocation));
+        // Only the native point-view producer is covered here. Other verbs
+        // keep their existing unknown ledger until their reads are captured.
+        let read_capture =
+            (call.verb == AgentVerb::VaultGet && site.is_some()).then(ReadCapture::default);
+        let origin = match &read_capture {
+            Some(capture) => origin.with_read_capture(capture.clone()),
+            None => origin,
+        };
+        let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            let answer = self.program_door_call(&**door, &call, &origin, invocation)?;
-            return Ok(connector_call_answer(
+            let answer = self.program_door_call(&**door, &call, &origin, invocation);
+            let captured = read_capture.and_then(|capture| capture.finish());
+            let outcome = connector_call_answer(
                 call.verb,
                 worded(
-                    answered(self.keep_no_secret_value(call.verb, answer)),
+                    answered(self.keep_no_secret_value(call.verb, answer?)),
                     &**door,
                 ),
-            ));
+            );
+            if let (Some(site), SelfDispatchOutcome::AgentVerb(answer)) = (read_site, &outcome) {
+                self.note_verb_read_worlds(site, answer, captured);
+            }
+            return Ok(outcome);
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
@@ -222,6 +242,22 @@ impl HostSelfDispatcher<'_> {
                     )?;
                 return Err(error);
             }
+            Err(error @ Error::DurableStepTrapped) => {
+                receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                    0,
+                    &SelfCall::AgentVerb(call),
+                    &never_ran_mark(MEDIA_STEP_TRAPPED),
+                    0,
+                    0,
+                )?);
+                self.storage
+                    .put_code_run_replay_record_if_generation_with_heal(
+                        &receipt,
+                        Some(generation),
+                        None,
+                    )?;
+                return Err(error);
+            }
             Err(error) => return Err(error),
         };
         // A receipt keeps its call's answer as its record's first row.
@@ -239,6 +275,8 @@ impl HostSelfDispatcher<'_> {
             true,
             site.run_id,
         )?;
+        // The replay row is persisted; the door releases what the answer held (FIX 10633).
+        door.answer_recorded();
         Ok(outcome)
     }
 
@@ -591,8 +629,8 @@ fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
 }
 
 /// The mark a write's receipt keeps when it never ran: a verb hook stopped it
-/// ([`VERB_HOOK_STOPPED`]), or no provider answered it
-/// ([`PROVIDER_UNAVAILABLE`]).
+/// ([`VERB_HOOK_STOPPED`]), no provider answered it ([`PROVIDER_UNAVAILABLE`]),
+/// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
         effect: SelfEffect::AgentVerb,
@@ -608,6 +646,7 @@ fn never_ran(row: &CodeRunBridgeCall) -> bool {
         Ok(SelfDispatchOutcome::Denied(refused))
             if refused.reason_codes == [VERB_HOOK_STOPPED]
                 || refused.reason_codes == [PROVIDER_UNAVAILABLE]
+                || refused.reason_codes == [MEDIA_STEP_TRAPPED]
     )
 }
 
@@ -710,34 +749,30 @@ fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
         .wait_ref()
 }
 
-/// A verb call's identity: the verb and its input with object keys sorted, so
-/// a re-run that writes the same fields in another order makes the same call.
-fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
-    fn sorted(value: &Value) -> Value {
-        match value {
-            Value::Object(fields) => {
-                let mut fields: Vec<_> = fields.iter().collect();
-                fields.sort_unstable_by_key(|(name, _)| *name);
-                Value::Object(
-                    fields
-                        .into_iter()
-                        .map(|(name, value)| (name.clone(), sorted(value)))
-                        .collect(),
-                )
-            }
-            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-            other => other.clone(),
-        }
-    }
-    let mut identity = verb.as_bytes().to_vec();
-    identity.push(0);
-    identity.extend(sorted(input).to_string().into_bytes());
-    identity
-}
-
 /// The identity of the verb call a receipt row recorded, if the row is one.
 fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
     let (verb, input) = recorded_call(row)?;
+    if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
+        if !input.is_empty() {
+            return None;
+        }
+        let rmpv::Value::Map(fields) = &row.request else {
+            return None;
+        };
+        let (_, rmpv::Value::Binary(digest)) = fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("input_identity"))?
+        else {
+            return None;
+        };
+        if digest.len() != 32 {
+            return None;
+        }
+        let mut identity = verb.as_bytes().to_vec();
+        identity.push(0);
+        identity.extend_from_slice(digest);
+        return Some(identity);
+    }
     Some(call_identity(verb, &serde_json::from_str(input).ok()?))
 }
 

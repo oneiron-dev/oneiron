@@ -101,6 +101,7 @@ impl crate::Vault {
                 state: ThreadState::Open,
                 locator,
                 drift: None,
+                body: None,
             };
             self.write_thread_head_in_txn(
                 txn,

@@ -1,0 +1,14 @@
+[package]
+name = "oneiron-skill-attribution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Skill attribution vocabulary of the oneiron engine: outcome evidence, verdicts and splits, judgments and edit proposals"
+repository.workspace = true
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+
+[lints]
+workspace = true

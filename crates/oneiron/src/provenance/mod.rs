@@ -146,8 +146,9 @@ mod actor_stamp;
 pub use actor_stamp::ActorStamp;
 pub(crate) use actor_stamp::{
     actor_stamp, actor_stamp_in_txn, actor_stamp_tokens_remain_in_txn,
-    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn,
-    release_held_actor_stamps_in_txn, resolve_actor_stamp, resolve_actor_stamp_in_txn,
+    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn, erase_actor_stamp_uses_in_txn,
+    record_actor_stamp_uses_in_txn, release_held_actor_stamps_in_txn, resolve_actor_stamp,
+    resolve_actor_stamp_in, resolve_actor_stamp_in_txn, tokens_named_since,
 };
 mod actor_substrate;
 mod archive;
@@ -221,12 +222,13 @@ use rmpv::Value;
 /// replay capsules' bodies (FIX 5718, FIX 6278). A delete keeps every key,
 /// so its restore window stays: this door is the one erase cause.
 pub(crate) fn erase_row_provenance_in_txn(
-    store: &crate::store::Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
     erase: bool,
 ) -> Result<()> {
-    erase_row_provenance_without_attempt_payloads_in_txn(store, txn, row, erase)?;
+    let store = write.store;
+    erase_row_provenance_without_attempt_payloads_in_txn(write, txn, row, erase)?;
     // Each planned intent an erased row asked or whose plan seats it keeps
     // only its erased form (Engine 10-22), first, so the attempt payload pass
     // finds the intents its asker's erase took (FIX 9181). An erased dispatch
@@ -242,7 +244,7 @@ pub(crate) fn erase_row_provenance_in_txn(
         crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
             store, txn, &erased,
         )?;
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(write, txn, row)?;
     }
     Ok(())
 }
@@ -251,11 +253,12 @@ pub(crate) fn erase_row_provenance_in_txn(
 /// row that pass itself erases (a BYOA task's staged job, FIX 7502), so no
 /// erase reads the ledger again from inside its own pass.
 pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
-    store: &crate::store::Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
     erase: bool,
 ) -> Result<()> {
+    let store = write.store;
     // A held row keeps its bodies whichever door erases it, as does a pad
     // whose world or sealed claim is held (OF-470); the refusal is queued for
     // the hold log like every other door's.
@@ -264,15 +267,21 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     // A step claim's response pins go before anything of it does, on an
     // erase and a delete alike: each exact version no other claim holds goes
     // with them, and an erase retires or owes its kept copies (FIX 6225).
-    crate::llm::release_step_response_pins_in_txn(store, txn, row, erase)?;
+    crate::llm::release_step_response_pins_in_txn(write, txn, row, erase)?;
     // An earlier erase's debt on this row's inline ASSET body settles at
     // its final teardown, by any door (FIX 6225).
     #[cfg(unix)]
     crate::store::settle_inline_asset_in_txn(store, txn, row, erase)?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
+    #[cfg(unix)]
+    if erase {
+        crate::code_run::retire_sourced_code_outputs_in_txn(store, txn, row)?;
+    }
     // The cause is read before the descriptors go.
     let held: Vec<[u8; 32]> = if erase {
-        body::owned_bodies_in_txn(store, txn, row)?
+        let bodies = body::owned_bodies_in_txn(store, txn, row)?;
+        crate::code_run::erase_retained_result_marks_in_txn(store, txn, &bodies)?;
+        bodies
             .iter()
             .filter_map(|body| body.state.held().map(|held| held.blake3))
             .collect()

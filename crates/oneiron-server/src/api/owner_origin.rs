@@ -33,7 +33,7 @@ use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use oneiron::origin::secret_publication::RepoDestinationVisibility;
 use serde::{Deserialize, Serialize};
 
-use super::openapi::OwnerRoute;
+use super::openapi::{OwnerRoute, RestShape};
 use super::owner_routes::{OwnerTable, blocking, owner};
 use super::query_params;
 use crate::api::body_spool::OwnerJsonBody;
@@ -50,6 +50,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-authority",
                 summary: "Origin authority.",
                 row: None,
+                shape: None,
             },
             get(origin_authority),
         ),
@@ -59,6 +60,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-authority",
                 summary: "Cut origin authority.",
                 row: None,
+                shape: Some(RestShape::json(
+                    cut_origin_authority_body_schema,
+                    origin_authority_schema,
+                )),
             },
             post(cut_origin_authority),
         ),
@@ -68,6 +73,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-mirror",
                 summary: "Origin mirror.",
                 row: None,
+                shape: None,
             },
             get(origin_mirror),
         ),
@@ -77,6 +83,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-mirror",
                 summary: "Set origin mirror.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_origin_mirror_body_schema,
+                    origin_mirror_target_schema,
+                )),
             },
             post(set_origin_mirror),
         ),
@@ -86,6 +96,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-mirror",
                 summary: "Clear origin mirror.",
                 row: None,
+                shape: None,
             },
             delete(clear_origin_mirror),
         ),
@@ -95,6 +106,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-mirror/push",
                 summary: "Push origin mirror.",
                 row: None,
+                shape: Some(RestShape::json(
+                    push_origin_mirror_body_schema,
+                    origin_mirror_run_schema,
+                )),
             },
             post(push_origin_mirror),
         ),
@@ -104,6 +119,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/origin-mirror/strategy",
                 summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
                 row: None,
+                shape: Some(RestShape::json(
+                    set_origin_mirror_strategy_body_schema,
+                    origin_mirror_target_schema,
+                )),
             },
             post(set_origin_mirror_strategy),
         ),
@@ -203,6 +222,9 @@ async fn cut_origin_authority(
     payload: OwnerJsonBody<CutOriginAuthority>,
 ) -> Result<Json<OriginAuthority>, EnvelopedApiError> {
     let owner = owner(&auth, &server)?;
+    // Where the owner's cut came from, for the act each cut it signs records
+    // (FIX 15740): the host's own reading of the request, never its input.
+    let surface = crate::api::facade::owner_binding::act_surface(&auth);
     let request = payload.read(&server).await?;
     let row = blocking(move || {
         let vault = server.vault();
@@ -222,6 +244,7 @@ async fn cut_origin_authority(
         // The proof is revalidated where the row commits (FIX 8214).
         Ok(vault.set_served_origin_authority_as_owner(
             &owner,
+            surface,
             &request.repo,
             request.expected_epoch,
             request.residence,

@@ -52,6 +52,10 @@ use loro::{CommitOptions, LoroDoc};
 ///
 /// A file-plane ASSET packs as the carrier of its manifest, its body
 /// reference beside it (FIX 5489, `asset_body::references::mirror_ref`).
+///
+/// A row bound to a source audience, or whose words came from one, stays on
+/// this vault: its binding does not travel (FIX 12559,
+/// `source_audience::withheld_from_replication_in`).
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
@@ -60,6 +64,7 @@ pub(super) fn window_packing_excludes_entity(
     let rtxn = vault.store.env.read_txn()?;
     if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
         || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
+        || crate::source_audience::withheld_from_replication_in(vault, &rtxn, id)?
     {
         return Ok(true);
     }
@@ -196,6 +201,7 @@ pub(super) fn scrub_local_only_carriers(
     }
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -331,6 +337,7 @@ pub(super) fn scrub_local_claim_carriers(
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, ids)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -434,6 +441,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         map_delete(&entities, raw_key)?;
     }
     crate::sync::row_birth::drop_orphan_births(doc)?;
+    crate::sync::origin_positions::drop_unbound(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
@@ -479,6 +487,7 @@ pub(super) fn scrub_redacted_attribution_carriers(
     }
     if !keys.is_empty() {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(!keys.is_empty())
@@ -517,10 +526,15 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 6870: and an erased repo's portable manifest.
+    crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
     // FIX 3877: and an origin claim carrier that names an erased actor.
     crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
+    // FIX 12769: and a section-fit receipt carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(key))?;
     // FIX 6279: and a birth carrier whose maker this vault erased.
     crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;

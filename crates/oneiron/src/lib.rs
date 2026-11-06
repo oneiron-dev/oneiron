@@ -12,8 +12,9 @@
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
-pub mod config;
+pub use oneiron_store::config;
 pub mod deletion;
+pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
     //! defined in `oneiron-base`. The `regenerates` proofs over stored rows are
@@ -36,6 +37,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
 pub mod limit_ask;
@@ -44,14 +46,16 @@ pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
 pub mod off_record;
-pub(crate) mod overlay_db;
+pub(crate) use oneiron_store::overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
+pub(crate) mod room_codec;
 pub mod registry {
     //! Entity-type registry: defined in `oneiron-contracts` and named through
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
     pub use oneiron_base::registry::*;
 
+    pub mod export;
     pub mod pack_byte_map;
 
     // Only the `#[cfg(test)]` type-registry suite names this door.
@@ -59,10 +63,17 @@ pub mod registry {
     pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;
 }
 pub use oneiron_base::request_limits;
-pub mod heap_drop;
+pub use oneiron_store::heap_drop;
 pub mod result_body;
 pub mod result_memory;
-pub(crate) mod session_overlay;
+pub(crate) use oneiron_store::session_overlay;
+/// Core's own test binary registers the session overlay's allocation
+/// observer, as it did when the overlay lived in this crate; no other build
+/// installs it.
+#[cfg(test)]
+#[global_allocator]
+static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedAllocator =
+    session_overlay::hygiene_tests::ObservedAllocator;
 pub(crate) mod side_table;
 pub mod slim;
 pub mod store;
@@ -73,7 +84,8 @@ mod vault;
 pub mod window_key;
 pub use oneiron_base::work_line;
 mod task_work_line;
-pub mod write_envelope;
+pub use oneiron_store::write_envelope;
+pub(crate) mod carry_forward_admission;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub use oneiron_base::analyzer;
 pub(crate) mod bm25;
@@ -91,12 +103,12 @@ pub use oneiron_base::live_rows;
 pub mod claim_check;
 pub mod inference_context;
 pub mod llm;
-pub mod model_binding;
+pub use oneiron_model::model_binding;
 pub mod model_decision;
 pub mod model_step_context;
 pub(crate) mod model_step_effect;
 pub mod model_step_error;
-pub mod model_step_record;
+pub use oneiron_store::model_step_record;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod ppr_community;
@@ -106,8 +118,8 @@ pub mod reaction;
 pub mod rerank;
 pub mod research_budget;
 pub mod retrieval_depth;
-pub mod run_budget;
-pub mod teacher_probe_policy;
+pub use oneiron_model::teacher_probe_policy;
+pub use oneiron_run_budget::run_budget;
 mod vault_live_rows;
 pub use oneiron_base::retrieval_quality;
 pub mod saved_query;
@@ -119,6 +131,7 @@ pub use oneiron_base::tokenizer;
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
+pub mod clipboard;
 pub mod companion;
 pub mod corpus;
 pub use oneiron_base::extraction_eval;
@@ -140,6 +153,7 @@ pub mod policy_model;
 pub mod receipt;
 pub mod share;
 pub mod share_travel;
+pub mod source_audience;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -147,7 +161,7 @@ pub mod world_keys;
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
-pub mod channel_identity_manifest;
+pub use oneiron_authority::channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
 pub mod counterparty_contact;
@@ -173,6 +187,7 @@ pub mod guest_document_share;
 pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
+pub mod mail_pack;
 pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
@@ -196,7 +211,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
-pub mod web_fetch;
+pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;
 pub mod agent_dispatch;
@@ -232,6 +247,7 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
 pub use oneiron_base::posterior;
 pub mod skill;
@@ -242,6 +258,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.
@@ -252,7 +270,7 @@ pub mod artifact_hosting;
 pub mod blob_artifact;
 pub mod browser_library;
 pub mod build_cache;
-pub mod bundle_generations;
+pub use oneiron_store::bundle_generations;
 pub mod checkout;
 pub mod code_artifact;
 pub mod code_document;
@@ -272,11 +290,11 @@ pub mod edit_settle;
 pub mod file_secret_marks;
 pub mod git_wire;
 pub mod inference_snapshot;
-pub(crate) mod key_material;
+pub(crate) use oneiron_store::key_material;
 pub mod merge_queue;
 pub mod office_body;
 pub mod origin;
-pub(crate) mod receive_scan;
+pub(crate) use oneiron_store::receive_scan;
 pub mod repo_mutation;
 pub mod scan_check;
 pub mod scope_summary;
@@ -399,9 +417,9 @@ pub use crate::compaction::{
     CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
     CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
-    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
-    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
-    decode_epoch_summary_body, encode_epoch_summary_body,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody, MarginLaw, SwapPlan,
+    ValidatedCompactionPacket, admit_compaction_packet, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -508,8 +526,8 @@ pub use crate::llm::{
     IncompleteReason, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError,
-    TierPrecedence, UnsupportedCapability,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,

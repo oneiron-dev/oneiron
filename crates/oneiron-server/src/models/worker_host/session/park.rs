@@ -89,11 +89,20 @@ pub(super) fn mib(bytes: u64) -> u64 {
 }
 
 /// Whether a host copy of `bytes` fits in the memory this process may
-/// still take with [`SNAPSHOT_HEADROOM_BYTES`] left; `None` when no source
-/// measures that memory.
-pub(super) fn host_room(bytes: u64) -> Option<bool> {
-    let available = available_memory_bytes()?;
-    Some(bytes.saturating_add(SNAPSHOT_HEADROOM_BYTES) <= available)
+/// still take with [`SNAPSHOT_HEADROOM_BYTES`] left, past the plaintext
+/// bytes it already holds; `None` when no source measures that memory.
+/// The memory read stays live on every call but runs off the runtime: it
+/// is a blocking `/proc` read (FIX 11290). Held and reserved bytes are
+/// charged, so two racers of the same headroom do not both admit
+/// (FIX 11289). A screen only: the admission itself is `reserve_host`.
+pub(super) async fn fits_host(bytes: u64) -> Option<bool> {
+    let available = tokio::task::spawn_blocking(available_memory_bytes)
+        .await
+        .ok()??;
+    let want = bytes
+        .saturating_add(SNAPSHOT_HEADROOM_BYTES)
+        .saturating_add(registry::host_committed_bytes());
+    Some(want <= available)
 }
 
 /// Whether the device room `ledger` knows leaves room for `bytes` past the
@@ -230,6 +239,9 @@ async fn park(candidate: Candidate) {
                 })
         {
             session.phase = Phase::Ready;
+            // A skip parks again only on its next commit, which installs a
+            // fresh basis; the retained authority is dead weight from here.
+            session.basis = None;
         }
     }
 }
@@ -243,8 +255,11 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
         return Err(None);
     };
     let scope = &candidate.basis.scope;
-    if scope.read_scope != candidate.key.anchor.read_scope || !scope.dependencies.precise {
+    if scope.read_scope != candidate.key.anchor.read_scope {
         return Err(Some(Skip::Unsupported));
+    }
+    if !scope.dependencies.precise {
+        return Err(Some(Skip::Imprecise));
     }
     let budget = lifecycle::budget(&vault_ref);
     if budget.limit() == 0 {
@@ -263,7 +278,7 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     if estimate.is_some_and(|bytes| bytes > budget.limit()) {
         return Err(Some(Skip::Oversize));
     }
-    room(estimate.unwrap_or(0))?;
+    room(estimate.unwrap_or(0)).await?;
     let ledger = super::super::device_ledger(&candidate.worker_id);
     if estimate.is_some_and(|bytes| !device_room(ledger.as_deref(), bytes)) {
         return Err(Some(Skip::NoRoom));
@@ -273,6 +288,13 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
         ledger.hold(&holder, mib(bytes));
     }
     let parked = seal(candidate, &vault, admission, budget).await;
+    // The export measured the region: the device hold carries its actual
+    // bytes now, not the residency estimate (FIX 11289). `hold` replaces the
+    // same holder atomically: no release first, or a concurrent reserve
+    // takes the freed room while the session is still held.
+    if let (Ok(bytes), Some(ledger)) = (&parked, &ledger) {
+        ledger.hold(&holder, mib(*bytes));
+    }
     if parked.is_ok() {
         retire(candidate).await;
     }
@@ -280,13 +302,13 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     if let Some(ledger) = &ledger {
         ledger.release_hold(&holder);
     }
-    parked
+    parked.map(|_| ())
 }
 
 /// Whether a host copy of `bytes` may be taken now: `Err` with the reason
 /// it may not.
-fn room(bytes: u64) -> Result<(), Option<Skip>> {
-    match host_room(bytes) {
+async fn room(bytes: u64) -> Result<(), Option<Skip>> {
+    match fits_host(bytes).await {
         Some(true) => Ok(()),
         Some(false) => Err(Some(Skip::NoRoom)),
         None => Err(Some(Skip::UnknownRoom)),
@@ -327,7 +349,7 @@ async fn seal(
     vault: &Arc<Vault>,
     admission: SnapshotAdmission,
     budget: SnapshotBudget,
-) -> Result<(), Option<Skip>> {
+) -> Result<u64, Option<Skip>> {
     let vault_ref = candidate.key.anchor.vault;
     let body = SessionExport {
         target: candidate.target.clone(),
@@ -338,10 +360,23 @@ async fn seal(
         checkpoint: candidate.checkpoint.clone(),
     };
     let place = &candidate.place;
-    let (answer, region) = session_export(&place.socket, &place.epoch, &body, &place.worker)
+    // Reserve the export's allocation before it exists: the pre-export room
+    // screen reserves nothing, so a concurrent restore could reserve the
+    // same headroom while the export allocates. The worker's measured
+    // residency is the estimate; the guard is reconciled once the export's
+    // real size is held live below.
+    let pre_export = registry::reserve_host(candidate.residency.unique_bytes.unwrap_or(0))
+        .await
+        .ok_or(Some(Skip::NoRoom))?;
+    let (answer, region) = session_export(&place.launch, &place.epoch, &body, &place.worker)
         .await
         .map_err(|_| None)?;
-    let region = HostCopy::hold(vault_ref, region);
+    let region_len = region.len();
+    let region = HostCopy::hold(vault_ref, region, region_len);
+    // The export's measured bytes are counted live now: the estimate guard
+    // has done its job, so releasing it reconciles the reservation to the
+    // measured size before the plaintext read makes the second copy.
+    drop(pre_export);
     lifecycle::count(Counted::Park);
     let bytes = region.get().len();
     if answer.checkpoint != candidate.checkpoint || answer.snapshot_bytes != bytes {
@@ -350,14 +385,22 @@ async fn seal(
     if bytes > budget.limit() {
         return Err(Some(Skip::Oversize));
     }
-    // Reading the region makes a second copy.
-    room(bytes)?;
+    // Reading the region makes a second copy and the seal holds two
+    // beside each other: reserve the two-copy peak with the screen, one
+    // atomic admission, held through the seal. A one-copy admission would
+    // let the peak breach the headroom.
+    room(bytes).await?;
+    let peak = bytes.saturating_mul(2);
+    let _host_reserved = registry::reserve_host(peak)
+        .await
+        .ok_or(Some(Skip::NoRoom))?;
     if lifecycle::admission(&vault_ref) != Some(Admitted::Granted(admission)) {
         return Err(None);
     }
     let plaintext = region.get().read().map_err(|_| None)?;
     drop(region);
-    let plaintext = HostCopy::hold(vault_ref, Zeroizing::new(plaintext));
+    let plaintext_len = u64::try_from(plaintext.len()).unwrap_or(u64::MAX);
+    let plaintext = HostCopy::hold(vault_ref, Zeroizing::new(plaintext), plaintext_len);
     let compatibility =
         compatibility(&candidate.key, plaintext.get()).ok_or(Some(Skip::Unsupported))?;
     recheck(candidate).await?;
@@ -385,7 +428,7 @@ async fn seal(
     match published {
         Ok(Some(_)) => {
             lifecycle::count(Counted::Seal);
-            Ok(())
+            Ok(bytes)
         }
         // Nothing kept while the admission still holds: no room inside the
         // budget beside what is pinned.
@@ -491,9 +534,11 @@ fn manifest(candidate: &Candidate, compatibility: SnapshotCompatibility) -> Snap
 
 /// The part of a snapshot's compatibility a turn names before any import:
 /// the worker's identity less its epoch, and its execution mode, or where
-/// the identity names none (a session worker's hello does not, the mode
-/// being the call's) the digest of the call's conditioning, its template
-/// arguments and tool definitions.
+/// the identity names none (a session worker's hello does not) the digest
+/// of the call's conditioning, its template arguments and tool definitions.
+/// The host fill is deliberate: the worker's execution mode is per-call
+/// (server settings plus template arguments) and not hello-nameable, while
+/// its varying parts already sit inside the conditioning.
 pub(super) fn identity_part(
     identity: &CacheIdentity,
     conditioning: &ConditioningDigest,
@@ -508,16 +553,21 @@ pub(super) fn identity_part(
 
 /// What the snapshot was computed with: [`identity_part`], then from the
 /// snapshot's own header the KV layout and quantization, the state kind,
-/// and the schema. The worker names no attention or position settings
-/// apart: the digest of its whole snapshot compatibility, which fixes them
-/// with the weights and the layout, stands for them. `None` when the
-/// header does not read or a field is left unnamed.
+/// and the schema. The attention digest is the worker's own where its
+/// header names one (FIX 11284), else the legacy digest of its whole
+/// snapshot compatibility, which fixes the settings with the weights and
+/// the layout. `None` when the header does not read or a field is left
+/// unnamed.
 fn compatibility(key: &SessionKey, snapshot: &[u8]) -> Option<SnapshotCompatibility> {
     let header = header(snapshot)?;
     let worker = header.get("compatibility")?;
     let mut compatibility = identity_part(&key.identity, &key.conditioning);
     compatibility.quant = json_digest(b"oneiron.snapshot.quant.v1\0", worker.get("kv")?);
-    compatibility.attention = json_digest(b"oneiron.snapshot.attention.v1\0", worker);
+    compatibility.attention = worker
+        .get("attention")
+        .and_then(JsonValue::as_str)
+        .and_then(|named| CacheDigest::new(named).ok())
+        .or_else(|| json_digest(b"oneiron.snapshot.attention.v1\0", worker));
     compatibility.state_schema = u32::try_from(SNAPSHOT_SCHEMA).ok();
     compatibility.state_kinds = Some(vec![worker.get("state")?.as_str()?.to_owned()]);
     compatibility.complete().then_some(compatibility)

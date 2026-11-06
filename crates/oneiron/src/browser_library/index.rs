@@ -58,6 +58,12 @@ pub(super) const COVERAGE: SideTable<([u8; 32], EntityId), CoverageRef, Named> =
 const DIRTY: SideTable<[u8; 32], DirtyRow, Named> =
     SideTable::new(&side_table::BROWSER_SOLVED_DIRTY);
 
+/// Whether a masked copy of a `BROWSER_SOLVED_DIRTY` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn browser_solved_dirty_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DirtyRow, Named>(bytes)
+}
+
 /// A group's evidence claims. Key: the group's digest, then the claim's id.
 const GROUP: SideTable<([u8; 32], EntityId), GroupRef, Named> =
     SideTable::new(&side_table::BROWSER_SOLVED_GROUP);
@@ -463,6 +469,10 @@ pub(crate) fn erase_dirty_actor_in_txn(
         }
     }
     for digest in taken {
+        // FIX 12085: the deleted row's lifted custody goes with it.
+        let place = format!("side:{}", DIRTY.decl().name);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &DIRTY.key_bytes(&digest))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, None)?;
         DIRTY.delete(&vault.store, wtxn, &digest)?;
     }
     Ok(())

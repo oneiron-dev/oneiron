@@ -6,7 +6,7 @@
 //! that found it), its `sc` handle and where it sat. Nothing here holds a
 //! value.
 //!
-//! The owner answers each key with one of four doors, each owner-only and
+//! The owner answers each key with one of five doors, each owner-only and
 //! each with its receipt ([`actions`]):
 //!
 //! - **rotate**: the existing rotate door for the key's custody record
@@ -20,6 +20,9 @@
 //!   record's body or text field gets its value back, a file's mark drops
 //!   the key, and the custody record is revoked. The value stays a kept value of that record
 //!   ([`KeptValues`]): the write door no longer reads it as a hit there.
+//! - **kept as text**: the owner accepts the risk and keeps the marked span as
+//!   text by choice, with the same restore, revoke and kept-value screen but a
+//!   distinct action and receipt reason.
 //!
 //! A batch that masks many keys in one record raises one notice for it. The
 //! mask writes inside the batch's own transaction, where no vault is at
@@ -28,6 +31,8 @@
 
 mod actions;
 mod page;
+mod purpose;
+pub(crate) use purpose::purpose_questions_in_txn;
 
 pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
 
@@ -44,10 +49,15 @@ use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::found_key_notice_queue::DUE;
 use crate::vault::Vault;
 
-pub use self::actions::FOUND_KEY_REASON_NOT_A_SECRET;
-pub(crate) use self::actions::{ruled_no_secret_in_txn, settle_found_key_in_txn};
+pub(crate) use crate::store::found_key_notice_queue::found_key_notices_due_in_txn;
+
+pub use self::actions::{FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET};
+pub(crate) use self::actions::{
+    kept_as_text_in_txn, ruled_no_secret_in_txn, settle_found_key_in_txn,
+};
 pub use self::page::{FoundKeyCursor, FoundKeyNoticePage};
 
 /// Producer name of a found-key notice.
@@ -63,9 +73,6 @@ const REASON_PREFIX: &str = "gate.secret_scan.";
 
 /// Each record's found keys. Key: the record's id.
 const FOUND: SideTable<EntityId, FoundKeys, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY);
-
-/// The records whose notice is still due, with when their keys were found.
-const DUE: SideTable<EntityId, u64, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY_DUE);
 
 pub use crate::secret_record::FoundKeyAction;
 
@@ -87,6 +94,10 @@ pub struct FoundKeyCard {
     pub handle: String,
     /// The custody record's name; the rotate door takes it.
     pub name: String,
+    /// The owner's display-label override, when one is set.
+    pub label: Option<String>,
+    /// The value-free suggestion derived from the scan kind.
+    pub suggested_label: Option<String>,
     /// The scan rule's word for the key, such as `openai_key`.
     pub kind: String,
     /// Where it sat: `body`, `claim`, `text:<field>`, `file`, or a row
@@ -127,6 +138,16 @@ impl FoundKey {
         self.settled
             .as_ref()
             .is_some_and(|settled| settled.action == FoundKeyAction::NotASecret)
+    }
+
+    fn kept_as_text(&self) -> bool {
+        self.settled
+            .as_ref()
+            .is_some_and(|settled| settled.action == FoundKeyAction::KeptAsText)
+    }
+
+    fn kept_by_owner(&self) -> bool {
+        self.ruled_no_secret() || self.kept_as_text()
     }
 }
 
@@ -200,12 +221,6 @@ pub(crate) fn note_found_keys_in_txn(
         DUE.put(store, txn, &record, &at)?;
     }
     Ok(())
-}
-
-/// Whether a record is due its notice, read through `txn`: what
-/// [`raise_found_key_notices_in_txn`] raises at the next write's commit.
-pub(crate) fn found_key_notices_due_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(DUE.iter_from(&vault.store, txn, &[])?.next().is_some())
 }
 
 /// Raises the notices of the next [`NOTICES_PER_WRITE`] records left due, in
@@ -310,10 +325,68 @@ pub(super) fn found_key_custody_in_txn(
         }))
 }
 
-/// The values the owner ruled no secret, by record: the write door reads
-/// none of them as a hit in its record, and the mask leaves each as
-/// written. Each value is read from its revoked custody record and wiped
-/// when dropped; no digest of it is kept anywhere.
+/// Moves a deleted side row's found-key state to its replacement's origin (FIX
+/// 12779, REVIEW-4444 follow-up): every `FOUND` key under `old` joins `new`,
+/// merged by custody without losing either side's settlement or the earliest
+/// `found_at`, and `old`'s `DUE` marker moves to `new` without losing a
+/// destination marker. Leaves no `FOUND`/`DUE` under `old`. Each moved
+/// custody's mask origin is rebound `old` -> `new` only when it still names
+/// `old`, so a known value the row references keeps its owner. Skips cleanly
+/// when `old` holds nothing. Runs in the caller's write transaction, with the
+/// row move it follows: the handles the new row keeps still resolve.
+pub(crate) fn move_side_row_custody_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    old: &EntityId,
+    new: &EntityId,
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    if let Some(old_found) = FOUND.get(store, wtxn, old)? {
+        for key in &old_found.keys {
+            crate::batch::secret_scan::rebind_mask_origin_in_txn(
+                store,
+                wtxn,
+                &key.custody,
+                old,
+                new,
+            )?;
+        }
+        let mut merged = FOUND.get(store, wtxn, new)?.unwrap_or_default();
+        for key in old_found.keys {
+            match merged
+                .keys
+                .iter_mut()
+                .find(|held| held.custody == key.custody)
+            {
+                Some(held) => {
+                    if held.settled.is_none() {
+                        held.settled = key.settled;
+                    }
+                    held.found_at = held.found_at.min(key.found_at);
+                }
+                None => merged.keys.push(key),
+            }
+        }
+        if !merged.keys.is_empty() {
+            FOUND.put(store, wtxn, new, &merged)?;
+        }
+        FOUND.delete(store, wtxn, old)?;
+    }
+    if let Some(old_due) = DUE.get(store, wtxn, old)? {
+        if DUE.get(store, wtxn, new)?.is_none() {
+            DUE.put(store, wtxn, new, &old_due)?;
+        }
+        DUE.delete(store, wtxn, old)?;
+    }
+    Ok(())
+}
+
+/// The values the owner ruled no secret or kept as text by choice, by record:
+/// the write door reads none of them as a hit in that record, and the mask
+/// leaves each as written. Each value is read from its revoked custody record
+/// and wiped when dropped; no digest of it is kept anywhere.
 #[derive(Clone, Default)]
 pub(crate) struct KeptValues(HashMap<EntityId, Vec<Zeroizing<Vec<u8>>>>);
 
@@ -341,7 +414,7 @@ impl KeptValues {
                 continue;
             };
             let mut values = Vec::new();
-            for key in found.keys.iter().filter(|key| key.ruled_no_secret()) {
+            for key in found.keys.iter().filter(|key| key.kept_by_owner()) {
                 if let Some(mut rec) = super::read_secret_custody_in_txn(store, txn, &key.custody)?
                 {
                     values.push(Zeroizing::new(std::mem::take(&mut rec.value_bytes)));
@@ -358,9 +431,9 @@ impl KeptValues {
         self.0.is_empty()
     }
 
-    /// Whether the owner ruled `value` no secret in `record`, as it is or as
-    /// one of its spellings decodes (base64, percent or JSON escapes): the
-    /// ruling covers the value however it is written (FIX 2725).
+    /// Whether the owner ruled `value` no secret or kept it as text in `record`,
+    /// as it is or as one of its spellings decodes (base64, percent or JSON
+    /// escapes): the choice covers the value however it is written (FIX 2725).
     pub(crate) fn holds(&self, record: &EntityId, value: &[u8]) -> bool {
         let Some(values) = self.0.get(record) else {
             return false;
@@ -372,25 +445,15 @@ impl KeptValues {
                 .any(|decoded| ruled(decoded.as_slice()))
     }
 
-    /// `bytes` of `record` with each kept value in them overwritten by the
-    /// mask's filler, for the door's scan; `None` when none sits there.
+    /// `bytes` of `record` with each kept value's raw or encoded spelling
+    /// overwritten by the mask's filler, for the door's scan; `None` when none
+    /// sits there.
     pub(crate) fn screened(&self, record: &EntityId, bytes: &[u8]) -> Option<Vec<u8>> {
         let values = self.0.get(record)?;
         let mut copy = None::<Vec<u8>>;
         for value in values.iter().filter(|value| !value.is_empty()) {
-            let mut at = 0;
-            loop {
-                let haystack = copy.as_deref().unwrap_or(bytes);
-                let Some(found) = haystack.get(at..).and_then(|rest| {
-                    rest.windows(value.len())
-                        .position(|window| window == value.as_slice())
-                }) else {
-                    break;
-                };
-                let start = at + found;
-                let end = start + value.len();
-                copy.get_or_insert_with(|| bytes.to_vec())[start..end].fill(b'*');
-                at = end;
+            for span in super::known_values::occurrences(bytes, value) {
+                copy.get_or_insert_with(|| bytes.to_vec())[span].fill(b'*');
             }
         }
         copy

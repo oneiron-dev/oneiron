@@ -7,26 +7,41 @@
 //! the ask's recorded forks; a hold, an unknown or silence lands nothing
 //! (ARCH-0040: "Only a ledger record from a holder surface satisfies
 //! approval").
+//!
+//! Live DOCX/XLSX edits without a grant ask the vault's owners instead
+//! (FIX 596): a definitive owner ACCEPT mints the standing
+//! `entity.office.edit` grant for the editor on the artifact in the ask's
+//! settling transaction; the editor's retry carries the ops and lands
+//! through the normal grant check. Nothing auto-applies.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     AskAuthorityScope, ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason,
     TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskTarget,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 use crate::write_envelope::WriteActor;
 
 use super::consent::{PROPOSALS, let_go_in_txn, office_scope, settle_in_txn};
+
+mod live_edit;
 use super::support::{loro_kind, open_fork};
 use super::{MemberVerdict, ProposalAsk, ProposalSettleRequest, ReviewedFork, SettleVerdict};
+pub(super) use live_edit::LIVE_EDIT_GROUPS;
+pub(crate) use live_edit::{
+    LiveEditAskOutcome, guard_live_edit_word, is_live_edit_ask, may_cut_live_edit,
+    resolve_live_edit_holder_ask_in_txn,
+};
 
 /// The intent prefix of an office proposal's holder ask; with the proposal
 /// and the waiting set's revision it keys one ask, so a repeat replays it.
@@ -36,7 +51,6 @@ const REVISION_DOMAIN: &[u8] = b"oneiron.office.proposal_ask.v1";
 /// forks, reject discards them, each as the answering holder.
 const ACCEPT: &str = "accept";
 const REJECT: &str = "reject";
-
 impl Memory<'_> {
     /// Ask each waiting member artifact's holders once per waiting set. Ask
     /// admission refuses only that artifact's ask: the settlement stands,
@@ -111,6 +125,25 @@ impl Memory<'_> {
         if record.settlement.is_some() || forks.is_empty() {
             return Ok(());
         }
+        let revision = waiting_revision(proposal, artifact, &forks);
+        let intent_key = format!(
+            "{ASK_INTENT}/{}/{}/{revision}",
+            proposal.to_hex(),
+            artifact.to_hex()
+        );
+        for asked in &record.asks {
+            if asked.artifact == *artifact
+                && asked.forks == forks
+                && self.owns_task_ask_intent(
+                    crate::task_verb::TaskAskHandle {
+                        group_ref: asked.ask,
+                    },
+                    &intent_key,
+                )?
+            {
+                return Ok(vault.record_office_proposal_ask(proposal, asked.clone())?);
+            }
+        }
         let (class, envelope) = office_scope(artifact)?;
         let who = {
             let txn = vault
@@ -136,7 +169,6 @@ impl Memory<'_> {
         let version = vault
             .blob_artifact_head(artifact)?
             .ok_or_else(|| MemoryError::not_found("the office artifact has no version"))?;
-        let revision = waiting_revision(proposal, artifact, &forks);
         let mut question = TaskAskQuestion::new(ConsultPayloadRef::Claim(version.claim_id));
         question.revision = revision;
         question.options = BTreeMap::from([
@@ -156,21 +188,33 @@ impl Memory<'_> {
             forks.len()
         ));
         let mut spec = TaskAskSpec::shorthand(Some(who), question, None, TaskAskDefault::Hold);
-        spec.intent_key = format!(
-            "{ASK_INTENT}/{}/{}/{revision}",
-            proposal.to_hex(),
-            artifact.to_hex()
-        );
-        let receipt = self.tasks_ask(&spec)?;
-        vault.record_office_proposal_ask(
-            proposal,
-            ProposalAsk {
-                artifact: *artifact,
-                ask: receipt.handle.group_ref,
-                forks,
-                at: vault.now_recorded_at(),
-            },
-        )?;
+        spec.intent_key = intent_key;
+        let receipt = self.tasks_ask_with_txn_effect(&spec, |txn, group| {
+            vault
+                .record_office_proposal_ask_in_txn(
+                    txn,
+                    proposal,
+                    ProposalAsk {
+                        artifact: *artifact,
+                        ask: group,
+                        forks: forks.clone(),
+                        at: vault.now_recorded_at(),
+                    },
+                )
+                .map_err(MemoryError::from)
+        })?;
+        // Admission replays do not rerun their transaction effect.
+        if receipt.idempotent_replay {
+            vault.record_office_proposal_ask(
+                proposal,
+                ProposalAsk {
+                    artifact: *artifact,
+                    ask: receipt.handle.group_ref,
+                    forks,
+                    at: vault.now_recorded_at(),
+                },
+            )?;
+        }
         Ok(())
     }
 }

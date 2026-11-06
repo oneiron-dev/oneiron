@@ -22,9 +22,11 @@ use super::work_context::WorkContext;
 mod denied;
 mod media;
 mod origin;
+mod raw;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
+pub use raw::RawDispatch;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
@@ -252,8 +254,12 @@ impl RunAdmission {
 
     /// This run, for calls `actor` acted to start (FIX 8970): every permit
     /// admitted through the handle names it as its initiator, in its facts
-    /// and on its `Admitted` receipt. Attribution only: who pays, the line
-    /// and every admission rule are the run's, unchanged.
+    /// and on its `Admitted` receipt.
+    ///
+    /// For host-paid calls that draw on a resident share, the initiator
+    /// selects that resident; without one, the bound run's served agent is
+    /// used. That resident's pinned share can refuse admission and receives
+    /// settlement charges. The run's payer and budget line are unchanged.
     #[must_use]
     pub fn initiated_by(&self, actor: Option<crate::EntityId>) -> Self {
         Self {
@@ -285,6 +291,20 @@ impl RunAdmission {
             }
             context
         })
+    }
+
+    /// The unique instance id of this run, used as the model-call record's
+    /// attempt key (FIX 12516).
+    #[must_use]
+    pub fn instance(&self) -> crate::EntityId {
+        self.inner.instance
+    }
+
+    /// The rows the host named as this run's input sources, if it named any
+    /// ([`Self::sourced`]); `None` means unknown, never an empty attestation.
+    #[must_use]
+    pub fn source_rows(&self) -> Option<Vec<crate::EntityId>> {
+        self.sources.clone()
     }
 
     /// Who this handle's calls answer to (FIX 562): the actor that acted to
@@ -544,6 +564,10 @@ impl RunAdmission {
 }
 
 impl RunInner {
+    pub(super) fn instance(&self) -> crate::EntityId {
+        self.instance
+    }
+
     /// `offer` as this run binds it: with the run's payer when a room's root
     /// spend scope funds the run (OF-531). Admission and the gate both take
     /// this one binding, so the permit's offer identity is the one the gate

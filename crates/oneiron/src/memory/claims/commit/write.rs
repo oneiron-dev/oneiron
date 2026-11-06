@@ -5,13 +5,33 @@
 use super::*;
 
 mod attempt;
+mod batch;
 mod landing;
 mod receipt;
 mod resolve;
 
+pub(in crate::memory) use self::batch::{BatchClaim, BatchRefusal};
 use self::resolve::refuse_typed_claim_family;
 
 impl Memory<'_> {
+    /// Recovers a hook proposal without re-putting an already landed exact
+    /// intent over an intervening owner decision. Other cases still propose
+    /// through the ordinary guarded writer.
+    pub(crate) fn claim_propose_for_hook_replay(
+        &self,
+        input: &ClaimInput,
+    ) -> MemoryResult<CommitReceipt> {
+        self.commit_claim_write(
+            input,
+            false,
+            Some(ClaimApprovalStatus::Proposed),
+            || {},
+            &|_: &heed::RoTxn<'_>| Ok(()),
+            None,
+            true,
+        )
+    }
+
     pub(in crate::memory) fn commit_one_guarded_with_birth(
         &self,
         input: &ClaimInput,
@@ -20,6 +40,27 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
         birth: Option<&crate::provenance::birth::RowBirth>,
+    ) -> MemoryResult<CommitReceipt> {
+        self.commit_claim_write(
+            input,
+            auto_supersede,
+            forced_approval,
+            before_txn,
+            in_writer,
+            birth,
+            false,
+        )
+    }
+
+    fn commit_claim_write(
+        &self,
+        input: &ClaimInput,
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+        before_txn: impl FnOnce(),
+        in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+        birth: Option<&crate::provenance::birth::RowBirth>,
+        skip_exact_hook_replay: bool,
     ) -> MemoryResult<CommitReceipt> {
         refuse_typed_claim_family(input)?;
         let write = self.resolve_claim_write(input, auto_supersede, in_writer, birth)?;
@@ -31,16 +72,17 @@ impl Memory<'_> {
         // Proposed: that write would park for review, so it lands parked. A
         // Gate deny (an unresolved record reference among them, FIX 1220) is
         // never resubmitted; no approval lane makes it land.
-        let refused = match self.attempt_claim_write(&write, approval) {
+        let refused = match self.attempt_claim_write(&write, approval, skip_exact_hook_replay) {
             Ok(refused) => refused,
             Err(err) if approval == ClaimApprovalStatus::Auto && gate_rejection_pends(&err) => {
                 approval = ClaimApprovalStatus::Proposed;
-                self.attempt_claim_write(&write, approval).map_err(|err| {
-                    write
-                        .publication_refusal
-                        .take()
-                        .unwrap_or_else(|| err.into())
-                })?
+                self.attempt_claim_write(&write, approval, skip_exact_hook_replay)
+                    .map_err(|err| {
+                        write
+                            .publication_refusal
+                            .take()
+                            .unwrap_or_else(|| err.into())
+                    })?
             }
             Err(err) => {
                 return Err(write
@@ -49,8 +91,8 @@ impl Memory<'_> {
                     .unwrap_or_else(|| err.into()));
             }
         };
-        if refused {
-            return Err(hard_deleted_refusal(&write.id));
+        if let Some(refused_id) = refused {
+            return Err(hard_deleted_refusal(&refused_id));
         }
         self.commit_receipt(write.id, write.prior, approval)
     }

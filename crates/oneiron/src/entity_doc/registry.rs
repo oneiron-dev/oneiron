@@ -188,7 +188,8 @@ impl Vault {
             revision,
             text: selected.text(),
             metadata: selected.metadata()?,
-            birth: live.birth().clone(),
+            // The birth's stamp token reads as its actor (FIX 11964).
+            birth: live.birth().resolved_in(&self.store, &txn)?,
         })
     }
 
@@ -232,9 +233,12 @@ impl Vault {
         self.read_entity_doc(entity, EntityDoc::frontier)
     }
 
-    /// Returns the birth provenance retained after all edits and cache evictions.
+    /// Returns the birth provenance retained after all edits and cache
+    /// evictions, its stamp token read as its actor, or no one (FIX 11964).
     pub fn entity_text_birth(&self, entity: &EntityId) -> Result<super::Birth> {
-        self.read_entity_doc(entity, |doc| doc.birth().clone())
+        let birth = self.read_entity_doc(entity, |doc| doc.birth().clone())?;
+        let txn = self.store.env.read_txn()?;
+        birth.resolved_in(&self.store, &txn)
     }
 
     pub(super) fn read_entity_doc<T>(

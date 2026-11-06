@@ -130,7 +130,49 @@ pub(super) struct NoteReadAt<'a, S> {
     pub(super) pending: &'a PendingScanChecks,
 }
 
+/// An admitted NOTE answer whose snapshot has closed before diary completion.
+pub(crate) struct PreparedNoteRead(ScopedReadResult<(Option<NoteReadView>, Option<DiaryReadGate>)>);
+
+impl PreparedNoteRead {
+    pub(crate) fn finish(
+        self,
+        memory: &Memory<'_>,
+    ) -> MemoryResult<ScopedReadResult<Option<NoteReadView>>> {
+        memory.finish_note_read(self.0)
+    }
+}
+
 impl Memory<'_> {
+    /// A resolved live NOTE in the caller's prepared lane and snapshot.
+    /// The lane, grant clock, room view and body pins must be prepared before
+    /// `txn`; the returned diary completion runs only after `txn` closes.
+    pub(crate) fn read_live_note_in_txn(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+        reason: &str,
+        pending: &PendingScanChecks,
+    ) -> MemoryResult<PreparedNoteRead> {
+        let store = lane.store_read();
+        let at = NoteReadAt {
+            note,
+            store: &store,
+            pending,
+        };
+        let access = NoteAccessRequest {
+            note_ref: note.to_hex(),
+            reason: Some(reason.to_owned()),
+        };
+        let result =
+            lane.read_projected_in_txn(txn, &[PointRead::id(note)], None, |txn, rows| {
+                self.project_admitted_note(txn, rows, &at, &access, |_, doc, _| {
+                    Ok(read_view(&doc, &[], NoteReadSource::Local)?)
+                })
+            })?;
+        Ok(PreparedNoteRead(result))
+    }
+
     /// A live editor is held by a serving host, not an embedded read handle.
     pub fn bind_note_editor(
         &self,
@@ -165,7 +207,7 @@ impl Memory<'_> {
             note_ref: input.note_ref.clone(),
             reason: input.reason.clone(),
         };
-        self.project_note_read(&access, |_, doc| {
+        self.project_note_read(&access, |_, doc, _| {
             let selected = match &input.version {
                 Some(version) => doc.at_version(version)?,
                 None => doc,
@@ -180,15 +222,25 @@ impl Memory<'_> {
         &self,
         input: &NoteAccessRequest,
     ) -> MemoryResult<ScopedReadResult<Option<NoteHistoryView>>> {
-        self.project_note_read(input, |_, doc| {
+        self.project_note_read(input, |txn, doc, birth_author| {
             let complete = !doc.doc.is_shallow();
+            // Each entry's stamp token reads as its actor (FIX 11964).
+            let operations = if complete {
+                let records = super::operations::authorship(&doc.doc)?;
+                let vault = self.vault();
+                super::operations::resolved_authorship_with_birth_in_txn(
+                    vault,
+                    txn,
+                    doc.note,
+                    birth_author,
+                    records,
+                )?
+            } else {
+                Vec::new()
+            };
             Ok(NoteHistoryView {
                 version: doc.version(),
-                operations: if complete {
-                    super::operations::authorship(&doc.doc)?
-                } else {
-                    Vec::new()
-                },
+                operations,
                 shallow_since: doc.doc.shallow_since_vv().to_vv().encode(),
                 complete,
             })
@@ -198,7 +250,7 @@ impl Memory<'_> {
     pub(super) fn project_note_read<T: Serialize + serde::de::DeserializeOwned>(
         &self,
         input: &NoteAccessRequest,
-        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument) -> MemoryResult<T>,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         // A NOTE the room this surface binds holds reads in that room (FIX
         // 4280); every other read, a vault NOTE's in a bound session
@@ -239,7 +291,7 @@ impl Memory<'_> {
         rows: Vec<Option<ReadRow>>,
         at: &NoteReadAt<'_, impl ManifestDbs>,
         input: &NoteAccessRequest,
-        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument) -> MemoryResult<T>,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<(Option<T>, Option<DiaryReadGate>)> {
         let note = at.note;
         let Some(row) = rows
@@ -282,7 +334,7 @@ impl Memory<'_> {
             return Ok((None, gate));
         }
         let doc = live_doc_in(self.vault(), at.store, txn, note, at.pending)?;
-        let view = project(txn, doc)?;
+        let view = project(txn, doc, core.author_ref)?;
         let value = serde_json::to_value(&view).map_err(|_| invalid("NOTE read view encoding"))?;
         let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
             &self.vault().store,

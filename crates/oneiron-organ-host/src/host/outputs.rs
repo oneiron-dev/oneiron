@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
-use oneiron_organ_protocol::{Hash32, MAX_FDS_PER_FRAME, MappedRegion, Output, Payload, Proposal};
+use oneiron_organ_protocol::{Hash32, MappedRegion, Output, Payload, Proposal};
 
 use super::Resolved;
 use crate::budget::{CallRoom, Grown, Lease};
@@ -86,7 +86,6 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
     if grown.overcommit > 0 {
         vault.measure_limit_at(EngineLimit::OrganMemoryBytes, budget, grown.peak);
     }
-    drop(frame);
     let receipt = CallReceipt {
         organ: process.hello.organ.clone(),
         protocol: process.session,
@@ -132,6 +131,7 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
         outputs,
         report: proposal.report,
         receipt,
+        _frame: Some(frame),
     })
 }
 
@@ -161,14 +161,13 @@ fn take_outputs(
     fds: Vec<OwnedFd>,
     deadline: Instant,
 ) -> Result<Vec<OrganOutput>, HostError> {
-    if outputs.len() > MAX_FDS_PER_FRAME {
-        return Err(HostError::ReplyInvalid("more than 16 outputs".into()));
-    }
     let Called {
         vault, spec, room, ..
     } = *called;
     // From the reply's own moved deadline: only the waits from here on.
     let clock = Clock::new(deadline, room.waits());
+    // The slots' room was pre-held with the frame's lease (FIX 12434):
+    // `fd_read_cost` covers this collect beside the fds buffer.
     let mut slots: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
     let mut total = 0u64;
     let taken = outputs
@@ -226,8 +225,9 @@ fn output_bytes(
             Ok((OutputBytes::Inline(bytes.into_vec()), len))
         }
         Payload::Slot(slot) => {
-            let fd = slots
-                .get_mut(usize::from(slot))
+            let fd = usize::try_from(slot)
+                .ok()
+                .and_then(|slot| slots.get_mut(slot))
                 .and_then(Option::take)
                 .ok_or_else(|| HostError::ReplyInvalid("output slot".into()))?;
             let invalid =

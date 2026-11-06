@@ -194,6 +194,7 @@ impl Vault {
                 message_type: "project_header".into(),
                 // The reference is structured metadata. Source text is never copied.
                 content: String::new(),
+                parts: None,
                 metadata: Some(serde_json::json!({
                     "project_source_message": source.to_hex(),
                     "project_source_thread": source_turn.to_hex(),

@@ -11,10 +11,9 @@ use super::support::verify_deletion_authority_in_txn;
 use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
-    SafeDeleteReason,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{DeleteEntityPreview, LegalHoldActorKind, LegalHoldTarget};
+use crate::deletion::{DeleteEntityPreview, DeleteReason, LegalHoldActorKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, LegalHoldNotice, LegalHoldState};
@@ -29,17 +28,17 @@ const ERASE_ACT: &str = "erase";
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EraseReason {
     #[default]
-    UserHardDelete,
+    OwnerErase,
     /// A GDPR Art. 17 request: every record holding the same bytes is erased at once, another
     /// owner's included.
     GdprDelete,
 }
 
 impl EraseReason {
-    const fn safe_delete_reason(self) -> SafeDeleteReason {
+    const fn delete_reason(self) -> DeleteReason {
         match self {
-            Self::UserHardDelete => SafeDeleteReason::UserHardDelete,
-            Self::GdprDelete => SafeDeleteReason::GdprDelete,
+            Self::OwnerErase => DeleteReason::OwnerErase,
+            Self::GdprDelete => DeleteReason::GdprDelete,
         }
     }
 }
@@ -248,7 +247,7 @@ impl Memory<'_> {
                     self.vault.store.clock.now_recorded_at(),
                 )?;
             }
-            let reason = options.reason.safe_delete_reason();
+            let reason = options.reason.delete_reason();
             self.safe_delete_preview_checked(&preview.entity().to_hex(), reason, |txn| {
                 preview
                     .check_after_unshare(self.vault, txn)
@@ -351,7 +350,7 @@ impl Memory<'_> {
                 ..held
             }
         };
-        self.unshare_and_erase_match(&planned, EraseReason::UserHardDelete, Some(owner))
+        self.unshare_and_erase_match(&planned, EraseReason::OwnerErase, Some(owner))
     }
 
     /// A held match's own `erase` act, its payload the record and the bytes the preview named.
@@ -423,7 +422,13 @@ impl Memory<'_> {
         {
             return Ok(DeleteReceipt {
                 existed: true,
-                reason: SafeDeleteReason::UserHardDelete.as_str().to_owned(),
+                reason: if receipt.is_some() {
+                    DeleteReason::OwnerErase
+                } else {
+                    DeleteReason::UserHardDelete
+                }
+                .as_str()
+                .to_owned(),
                 receipt_ref: receipt.map(|receipt| format!("redaction:{receipt}")),
                 state: DeleteRequestState::Applied,
             });
@@ -498,16 +503,24 @@ impl Memory<'_> {
             }
             self.still_erasable_in_txn(txn, planned, reason)
         };
-        let claim: crate::deletion::DeletionClaim<'_> = &|txn, request, receipt| {
-            let Some(act) = &planned.act else {
-                return Ok(());
+        let apply_claim =
+            |txn: &mut heed::RwTxn<'_>, request: &[u8; 16], receipt: Option<&EntityId>| {
+                let Some(act) = &planned.act else {
+                    return Ok(());
+                };
+                self.vault.claim_completed_authority_act_in_txn(
+                    txn,
+                    act,
+                    uuid::Uuid::from_bytes(*request).to_string(),
+                    receipt.map(EntityId::to_hex),
+                )
             };
-            self.vault.claim_completed_authority_act_in_txn(
-                txn,
-                act,
-                uuid::Uuid::from_bytes(*request).to_string(),
-                receipt.map(EntityId::to_hex),
-            )
+        let claim = match planned.act.as_deref() {
+            Some(act) => Some(crate::deletion::DeletionClaim::new(
+                EntityId::from_hex(act)?,
+                &apply_claim,
+            )),
+            None => None,
         };
         let shares = {
             let txn = store.env.read_txn().map_err(crate::Error::from)?;
@@ -530,7 +543,7 @@ impl Memory<'_> {
         }
         self.safe_delete_claimed(
             &planned.holder.to_hex(),
-            reason.safe_delete_reason(),
+            reason.delete_reason(),
             |txn| {
                 check(txn)?;
                 if crate::share::active_brief_shares_for(
@@ -546,7 +559,7 @@ impl Memory<'_> {
                     Err(Error::ConcurrentWrite("delete shares changed").into())
                 }
             },
-            planned.act.is_some().then_some(claim),
+            claim,
         )
     }
 

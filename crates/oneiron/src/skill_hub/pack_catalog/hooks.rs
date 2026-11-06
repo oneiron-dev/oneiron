@@ -27,11 +27,16 @@ use crate::{
 mod author;
 mod bindings;
 mod install;
+mod proposal;
 
 pub use self::author::{FOREIGN_SKILL_PUBLISHER, HookAuthor};
 pub use self::bindings::PackHookBinding;
 pub(crate) use self::bindings::is_hook_binding;
 pub(super) use self::install::HookBinder;
+pub use self::proposal::{HookWidening, PackHookProposal, PackHookProposalStatus};
+pub use crate::store::pack_hook_proposal::{
+    HookOutcomeKind, HookPhase, HookRenderClass, HookSelector,
+};
 
 /// The binding's predicate: the same row kind a pack's `wakes` write.
 const PREDICATE: &str = "agent.connector_subscription";
@@ -44,20 +49,6 @@ const HOOK_INTENT: &str = "intent.md";
 const HOOK_BODY: &str = "body.js";
 const MAX_HOOK_BUDGET_MS: u32 = 60_000;
 
-/// When a hook fires (ARCH-0080 §2).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookPhase {
-    /// Before a verb, inside the call; it may stop the act.
-    Pre,
-    /// After a verb, inside the call.
-    Post,
-    /// After a write commits, on its own runner.
-    Fact,
-}
-
 impl HookPhase {
     /// The time budget for one run when HOOK.md names none.
     const fn default_budget_ms(self) -> u32 {
@@ -69,56 +60,7 @@ impl HookPhase {
     }
 }
 
-/// The closed actor classes a selector may name (ARCH-0067 §4).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookActorClass {
-    Human,
-    Agent,
-    System,
-}
-
-/// How a hook's body may spend model time (ARCH-0035 render classes;
-/// ARCH-0080 §4 Its shape).
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookRenderClass {
-    /// No model call: the body stays deterministic inside its budget.
-    #[default]
-    DeterministicEager,
-    /// A fact hook that may call `ai.verdict`, paid from its pack's budget
-    /// line.
-    Generative,
-}
-
-impl HookRenderClass {
-    const fn is_deterministic(&self) -> bool {
-        matches!(self, Self::DeterministicEager)
-    }
-}
-
-/// The one outcome set; the phase decides which kinds apply.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum HookOutcomeKind {
-    Continue,
-    Rewrite,
-    Skip,
-    Ask,
-    AddBlock,
-    Annotate,
-    Redact,
-    Propose,
-    Enqueue,
-    Effect,
-    Nothing,
-}
+pub use crate::store::pack_hook_actor_class::HookActorClass;
 
 impl HookOutcomeKind {
     pub(crate) fn applies_in(self, phase: HookPhase) -> bool {
@@ -135,37 +77,6 @@ impl HookOutcomeKind {
             HookPhase::Fact => matches!(self, Propose | Enqueue | Effect | AddBlock | Nothing),
         }
     }
-}
-
-/// What a HOOK.md declares: the selector table of ARCH-0080 §3.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HookSelector {
-    /// Globs over row names and SelfEffect labels; for a fact hook, over
-    /// predicates.
-    pub verbs: Vec<String>,
-    /// Empty selects every class.
-    pub actors: Vec<HookActorClass>,
-    /// A world, facet, room or project as `<axis>:<32 hex id>`; a scope
-    /// only narrows.
-    pub scope: Option<String>,
-    pub phase: HookPhase,
-    /// Higher runs first; ties break on the content hash.
-    pub priority: i32,
-    pub budget_ms: u32,
-    /// The owner's narrowing dial. Off by default.
-    pub blocking: bool,
-    /// The engine refuses any other kind from this hook.
-    pub outcomes: Vec<HookOutcomeKind>,
-    /// A post-hook's served-row filter: it runs only on a call that served
-    /// rows (a recall's pack, a deadline's cut pack included) when one of
-    /// them matches, and reads only those. An entry is `<kind glob>:<predicate
-    /// glob>`, or a bare predicate glob over served claims.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub served: Vec<String>,
-    /// `generative` lets a fact hook call `ai.verdict`.
-    #[serde(default, skip_serializing_if = "HookRenderClass::is_deterministic")]
-    pub render_class: HookRenderClass,
 }
 
 /// One hook folder as the pack carries it.

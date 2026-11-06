@@ -75,9 +75,9 @@ impl AgentPackFacets {
     }
 
     /// The projection a travelling pack's whole folder holds, `None` for
-    /// the native facets. Each skill's SKILL.md must name the skill and
-    /// version its `skills.json` row pins, so the skill the common door
-    /// installs is the one the agent depends on.
+    /// the native facets. Each skill's format, native metadata and source
+    /// hash revalidate against its `skills.json` row, so the common door
+    /// installs the skill the agent depends on (FIX 3276).
     pub(super) fn travel(&self, files: &[HubFile]) -> Result<Option<AgentPackTravelProjection>> {
         let policy = files
             .iter()
@@ -88,15 +88,9 @@ impl AgentPackFacets {
         }
         let projection = AgentPackTravelProjection::from_files(files)?;
         for skill in &projection.skills {
-            let package = super::super::folder::package_from_files(skill.files.clone())?;
-            if package.record.skill_id != skill.skill_id
-                || package.record.version != skill.version
-                || package.content_hash()?.to_hex() != skill.content_hash
-            {
-                return Err(invalid(
-                    "a travelling skill's SKILL.md disagrees with its skills.json row",
-                ));
-            }
+            // Format, native metadata, source and content hash all revalidate
+            // through the producer's record-bound rebuild (FIX 3276).
+            skill.package()?;
         }
         Ok(Some(projection))
     }

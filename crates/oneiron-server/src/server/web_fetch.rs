@@ -70,6 +70,8 @@ impl SyncServer {
                         HandleLine::of(self),
                         Arc::clone(self.vault()),
                         self.browser_readiness().clone(),
+                        Arc::clone(&self.retained),
+                        Arc::clone(self.wire_telemetry.limit_questions()),
                     )
                 });
                 let fetcher = default_web_fetcher(guard.as_ref(), headless)?;

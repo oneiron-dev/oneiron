@@ -21,11 +21,12 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use oneiron::web_fetch::{HostedEgressRefusal, RendererError, hosted_dns_resolver};
-use oneiron_browser::{BrowserError, BrowserRequestHandler, DestinationRefusal};
+use oneiron_browser::{BrowserError, BrowserRequestHandler, DestinationRefusal, SpooledResponse};
 use oneiron_container::{HttpRequest, HttpResponse};
 use reqwest::Url;
 
 use super::Operation;
+use super::body::{ProduceBodyError, SpooledBody, produce_body};
 
 /// Request headers the client sets itself, or that frame one hop only: they
 /// are not passed on, as the run's egress door passes none of them.
@@ -110,6 +111,24 @@ impl PageRequests {
     }
 
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, Unanswered> {
+        let (url, status, headers, body) = self.send_spooled(request).await?;
+        let body = body.into_bytes().map_err(Unanswered::failed)?;
+        Ok(HttpResponse {
+            url,
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// Performs `request` as one hop and reads its decoded body under the
+    /// render's budgets (FIX 8638): chunks grow one cumulative reservation on
+    /// the shared retained line, pool past the inline bound without a second
+    /// full copy, and refuse past the host's bound as a request failure.
+    async fn send_spooled(
+        &self,
+        request: HttpRequest,
+    ) -> Result<(String, u16, Vec<(String, Vec<u8>)>, SpooledBody), Unanswered> {
         let url = Url::parse(&request.url).map_err(Unanswered::failed)?;
         // An address literal resolves nothing, so the client's guard never
         // sees it: it is checked here, before anything is sent. A name's
@@ -137,27 +156,24 @@ impl PageRequests {
             .map_err(|error| self.unanswered(error))?;
         let url = response.url().to_string();
         let status = response.status().as_u16();
-        let headers = response
+        let headers: Vec<(String, Vec<u8>)> = response
             .headers()
             .iter()
             .filter(|(name, _)| !HOP_RESPONSE_HEADERS.contains(&name.as_str()))
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.to_string(), value.to_owned()))
-            })
+            .map(|(name, value)| (name.to_string(), value.as_bytes().to_vec()))
             .collect();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| self.unanswered(error))?;
-        Ok(HttpResponse {
-            url,
-            status,
-            headers,
-            body: body.to_vec(),
-        })
+        let body = produce_body(
+            response,
+            self.operation.max_response_bytes,
+            Some(&*self.operation.retained),
+            &self.operation.questions,
+        )
+        .await
+        .map_err(|error| match error {
+            ProduceBodyError::Request(error) => self.unanswered(error),
+            error => Unanswered::failed(error),
+        })?;
+        Ok((url, status, headers, body))
     }
 
     /// `error`, a refusal where the render's guard failed its connection,
@@ -173,6 +189,46 @@ impl PageRequests {
             None => Unanswered::failed(error.without_url()),
         }
     }
+
+    /// Performs `request` as one piece-readable answer, unless the render
+    /// ends first: its end cancels the request and drops the partial spool.
+    fn perform_spooled(&self, request: HttpRequest) -> Result<SpooledResponse, BrowserError> {
+        let Some(_running) = self.operation.begin() else {
+            return Err(BrowserError::Navigation("the render has ended".to_string()));
+        };
+        let mut stopped = self.operation.stopped();
+        self.runtime.block_on(async {
+            tokio::select! {
+                answer = self.send_spooled(request) => {
+                    answer
+                        .map(|(_, status, headers, body)| SpooledResponse {
+                            status,
+                            headers,
+                            body: Box::new(body),
+                        })
+                        .map_err(Self::request_error)
+                }
+                _ = stopped.wait_for(|stopped| *stopped) => {
+                    Err(BrowserError::Navigation(
+                        "the render ended before its answer".to_string(),
+                    ))
+                }
+            }
+        })
+    }
+
+    /// A refusal answers the host's destination refusal: the guard's reason
+    /// (hosted infrastructure or a private network), in the engine's own
+    /// words; any other failure fails only its request.
+    fn request_error(unanswered: Unanswered) -> BrowserError {
+        match unanswered {
+            Unanswered::Refused(refused) => BrowserError::DestinationRefused(DestinationRefusal {
+                reason: refused.reason().to_owned(),
+                message: refused.to_string(),
+            }),
+            Unanswered::Failed(detail) => BrowserError::Navigation(detail),
+        }
+    }
 }
 
 impl BrowserRequestHandler for PageRequests {
@@ -180,15 +236,17 @@ impl BrowserRequestHandler for PageRequests {
     /// (hosted infrastructure or a private network), in the engine's own
     /// words.
     fn fetch(&self, request: HttpRequest) -> Result<HttpResponse, BrowserError> {
-        self.perform(request)
-            .map_err(|unanswered| match unanswered {
-                Unanswered::Refused(refused) => {
-                    BrowserError::DestinationRefused(DestinationRefusal {
-                        reason: refused.reason().to_owned(),
-                        message: refused.to_string(),
-                    })
-                }
-                Unanswered::Failed(detail) => BrowserError::Navigation(detail),
-            })
+        self.perform(request).map_err(Self::request_error)
+    }
+
+    /// One request with a piece-readable answer: the paused-request path
+    /// reads the spool in pieces instead of assembling the whole body again.
+    fn fetch_spooled(&self, request: HttpRequest) -> Result<SpooledResponse, BrowserError> {
+        self.perform_spooled(request)
+    }
+
+    /// The paused-request path uses [`Self::fetch_spooled`].
+    fn provides_spooled(&self) -> bool {
+        true
     }
 }

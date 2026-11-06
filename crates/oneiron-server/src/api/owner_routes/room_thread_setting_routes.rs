@@ -8,11 +8,13 @@
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::machine_routes::act_surface_admitted;
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
@@ -26,6 +28,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/room-threads",
                 summary: "The owner's two room-thread switches, as they read now.",
                 row: None,
+                shape: None,
             },
             get(read),
         ),
@@ -35,6 +38,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/settings/room-threads",
                 summary: "Sets either switch, or both, and answers the two as they now read.",
                 row: None,
+                shape: Some(RestShape::json(
+                    room_thread_change_body_schema,
+                    room_thread_settings_schema,
+                )),
             },
             post(put),
         ),
@@ -99,15 +106,24 @@ async fn read(
 /// answers the two as they now read; the next walk-in or delete reads them.
 async fn put(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RoomThreadSettingsChange>,
 ) -> OwnerReply<RoomThreadSettings> {
     let owner = owner(&auth, &server)?;
+    // A change records where the owner spoke from (FIX 6465): audit only.
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let change = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<RoomThreadSettings> {
         Ok(server
             .vault()
-            .set_room_thread_admin_settings(&owner, change.admin_walk_in, change.admin_delete)?
+            .set_room_thread_admin_settings(
+                &owner,
+                Some(surface),
+                change.admin_walk_in,
+                change.admin_delete,
+            )?
             .into())
     })
     .await?;

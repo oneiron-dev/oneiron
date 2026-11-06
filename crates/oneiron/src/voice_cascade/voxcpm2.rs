@@ -59,6 +59,18 @@ impl WarmTarget {
         Ok(())
     }
 
+    /// A worker's `/ready` answer: the `transcript_frame` capability said
+    /// beside the warm target, then the strict target itself. Each caller
+    /// keeps its own validation and error mapping.
+    pub fn from_ready(mut ready: serde_json::Value) -> serde_json::Result<(Self, bool)> {
+        let takes_frame = ready
+            .as_object_mut()
+            .and_then(|fields| fields.remove("transcript_frame"))
+            == Some(serde_json::Value::Bool(true));
+        let warm = serde_json::from_value(ready)?;
+        Ok((warm, takes_frame))
+    }
+
     /// The worker this target names, as far as `/ready` proves it (FIX 8314,
     /// INFERENCE R1): a VoxCPM2 worker, and the incarnation that answered.
     /// Its boot id, minted once per process as 32 hex digits, is the

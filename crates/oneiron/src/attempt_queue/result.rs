@@ -168,6 +168,7 @@ impl AttemptQueue<'_> {
                 record.last_error = Some(input.reason);
                 record.result_ref = Some(input.result_ref);
                 record.updated_at = input.now;
+                record.settled_at = Some(input.now);
                 // A settled row owns no advisory dedupe claim: the next
                 // dispatch under the same key must mint a fresh try rather
                 // than be handed this stopped one.
@@ -183,6 +184,12 @@ impl AttemptQueue<'_> {
                     &input.lease_owner,
                 )?;
                 self.notify_settled_in_txn(wtxn, &record)?;
+                // FIX 900: an abandoned child settles its spend lease in the
+                // same write (OF-532); idempotent, a no-op when unmetered.
+                if let Some(vault) = self.vault {
+                    crate::agent_dispatch::AgentDispatcher::new(vault)
+                        .settle_child_in_txn(wtxn, &record.id, input.now)?;
+                }
                 Ok(AbandonOutcome::Abandoned(record))
             }
             state => Err(invalid_transition("abandon", state.as_str())),

@@ -126,7 +126,9 @@ pub(super) fn erase_slot_in_txn(
     slot: &EntityId,
 ) -> Result<()> {
     vault.fence_credential_in_txn(wtxn, slot);
-    crate::batch::deindex_entity(&vault.store, wtxn, slot)?;
+    crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, slot)?;
+    crate::secret_custody::erase_secret_handle_label_in_txn(&vault.store, wtxn, slot)?;
+    crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(vault, wtxn, slot)?;
     let name = slot_name(slot);
     if NAME_INDEX
         .get(&vault.store, &*wtxn, &name)?
@@ -237,6 +239,7 @@ impl Vault {
             name: slot_name(&slot),
             class: CustodyClass::CustodyDeviceBound,
             device_only: true,
+            model_reveal_allowed: true,
             value_bytes: tokens.to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at: at,
@@ -496,6 +499,43 @@ impl Vault {
             })?;
         }
         Ok(finished.len() == slots.len())
+    }
+}
+
+impl Store {
+    /// Drops every value-free `Erasing` row whose owner-authorized erase has
+    /// finished, without requiring the original owner door to run again.
+    /// Whether any row was dropped.
+    ///
+    /// # Errors
+    /// Storage and custody faults: the next finisher pass retries.
+    pub(crate) fn drop_finished_cloud_registration_erasing_rows(&self) -> Result<bool> {
+        let finished = {
+            let txn = self.env.read_txn()?;
+            let slots = rows_in_txn(self, &txn)?
+                .into_iter()
+                .filter_map(|(slot, row)| {
+                    (row.phase == CloudRegistrationPhase::Erasing).then_some(slot)
+                })
+                .collect::<Vec<_>>();
+            finished_in_txn(self, &txn, &slots)?
+        };
+        if finished.is_empty() {
+            return Ok(false);
+        }
+        let mut wtxn = self.env.write_txn()?;
+        let mut dropped = false;
+        for slot in &finished {
+            let erasing = ROWS
+                .get(self, &*wtxn, slot)?
+                .is_some_and(|row| row.phase == CloudRegistrationPhase::Erasing);
+            if erasing && self.credential_erase_finished_in_txn(&*wtxn, slot)? {
+                ROWS.delete(self, &mut wtxn, slot)?;
+                dropped = true;
+            }
+        }
+        wtxn.commit()?;
+        Ok(dropped)
     }
 }
 

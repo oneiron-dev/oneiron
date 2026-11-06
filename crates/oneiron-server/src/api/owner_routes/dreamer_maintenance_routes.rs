@@ -22,7 +22,7 @@ use oneiron::dreamer_runner::maintenance::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -41,6 +41,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/maintenance/applied",
                 summary: "Every applied write, reverted ones too, newest first.",
                 row: None,
+                shape: None,
             },
             get(applied),
         ),
@@ -50,6 +51,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/maintenance/revert",
                 summary: "The owner's revert of one applied write.",
                 row: None,
+                shape: Some(RestShape::json(
+                    revert_maintenance_body_schema,
+                    maintenance_revert_schema,
+                )),
             },
             post(revert),
         ),
@@ -59,6 +64,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/dreamer/maintenance/action-mode/apply",
                 summary: "The owner's apply of one action-mode finding's explicit agent-ceiling patch (FIX 1786): `finding` (32 hex), and the `agent` (32 hex) and `ceiling` (`proposed` or `auto`) the finding's patch names, as shown. The ceiling moves through the owner's definition writer, fenced on the definition revision the finding read; the finding's revert puts it back. Answers the applied write.",
                 row: None,
+                shape: Some(RestShape::json(
+                    apply_action_mode_body_schema,
+                    applied_maintenance_schema,
+                )),
             },
             post(apply_action_mode),
         ),

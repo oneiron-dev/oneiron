@@ -23,7 +23,10 @@ use crate::outbound_intent_ledger::{
 use super::approval::{
     ConnectorCallApproval, HeldConnectorAsk, retain_held_ask, scoped_mcp_pinned_gate_input,
 };
-use super::connector_call::{ConnectorCallInvocation, PENDING_CALLS, connector_call_ref};
+use super::connector_call::{
+    ConnectorCallInvocation, PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
+};
+use super::connector_call_erase::put_pending_call_in_txn;
 use super::tool_call::PreparedToolCall;
 
 /// The hold reason an `always ask` replay carries, the Gate's own receipt
@@ -174,9 +177,9 @@ impl Vault {
     /// invocation names (the principal, attempt and call seq), else the one
     /// row that holds that attempt and call seq for that principal, keeps the
     /// ask as its current one, and the owner is asked once, as a resume's
-    /// hold asks. A call no row holds is only reported by the sweep: a row
-    /// kept here could not name the credential the call presents. `true`
-    /// when a row holds the call.
+    /// hold asks. A call no row holds gets a sweep-minted row from its frozen
+    /// bytes; the next matching live pass adopts the presentation context the
+    /// sweep could not rebuild. `true` when a row holds the call.
     ///
     /// # Errors
     /// Storage errors.
@@ -200,9 +203,45 @@ impl Vault {
             },
         )?;
         let ask = HeldConnectorAsk::of(approval_digest, &candidate.prepared);
+        let name = candidate.prepared.call().server.clone();
+        let tool = candidate.prepared.call().tool.clone();
+        let mut full_arguments = candidate.prepared.arguments().clone();
+        for requirement in candidate.prepared.header_grants() {
+            if let Some(value) = candidate.prepared.headers().get(&requirement.header) {
+                full_arguments.insert(
+                    requirement.parameter.clone(),
+                    serde_json::Value::String(value.clone()),
+                );
+            }
+        }
+        let dry_run_forced = candidate.prepared.destructive_hint()
+            && candidate.prepared.arguments().contains_key("dry_run");
+        if dry_run_forced {
+            full_arguments.remove("dry_run");
+        }
+        let arguments = serde_json::to_string(&full_arguments).map_err(|_| {
+            IntentLedgerError::InvalidInput("frozen connector arguments are not JSON")
+        })?;
+        let mutation = candidate.prepared.mutation();
+        let grant_id = record
+            .capability_provenance()
+            .map(|capability| capability.grant_id());
         let held = self.try_with_write_txn(|txn| -> Result<_, IntentLedgerError> {
+            // The sweep reconstructed this call from an earlier snapshot:
+            // re-read the authoritative ledger row in this writer and mint
+            // nothing unless it is still Pending with the same unerased
+            // payload, so an actor erase committed since is not rebuilt
+            // from stale plaintext.
+            let fresh =
+                read_intent_for_attempt_in_txn(self, txn, record.attempt_id, record.call_seq)?;
+            let live = fresh.is_some_and(|fresh| {
+                fresh.state == IntentState::Pending && fresh.payload() == record.payload()
+            });
+            if !live {
+                return Ok(None);
+            }
             let found = match PENDING_CALLS.get(&self.store, txn, &named)? {
-                Some(row) => Some((named, row)),
+                Some(row) => Some((named.clone(), row)),
                 None => PENDING_CALLS
                     .scan(&self.store, txn)?
                     .into_iter()
@@ -212,16 +251,51 @@ impl Vault {
                             && row.principal_ref == candidate.principal_ref
                     }),
             };
-            let Some((call_ref, mut row)) = found else {
-                return Ok(None);
-            };
+            let (call_ref, mut row) = found.unwrap_or_else(|| {
+                (
+                    named,
+                    PendingConnectorCall {
+                        name: name.clone(),
+                        tool: tool.clone(),
+                        arguments: arguments.clone(),
+                        mutation,
+                        grant_id: grant_id.map(|id| id.to_hex()),
+                        attempt_id: record.attempt_id,
+                        call_seq: record.call_seq,
+                        principal_ref: candidate.principal_ref.clone(),
+                        remember_context: candidate.prepared.remember_context(),
+                        held_at_ms: now_ms(),
+                        settled: None,
+                        held_reasons: Vec::new(),
+                        owner_ask_seq: None,
+                        credential: None,
+                        grant: None,
+                        secret_use: None,
+                        sweep_minted: true,
+                        sweep_dry_run_forced: dry_run_forced,
+                        live_use: false,
+                        code_consent_wait: None,
+                        // The original pass's retention context is unknown: mint
+                        // sealed, so a crash-left off-record request never
+                        // gains a plaintext durable copy before adoption.
+                        off_record: true,
+                        // The original pass's complete source union is unknown.
+                        source_rows: None,
+                        approval: None,
+                        input: None,
+                        code: None,
+                        sealed_arguments: None,
+                        paced_until: None,
+                    },
+                )
+            });
             // A settled row, one a connector asked through, or one a code
             // consent wait owns asks nothing here.
             if row.settled.is_some() || row.input.is_some() || row.code_consent_wait.is_some() {
                 return Ok(None);
             }
             retain_held_ask(&mut row, ask.as_ref());
-            PENDING_CALLS.put(&self.store, txn, &call_ref, &row)?;
+            put_pending_call_in_txn(&self.store, txn, &call_ref, &row)?;
             Ok(Some(call_ref))
         })?;
         let Some(call_ref) = held else {

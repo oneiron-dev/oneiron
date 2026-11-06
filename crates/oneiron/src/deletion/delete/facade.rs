@@ -1,10 +1,14 @@
 //! Public and gated delete entry points plus the headerful orchestration state machine.
 
 use crate::Vault;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::legal_hold::pending_erase_in_txn;
 
-use super::super::gate::{GatedDeletion, reverify_deletion_authority_before_publication};
+use super::super::gate::{
+    DeletionGateContext, GatedDeletion, reverify_deletion_authority_before_publication,
+};
 use super::super::tombstone::DeleteReason;
 use super::guard::DeleteGuard;
 use super::{
@@ -65,12 +69,17 @@ impl Vault {
     }
 
     /// The delete of an owner erase come due (FIX 6337), under the reason
-    /// its request `generation` keeps (FIX 1465): run as
-    /// [`Self::delete_entity_with_reason`] runs one, except that the first
-    /// writer that would publish or tear the record re-proves that this
-    /// request still waits, and a hold's refusal names the owner its row
-    /// records. None waiting, or a newer request, cancels it: nothing is
-    /// published or torn.
+    /// its request `generation` keeps (FIX 1465): run as the owner's own
+    /// delete runs, under the owner gate of the owner its row records as
+    /// confirming it (FIX 10402), so a goal CLAIM is decided as that
+    /// owner's plain delete decides it and the gate decision record is
+    /// appended. Each writer before publication re-proves that owner's
+    /// deletion authority as the owner's delete re-proves it. A row naming
+    /// no owner, or an owner whose deletion authority no longer holds, runs
+    /// ungated, as before. The first writer that would publish or tear the
+    /// record re-proves that this request still waits, and a hold's
+    /// refusal names the owner its row records. None waiting, or a newer
+    /// request, cancels it: nothing is published or torn.
     pub(crate) fn delete_confirmed_erase(
         &self,
         id: &EntityId,
@@ -78,9 +87,65 @@ impl Vault {
         generation: EntityId,
     ) -> Result<ConfirmedEraseOutcome> {
         let due = PendingConfirmedErase::new(generation);
-        let deleted = self.delete_entity_through_dependents(id, reason, None, Some(&due));
+        let confirmed = self.confirmed_erase_gate(id, &generation)?;
+        let owner = confirmed.as_ref().map(|(_, owner)| *owner);
+        let reverify = |txn: &heed::RoTxn<'_>| -> Result<()> {
+            owner.map_or(Ok(()), |owner| {
+                confirming_owner_authority_in_txn(self, txn, owner)
+            })
+        };
+        let gate = confirmed.map(|(context, _)| GatedDeletion::new(context, &reverify));
+        let deleted = self.delete_entity_through_dependents(id, reason, gate, Some(&due));
         self.store.flush_legal_hold_refusals_settled();
         due.outcome(deleted)
+    }
+
+    /// The owner gate of the waiting erase of `id` at request `generation`
+    /// (FIX 10402): the owner its row records as confirming it, with the
+    /// decision evidence the owner's own delete mints before its first
+    /// writer. `None` when no such request waits, its row names no owner,
+    /// or that owner's deletion authority no longer holds.
+    fn confirmed_erase_gate(
+        &self,
+        id: &EntityId,
+        generation: &EntityId,
+    ) -> Result<Option<(DeletionGateContext, EntityId)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(owner) = pending_erase_in_txn(&self.store, &txn, id)?
+            .filter(|pending| pending.generation == *generation)
+            .and_then(|pending| pending.confirmed_by)
+            .and_then(|by| EntityId::from_hex(&by).ok())
+        else {
+            return Ok(None);
+        };
+        // Only an explicit denial means the confirming owner's authority no
+        // longer holds, and only then does the erase run ungated as before.
+        // A storage or decode failure is not a denial: it propagates and
+        // the erase does not run, rather than silently dropping the gate
+        // (the same split archive_delete_wire makes of this predicate).
+        match crate::memory::verify_deletion_authority_in_txn(
+            self,
+            &txn,
+            owner,
+            EdgeActorClass::Human,
+        ) {
+            Ok(()) => {}
+            Err(error)
+                if error.code == crate::memory::MEMORY_CODE_FORBIDDEN
+                    || error.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(Error::Refused(error.message)),
+        }
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        let context = DeletionGateContext::new(
+            owner,
+            EdgeActorClass::Human,
+            crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+        );
+        Ok(Some((context, owner)))
     }
 
     /// One delete and its dependent walks. Its caller logs the refusals once
@@ -194,11 +259,16 @@ impl Vault {
     ) -> Result<()> {
         if matches!(
             reason,
-            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
-            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
+            self.store.delete_guards.precheck_goal_delete(
+                &self.store,
+                &txn,
+                *id,
+                gate.is_some(),
+            )?;
             if !crate::share::active_brief_shares_for(
                 &self.store,
                 &txn,
@@ -283,4 +353,16 @@ impl Vault {
             hard.soft_complete_at,
         )
     }
+}
+
+/// The deletion authority of `owner`, the owner a due erase's row records
+/// as confirming it, read in `txn` by the one predicate the owner's own
+/// delete re-proves in its writers (FIX 10402).
+fn confirming_owner_authority_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: EntityId,
+) -> Result<()> {
+    crate::memory::verify_deletion_authority_in_txn(vault, txn, owner, EdgeActorClass::Human)
+        .map_err(|_| Error::ConcurrentWrite("deletion authority changed before commit"))
 }

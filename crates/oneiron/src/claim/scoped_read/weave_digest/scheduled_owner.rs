@@ -169,60 +169,66 @@ impl Vault {
         })
         .map_err(|_| invalid())?;
         let digest_key = digest_key(reader, scheduled_for);
-        let notice =
-            self.with_write_txn_grouped(|txn| {
-                if self.store.vault_meta.get(&*txn, key)?.as_deref() != Some(saved) {
-                    return Ok(None);
+        let notice = self.with_write_txn_grouped(|txn| {
+            if self.store.vault_meta.get(&*txn, key)?.as_deref() != Some(saved) {
+                return Ok(None);
+            }
+            if !sources_live_in_txn(&self.store, txn, &report.value)? {
+                return Ok(None);
+            }
+            // The same projection in this writer's snapshot, his schedule
+            // and standing read again: each row it saves must still serve,
+            // and a loop decision the ledger gained since joins the next
+            // period (FIX 7694).
+            let current =
+                read.weave_report_for_scheduled_owner_in_txn(txn, &scheduled, &row.recipe)?;
+            if current.receipt != report.receipt
+                || !snapshot_still_served(&report.value, &current.value)
+            {
+                return Ok(None);
+            }
+            if let Some(raw) = digest_row_in(&self.store, txn, &digest_key)? {
+                let previous: WireDigest = serde_json::from_slice(&raw).map_err(|_| invalid())?;
+                for source in dependencies::indexed_sources(&previous.into_report()?.value)? {
+                    index_source_in_txn(&self.store, txn, &source, &digest_key, false)?;
                 }
-                if !sources_live_in_txn(&self.store, txn, &report.value)? {
-                    return Ok(None);
-                }
-                // The same projection in this writer's snapshot, his schedule
-                // and standing read again: each row it saves must still serve,
-                // and a loop decision the ledger gained since joins the next
-                // period (FIX 7694).
-                let current =
-                    read.weave_report_for_scheduled_owner_in_txn(txn, &scheduled, &row.recipe)?;
-                if current.receipt != report.receipt
-                    || !snapshot_still_served(&report.value, &current.value)
-                {
-                    return Ok(None);
-                }
-                if let Some(raw) = digest_row_in(&self.store, txn, &digest_key)? {
-                    let previous: WireDigest =
-                        serde_json::from_slice(&raw).map_err(|_| invalid())?;
-                    for source in dependencies::indexed_sources(&previous.into_report()?.value)? {
-                        index_source_in_txn(&self.store, txn, &source, &digest_key, false)?;
-                    }
-                }
-                for source in &sources {
-                    index_source_in_txn(&self.store, txn, source, &digest_key, true)?;
-                }
-                put_digest_row_in_txn(&self.store, txn, &digest_key, &bytes)?;
-                self.store.vault_meta.put(txn, key, &next)?;
-                // The period's one due notice, in this same write: the owner
-                // learns of it as he always has, and his open finds it saved.
-                let notice =
-                    self.record_notification_in_txn(txn, &reader.notification(scheduled_for, now))?;
-                // The lens's generate step renders the period on the Dreamer's
-                // lent model, queued in this same write.
-                if report
-                    .value
-                    .sections
-                    .iter()
-                    .any(|section| !section.items.is_empty())
-                {
-                    crate::dreamer_runner::DreamerRunnerStore::new(self)
-                        .enqueue_weave_lens_in_txn(txn, reader, scheduled_for, now)?;
-                }
-                Ok(Some(notice))
-            })?;
+            }
+            for source in &sources {
+                index_source_in_txn(&self.store, txn, source, &digest_key, true)?;
+            }
+            put_digest_row_in_txn(&self.store, txn, &digest_key, &bytes)?;
+            self.store.vault_meta.put(txn, key, &next)?;
+            // The period's one due notice, in this same write: the owner
+            // learns of it as he always has, and his open finds it saved.
+            let notice =
+                self.record_notification_in_txn(txn, &reader.notification(scheduled_for, now))?;
+            // The lens's generate step renders the period on the Dreamer's
+            // lent model, queued in this same write.
+            if report
+                .value
+                .sections
+                .iter()
+                .any(|section| !section.items.is_empty())
+            {
+                crate::dreamer_runner::DreamerRunnerStore::new(self).enqueue_weave_lens_in_txn(
+                    txn,
+                    reader,
+                    scheduled_for,
+                    now,
+                    published.report_revision,
+                    now,
+                )?;
+            }
+            Ok(Some(notice))
+        })?;
         let Some(notice) = notice else {
             return Ok(false);
         };
         // His own exposure to the period, for the Coach (FIX 5495), in its
         // own write after the notice's; never his open.
         self.note_owner_weave_digest_notice(owner, scheduled_for, cadence, notice, now);
+        // The notice also goes to his own channel (FIX 1262).
+        self.send_weave_digest(reader, scheduled_for, notice);
         Ok(true)
     }
 

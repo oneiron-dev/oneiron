@@ -24,12 +24,15 @@ use loro::ExportMode;
 use oneiron_docedit::live::ApproveScope;
 use serde::{Deserialize, Serialize};
 
-use super::{ConflictKind, OfficeBodyDiff, invalid, loro_kind, open_fork, three_way, validate};
+use super::{
+    ConflictKind, OfficeBodyDiff, OfficeBodyKind, invalid, land_moved_xlsx, loro_kind, open_fork,
+    three_way, validate,
+};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, EffectFacts,
-    GrantBound, StandingConsentGrant, evaluate_consent, load_active_standing_grants,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, ConsentDecision,
+    EffectFacts, GrantBound, StandingConsentGrant, evaluate_consent, load_active_standing_grants,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -42,11 +45,19 @@ use crate::typed_body::{
 };
 use crate::write_envelope::WriteActor;
 
+mod live_edit;
+pub(crate) use live_edit::LiveEditAdmission;
+pub(super) use live_edit::revoke_office_edit_grants_naming_in_txn;
+pub(super) use live_edit::{
+    admit_live_edit_in_txn, covering_live_grant, identical_live_edit_grant_active_in_txn,
+    live_edit_admission_in_txn, live_edit_effect, mint_live_edit_grant_in_txn, office_bound,
+    office_effect_for, office_scope,
+};
+
 /// The action class a standing grant names to land an actor's office fork on
 /// an artifact without a person's word.
 pub const OFFICE_BODY_EDIT_CLASS: &str = "entity.office.edit";
 const OFFICE_MERGE_OPERATION: &str = "office.body.merge";
-const MAX_REASON_BYTES: usize = 1024;
 
 /// Each proposal by its id. The header's artifact is its home, not its key.
 pub(super) const PROPOSALS: SideTable<EntityId, OfficeBodyProposal, Named> =
@@ -267,18 +278,35 @@ impl Vault {
         ask: ProposalAsk,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
-            let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
-                return Ok(());
-            };
-            if record.settlement.is_some() || record.asks.iter().any(|held| held.ask == ask.ask) {
-                return Ok(());
-            }
-            record
-                .ask_refused
-                .retain(|held| held.artifact != ask.artifact);
-            record.asks.push(ask);
-            PROPOSALS.put(&self.store, wtxn, proposal, &record)
+            self.record_office_proposal_ask_in_txn(wtxn, proposal, ask)
         })
+    }
+
+    /// Keep a proposal's ask link in the ask admission's transaction.
+    pub(super) fn record_office_proposal_ask_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        proposal: &EntityId,
+        ask: ProposalAsk,
+    ) -> Result<()> {
+        let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
+            return Ok(());
+        };
+        if record.settlement.is_some() {
+            return Ok(());
+        }
+        let repeated = record.asks.iter().any(|held| held.ask == ask.ask);
+        let refused = record.ask_refused.len();
+        record
+            .ask_refused
+            .retain(|held| held.artifact != ask.artifact);
+        if repeated && record.ask_refused.len() == refused {
+            return Ok(());
+        }
+        if !repeated {
+            record.asks.push(ask);
+        }
+        PROPOSALS.put(&self.store, wtxn, proposal, &record)
     }
 
     /// Record that ask admission refused one member artifact's holder ask.
@@ -489,8 +517,8 @@ pub(super) fn settle_in_txn(
         return Err(invalid("the proposal is settled"));
     }
     let reason = match request.reason.map(str::trim) {
-        Some(reason) if reason.is_empty() || reason.len() > MAX_REASON_BYTES => {
-            return Err(invalid("a settlement reason is 1 to 1024 bytes"));
+        Some(reason) if reason.is_empty() => {
+            return Err(invalid("a settlement reason is not empty"));
         }
         reason => reason.map(str::to_owned),
     };
@@ -647,7 +675,7 @@ pub(super) fn settle_in_txn(
                     .map_err(|_| invalid("office body fork import"))?;
                 validate(kind, &scratch)?;
                 let admission = MergeAdmission { fork: member.fork };
-                let after = merge_admitted_typed_body_fork_in_txn(
+                let mut after = merge_admitted_typed_body_fork_in_txn(
                     vault,
                     wtxn,
                     &member.artifact,
@@ -656,6 +684,19 @@ pub(super) fn settle_in_txn(
                     actor,
                     &admission,
                 )?;
+                // Writes made beside a row or column edit move with it.
+                if kind == OfficeBodyKind::Xlsx
+                    && let Some(frontier) = land_moved_xlsx(
+                        vault,
+                        wtxn,
+                        &member.artifact,
+                        (&fork_record.base, &head.frontier),
+                        &fork_doc,
+                        actor,
+                    )?
+                {
+                    after.frontier = frontier;
+                }
                 let member = &mut record.members[index];
                 member.verdict = MemberVerdict::Landed;
                 member.answer = Some(MemberAnswer {
@@ -715,23 +756,7 @@ fn issued_grants(
 /// The landing of `opener`'s work on `artifact` as the one consent evaluator
 /// reads it: `opener` editing the artifact under the office edit class.
 fn office_effect(artifact: &EntityId, opener: &EntityId) -> Result<ComposedEffect> {
-    ComposedEffect::new(EffectFacts::new(OFFICE_MERGE_OPERATION)?)
-        .with_action_requirement(office_bound(artifact, opener)?)
-}
-
-fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<GrantBound> {
-    let (class, envelope) = office_scope(artifact)?;
-    GrantBound::action(ActorBound::new(opener.to_hex())?, class, envelope)
-}
-
-/// The scope of office edits to `artifact`: what a standing grant names to
-/// land a fork there, and whose holders a waiting member is asked of.
-pub(super) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEnvelope)> {
-    let target = format!("entity:{}", artifact.to_hex());
-    Ok((
-        ActionClass::new(OFFICE_BODY_EDIT_CLASS)?,
-        ActionEnvelope::new([target.clone()])?.with_target(target)?,
-    ))
+    office_effect_for(OFFICE_MERGE_OPERATION, artifact, opener)
 }
 
 /// The ref of a standing grant that lands `opener`'s work on `artifact`,
@@ -742,13 +767,27 @@ fn covering_grant(
     artifact: &EntityId,
     opener: &EntityId,
 ) -> Result<Option<String>> {
+    covering_grant_for(OFFICE_MERGE_OPERATION, grants, excluded, artifact, opener)
+}
+
+fn covering_grant_for(
+    operation: &str,
+    grants: &[(StandingConsentGrant, Option<EntityId>)],
+    excluded: &BTreeSet<EntityId>,
+    artifact: &EntityId,
+    subject: &EntityId,
+) -> Result<Option<String>> {
     let eligible: Vec<StandingConsentGrant> = grants
         .iter()
         .filter(|(_, issuer)| issuer.is_some_and(|issuer| !excluded.contains(&issuer)))
         .map(|(grant, _)| grant.clone())
         .collect();
-    let bound = office_bound(artifact, opener)?;
-    if evaluate_consent(&office_effect(artifact, opener)?, None, &eligible) != ConsentDecision::Auto
+    let bound = office_bound(artifact, subject)?;
+    if evaluate_consent(
+        &office_effect_for(operation, artifact, subject)?,
+        None,
+        &eligible,
+    ) != ConsentDecision::Auto
     {
         return Ok(None);
     }

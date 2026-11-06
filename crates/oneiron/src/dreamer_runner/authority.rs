@@ -50,64 +50,10 @@ pub struct DreamerAuthorityStamp {
     pub facet: String,
     pub receipt_id: [u8; 16],
 }
-/// The seeded MACHINE row's body; the row itself carries seed time 0.
-const ACTOR_BODY: &[u8] = b"Dreamer authority";
-/// The Coach's seeded MACHINE row body, seeded like the Dreamer's at time 0.
-const COACH_BODY: &[u8] = b"Coach authority";
-pub(crate) fn dreamer_actor_id() -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])
-}
-pub(crate) fn coach_actor_id() -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(b"oneiron.coach.authority.v1", &[])
-}
-/// The fixed body of a base-agent principal row; `None` for any other id.
-fn base_agent_body(id: EntityId) -> Result<Option<&'static [u8]>> {
-    Ok(if id == dreamer_actor_id()? {
-        Some(ACTOR_BODY)
-    } else if id == coach_actor_id()? {
-        Some(COACH_BODY)
-    } else {
-        None
-    })
-}
-/// Whether `id` is one of the two fixed base-agent principal rows, which every
-/// replica seeds identically and no write, delete or tombstone may change.
-pub(crate) fn is_base_agent_actor(id: &EntityId) -> Result<bool> {
-    Ok(base_agent_body(*id)?.is_some())
-}
-
-pub(crate) fn guard_actor_put(
-    id: EntityId,
-    entity_type: u8,
-    data: &[u8],
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    let Some(body) = base_agent_body(id)? else {
-        return Ok(());
-    };
-    if entity_type != crate::registry::ENTITY_TYPE_MACHINE
-        || data != body
-        || occurred.start != 0
-        || occurred.end != 0
-        || learned_at != 0
-    {
-        return Err(Error::Registry(
-            crate::error::RegistryError::DreamerActorImmutable,
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn guard_actor_delete(id: &EntityId) -> Result<()> {
-    if is_base_agent_actor(id)? {
-        return Err(Error::Registry(
-            crate::error::RegistryError::DreamerActorImmutable,
-        ));
-    }
-    Ok(())
-}
-
+use crate::store::base_agent::{ACTOR_BODY, COACH_BODY, base_agent_body};
+pub(crate) use crate::store::base_agent::{
+    coach_actor_id, dreamer_actor_id, guard_actor_delete, guard_actor_put, is_base_agent_actor,
+};
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer authority binding".into())
 }
@@ -206,6 +152,7 @@ impl Vault {
                 entity_type: crate::registry::ENTITY_TYPE_MACHINE,
                 occurred: TimeRange { start: 0, end: 0 },
                 learned_at: 0,
+                row_version: None,
                 data: body.to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -500,13 +447,21 @@ impl Vault {
     /// The resident a dreaming attempt runs as, by its own stamp.
     pub fn resident_actor_for_attempt(&self, id: AttemptId) -> Result<WriteActor> {
         let txn = self.store.env.read_txn()?;
-        let stamp = RESIDENT_ATTEMPT
-            .get(&self.store, &txn, &id)?
-            .ok_or_else(invalid)?;
-        if stamp.attempt_id != *id.as_bytes() {
-            return Err(invalid());
-        }
-        Ok(WriteActor::new(stamp.resident, EdgeActorClass::Agent))
+        self.resident_actor_for_attempt_in_txn(&txn, id)?
+            .ok_or_else(invalid)
+    }
+
+    /// The native stamped resident at the caller's revision, when the stamp
+    /// names this attempt. No stamp or a mismatched one binds no resident.
+    pub(crate) fn resident_actor_for_attempt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<WriteActor>> {
+        Ok(RESIDENT_ATTEMPT
+            .get(&self.store, txn, &id)?
+            .filter(|stamp| stamp.attempt_id == *id.as_bytes())
+            .map(|stamp| WriteActor::new(stamp.resident, EdgeActorClass::Agent)))
     }
 }
 #[cfg(test)]

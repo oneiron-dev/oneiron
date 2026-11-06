@@ -16,9 +16,9 @@ use super::check_store::{
 use super::plan::RepoCheckPlan;
 use super::{BatchState, CheckPhase, MergeBatch, MergeQueue, SpeculativePath};
 use crate::Vault;
-use crate::contract_oracle::{CommandOutput, ContractOracle, ContractVerdict, invalid};
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
+use crate::store::contract_oracle::{CommandOutput, ContractOracle, ContractVerdict, invalid};
 
 impl MergeQueue<'_> {
     /// The staged path a check of `phase` on `mask` runs on, and the verdict
@@ -142,9 +142,9 @@ impl MergeQueue<'_> {
             receipt.inputs_digest == digest
                 && receipt.verdict_ref.as_deref() == Some(verdict.id.as_str())
         }) {
-            Some(receipt) => receipt.clone(),
+            Some(receipt) => receipt.inputs.clone(),
             None => match self.bound_receipt(digest, &verdict.id)? {
-                Some(receipt) => receipt,
+                Some(receipt) => receipt.inputs,
                 None => return Ok(false),
             },
         };
@@ -168,9 +168,13 @@ impl MergeQueue<'_> {
             plan_digest: config.plan.digest.clone(),
             commands: plan.phase(phase).to_vec(),
             contract_outputs: plan.contract_outputs.clone(),
-            environment: receipt.inputs.environment.clone(),
+            environment: receipt.environment.clone(),
+            // Cleared: the rebuild compares digest wire bytes only, and the
+            // snapshot fields never hash.
+            input_scope: None,
+            input_taint: Vec::new(),
         };
-        Ok(rebuilt.digest()? == digest && receipt.inputs.digest()? == digest)
+        Ok(rebuilt.digest()? == digest && receipt.digest()? == digest)
     }
 
     /// `check` with the bound inputs of claimed check `work`: the frozen
@@ -254,6 +258,7 @@ impl MergeQueue<'_> {
                 return self.finish_step(work, step, status, None, None, None);
             }
         };
+        let (input_scope, input_taint) = snapshot_input_scope_taint(self.vault, config.repo)?;
         let inputs = QueueCheckInputs {
             store: self.repo.identity().as_hex(),
             repo: config.repo,
@@ -269,8 +274,10 @@ impl MergeQueue<'_> {
             commands: plan.phase(step.phase).to_vec(),
             contract_outputs: plan.contract_outputs.clone(),
             environment,
+            input_scope,
+            input_taint,
         };
-        let mut receipt = new_receipt(work, inputs)?;
+        let mut receipt = new_receipt(work, &config.approval, inputs)?;
         if !step.force_refresh
             && receipt.inputs.reusable()
             && let Some(prior) = self.reusable_receipt(&receipt.inputs_digest)?
@@ -444,6 +451,7 @@ pub(super) struct BoundCheck {
 /// A fresh receipt of claimed `work` for `inputs`.
 pub(super) fn new_receipt(
     work: &QueueCheckWork,
+    approval: &crate::consent::QueuedCheckApproval,
     inputs: QueueCheckInputs,
 ) -> Result<QueueCheckReceipt> {
     let lease = work
@@ -453,6 +461,8 @@ pub(super) fn new_receipt(
     Ok(QueueCheckReceipt {
         inputs_digest: inputs.digest()?,
         inputs,
+        recorded_actor: approval.recorded_actor(),
+        completion_approval: Some(approval.clone()),
         attempt: work
             .attempt
             .ok_or(Error::InvariantViolation("an unclaimed queue check ran"))?,
@@ -466,6 +476,33 @@ pub(super) fn new_receipt(
         tests_passed: None,
         verdict_ref: None,
     })
+}
+
+/// BEFORE-hostexecute snapshot of the served CODE's read scope and
+/// forward taint refs, in ONE read transaction: the repo row's actual
+/// raw bytes (an absent row stays `None`, never a refusal),
+/// `scope_for_blob` over present bytes, and the forward taint sidecar
+/// union. Called at the `new_receipt` producer (bound checks and the
+/// baseline init) BEFORE `host.execute`; the values freeze on the
+/// inputs and ride ORIGINAL through finish, where root closes them
+/// into the completion token.
+pub(super) fn snapshot_input_scope_taint(
+    vault: &Vault,
+    repo: crate::EntityId,
+) -> Result<(
+    Option<crate::federation::Scope>,
+    Vec<crate::secret_lease::SecretTaintRef>,
+)> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &repo)?;
+    let scope = match &raw {
+        Some(raw) => {
+            crate::federation::record_scope::scope_for_blob(&vault.store, &txn, repo, raw)?
+        }
+        None => None,
+    };
+    let taint = crate::secret_rotation::exhaust_taint_refs_in_txn(&vault.store, &txn, &repo)?;
+    Ok((scope, taint))
 }
 
 pub(super) fn held(reason: QueueCheckHoldReason, detail: String) -> QueueCheckStatus {

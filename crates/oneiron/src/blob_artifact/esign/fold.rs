@@ -55,17 +55,9 @@ impl EsignState {
         }
         (now >= self.document.expires_at).then_some(None)
     }
-    fn has_actionable_recipient(&self) -> bool {
-        self.document.recipients.iter().any(|recipient| {
-            matches!(
-                recipient.role,
-                RecipientRole::Signer | RecipientRole::Approver
-            )
-        })
-    }
     pub fn ready_to_seal(&self) -> bool {
+        // FIX 9607: a CC/viewer-only ceremony is sealable; invent no signer.
         self.document.kind == DocumentKind::Document
-            && self.has_actionable_recipient()
             && ((self.status == DocumentStatus::Pending
                 && (self.rejection.is_some()
                     || self
@@ -137,7 +129,6 @@ impl EsignState {
             EsignEvent::Sent => {
                 if self.status != DocumentStatus::Draft
                     || self.document.kind != DocumentKind::Document
-                    || !self.has_actionable_recipient()
                     || now >= self.document.expires_at
                 {
                     return Err(invalid("document cannot be sent"));
@@ -166,6 +157,18 @@ impl EsignState {
                 row.delivery = DeliveryStatus::Viewed;
                 row.access = AccessStatus::Verified;
             }
+            EsignEvent::AccessVerified { recipient } => {
+                if !self.recipients.contains_key(recipient) {
+                    return Err(invalid("unknown recipient"));
+                }
+                // Capability-verified agent access: no delivery change, no
+                // human Viewed evidence. The executor appends this only after
+                // Gate 2 checked the capability row itself.
+                self.recipients
+                    .get_mut(recipient)
+                    .expect("validated turn")
+                    .access = AccessStatus::Verified;
+            }
             EsignEvent::FieldSaved { signature } => {
                 self.require_turn(&signature.recipient, now)?;
                 if self.recipients[&signature.recipient].access != AccessStatus::Verified {
@@ -181,7 +184,9 @@ impl EsignState {
                 self.signatures
                     .insert(signature.field.clone(), signature.clone());
             }
-            EsignEvent::Signed { recipient, next } => {
+            EsignEvent::Signed {
+                recipient, next, ..
+            } => {
                 self.require_turn(recipient, now)?;
                 if self.recipients[recipient].access != AccessStatus::Verified {
                     return Err(invalid("access authentication required"));
@@ -220,8 +225,9 @@ impl EsignState {
                 self.rejection = Some(reason.clone());
             }
             EsignEvent::Voided { reason } => {
-                if self.ready_to_seal()
-                    || !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
+                // FIX 9608: readiness is not completion; withdrawal ends
+                // only once the ceremony leaves Draft/Pending for good.
+                if !matches!(self.status, DocumentStatus::Draft | DocumentStatus::Pending)
                     || reason.trim().is_empty()
                 {
                     return Err(invalid("document cannot be voided"));
@@ -244,11 +250,13 @@ impl EsignState {
             EsignEvent::Sealed {
                 rejected,
                 item_sha256,
+                item_profiles,
             } => {
                 if !self.ready_to_seal()
                     || *rejected != self.rejection.is_some()
                     || item_sha256.len() != self.document.items.len()
                     || item_sha256.contains(&[0; 32])
+                    || item_profiles.len() != item_sha256.len()
                 {
                     return Err(invalid("seal outcome is not justified"));
                 }

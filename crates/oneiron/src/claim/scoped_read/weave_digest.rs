@@ -41,7 +41,11 @@ mod coach;
 mod dependencies;
 // A saved period's loop-decision rows: carrier, erase index, recheck (OF-499 A2).
 mod loop_decisions;
+pub(crate) use loop_decisions::{
+    saved_weave_loop_reason_decisions_in_txn, scrub_saved_weave_loop_reasons_in_txn,
+};
 // A hard delete inside a saved period: rows rewritten, not the period (FIX 7693).
+mod rerender;
 mod rewrite;
 // A due Owner schedule renders as its recorded live Owner (FIX 1259).
 pub(super) mod scheduled_owner;
@@ -199,6 +203,7 @@ pub struct StoredWeaveDigest {
     pub reader: WeaveDigestReader,
     pub scheduled_for: u64,
     pub rendered_at: u64,
+    pub(crate) report_revision: EntityId,
     pub report: ScopedReadResult<WeaveReport>,
     /// The lens's generate step's render of this period, once it landed.
     pub lens: Option<WeaveLensRender>,
@@ -305,6 +310,7 @@ fn erase_weave_digest_in_txn(
     txn: &mut heed::RwTxn<'_>,
     digest_key: &[u8],
 ) -> Result<()> {
+    rerender::clear_in_txn(store, txn, digest_key)?;
     if let Some(raw) = digest_row_in(store, txn, digest_key)? {
         // Even an undecodable saved row is deleted. If it cannot be
         // decoded, orphan index keys contain references but no body bytes.
@@ -466,6 +472,9 @@ impl Vault {
     /// cadence from it.
     pub fn next_weave_digest_at(&self) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
+        if rerender::pending_in_txn(&self.store, &txn)? {
+            return Ok(Some(0));
+        }
         let mut next: Option<u64> = None;
         for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
             let (_, bytes) = row?;
@@ -498,6 +507,7 @@ impl Vault {
         {
             return Ok(0);
         }
+        self.enqueue_weave_rerenders(now)?;
         let due = {
             let txn = self.store.env.read_txn()?;
             let mut due = Vec::new();
@@ -669,6 +679,7 @@ impl Vault {
         reader: WeaveDigestReader,
         scheduled_for: u64,
         rendered_at: u64,
+        report_revision: EntityId,
         render: &WeaveLensRender,
     ) -> Result<bool> {
         let key = digest_key(reader, scheduled_for);
@@ -677,7 +688,10 @@ impl Vault {
                 return Ok(false);
             };
             let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-            if wire.rendered_at != rendered_at || wire.lens.is_some() {
+            if wire.rendered_at != rendered_at
+                || wire.report_revision != report_revision
+                || wire.lens.is_some()
+            {
                 return Ok(false);
             }
             wire.lens = Some(render.clone());
@@ -707,6 +721,7 @@ impl Vault {
         reader: WeaveDigestReader,
         scheduled_for: u64,
         rendered_at: u64,
+        report_revision: EntityId,
         refusal: &WeaveLensRefusal,
     ) -> Result<bool> {
         let key = digest_key(reader, scheduled_for);
@@ -715,7 +730,10 @@ impl Vault {
                 return Ok(false);
             };
             let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-            if wire.rendered_at != rendered_at || wire.lens.is_some() || wire.lens_refused.is_some()
+            if wire.rendered_at != rendered_at
+                || wire.report_revision != report_revision
+                || wire.lens.is_some()
+                || wire.lens_refused.is_some()
             {
                 return Ok(false);
             }
@@ -893,6 +911,7 @@ impl ScopedRead<'_> {
         };
         let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         let rendered_at = wire.rendered_at;
+        let report_revision = wire.report_revision;
         let lens = wire.lens.take();
         let lens_refused = wire.lens_refused.take();
         let mut report = wire.into_report()?;
@@ -1015,6 +1034,7 @@ impl ScopedRead<'_> {
             reader: reader_key,
             scheduled_for,
             rendered_at,
+            report_revision,
             report,
             lens,
             lens_refused,
@@ -1128,7 +1148,7 @@ impl ScopedRead<'_> {
         ]
         .concat();
         before_commit()?;
-        self.vault.with_write_txn_grouped(|txn| {
+        let published = self.vault.with_write_txn_grouped(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self.vault, txn)?;
             }
@@ -1176,7 +1196,14 @@ impl ScopedRead<'_> {
             // lent model, queued in this same write.
             if any {
                 crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
-                    .enqueue_weave_lens_in_txn(txn, id, row.next_due_at, now)?;
+                    .enqueue_weave_lens_in_txn(
+                        txn,
+                        id,
+                        row.next_due_at,
+                        now,
+                        wire.report_revision,
+                        now,
+                    )?;
             }
             // The copy handed back serves as a read of it would.
             let mut served = report;
@@ -1185,11 +1212,24 @@ impl ScopedRead<'_> {
                 reader: id,
                 scheduled_for: row.next_due_at,
                 rendered_at: now,
+                report_revision: wire.report_revision,
                 report: served,
                 lens: None,
                 lens_refused: None,
             }))
-        })
+        })?;
+        // The period's inbox notice also goes to the reader's own channel
+        // once it has committed (FIX 1262); a period with no notice sends
+        // nothing.
+        if owner.is_none()
+            && let Some(digest) = &published
+            && let Ok(notice) =
+                crate::inbox::notification_id(&id.notification(digest.scheduled_for, now).source)
+        {
+            self.vault
+                .send_weave_digest(id, digest.scheduled_for, notice);
+        }
+        Ok(published)
     }
 }
 

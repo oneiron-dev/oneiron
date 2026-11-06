@@ -34,30 +34,7 @@ use crate::write_envelope::WriteActor;
 /// The scope class a Grant names to delete, never an SDK method name.
 const DELETE_VERB: &str = "delete";
 
-/// The role an archive delete was admitted under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArchiveDeleteRole {
-    /// A live owner of the vault, co-owners included.
-    Owner,
-    /// A live Admin whose grant's resource axes hold the record.
-    Admin,
-    /// A live Admin or Member who provably owns the record.
-    Member,
-    /// An agent under one Grant that names `delete`.
-    Agent,
-}
-
-impl ArchiveDeleteRole {
-    /// The role's pinned name in receipts and gate reason codes.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Owner => "owner",
-            Self::Admin => "admin",
-            Self::Member => "member",
-            Self::Agent => "agent",
-        }
-    }
-}
+pub(crate) use crate::deletion::archive_role::ArchiveDeleteRole;
 
 /// One record's admitted archive delete: the role, and the grant that
 /// admitted it when one did. Only [`require_archive_delete_in_txn`] builds
@@ -441,9 +418,10 @@ fn pact_lapsed(
 }
 
 /// Whether the credential bound to `caller`, if any, reaches `record`: live,
-/// held by the caller, carrying no named record, channel or invitation
-/// bound, and its resource axes holding the record's position. Facets bind
-/// every caller but an Owner (FACET-READ). The transport judged its verbs.
+/// held by the caller, listing this record when record-bound, carrying no
+/// channel or invitation bound, and its resource axes holding the record's
+/// position. Facets bind every caller but an Owner (FACET-READ). The transport
+/// judged its verbs.
 fn credential_reaches(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -455,12 +433,15 @@ fn credential_reaches(
         return Ok(true);
     };
     let claims = proof.claims();
-    let Some(position) = record.and_then(|record| record.position.as_ref()) else {
+    let Some(record) = record else {
+        return Ok(false);
+    };
+    let Some(position) = record.position.as_ref() else {
         return Ok(false);
     };
     if claims.holder_ref != caller.actor.to_hex()
         || claims.invitation_ref.is_some()
-        || !claims.records.is_empty()
+        || (!claims.records.is_empty() && !claims.records.contains(&record.id.to_hex()))
         || !claims.channels.is_empty()
     {
         return Ok(false);

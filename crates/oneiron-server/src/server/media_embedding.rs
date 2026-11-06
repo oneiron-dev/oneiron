@@ -19,6 +19,8 @@
 //! world keeps; without it the engine refuses the rung as before. Each pass
 //! also embeds what live off-record rooms stage, into the room (FIX 2345).
 
+mod stock;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -166,6 +168,7 @@ fn llm_code(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::Auth) => "provider_auth",
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
+        LlmError::Fatal(FatalLlmError::JobLost) => "job_lost",
         LlmError::Fatal(_) => "invalid_request",
         LlmError::Retryable(_) => "provider_unavailable",
     }
@@ -403,6 +406,7 @@ impl SyncServer {
             }
             Err(error) => tracing::warn!(%error, "unfilled embedding space moves not closed"),
         }
+        let stock_failures = self.declare_waiting_stock_spaces(runtime);
         match self.vault.begin_waiting_embedder_moves() {
             Ok(begun) => {
                 for candidate in begun {
@@ -435,6 +439,11 @@ impl SyncServer {
                     let embedder = embedder.on_runtime(runtime.clone());
                     let egress = embedder.media_egress();
                     let gate = egress.as_ref().map(|gate| gate as &dyn EgressPredicate);
+                    if let Err(error) = runtime.block_on(
+                        self.vault.reuse_home_text_media_vectors(space, BACKFILL_BATCH),
+                    ) {
+                        tracing::debug!(%space, kind = ?error.kind(), "home text media reuse unavailable");
+                    }
                     let report = self.vault.reconcile_media_embeddings_admitted(
                         &embedder,
                         BACKFILL_BATCH,
@@ -447,6 +456,7 @@ impl SyncServer {
                 (space.to_owned(), pass)
             })
             .collect();
+        passes.extend(stock_failures);
         self.rederive_repo_index_texts(runtime);
         self.author_space_probes(runtime, &moves);
         self.check_space_moves(runtime, &moves, &mut passes);

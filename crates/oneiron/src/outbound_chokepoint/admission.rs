@@ -6,7 +6,8 @@ use super::budget::{
 };
 use super::dedupe;
 use super::replay::{
-    effect_result, gate_rejection, replay_record, send_admitted, suppression_result,
+    accounting_replay_in_txn, effect_result, gate_rejection, replay_record, send_admitted,
+    suppression_result,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
@@ -20,7 +21,7 @@ use crate::connector_key;
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
-use crate::outbound_consent::OutboundBindingAuthority;
+use crate::outbound_consent::{OutboundBindingAuthority, SLATE_ALWAYS_ASK_REASON};
 use crate::outbound_intent_ledger::{
     BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
     LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
@@ -209,6 +210,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         };
         return replay_record(vault, authority, record, prepared, now_ms, transport);
     }
+    // KS7-5 (FIX 12117): a call a restore kept only the accounting of
+    // replays as the owner's erase left it, never gated, asked or sent again.
+    if let Some(result) = accounting_replay_in_txn(vault, &wtxn, &command, intent_id)? {
+        drop(wtxn);
+        return Ok(result);
+    }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
     transport.admit_in(&wtxn)?;
@@ -242,6 +249,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             ));
         }
     };
+
+    // P1-2 #4499: a prepared campaign leg re-proves its lifecycle under
+    // this writer before any decision is recorded; other effects pass through.
+    crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
 
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     enforce_step_failure_policy(
@@ -277,11 +288,16 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         ),
     )?;
     if governance.outcome() != GateOutcome::Allow {
+        let ask_consent = governance.ask_consent().cloned();
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
         wtxn.commit().map_err(Error::from)?;
-        return Ok(gate_rejection(intent_id, decision_id, decision)
-            .held_by_outside_code_wait(&posting_gate, code_wait.is_some()));
+        let mut result = gate_rejection(intent_id, decision_id, decision)
+            .held_by_outside_code_wait(&posting_gate, code_wait.is_some());
+        if result.approval_digest.is_some() {
+            result.ask_consent = ask_consent;
+        }
+        return Ok(result);
     }
     // OF-427: the co-actor's own governance under this same writer. A
     // refusal records only its decision: the primary's Allow admitted
@@ -435,14 +451,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         _ => true,
     };
-    // FIX 8788, FIX 8686: a Linear mutation or a scoped connector call whose
+    // FIX 8788, FIX 8686: a Linear mutation, a scoped connector call, or a
+    // send whose caller holds a paced result (the dispatch pipeline's), whose
     // only full rows are count-bound windows that refuse waits for them:
     // dropping the writer leaves nothing recorded, bound or charged.
     let scoped_call = matches!(
         prepared.authorization,
         PreparedAuthorization::ScopedMcp { .. }
     );
-    if co_governance.is_some() || scoped_call {
+    if co_governance.is_some() || scoped_call || transport.waits_for_paced_window() {
         let co = co_governance.as_mut().filter(|_| co_key_distinct);
         if let Some(next_eligible_at) = rate_paced(
             vault,
@@ -521,9 +538,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     .ok_or(Error::InvariantViolation(
         "preauthorized spend changed inside admission transaction",
     ))?;
-    let spend_basis = spend.map(|(debits, basis)| {
+    let spend_basis = spend.map(|(debits, basis, rows)| {
         reserved.extend(debits);
-        basis
+        (basis, rows)
     });
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
         let (_, co_charge, exhausted) =
@@ -637,6 +654,23 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
+    let ordinary_press = match pinned_approval {
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate =>
+        {
+            Some(approval)
+        }
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
+        {
+            Some(approval)
+        }
+        _ => None,
+    };
+    crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, ordinary_press)?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
@@ -660,21 +694,34 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
-    super::types::keep_spent_presses(vault, pending.id, pinned_approval, co_spent)?;
+    super::types::keep_spent_presses(
+        vault,
+        pending.id,
+        pinned_approval.filter(|_| ordinary_press.is_none()),
+        co_spent,
+    )?;
 
     let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
-    result.gate_outcome = Some(decision.outcome().as_str().to_owned());
-    result.gate_reason_codes = decision
-        .reason_codes()
+    // FIX 9228: a send-time AlwaysAsk hold keeps its slate outcome/reasons;
+    // stamping the admission Allow here would surface gate.allow instead.
+    let slate_held = result
+        .gate_receipt_reasons
         .iter()
-        .map(|reason| reason.as_str().to_owned())
-        .collect();
-    result.gate_receipt_reasons = decision
-        .receipt_reasons()
-        .iter()
-        .map(|reason| (*reason).to_owned())
-        .collect();
+        .any(|reason| reason == SLATE_ALWAYS_ASK_REASON);
+    if !slate_held {
+        result.gate_outcome = Some(decision.outcome().as_str().to_owned());
+        result.gate_reason_codes = decision
+            .reason_codes()
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect();
+        result.gate_receipt_reasons = decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect();
+    }
     result.budget_charge = budget_charge;
     Ok(result)
 }

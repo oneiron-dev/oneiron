@@ -22,6 +22,7 @@ use super::telemetry::SessionRetrievalTelemetry;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
+mod checkpoint;
 mod type_feedback;
 mod vector_search;
 
@@ -632,16 +633,18 @@ impl OffRecordSession<'_> {
                 // base writer. The composed read is taken after the segment
                 // installs so it cannot miss a room-mate's just-applied row.
                 let overlay = self.entry.overlay.clone();
-                let segment = self.vault.with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    self.participant_in_txn(wtxn)?;
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(overlay.clone())?;
-                    accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-                    table.put(&view, wtxn, key, value)?;
-                    Ok(segment)
-                })?;
-                segment.commit()
+                self.vault.with_write_txn_grouped_after_commit(
+                    |wtxn| {
+                        let segment = overlay.install_txn_segment()?;
+                        self.participant_in_txn(wtxn)?;
+                        route.revalidate()?;
+                        let view = self.vault.store.session_view(overlay.clone())?;
+                        accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                        table.put(&view, wtxn, key, value)?;
+                        Ok(segment)
+                    },
+                    |segment| segment.commit(),
+                )
             }
             // A stretch on record writes here only while its saver holds.
             RouteTarget::Base => {
@@ -685,16 +688,17 @@ impl OffRecordSession<'_> {
             RouteTarget::Discard => unreachable!("anonymous recording refused above"),
             RouteTarget::Overlay => {
                 let overlay = self.entry.overlay.clone();
-                let (segment, answer) = self.vault.with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    self.participant_in_txn(wtxn)?;
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(overlay.clone())?;
-                    let answer = f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
-                    Ok((segment, answer))
-                })?;
-                segment.commit()?;
-                Ok(answer)
+                self.vault.with_write_txn_grouped_after_commit(
+                    |wtxn| {
+                        let segment = overlay.install_txn_segment()?;
+                        self.participant_in_txn(wtxn)?;
+                        route.revalidate()?;
+                        let view = self.vault.store.session_view(overlay.clone())?;
+                        let answer = f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
+                        Ok((segment, answer))
+                    },
+                    |(segment, answer)| segment.commit().map(|()| answer),
+                )
             }
             RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
                 route.revalidate()?;
@@ -765,15 +769,16 @@ impl OffRecordSession<'_> {
                 entry,
             )
         };
-        let (segment, written) = self.vault.with_write_txn_grouped(|wtxn| {
-            let segment = overlay.install_txn_segment()?;
-            self.participant_in_txn(wtxn)?;
-            route.revalidate()?;
-            let written = write(wtxn, apply)?;
-            Ok((segment, written))
-        })?;
-        segment.commit()?;
-        Ok(written)
+        self.vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                self.participant_in_txn(wtxn)?;
+                route.revalidate()?;
+                let written = write(wtxn, apply)?;
+                Ok((segment, written))
+            },
+            |(segment, written)| segment.commit().map(|()| written),
+        )
     }
 
     /// Atomically compare-and-put one routed side-table row and update one
@@ -812,38 +817,17 @@ impl OffRecordSession<'_> {
         CK: SideKey,
         CC: SideCodec<CV>,
     {
-        route.require_recording(&self.session_ref)?;
-        let target = route.target();
-        if target == RouteTarget::Discard {
-            unreachable!("anonymous recording refused above");
-        }
-        let overlay = self.entry.overlay.clone();
-        // A stretch on record writes into base only while its saver holds.
-        let check = self.saver_check_for(route)?;
-        let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
-            let segment = match target {
-                RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
-                RouteTarget::Base | RouteTarget::Discard => None,
-            };
-            route.revalidate()?;
-            let view = self.vault.store.session_view(overlay.clone())?;
-            accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-            let base = counter.get(&self.vault.store, wtxn, counter_key)?;
-            let delta = self.overlay_counter_delta(counter, counter_key)?;
-            let (next_counter, total) = update_counter(base, delta, target)?;
-            if target == RouteTarget::Overlay {
-                table.put(&view, wtxn, key, value)?;
-                counter.put(&view, wtxn, counter_key, &next_counter)?;
-            } else {
-                table.put(self.vault, wtxn, key, value)?;
-                counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
-            }
-            Ok((segment, total))
-        })?;
-        if let Some(segment) = segment {
-            segment.commit()?;
-        }
-        Ok(total)
+        self.side_table_compare_and_put_with_counter_routed_and(
+            route,
+            table,
+            key,
+            value,
+            accepts_current,
+            counter,
+            counter_key,
+            update_counter,
+            |_, _| Ok(()),
+        )
     }
 
     /// [`Self::side_table_compare_and_put_with_counter_routed`], with `also`
@@ -881,32 +865,37 @@ impl OffRecordSession<'_> {
         let overlay = self.entry.overlay.clone();
         // A stretch on record writes into base only while its saver holds.
         let check = self.saver_check_for(route)?;
-        let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
-            let segment = match target {
-                RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
-                RouteTarget::Base | RouteTarget::Discard => None,
-            };
-            route.revalidate()?;
-            let view = self.vault.store.session_view(overlay.clone())?;
-            accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-            let base = counter.get(&self.vault.store, wtxn, counter_key)?;
-            let delta = self.overlay_counter_delta(counter, counter_key)?;
-            let (next_counter, total) = update_counter(base, delta, target)?;
-            if target == RouteTarget::Overlay {
-                table.put(&view, wtxn, key, value)?;
-                counter.put(&view, wtxn, counter_key, &next_counter)?;
-                also(wtxn, RoutedDbs::Session(&view))?;
-            } else {
-                table.put(&self.vault.store, wtxn, key, value)?;
-                counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
-                also(wtxn, RoutedDbs::Base(self.vault))?;
-            }
-            Ok((segment, total))
-        })?;
-        if let Some(segment) = segment {
-            segment.commit()?;
-        }
-        Ok(total)
+        self.with_saver_write_txn_after_commit(
+            check,
+            |wtxn| {
+                let segment = match target {
+                    RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
+                    RouteTarget::Base | RouteTarget::Discard => None,
+                };
+                route.revalidate()?;
+                let view = self.vault.store.session_view(overlay.clone())?;
+                accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                let base = counter.get(&self.vault.store, wtxn, counter_key)?;
+                let delta = self.overlay_counter_delta(counter, counter_key)?;
+                let (next_counter, total) = update_counter(base, delta, target)?;
+                if target == RouteTarget::Overlay {
+                    table.put(&view, wtxn, key, value)?;
+                    counter.put(&view, wtxn, counter_key, &next_counter)?;
+                    also(wtxn, RoutedDbs::Session(&view))?;
+                } else {
+                    table.put(self.vault, wtxn, key, value)?;
+                    counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
+                    also(wtxn, RoutedDbs::Base(self.vault))?;
+                }
+                Ok((segment, total))
+            },
+            |(segment, total)| {
+                if let Some(segment) = segment {
+                    segment.commit()?;
+                }
+                Ok(total)
+            },
+        )
     }
 
     /// This room's overlay-local contribution to an additive counter row;
@@ -996,6 +985,45 @@ impl OffRecordSession<'_> {
         self.vault.pin_result_body(digest)
     }
 
+    /// Notes a detached line-index rebuild for the body `digest` in this
+    /// session's vault (FIX 1186b): the session arm's forward, beside
+    /// [`Self::pin_result_body`].
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        self.vault.note_body_line_index_rebuild(digest, len)
+    }
+
+    /// Notes the scan-bound search credit issued for the window (`digest`,
+    /// `base`, `len`): the exact emitted (`offset`, `line`, `credit`), kept
+    /// in memory on this session's vault only (FIX 1189 discount, #4311 P1-B).
+    pub(crate) fn note_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        self.vault
+            .note_search_credit(digest, base, len, offset, line, credit);
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit this session's
+    /// vault last issued for the window (`digest`, `base`, `len`): the full
+    /// tuple must match, else the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        self.vault
+            .valid_search_credit(digest, base, len, offset, line, credit)
+    }
+
     /// The custody read guard of this session's vault, for a body read that
     /// opens an instance's key: taken before its snapshot and held through
     /// the key's last use (FIX 6019), as a vault read takes it.
@@ -1025,6 +1053,14 @@ impl OffRecordSession<'_> {
         self.vault.known_source()
     }
 
+    /// Run-local output prints from this session's vault, live per frame.
+    pub(crate) fn run_known_source(
+        &self,
+        exec_run: crate::EntityId,
+    ) -> Result<crate::store::known_value_index::RunKnownSource> {
+        self.vault.run_known_source(exec_run)
+    }
+
     /// The `[limits]` rows of this session's vault.
     pub(crate) fn limit_watch(&self) -> &crate::limit_ask::LimitWatch {
         self.vault.limit_watch()
@@ -1033,6 +1069,11 @@ impl OffRecordSession<'_> {
     /// A share of the result-memory pool for one run in this session.
     pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
+    }
+
+    /// Wall milliseconds from this session's vault clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        self.vault.now_recorded_ms()
     }
 
     /// Identity of the vault this session belongs to.
@@ -1064,8 +1105,13 @@ impl OffRecordSession<'_> {
     /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
     /// so new writes stage there again. Pre-flip turns stay base-invisible.
     pub fn flip_off_record(&self) -> Result<()> {
-        self.vault
-            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OffRecord)?;
+        let mut state = session_entry_state(&self.entry)?;
+        super::vault_api::set_entry_mode(
+            &self.entry,
+            &mut state,
+            &self.session_ref,
+            OffRecordMode::OffRecord,
+        )?;
         Ok(())
     }
 

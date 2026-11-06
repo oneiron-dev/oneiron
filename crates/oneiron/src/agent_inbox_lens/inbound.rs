@@ -90,17 +90,16 @@ impl Vault {
         }
         let mut out: Vec<_> = items.into_values().map(|(_, item)| item).collect();
         // Membership is independent of an inbound event. A standing thread can
-        // appear before this node has received its first SurfaceEvent.
-        let identities = self.entities_by_type_page(
+        // appear before this node has received its first SurfaceEvent. Every
+        // channel identity is read, in this one read, however many there are.
+        let txn = self.store.env.read_txn()?;
+        for identity_ref in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &txn,
             crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
             None,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1,
-        )?;
-        if identities.len() > crate::receipt::MAX_RECEIPT_QUERY_SCAN {
-            return Err(Error::IndexOverflow("inbox identities"));
-        }
-        let txn = self.store.env.read_txn()?;
-        for identity_ref in identities {
+        )? {
+            let identity_ref = identity_ref?;
             if identity.is_some_and(|wanted| wanted != identity_ref) {
                 continue;
             }
@@ -121,11 +120,17 @@ impl Vault {
             else {
                 continue;
             };
-            let party = crate::comm::resolve_party_ref_in_txn(self, &txn, &facts.address_or_handle)
+            let party = self
+                .store
+                .record_hooks
+                .resolve_party_ref_in_txn(self, &txn, &facts.address_or_handle)
                 .map_err(comm_error)?;
             let Some(party) = party else { continue };
-            for thread in
-                crate::comm::active_thread_refs_in_txn(self, &txn, party).map_err(comm_error)?
+            for thread in self
+                .store
+                .record_hooks
+                .active_thread_refs_in_txn(self, &txn, party)
+                .map_err(comm_error)?
             {
                 if out.iter().any(|item| {
                     item.identity_ref == Some(identity_ref)

@@ -38,6 +38,7 @@
 pub(super) mod checkpoint;
 mod erased;
 mod turn_marks;
+mod waiting;
 pub(crate) use erased::erase_carried_actors;
 pub(crate) use turn_marks::{clear_turn_marks, mark_cold_turn_carriers};
 
@@ -64,7 +65,7 @@ use crate::workspace_roster::{
 pub(crate) const ROOM_FACTS_MAP: &str = "room_facts";
 
 /// The largest side row a window carries.
-const MAX_ROW_BYTES: usize = 1 << 16;
+use super::room_parts::ROOM_FACT_MAX_ROW_BYTES as MAX_ROW_BYTES;
 
 /// The key prefix of a room's host pin cell.
 const PIN: &str = "pin/";
@@ -538,54 +539,77 @@ fn responses_for(doc: &LoroDoc, parents: &BTreeSet<EntityId>) -> Vec<(EntityId, 
     found.into_iter().collect()
 }
 
-/// Merges each carried row into this vault's in one write: dropped cells and
-/// cells first, then claims, facts, joins and cards, then the responses of
-/// every claimed turn the rows touch, each settled with every response the
-/// window carries for it, since a response stands by the claim. A join or
-/// card whose window copy lacks part of this machine's is marked, so the
-/// next mirror of its carrier writes the merge back; the mark clears once
-/// the window's copy holds all of it. So is a card this machine replaced as
-/// a carried one became current (FIX 3322). The same write queues the
-/// carrier for the live mirror ([`ROOM_FACT_IMPORT_REPAIR`]).
-fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
-    let mut carried = Vec::new();
-    let mut cleared = Vec::new();
-    let mut parents = BTreeSet::new();
-    for (map_key, bytes) in rows {
-        let Some(bytes) = bytes else {
-            if let Some(cell) = cell_of(&map_key) {
-                cleared.push((map_key, cell));
+/// Room-side rows and response sets gathered before opening their writer.
+pub(super) struct RoomFactBatch {
+    carried: Vec<(String, RoomSideRow)>,
+    cleared: Vec<(String, (EntityId, Option<String>))>,
+    responses: Vec<(EntityId, Vec<RoomSideRow>)>,
+}
+
+impl RoomFactBatch {
+    pub(super) fn prepare(
+        doc: &LoroDoc,
+        window: &str,
+        rows: Vec<(String, Option<Vec<u8>>)>,
+    ) -> Self {
+        let mut carried = Vec::new();
+        let mut cleared = Vec::new();
+        let mut parents = BTreeSet::new();
+        for (map_key, bytes) in rows {
+            let Some(bytes) = bytes else {
+                if let Some(cell) = cell_of(&map_key) {
+                    cleared.push((map_key, cell));
+                }
+                continue;
+            };
+            // FIX 11790: a joined row passes here the checks admission gives a
+            // whole one; `well_formed` holds only where `place` does.
+            match erased::decode_held(&bytes) {
+                Ok(row) if carrier_key(&row, &bytes) == map_key && row.well_formed() => {
+                    match &row {
+                        RoomSideRow::Response { parent, .. } => {
+                            parents.insert(*parent);
+                        }
+                        RoomSideRow::Claim { claim } => {
+                            parents.extend(named(&claim.turn_id));
+                            carried.push((map_key, row));
+                        }
+                        _ => carried.push((map_key, row)),
+                    }
+                }
+                _ => tracing::warn!(window, key = %map_key, "room side row malformed; left out"),
             }
-            continue;
-        };
-        // FIX 11790: a joined row passes here the checks admission gives a
-        // whole one; `well_formed` holds only where `place` does.
-        match erased::decode_held(&bytes) {
-            Ok(row) if carrier_key(&row, &bytes) == map_key && row.well_formed() => match &row {
-                RoomSideRow::Response { parent, .. } => {
-                    parents.insert(*parent);
-                }
-                RoomSideRow::Claim { claim } => {
-                    parents.extend(named(&claim.turn_id));
-                    carried.push((map_key, row));
-                }
-                _ => carried.push((map_key, row)),
-            },
-            _ => tracing::warn!(window, key = %map_key, "room side row malformed; left out"),
+        }
+        let responses = responses_for(doc, &parents);
+        Self {
+            carried,
+            cleared,
+            responses,
         }
     }
-    let responses = responses_for(doc, &parents);
-    if carried.is_empty() && cleared.is_empty() && responses.is_empty() {
-        return;
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.carried.is_empty() && self.cleared.is_empty() && self.responses.is_empty()
     }
-    let outcome = vault.with_write_txn_grouped(|wtxn| {
+
+    pub(super) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        window: &str,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let Self {
+            carried,
+            cleared,
+            responses,
+        } = self;
         let mut merged = 0;
-        for (map_key, (room, handle)) in &cleared {
+        for (map_key, (room, handle)) in cleared {
             let merge = clear_replicated_side_cell_in_txn(vault, wtxn, *room, handle.as_deref())?;
             merged += usize::from(merge == SideMerge::Written);
             DIRTY.delete(&vault.store, wtxn, map_key)?;
         }
-        for (map_key, row) in &carried {
+        for (map_key, row) in carried {
             if is_shared(map_key) {
                 let (merge, holds, replaced) =
                     merge_replicated_shared_row_in_txn(vault, wtxn, row)?;
@@ -617,12 +641,29 @@ fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Opt
             }
             merged += logged(window, map_key, merge);
         }
-        for (parent, rows) in &responses {
+        for (parent, rows) in responses {
             let merge = merge_replicated_responses_in_txn(vault, wtxn, *parent, rows)?;
             merged += logged(window, &parent.to_hex(), merge);
         }
         Ok(merged)
-    });
+    }
+}
+
+/// Merges each carried row into this vault's in one write: dropped cells and
+/// cells first, then claims, facts, joins and cards, then the responses of
+/// every claimed turn the rows touch, each settled with every response the
+/// window carries for it, since a response stands by the claim. A join or
+/// card whose window copy lacks part of this machine's is marked, so the
+/// next mirror of its carrier writes the merge back; the mark clears once
+/// the window's copy holds all of it. So is a card this machine replaced as
+/// a carried one became current (FIX 3322). The same write queues the
+/// carrier for the live mirror ([`ROOM_FACT_IMPORT_REPAIR`]).
+fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
+    let staged = RoomFactBatch::prepare(doc, window, rows);
+    if staged.is_empty() {
+        return;
+    }
+    let outcome = vault.with_write_txn_grouped(|wtxn| staged.stage_in_txn(vault, window, wtxn));
     match outcome {
         Ok(merged) if merged > 0 => tracing::debug!(window, merged, "room side rows merged"),
         Ok(_) => {}
@@ -699,6 +740,9 @@ pub(crate) fn scrub_room_facts(
                 gone.push(map_key);
             }
         }
+        // FIX 12127: a manifest whose parts never all land drops with the
+        // row it stands for, decided from its key alone.
+        gone.extend(waiting::doomed_manifests(vault, &rtxn, &map)?);
         let named = erased::erased_rows(vault, &rtxn, &map)?;
         (gone, named)
     };

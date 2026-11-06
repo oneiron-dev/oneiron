@@ -189,10 +189,13 @@ pub enum SessionOp {
     Drop,
     Export,
     Import,
+    /// I1 = C: prefill the next turn's known tail on the published
+    /// checkpoint, beside it.
+    Prepare,
 }
 
 impl SessionOp {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Create,
         Self::Append,
         Self::Checkpoint,
@@ -203,6 +206,7 @@ impl SessionOp {
         Self::Drop,
         Self::Export,
         Self::Import,
+        Self::Prepare,
     ];
 
     #[must_use]
@@ -218,6 +222,7 @@ impl SessionOp {
             Self::Drop => "session.drop",
             Self::Export => "session.export",
             Self::Import => "session.import",
+            Self::Prepare => "session.prepare",
         }
     }
 
@@ -232,7 +237,8 @@ impl SessionOp {
             | Self::Generate
             | Self::SuffixCommit
             | Self::Restore
-            | Self::Drop => SESSION_SCHEMA_MINOR,
+            | Self::Drop
+            | Self::Prepare => SESSION_SCHEMA_MINOR,
             Self::Export | Self::Import => SNAPSHOT_SCHEMA_MINOR,
         }
     }
@@ -273,6 +279,10 @@ pub struct SnapshotCapability {
     pub encoding: String,
     pub hash: String,
     pub state_kinds: Vec<String>,
+    /// The worker's attention and position settings digest, named in hello;
+    /// `None` on workers that predate it.
+    #[serde(default)]
+    pub attention: Option<String>,
 }
 
 impl SnapshotCapability {
@@ -446,13 +456,62 @@ pub struct SessionFork {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SessionForked {
     pub branch: BranchHandle,
-    /// Where the branch attached: tokens reused from the checkpoint.
+    /// Where the branch attached: tokens reused from the checkpoint, or from
+    /// the prepared tail when that reaches further.
     pub frontier_tokens: u64,
     /// How much of the published checkpoint the turn's canonical path
     /// keeps; less than its frontier means the prefix changed.
     pub canonical_lcp_tokens: u64,
     #[serde(default)]
     pub residency: SessionResidency,
+    /// What the session's prepared tail held and gave this turn (I1 = C);
+    /// `None` when it had none and no prepare ran.
+    #[serde(default)]
+    pub prepared: Option<PreparedUse>,
+}
+
+/// `session.prepare` (I1 = C): prefill, without sampling, the path the
+/// frame's input region carries (the published path, then the next turn's
+/// state-only board) on the published checkpoint `base` names, under the
+/// class and priority given, and keep it beside that checkpoint as the
+/// session's prepared tail. It is never published or canonical: the next
+/// fork attaches to it only where the turn's own tokens equal its tokens,
+/// and it ends at that fork, the next publish, or when the session stops
+/// serving. A prepare still running when the fork arrives stops.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionPrepare {
+    #[serde(flatten)]
+    pub target: SessionTarget,
+    #[serde(flatten)]
+    pub stamp: SessionOpStamp,
+    pub base: CanonicalCheckpointRef,
+    pub work_class: super::scheduling::WorkClass,
+    pub priority: super::scheduling::WorkPriority,
+}
+
+/// `session.prepare`'s answer: the prepared tail's tokens past the
+/// checkpoint, and the tokens the prepare computed (more, when the attach
+/// fell back to an earlier safe state).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct SessionPrepared {
+    pub prepared_tokens: u64,
+    pub computed_tokens: u64,
+}
+
+/// What a fork found of the session's prepared tail: whether the branch
+/// attached to it, its tokens past the checkpoint, what its prepare
+/// computed (`None` when that is not known), and how many of its tokens the
+/// turn reused past the checkpoint's own attach point. A prepare stopped by
+/// the fork (`stopped`) gave nothing and its work is not known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct PreparedUse {
+    pub attached: bool,
+    pub prepared_tokens: u64,
+    #[serde(default)]
+    pub computed_tokens: Option<u64>,
+    pub reused_tokens: u64,
+    #[serde(default)]
+    pub stopped: bool,
 }
 
 /// The `session` field of a `session.generate`, whose body is otherwise a

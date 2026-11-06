@@ -47,7 +47,7 @@ use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
 use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
 use crate::task_verb::recall_door::RecallDoor;
-use oneiron_model::llm::BudgetLease;
+use oneiron_model::llm::{BudgetLease, WorkCancel};
 
 mod lineage;
 
@@ -92,7 +92,8 @@ pub trait RecallRerankHost: Sync {
 
     /// One score per document, in order, higher meaning more relevant to
     /// `query`. `answer_at` is when the recall's door answers, if it has a
-    /// deadline. Before each request it sends, a fallback's too, the host
+    /// deadline. `cancel` shares that attempt's cancellation flag and wake
+    /// when the recall has a deadline. Before each request it sends, a fallback's too, the host
     /// asks `egress` whether the texts may still leave
     /// ([`RerankEgress::holds`]), and sends nothing more once it says no. A
     /// refusal is the recall's: nothing stands in for the model.
@@ -102,12 +103,18 @@ pub trait RecallRerankHost: Sync {
         documents: &[RerankDocument<'_>],
         egress: &RerankEgress<'_>,
         answer_at: Option<Instant>,
+        cancel: Option<WorkCancel>,
     ) -> MemoryResult<RerankScores>;
 
-    /// Whether every model `score` can reach runs on this device, in this
-    /// process. Only then is it sent the words of a row a device-only world
-    /// keeps; any other host is sent such a row empty. A host that cannot
-    /// say runs elsewhere.
+    /// Whether every model `score` can reach, through every request, batch
+    /// and fallback of this block, runs on this physical device: in this
+    /// process, or in a model runtime this host supervises and reaches only
+    /// over a channel it authenticates against that child, so that no
+    /// transport it may use leaves the device (I2-LOCAL). Only then is it
+    /// sent the words of a row a device-only world keeps; any other host is
+    /// sent such a row empty. A host that cannot say runs elsewhere, and so
+    /// does one whose scoring plan could reach an endpoint over HTTP, even
+    /// on this machine.
     fn runs_on_device(&self) -> bool {
         false
     }
@@ -130,7 +137,7 @@ pub struct RerankDocument<'a> {
 /// leaves, and the recall ranks by fusion.
 pub struct RerankEgress<'a> {
     vault: &'a crate::Vault,
-    /// The routes the sent rows' worlds allow, in their owner's order.
+    /// The routes the sent rows' carried worlds allow, in their owner's order.
     model_routes: crate::authority::WorldModelRoutes,
     /// Each row sent with words, and the world its item names at the
     /// revision scored; `None` when the host's model runs on this device,
@@ -476,6 +483,7 @@ impl Memory<'_> {
                 &documents,
                 &egress,
                 deadline.as_ref().map(RetrievalDeadline::answer_at),
+                deadline.as_ref().map(RetrievalDeadline::work_cancel),
             ) {
                 Ok(scored) => RerankScores {
                     served_model: scored.served_model.filter(|name| reported_model(name)),
@@ -614,8 +622,9 @@ impl Memory<'_> {
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
     /// unless the host's model runs on this device (`on_device`). With the
     /// texts come the rows each is read from (FIX 7001), and the rows that
-    /// leave with words, to be judged again. It reads the worlds of the
-    /// recall's pinned selection (`pin`).
+    /// leave with words, to be judged again. It reads through the recall's
+    /// pinned selection (`pin`); the model routes meet the carried worlds
+    /// of the rows sent with words (FIX 12313).
     fn rerank_documents(
         &self,
         scope: &RecallScope,
@@ -630,6 +639,16 @@ impl Memory<'_> {
             None => lane,
         };
         let mut receipt = lane.read_receipt(None, 0)?;
+        // The texts below are read at each candidate's pinned revision,
+        // across several snapshots, while the carried worlds behind the
+        // route choice are read live after them under one read snapshot
+        // (`rtxn` below): the routes always meet the worlds the rows carry
+        // now, and meeting a wider world set only narrows the rungs. No
+        // text is compared live: the indexed revision the block holds
+        // legitimately lags the store until idle publication, so live
+        // inequality without any concurrent write is expected, not
+        // corruption (blind review 11-04). A deleted row reads as unknown
+        // worlds and fails closed under an ordered route.
         let mut texts = Vec::with_capacity(block.len());
         let mut sources = Vec::with_capacity(block.len());
         let mut pinned_worlds = Vec::with_capacity(block.len());
@@ -691,16 +710,41 @@ impl Memory<'_> {
                     .collect(),
             )
         };
-        // Only the worlds of texts the host actually reads decide its rungs:
-        // rows sent empty are no model input, and base reality inherits.
-        let model_routes = self.vault.world_model_routes(
-            block
-                .iter()
-                .zip(&pinned_worlds)
-                .zip(&texts)
-                .filter(|(_, text)| !text.is_empty())
-                .filter_map(|((_, world), _)| *world),
-        )?;
+        // Only the carried worlds of texts the host actually reads decide its rungs:
+        // rows sent empty are no model input, base reality inherits, and an
+        // unknown carried world fails closed under an ordered route.
+        let rtxn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let mut carried = crate::settings::CarriedWorlds::default();
+        for ((candidate, text), pinned) in block.iter().zip(&texts).zip(&pinned_worlds) {
+            if text.is_empty() {
+                continue;
+            }
+            // The text was read at its pinned revision; fold its pinned
+            // world in as well, so the live closure below meets the words
+            // it routes.
+            if let Some(world) = pinned {
+                carried.worlds.insert(*world);
+            }
+            let worlds =
+                crate::settings::carried_worlds_in(&self.vault.store, &rtxn, &candidate.id)?;
+            carried.absorb(&worlds);
+        }
+        let mut model_routes = self
+            .vault
+            .world_model_routes_in_txn(&rtxn, carried.worlds.iter().copied())?;
+        if carried.unknown
+            && matches!(
+                &model_routes,
+                crate::authority::WorldModelRoutes::Ordered(_)
+            )
+        {
+            model_routes = crate::authority::WorldModelRoutes::Ordered(Vec::new());
+        }
         let egress = RerankEgress {
             vault: self.vault,
             model_routes,

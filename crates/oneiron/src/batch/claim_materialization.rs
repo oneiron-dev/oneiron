@@ -85,6 +85,7 @@ impl ClaimMaterialization {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: _,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -103,7 +104,8 @@ impl ClaimMaterialization {
             return Err(binding_error());
         }
         let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next =
+            crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, txn, data, false)?;
         let expected = demotion_body(&vault.store, txn, id, &prior, &next, &ops[1..])?;
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
@@ -216,6 +218,7 @@ impl ClaimMaterialization {
                 defer_metrics_until_commit: true,
                 transition: None,
                 owner_authored: None,
+                pending_prompt: None,
             },
             &policy,
             crate::store::GateWriteMode {
@@ -259,6 +262,7 @@ impl ClaimMaterialization {
                 entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                 occurred,
                 learned_at: header.learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -311,6 +315,7 @@ impl ClaimMaterialization {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: _,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -398,7 +403,7 @@ impl ClaimMaterialization {
 
     pub(super) fn matches_op(&self, op: &BatchOp) -> bool {
         matches!(op, BatchOp::Put { id, entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-            occurred, learned_at, data, allow_maintenance: false,
+            occurred, learned_at, row_version: _, data, allow_maintenance: false,
             allow_reserved_predicate, hub_sync_imported: false }
             if *id == self.id && *occurred == self.occurred && *learned_at == self.learned_at
                 && *data == self.data && *allow_reserved_predicate == self.reserved)

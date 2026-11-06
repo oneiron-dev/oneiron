@@ -1,6 +1,7 @@
 //! GOV-10 charter gate: stage proposal, human approve-and-stamp, discard.
 
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -84,8 +85,59 @@ impl Vault {
             return Err(invalid_body("stamped_by must not be blank"));
         }
         let mut wtxn = self.store.env.write_txn()?;
+        let stamped = self.approve_connector_charter_in_txn(
+            &mut wtxn,
+            id,
+            (expected_text_hash, expected_compiled_hash),
+            stamped_by,
+            stamped_at,
+        )?;
+        wtxn.commit()?;
+        Ok(stamped)
+    }
+    /// [`Self::approve_connector_charter`] as the owner's own act (FIX
+    /// 11680): his proof is revalidated in the approving transaction, and
+    /// the stamp names him.
+    pub fn approve_connector_charter_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_text_hash: [u8; 32],
+        expected_compiled_hash: [u8; 32],
+        stamped_at: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        crate::memory::verify_deletion_authority_in_txn(
+            self,
+            &wtxn,
+            actor,
+            crate::edge::EdgeActorClass::Human,
+        )
+        .map_err(|_| invalid_body("charter approval needs the owner"))?;
+        let stamped = self.approve_connector_charter_in_txn(
+            &mut wtxn,
+            id,
+            (expected_text_hash, expected_compiled_hash),
+            &actor.to_hex(),
+            stamped_at,
+        )?;
+        wtxn.commit()?;
+        Ok(stamped)
+    }
+    /// The approve-and-stamp of [`Self::approve_connector_charter`] in the
+    /// caller's writer, for the staged compile whose text and compiled
+    /// hashes are `expected`.
+    fn approve_connector_charter_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        (expected_text_hash, expected_compiled_hash): ([u8; 32], [u8; 32]),
+        stamped_by: &str,
+        stamped_at: u64,
+    ) -> Result<ConnectorKeyRecord> {
         let record =
-            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+            read_connector_key_in_txn(&self.store, wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status == ConnectorKeyStatus::Revoked {
             return Err(invalid_body("charter op on revoked key"));
         }
@@ -113,19 +165,18 @@ impl Vault {
             pending_charter: None,
             ..record
         };
-        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &stamped)?;
-        delete_charter_usage_rows_in_txn(&self.store, &mut wtxn, id)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        rewrite_connector_key_in_txn(&self.store, wtxn, id, &stamped)?;
+        delete_charter_usage_rows_in_txn(&self.store, wtxn, id)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
         append_connector_key_op_record(
             &self.store,
-            &mut wtxn,
+            wtxn,
             id,
             "gate.connector_key.charter_approve",
             &stamped,
             policy.read_frontier_hash()?,
             stamped_at,
         )?;
-        wtxn.commit()?;
         Ok(stamped)
     }
     /// Owner rejection of a staged charter compile (GOV-10): clears the

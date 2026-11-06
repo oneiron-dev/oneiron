@@ -30,7 +30,14 @@ pub(crate) async fn vault_calendar_ics_import(
         auth,
         (actor, EdgeActorClass::Human),
         VERB,
-        move |_, _, memory| import_ics_as_owner(&memory, &owner, &input),
+        move |_, _, memory| {
+            import_ics_as_owner(
+                &memory,
+                &owner,
+                &input,
+                crate::calendar_host::calendar_body_screener(),
+            )
+        },
     )
     .await
 }
@@ -54,7 +61,14 @@ pub(crate) async fn vault_calendar_instances_move(
         auth,
         (actor, EdgeActorClass::Human),
         VERB,
-        move |_, _, memory| move_instance_as_owner(&memory, &owner, &input),
+        move |_, _, memory| {
+            move_instance_as_owner(
+                &memory,
+                &owner,
+                &input,
+                crate::calendar_host::calendar_body_screener(),
+            )
+        },
     )
     .await
 }
@@ -152,11 +166,12 @@ pub(crate) async fn calendar_connector_pull(
                 row.clone(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            let operation = wire.operation().clone();
             let now = server.vault().now_recorded_at();
             let seed = now;
             let outcome = oneiron::calendar::run_calendar_connector_sync(
                 server.vault(),
-                &row.seat,
+                &operation,
                 &CalDavConnector::new(wire),
                 now,
                 seed,
@@ -203,9 +218,10 @@ pub(crate) async fn calendar_connector_write(
                 row.clone(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            let operation = wire.operation().clone();
             oneiron::calendar::write_calendar_event(
                 server.vault(),
-                &row.seat,
+                &operation,
                 &CalDavConnector::new(wire),
                 event,
                 server.vault().now_recorded_at(),
@@ -244,11 +260,11 @@ pub(crate) async fn calendar_imip_get(
     .await
 }
 
+use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
     self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
     CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
-use oneiron::calendar::ingest::{CustodyDoorIcsFeedFetcher, run_ics_feed_poll};
 
 pub(crate) async fn calendar_ics_configure(
     server: &Arc<SyncServer>,
@@ -298,11 +314,14 @@ pub(crate) async fn calendar_ics_poll(
             .map_err(MemoryError::bad_request)?;
             let fetcher =
                 CustodyDoorIcsFeedFetcher::new(server.vault(), "calendar.ics.poll", transport);
-            let poll_ref = oneiron::EntityId::now().to_hex();
-            let now = server.vault().now_recorded_at();
-            let outcome = run_ics_feed_poll(server.vault(), &fetcher, &row.config, now, now)
-                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-            feed::observe_poll(&memory, &owner, &row.config, poll_ref, outcome)
+            feed::run_installed_poll(
+                &memory,
+                &owner,
+                &fetcher,
+                crate::calendar_host::calendar_body_screener(),
+                &row.config,
+                oneiron::EntityId::now().to_hex(),
+            )
         },
     )
     .await

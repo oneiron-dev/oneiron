@@ -163,6 +163,41 @@ impl BranchResources<'_> {
         }
     }
 
+    /// The projector reading of TURN `id`'s words as this branch froze
+    /// them: the version a completed widened branch records as taken, so a
+    /// publication after its commit is never marked read unread.
+    pub(in crate::dreamer_consolidation) fn taken_reading(
+        &self,
+        id: &EntityId,
+    ) -> Result<[u8; 32]> {
+        let facts = self.turn(&self.scope, id)?;
+        let role = crate::dreamer_runner::dreamer_turn_role(
+            facts.speaker.as_deref(),
+            &self.read.vault().config.assistant_display_names,
+        );
+        Ok(crate::dreamer_wake::reading_of_text(
+            facts.text.as_deref().unwrap_or_default(),
+            super::super::conflict::turn_trust_class(role, facts.imported),
+        ))
+    }
+
+    /// The partition `id` was read under when this branch froze it: its
+    /// declared part's key under the branch axes. A same-text republish
+    /// that moves the turn's partition must not be stamped as taken (its
+    /// words were extracted under the old axes); the stamp filter compares
+    /// this frozen hash against the live one.
+    pub(in crate::dreamer_consolidation) fn taken_partition(
+        &self,
+        id: &EntityId,
+    ) -> Result<[u8; 32]> {
+        let conversation = self
+            .turns
+            .get(id)
+            .copied()
+            .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?;
+        Ok(self.branch.part_key(conversation).partition_hash())
+    }
+
     /// The text a TURN citation of `id` is verified against: its frozen
     /// text, readable under the branch's scope.
     pub(super) fn cited_text(&self, id: &EntityId) -> Result<Option<&str>> {

@@ -31,7 +31,7 @@ impl Vault {
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteGuard> {
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
@@ -55,6 +55,7 @@ impl Vault {
                 id,
                 gate.as_ref()
                     .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor),
+                reason,
                 |txn| reverify_deletion_authority_before_publication(gate.as_ref(), txn),
             )?
         {
@@ -62,10 +63,19 @@ impl Vault {
         }
         {
             let txn = self.store.env.read_txn()?;
-            crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
-            crate::task_authority::reject_fact_delete(&self.store, &txn, id)?;
-            crate::workspace_roster::reject_audience_edit_delete(&self.store, &txn, id)?;
-            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
+            self.store
+                .delete_guards
+                .reject_ruling_delete(&self.store, &txn, id)?;
+            crate::store::task_authority_guard::reject_fact_delete(&self.store, &txn, id)?;
+            self.store
+                .delete_guards
+                .reject_audience_edit_delete(&self.store, &txn, id)?;
+            self.store.delete_guards.precheck_goal_delete(
+                &self.store,
+                &txn,
+                *id,
+                gate.is_some(),
+            )?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
         signal_delete_rendezvous(
@@ -106,7 +116,7 @@ impl Vault {
                 .map(DeleteGuard::Done);
         };
         if crate::batch::delete_door_protected(header.entity_type)
-            || crate::workspace_roster::is_project_revision_type(&self.store, header.entity_type)
+            || crate::store::project_kind::is_project_revision_type(&self.store, header.entity_type)
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,

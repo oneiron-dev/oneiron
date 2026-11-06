@@ -79,6 +79,7 @@ mod ask_auto;
 mod checks;
 mod hold;
 mod resume;
+mod scrub;
 pub(super) use self::ask_auto::AskAutoGate;
 use self::checks::settle_held_attempts_in;
 pub(super) use self::checks::{AskCheck, WaveCheck, record_ask_check_in, record_wave_check_in};
@@ -87,6 +88,10 @@ pub(super) use self::hold::{
     hold_ask_in, hold_planning_attempt_in, mark_launched_in,
 };
 use self::hold::{launch_role_is_held_in, require_holder_launch_choice};
+pub(super) use self::scrub::{
+    FanoutRecipientScrub, erase_launch_recipient_in_txn, scrub_pathology_for, scrub_statement_for,
+    verify_scrubbed_launch,
+};
 
 /// One fan-out launch, keyed by its launch ref.
 pub(super) const FANOUT_LAUNCHES: SideTable<HexId, StoredLaunch, Named> =
@@ -297,6 +302,11 @@ pub(super) struct StoredLaunch {
     /// would have. `None` for a wave no credential caller applied (FIX 11811),
     /// and for an ask no credential caller made.
     requester: Option<crate::agent_dispatch::QueuedRequester>,
+    /// Truthful erasure-scrub marker (FIX 4699): what recipient erasures
+    /// scrubbed from this launch; `None` when never scrubbed. Old rows read
+    /// as none.
+    #[serde(default)]
+    pub(super) recipient_scrub: Option<FanoutRecipientScrub>,
 }
 
 impl StoredLaunch {
@@ -646,6 +656,7 @@ pub(super) fn admit_wave_launch_in(
         choice_receipt_ref: None,
         shipped_policy_rows: gate.governed.shipped_rows.clone(),
         requester: input.requester.clone(),
+        recipient_scrub: None,
     };
     let admission = admit_fanout_with_history(
         &plan,

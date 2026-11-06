@@ -256,8 +256,11 @@ pub(super) fn shares_in_txn(
 /// Redacts erased `entity` from every late-credit receipt that names it
 /// (FIX 8988): a direct subject or share subject it names is kept in erased
 /// form, a chain it ends reads as erased, and a frozen attribution naming it
-/// is cleared. Each receipt keeps its anchor, outcome, time and every share
-/// it does not name. A row that no longer decodes is deleted and counted.
+/// is cleared. A receipt whose run or outcome reference spells the id moves
+/// to `erased` NUL a fresh ULID with those references rewritten to opaque
+/// erased ids and its attribution cleared (FIX 11359, CB2-B). Each receipt
+/// keeps its anchor, outcome, time and every share it does not name. A row
+/// that no longer decodes is deleted and counted.
 ///
 /// # Errors
 ///
@@ -267,10 +270,39 @@ pub(crate) fn erase_late_credit_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
+    let spelled = entity.to_hex().to_ascii_lowercase();
     for (key, mut credit) in super::skill_erase::erase_scan_in_txn(vault, wtxn, CREDIT_RECEIPT)? {
-        if redact_credit(&mut credit, *entity) {
-            CREDIT_RECEIPT.put(&vault.store, wtxn, &key, &credit)?;
+        let spelled_ref = [&credit.attempt_receipt, &credit.outcome_receipt]
+            .iter()
+            .any(|text| text.to_ascii_lowercase().contains(&spelled));
+        let named = redact_credit(&mut credit, *entity);
+        if !spelled_ref {
+            if named {
+                CREDIT_RECEIPT.put(&vault.store, wtxn, &key, &credit)?;
+            }
+            continue;
         }
+        let fresh = crate::entity_id::bytes_to_hex_lower(&vault.store.clock.ulid()?);
+        let erased_ref = format!("erased:{fresh}");
+        if credit
+            .attempt_receipt
+            .to_ascii_lowercase()
+            .contains(&spelled)
+        {
+            credit.attempt_receipt.clone_from(&erased_ref);
+        }
+        if credit
+            .outcome_receipt
+            .to_ascii_lowercase()
+            .contains(&spelled)
+        {
+            credit.outcome_receipt.clone_from(&erased_ref);
+        }
+        credit.receipt_id = erased_ref;
+        credit.attribution = None;
+        CREDIT_RECEIPT.delete(&vault.store, wtxn, &key)?;
+        let moved = format!("erased\0{fresh}");
+        CREDIT_RECEIPT.put(&vault.store, wtxn, &moved, &credit)?;
     }
     Ok(())
 }

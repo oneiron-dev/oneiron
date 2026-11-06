@@ -94,6 +94,8 @@ pub enum GateDenialReason {
     /// longer allows a write the child's own bound allows; the write waits
     /// for review.
     PendingDelegationChainCeiling,
+    /// FIX 12542: campaign compliance waits for the owner's clearance.
+    PendingCampaignCompliance,
 }
 
 impl GateDenialReason {
@@ -126,6 +128,7 @@ impl GateDenialReason {
             Self::DenyMessageAddress => "gate.deny.message_address",
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
             Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
+            Self::PendingCampaignCompliance => "gate.pending.campaign_compliance",
         }
     }
 
@@ -160,6 +163,7 @@ impl GateDenialReason {
             "gate.deny.message_address" => Some(Self::DenyMessageAddress),
             "gate.deny.unresolved_record_reference" => Some(Self::DenyUnresolvedRecordReference),
             "gate.pending.delegation_chain_ceiling" => Some(Self::PendingDelegationChainCeiling),
+            "gate.pending.campaign_compliance" => Some(Self::PendingCampaignCompliance),
             _ => None,
         }
     }
@@ -186,7 +190,8 @@ impl GateDenialReason {
             | Self::PendingExternalEffectAuthority
             | Self::PendingChecker
             | Self::PendingCheckerUnavailable
-            | Self::PendingDelegationChainCeiling => GateDenialOutcome::Pending,
+            | Self::PendingDelegationChainCeiling
+            | Self::PendingCampaignCompliance => GateDenialOutcome::Pending,
         }
     }
 }
@@ -322,6 +327,12 @@ pub enum GateError {
         outcome: &'static str,
         reason_codes: Vec<&'static str>,
     },
+    /// The Gate allowed a share creation but a full count-bound budget
+    /// window paces it (FIX 12155): no decision was recorded and nothing
+    /// was charged. Bring the share back at `next_eligible_at`, Unix
+    /// seconds on the engine's clock.
+    #[error("share creation paced by a full budget window: retry at {next_eligible_at}")]
+    ShareCreatePaced { next_eligible_at: u64 },
     /// A pending consent approval attempted to approve bytes or a policy
     /// read-frontier different from the original pending Gate decision.
     #[error("gate consent approval is stale for claim {}", claim_id.to_hex())]
@@ -384,6 +395,7 @@ impl GateError {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
             Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
+            Self::ShareCreatePaced { .. } => ErrorKind::ShareCreatePaced,
             Self::GateConsentStale { .. } => ErrorKind::GateConsentStale,
             Self::FamilyRequiresAutoGrant { .. } => ErrorKind::FamilyRequiresAutoGrant,
             Self::PolicyValueLevelNotAdmitted { .. } => ErrorKind::InvalidConfig,

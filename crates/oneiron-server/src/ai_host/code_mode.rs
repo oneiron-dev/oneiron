@@ -13,6 +13,7 @@
 //! model and effort; a pinned planned child keeps every step on its pick.
 use std::sync::Arc;
 
+use oneiron::agent_def::{AgentModel, ensure_inherited_model_list};
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding};
 use oneiron::compaction::EpochEmbedder;
@@ -34,12 +35,15 @@ use oneiron_code_check::{
 use super::CHAT_ROLE;
 use super::browser_planner::{self, BrowserPlannerRuns};
 use super::compaction::{CodeModeCompaction, LiveAdmission};
+use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
-use crate::embedder::EmbedderSlot;
-use crate::mcp::{McpQuickJsProvider, PlannedMeter, PlannedModel, PlannedRoute, RunCompactionSeat};
+use crate::mcp::{
+    McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
+    PlannedRoute, RunCompactionSeat,
+};
 use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
-use crate::server::SyncServer;
+use crate::server::{SharedModelSlots, SyncServer};
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
 /// checked-in component passes its pin and readiness probe. Any failure
@@ -71,7 +75,11 @@ pub(super) async fn bind(
         );
         return server;
     }
-    let component = match tokio::task::spawn_blocking(crate::mcp::checked_in_quickjs_runtime).await
+    let step_wall = models.code_mode.step_wall;
+    let component = match tokio::task::spawn_blocking(move || {
+        crate::mcp::checked_in_quickjs_runtime_with_wall(step_wall)
+    })
+    .await
     {
         Ok(Ok(component)) => component,
         Ok(Err(error)) => {
@@ -109,8 +117,29 @@ pub(super) async fn bind(
         guard: guard.clone(),
         payer: None,
         planned: None,
+        lease: None,
         browser: Arc::clone(&browser),
+        caller: None,
+        listed: Vec::new(),
     });
+    let model_call_backend: ModelCallBackend = {
+        let backend = Arc::clone(&backend);
+        Arc::new(move |principal, session| {
+            Arc::new(CodeModeBackend {
+                caller: Some(CodeModeCaller { principal, session }),
+                ..backend.as_ref().clone()
+            }) as Arc<dyn LlmBackend>
+        })
+    };
+    let model_list_backend: ModelListBackend = {
+        let backend = Arc::clone(&backend);
+        Arc::new(move |listed| {
+            Arc::new(CodeModeBackend {
+                listed,
+                ..backend.as_ref().clone()
+            }) as Arc<dyn LlmBackend>
+        })
+    };
     // Each run's compaction seat reads the rung its step's call is admitted
     // on, at the breakpoint, through this same admission (FIX 4465 C).
     let live_admission = Arc::new(LiveStepAdmission {
@@ -127,16 +156,24 @@ pub(super) async fn bind(
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
-        Arc::new(move |guard: BudgetGuard, payer: Option<PayerPerson>| {
-            Arc::new(CodeModeBackend {
-                vault: Arc::clone(&vault),
-                models: Arc::clone(&models),
-                guard,
-                payer,
-                planned: None,
-                browser: Arc::clone(&browser),
-            }) as Arc<dyn LlmBackend>
-        })
+        Arc::new(
+            move |guard: BudgetGuard,
+                  payer: Option<PayerPerson>,
+                  lease: Option<LiveLeaseState>,
+                  listed: Vec<AgentModel>| {
+                Arc::new(CodeModeBackend {
+                    vault: Arc::clone(&vault),
+                    models: Arc::clone(&models),
+                    guard,
+                    payer,
+                    planned: None,
+                    lease,
+                    browser: Arc::clone(&browser),
+                    caller: None,
+                    listed,
+                }) as Arc<dyn LlmBackend>
+            },
+        )
     };
     // FIX 2310: a planned child no seat binds runs its pick exactly where
     // this host routes it so (Engine C1/C2), else on the route it takes
@@ -151,14 +188,21 @@ pub(super) async fn bind(
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
         Arc::new(
-            move |guard: BudgetGuard, payer: Option<PayerPerson>, planned: &PlannedModel| {
+            move |guard: BudgetGuard,
+                  payer: Option<PayerPerson>,
+                  planned: &PlannedModel,
+                  lease: Option<LiveLeaseState>,
+                  listed: Vec<AgentModel>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
                     models: Arc::clone(&models),
                     guard,
                     payer,
                     planned: Some(planned.clone()),
+                    lease,
                     browser: Arc::clone(&browser),
+                    caller: None,
+                    listed,
                 }) as Arc<dyn LlmBackend>
             },
         )
@@ -174,9 +218,12 @@ pub(super) async fn bind(
         global_tier: ModelTierRef(ENGINE_EXECUTOR_PURPOSE_NAME.to_owned()),
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
+        wake: None,
     };
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
+            .with_model_call_backend(model_call_backend)
+            .with_model_list_backend(model_list_backend)
             .with_clock_from_first_start()
             .with_reader_meter(reader_meter)
             .with_planned_models(planned_route, planned_meter)
@@ -222,7 +269,10 @@ pub(super) async fn bind(
     if let Some(backend) = compaction.host_backend() {
         let _ = server.ai.host_compaction.set(backend);
     }
-    let embedder = server.embedder.clone();
+    // The live slot pair, shared with late first-run setup: each seat birth
+    // reads the serving embedder, so runs created after attach compact with
+    // vectors instead of the startup None.
+    let slots = Arc::clone(&server.model_slots);
     // Engine C5: a pinned child's compaction reads its live rung through
     // the admission its calls take, on its pick.
     let pinned = Arc::new(LiveStepAdmission {
@@ -232,9 +282,9 @@ pub(super) async fn bind(
         browser,
     });
     let provider =
-        provider.with_pinned_compaction(pinned_compaction(&compaction, embedder.clone(), pinned));
+        provider.with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned));
     server.with_mcp_quickjs_provider(
-        compaction.attach(provider, status, embedder, live_admission),
+        compaction.attach(provider, status, slots, live_admission),
         runs,
     )
 }
@@ -244,17 +294,16 @@ pub(super) async fn bind(
 /// read through `live`, the admission its calls take on its pick.
 fn pinned_compaction(
     compaction: &CodeModeCompaction,
-    embedder: Option<Arc<EmbedderSlot>>,
+    slots: Arc<SharedModelSlots>,
     live: Arc<LiveStepAdmission>,
 ) -> RunCompactionSeat {
     let compaction = compaction.clone();
     let live: Arc<dyn LiveAdmission> = live;
-    let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
     Arc::new(
         move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
             let seat = compaction.for_run(host, credential, spend, &live);
-            match &vectors {
-                Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
+            match slots.load().embedder.clone() {
+                Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
                 None => seat,
             }
         },
@@ -289,7 +338,7 @@ fn type_feedback(settings: &CodeCheckSettings, vault: Arc<Vault>) -> TypeFeedbac
         BackendKind::Microsoft => "microsoft",
         BackendKind::Tsrs => "tsrs",
     };
-    let feedback = TypeFeedback::loading(configured, Some(vault));
+    let feedback = TypeFeedback::loading(configured, vault);
     let (loading, settings) = (feedback.clone(), settings.clone());
     tokio::spawn(async move {
         // Compiling the checker's module takes seconds.
@@ -363,18 +412,31 @@ fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, Chec
 /// none or fails after it went out). A browser subgoal's step takes the
 /// role its run's browser planner state picks, on the same budget, with
 /// the evidence that state holds (CUA E5).
+#[derive(Clone)]
 struct CodeModeBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     guard: BudgetGuard,
     /// Who funds each call when a room's root spend scope pays for the run.
     payer: Option<PayerPerson>,
+    /// The caller's shared lease state for per-rung spend looks (FIX 11749).
+    lease: Option<LiveLeaseState>,
     /// The planned child no seat binds whose calls these are (FIX 2310):
     /// pinned, each runs its pick alone; else the role's live route, and
     /// one another model answers is marked on its receipts.
     planned: Option<PlannedModel>,
     /// The runs' browser planner states each call is routed by (CUA E5).
     browser: Arc<BrowserPlannerRuns>,
+    caller: Option<CodeModeCaller>,
+    /// The bound run's actual frozen list. Other backend paths retain
+    /// their existing unconstrained routing until they carry one too.
+    listed: Vec<AgentModel>,
+}
+
+#[derive(Clone)]
+struct CodeModeCaller {
+    principal: EntityId,
+    session: Option<String>,
 }
 
 /// The run each code-mode call is admitted under, one run per call so the
@@ -389,30 +451,32 @@ const CODE_MODE_RUN: &str = "code-mode";
 /// `role` it is admitted here as any other step. A planned child its host
 /// pinned to its pick (`pinned`, FIX 2310) is admitted on that one model as
 /// a seat-bound call is; when that admission refuses now, the call takes
-/// the role's live route as any other does, so nothing new refuses.
+/// the role's live route as any other does, so nothing new refuses. The
+/// third value is the role that actually admitted the call (FIX 6359): the
+/// browser role when its admission took the call, else the chat role.
 fn admit_code_mode_call(
     models: &ModelRuntime,
     vault: &Vault,
     request: LlmRequest,
     pinned: bool,
     role: ModelRole,
-) -> Result<(RoleCall, bool), RoleRefusal> {
+) -> Result<(RoleCall, bool, ModelRole), RoleRefusal> {
     let seat_bound = request.envelope.seat_effort.is_some();
     if pinned
         && !seat_bound
         && let Some(call) = pinned_call(models, vault, &request)
     {
-        return Ok((call, true));
+        return Ok((call, true, CHAT_ROLE));
     }
     if let Some(admitted) = browser_planner::admit_browser_step(models, vault, role, &request) {
-        return admitted.map(|call| (call, false));
+        return admitted.map(|call| (call, false, role));
     }
     let call = if seat_bound {
         models.admit_seat_bound(vault, CHAT_ROLE, request)
     } else {
         models.admit_role(vault, CHAT_ROLE, request)
     }?;
-    Ok((call, seat_bound))
+    Ok((call, seat_bound, CHAT_ROLE))
 }
 
 /// A pinned child's call on its pick alone, as [`ModelRuntime::admit_seat_bound`]
@@ -448,7 +512,7 @@ impl LiveAdmission for LiveStepAdmission {
     fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal> {
         let (role, request, _) = self.browser.route(request, self.pinned);
         admit_code_mode_call(&self.models, &self.vault, request, self.pinned, role)
-            .map(|(call, _)| call)
+            .map(|(call, _, _)| call)
     }
 }
 
@@ -460,38 +524,109 @@ impl CodeModeBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let pinned = self.planned.as_ref().is_some_and(|planned| planned.exact);
+            // The messages as the caller sent them, which a step's capture
+            // staged: routing below only adds host data after them, and
+            // admission leaves them as they are.
+            let staged_len = request.messages.len();
+            let capture_run = browser_planner::step_run(&request);
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
             let (role, request, handoff) = self.browser.route(request, pinned);
-            let (call, seat_bound) =
-                admit_code_mode_call(&self.models, &self.vault, request, pinned, role).map_err(
-                    |refusal| {
+            let (call, seat_bound, admitted_role) =
+                admit_code_mode_call(&self.models, &self.vault, request, pinned, role)
+                    .and_then(|(mut call, seat_bound, admitted_role)| {
+                        if !self.listed.is_empty() {
+                            ensure_inherited_model_list(&self.listed, &call.request.model)
+                                .map_err(|error| RoleRefusal::Refused(Box::new(error)))?;
+                            let ladder = call
+                                .ladder
+                                .for_model_list(&self.listed)
+                                .map_err(|error| RoleRefusal::Refused(Box::new(error)))?;
+                            call.ladder = Arc::new(ladder);
+                        }
+                        Ok((call, seat_bound, admitted_role))
+                    })
+                    .map_err(|refusal| {
                         tracing::warn!(%refusal, "a code-mode model call was refused");
                         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
-                    },
-                )?;
+                    })?;
+            // FIX 6359: the step's capture keeps the role that admitted this
+            // call, matched by the executor's own messages, so its replays
+            // are admitted on that role's route. The role is noted on the
+            // staged prefix before the refresh below re-keys the capture.
+            if let Some(messages) = call.request.messages.get(..staged_len) {
+                oneiron::code_run::note_step_admission_role(messages, admitted_role);
+            }
+            if let Some(run) = capture_run {
+                oneiron::code_run::refresh_step_capture_request(
+                    &self.vault,
+                    run,
+                    &call.request,
+                    staged_len,
+                );
+            }
+            let no_record_at_arrival = self.caller.as_ref().is_some_and(|caller| {
+                self.vault.model_call_keeps_no_record_for(
+                    caller.session.as_deref(),
+                    Some(caller.principal),
+                )
+            });
+            let record_request = self.caller.as_ref().map(|_| call.request.clone());
             let run = self
                 .models
                 .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone())
                 .sourced(sources);
+            let live = self
+                .lease
+                .clone()
+                .map(|state| LiveLease::from_state(&self.vault, state));
+            let may_send = || {
+                if let Some(live) = &live {
+                    live.book_and_revise();
+                }
+                true
+            };
             let answered = if seat_bound {
-                call.ladder.generate_exact(&run, call.request, None).await
+                call.ladder
+                    .generate_exact_recorded_while(&run, call.request, None, &may_send)
+                    .await
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
-                let (response, ran) = call
+                let (response, binding) = call
                     .ladder
-                    .generate_served(&run, call.request, None)
+                    .generate_recorded_while(&run, call.request, None, &may_send)
                     .await?;
-                planned.answered(&run, ran);
-                Ok(response)
+                planned.answered(&run, binding.rung.model.clone());
+                Ok((response, binding))
             } else {
-                call.ladder.generate(&run, call.request, None).await
+                call.ladder
+                    .generate_recorded_while(&run, call.request, None, &may_send)
+                    .await
             };
             if answered.is_ok() {
                 handoff.answered();
             }
-            answered
+            answered.map(|(response, binding)| {
+                if let (Some(caller), Some(request)) = (&self.caller, &record_request) {
+                    let no_record = no_record_at_arrival
+                        || self.vault.model_call_keeps_no_record_for(
+                            caller.session.as_deref(),
+                            Some(caller.principal),
+                        );
+                    let evidence_run = run.clone().initiated_by(Some(caller.principal));
+                    crate::api::record_raw_response(
+                        &self.vault,
+                        &call.ladder,
+                        &evidence_run,
+                        request,
+                        &response,
+                        Some(&binding),
+                        no_record,
+                    );
+                }
+                response
+            })
         })
     }
 }

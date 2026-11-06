@@ -148,15 +148,21 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
         Carried::Inline(bytes) => return Ok(bytes.into_vec()),
         Carried::Staged { hash, len } => (hash, len),
     };
-    let want = usize::try_from(len).map_err(|_| MeshError::Io("staged bytes too long".into()))?;
-    let mut bytes = Vec::with_capacity(want);
+    let want = usize::try_from(len)
+        .ok()
+        .filter(|len| *len <= isize::MAX as usize)
+        .ok_or_else(|| MeshError::Io("staged bytes too long".into()))?;
+    let mut bytes = Vec::new();
     while bytes.len() < want {
         let request = Request::Get {
             hash,
             offset: bytes.len() as u64,
         };
         match exchange(conn, &request).await? {
-            Reply::Piece(piece) if !piece.is_empty() && bytes.len() + piece.len() <= want => {
+            Reply::Piece(piece) if !piece.is_empty() && piece.len() <= want - bytes.len() => {
+                bytes.try_reserve_exact(piece.len()).map_err(|error| {
+                    MeshError::Io(format!("staged bytes allocation failed: {error}"))
+                })?;
                 bytes.extend_from_slice(&piece);
             }
             other => return Err(unexpected(&other)),
@@ -330,6 +336,7 @@ async fn received(
         outputs,
         report,
         receipt,
+        _frame: None,
     })
 }
 
@@ -347,7 +354,7 @@ async fn answer(
     let (answered, signed) = run_handler(&ask, asks);
     let _held = match &answered {
         Ok(Answered { value, data, .. }) => {
-            let value_len = rmp_serde::to_vec_named(value).map_or(0, |bytes| bytes.len() as u64);
+            let value_len = oneiron_organ_protocol::encoded_len(value).unwrap_or(0);
             let data_len = data.as_ref().map_or(0, |bytes| bytes.len() as u64);
             here.hold_sent(value_len.saturating_add(data_len))?
         }

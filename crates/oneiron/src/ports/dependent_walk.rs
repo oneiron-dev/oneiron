@@ -114,6 +114,8 @@ pub struct DependentWalkCheck {
     pub threshold: u64,
     /// Dependents withdrawn when the walk crossed it.
     pub walked: u64,
+    /// Unix seconds of the crossing.
+    pub raised_at: u64,
 }
 
 impl DependentWalkCheck {
@@ -216,7 +218,9 @@ fn dependent_of(row: &RowKey) -> Result<EntityId> {
     )
 }
 
-fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
+/// The walk policy in force here: also the batch past which a withdrawal's
+/// source chain takes the stale mark alone (FIX 1494).
+pub(super) fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
     Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
 }
 
@@ -235,11 +239,12 @@ fn entity_type_in(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Res
 /// not reached as an earlier mark, so each row is withdrawn for the worlds
 /// of the marks that covered it, as two walks would give it.
 pub(super) fn begin_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     document: &EntityId,
     door: DependentWalkDoor,
 ) -> Result<()> {
+    let store = write.store;
     let prefix = [DEP, document.as_bytes()].concat();
     let highest = [prefix.as_slice(), &[0xFF; ROW]].concat();
     let last = store
@@ -293,17 +298,18 @@ pub(super) fn begin_in_txn(
             .collect();
         walk.earlier = mark::keep_apart(earlier, &walk.mark);
     }
-    batch_in_txn(store, txn, document, walk)
+    batch_in_txn(write, txn, document, walk)
 }
 
 /// Withdraws the next batch of `walk`, then keeps what is left of it, or
 /// retires it once no row it covers is left.
 fn batch_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     document: &EntityId,
     mut walk: WalkRow,
 ) -> Result<()> {
+    let store = write.store;
     let policy = policy_in(store, txn)?;
     let prefix = [DEP, document.as_bytes()].concat();
     let lower = walk.mark.after.map_or_else(
@@ -338,7 +344,7 @@ fn batch_in_txn(
         }
     }
     for (dependent, worlds) in &dependents {
-        integrity::withdraw_dependent_in_txn(store, txn, document, dependent, worlds)?;
+        integrity::withdraw_dependent_in_txn(write, txn, document, dependent, worlds)?;
     }
     walk.walked = walk.walked.saturating_add(dependents.len() as u64);
     if walk.walked > policy.check_threshold && !CHECK.contains(store, txn, document)? {
@@ -401,6 +407,7 @@ fn ask_in_txn(
         door: walk.door.code().to_owned(),
         threshold: policy.check_threshold,
         walked: walk.walked,
+        raised_at: crate::unix_seconds_now(),
     };
     CHECK.put(store, txn, document, &check)?;
     tracing::warn!(
@@ -416,7 +423,9 @@ fn ask_in_txn(
 /// The worlds the pending walks withdraw `id` for before their batches reach
 /// it; `Some` where one does. A walk withdraws each dependent its range still
 /// covers, an EVENT that outlives its source excepted, and through each one
-/// every epoch summary written from it, as the batch itself will.
+/// every epoch summary written from it, as the batch itself will. The rest
+/// of each one's source chain is withdrawn when the batch reaches it (FIX
+/// 1494), not before.
 pub(super) fn pending_withdrawal_in(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -528,10 +537,11 @@ pub(super) fn settle_admitted_in_txn(
 /// them by. Its regeneration then meets the same fence as after a
 /// single-transaction walk.
 pub(crate) fn withdraw_before_rewrite_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let Some(worlds) = pending_withdrawal_in(store, txn, id)? else {
         return Ok(());
     };
@@ -543,16 +553,17 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
         };
         let settled = SETTLED.get(store, txn, &(document, row))?;
         if let Some(worlds) = walk.worlds_for(&row, settled) {
-            integrity::withdraw_dependent_in_txn(store, txn, &document, id, &worlds)?;
+            integrity::withdraw_dependent_in_txn(write, txn, &document, id, &worlds)?;
             SETTLED.put(store, txn, &(document, row), &walk.mark.generation)?;
             direct = true;
         }
     }
     // An epoch summary withdrawn only through one it was written from: marked
-    // once, as the batch that reaches that one marks it, and never again for
-    // a put that repeats (its regeneration's own revision would fence it).
+    // once, as the batch that reaches that one marks it, with its source
+    // chain, and never again for a put that repeats (its regeneration's own
+    // revision would fence it).
     if !direct {
-        integrity::withdraw_epochs_in_txn(store, txn, vec![*id], &worlds)?;
+        integrity::withdraw_source_chain_in_txn(write, txn, vec![*id], &worlds)?;
     }
     Ok(())
 }
@@ -598,7 +609,12 @@ impl Vault {
             }
             let batch =
                 self.with_write_txn_grouped(|txn| match WALK.get(&self.store, txn, &document)? {
-                    Some(walk) => batch_in_txn(&self.store, txn, &document, walk),
+                    Some(walk) => batch_in_txn(
+                        &crate::secret_custody::CustodyWrite::of(self),
+                        txn,
+                        &document,
+                        walk,
+                    ),
                     None => Ok(()),
                 });
             if let Err(error) = batch {
@@ -626,15 +642,23 @@ impl Vault {
             .collect())
     }
 
-    /// The checks walks raised, one per source, in source order.
+    /// The checks walks raised, one per source, in source order. These same
+    /// crossings are also listed by [`Self::scan_checks`].
     ///
     /// # Errors
     ///
     /// Storage failures.
     pub fn dependent_walk_checks(&self) -> Result<Vec<DependentWalkCheck>> {
         let txn = self.store.env.read_txn()?;
+        self.dependent_walk_checks_in(&txn)
+    }
+
+    pub(crate) fn dependent_walk_checks_in(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Vec<DependentWalkCheck>> {
         Ok(CHECK
-            .scan(&self.store, &txn)?
+            .scan(&self.store, txn)?
             .into_iter()
             .map(|(_, check)| check)
             .collect())
@@ -647,7 +671,21 @@ impl Vault {
     /// Storage failures.
     pub fn dependent_walk_policy(&self) -> Result<DependentWalkPolicy> {
         let txn = self.store.env.read_txn()?;
-        policy_in(&self.store, &txn)
+        self.dependent_walk_policy_in(&txn)
+    }
+
+    pub(crate) fn dependent_walk_policy_in(&self, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
+        policy_in(&self.store, txn)
+    }
+
+    pub(crate) fn set_dependent_walk_check_threshold_in(
+        &self,
+        txn: &mut RwTxn<'_>,
+        threshold: u64,
+    ) -> Result<()> {
+        let mut policy = self.dependent_walk_policy_in(txn)?;
+        policy.check_threshold = threshold;
+        POLICY.put(&self.store, txn, &(), &policy)
     }
 
     /// Sets the local dependent walk policy for the batches that follow.

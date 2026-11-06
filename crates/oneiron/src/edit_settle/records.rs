@@ -1,5 +1,7 @@
 //! Consent, outcome and settlement records.
 
+use serde::{Deserialize, Serialize};
+
 use super::keys::{OUTCOME_DISCARDED, OUTCOME_PROPOSED, OUTCOME_SELECTED};
 use crate::anchored_annotation::{Locator, ReanchorSummary};
 use crate::blob_artifact::{
@@ -89,7 +91,7 @@ pub struct SettledAnchor {
 }
 
 /// Selected Office author and the separate identities behind a review comment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PptxReviewIdentity {
     pub thread_id: EntityId,
     pub asked_by: EntityId,
@@ -113,6 +115,9 @@ pub struct SettlementRecord {
     pub actor_ref: Option<String>,
     /// The assigning brief this settle rode, if any.
     pub brief_ref: Option<String>,
+    /// The standing grant selected by authorization in the settlement's write
+    /// transaction; absent when the owner consented directly.
+    pub grant_ref: Option<String>,
     /// The artifact head version the select was appended ONTO — the D6 receipt's
     /// before-version ref (select only; a discard commits no version).
     pub before_version: Option<u64>,
@@ -191,6 +196,30 @@ pub struct SettleSelectOutcome {
     /// A kept output that forked from the version it was made against, the
     /// head it replaced kept beside it (FIX 2700); `None` when it did not.
     pub reconciliation: Option<VersionReconciliation>,
+    /// The review the Keep settled, typed as its record keeps it (FIX 9337).
+    pub review: SettledReview,
+}
+
+/// The review one Keep settled, typed (FIX 9337): each slide and paragraph
+/// judgment it kept, and each exported comment's asker, answerer and
+/// selected Office author. The receipt carries the same as text. Empty for
+/// a Keep of no review.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SettledReview {
+    pub slide_judgments: Vec<crate::edit_roundtrip::slides_review::SlideJudgment>,
+    pub paragraph_judgments: Vec<crate::edit_roundtrip::ParagraphJudgment>,
+    pub review_identities: Vec<PptxReviewIdentity>,
+}
+
+impl SettledReview {
+    /// The review `record` keeps, taken from it once its receipt is made.
+    pub(super) fn of(record: SettlementRecord) -> Self {
+        Self {
+            slide_judgments: record.pptx_judgments,
+            paragraph_judgments: record.docx_judgments,
+            review_identities: record.pptx_review_identities,
+        }
+    }
 }
 
 /// The result of a settle-discard: the discard receipt.

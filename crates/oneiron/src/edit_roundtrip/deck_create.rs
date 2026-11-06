@@ -33,11 +33,10 @@ pub(crate) use store::outline_pins;
 use oneiron_docedit::design_plan::{
     AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
-use oneiron_docedit::emit::{EmitError, EmitInputs, Names, StoredAsset, check_template, emit};
-use oneiron_docedit::fonts::{FontBook, FontError};
+use oneiron_docedit::emit::{EmitInputs, StoredAsset, check_template, emit};
+use oneiron_docedit::fonts::FontBook;
 use oneiron_docedit::graphic::{AssetRecord, GraphicLimits, Origin};
 use oneiron_docedit::retained_opc::Package;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
@@ -45,7 +44,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::{NotePin, NoteSpanResolution};
 use crate::provenance::made_by::{
-    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::side_table::{self, Named, SideTable};
@@ -76,206 +75,31 @@ pub(crate) fn erase_in_txn(
     txn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
-    OUTLINE_KEEPS.delete(store, txn, entity)?;
-    DESIGN_SPECS.delete(store, txn, entity)?;
-    CREATIONS.delete(store, txn, entity)?;
+    discard_payload_in_txn(store, txn, entity)?;
     super::deck::erase_in_txn(store, txn, entity)
 }
 
-/// One blob artifact version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ArtifactVersionRef {
-    pub artifact: EntityId,
-    pub version: u64,
+/// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34 call
+/// 4 = A): a note's kept outline and design spec and an artifact's creation
+/// record go; its managed native-id history stays as identifier-only
+/// immutable history.
+pub(crate) fn discard_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    OUTLINE_KEEPS.delete(store, txn, entity)?;
+    DESIGN_SPECS.delete(store, txn, entity)?;
+    CREATIONS.delete(store, txn, entity)?;
+    Ok(())
 }
 
-/// A person's keep of an outline: the frontier, the exact outline bytes with
-/// drift mapped at keep, and their hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct KeptOutline {
-    pub note: EntityId,
-    pub frontier: Vec<u8>,
-    /// The kept version as the design plan binds it: the frontier in hex.
-    pub version: String,
-    pub bytes: Vec<u8>,
-    pub content_hash: [u8; 32],
-    pub kept_by: EntityId,
-    pub kept_at: u64,
-    /// What the engine observed of each pin it can address at the keep,
-    /// outside the bytes and their hash (FIX 9813, 9814).
-    #[serde(default)]
-    pub evidence: Vec<EvidenceObservation>,
-}
-
-/// Whether a keep still describes its outline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OutlineFreshness {
-    Fresh,
-    NotKept,
-    /// The note changed after the keep.
-    Edited,
-    /// Cited evidence moved: these pins, in document order, map differently.
-    EvidenceMoved {
-        pins: Vec<usize>,
-    },
-}
-
-/// A cited CLAIM's lifecycle as the engine observed it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CitedClaimLifecycle {
-    Active,
-    Superseded,
-    Retracted,
-}
-
-/// What the engine observed of one evidence pin it can address: a note
-/// document span, with or without a cited CLAIM (FIX 9813, 9814).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvidenceObservation {
-    /// The pin, in document order, as [`OutlineFreshness::EvidenceMoved`]
-    /// counts them.
-    pub pin: usize,
-    /// The cited document's frontier; `None` once it no longer resolves.
-    pub source_frontier: Option<Vec<u8>>,
-    /// The cited CLAIM's lifecycle; `None` when the pin names none or it no
-    /// longer reads.
-    pub lifecycle: Option<CitedClaimLifecycle>,
-    /// Whether the span still maps onto live characters with its quote.
-    pub mapped: bool,
-}
-
-/// One pin whose evidence changed since the keep: what the keep saw, and
-/// what the engine sees now. It is reported, never a keep to make again.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvidenceChange {
-    pub kept: EvidenceObservation,
-    pub now: EvidenceObservation,
-}
-
-/// One design direction: a template and what the kept outline becomes on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DesignDirection {
-    pub template: ArtifactVersionRef,
-    /// BLAKE3 of the template version's bytes.
-    pub template_hash: [u8; 32],
-    pub outcome: DirectionOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DirectionOutcome {
-    Plan {
-        slides: Vec<DirectionSlide>,
-        /// Optional blocks the plan leaves out.
-        omitted: Vec<String>,
-        /// Estimates a real face measured, and those the em rule made.
-        measured: usize,
-        estimated: usize,
-    },
-    /// Pages no layout rung holds: another template or a design change.
-    Ask { pages: Vec<String> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DirectionSlide {
-    pub page: String,
-    pub layout: String,
-    /// The ladder step that made the slide; `None` is the capability match.
-    pub fallback: Option<String>,
-}
-
-/// The design spec linked to one kept outline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DesignSpec {
-    pub note: EntityId,
-    /// The keep the directions were compiled from.
-    pub content_hash: [u8; 32],
-    pub directions: Vec<DesignDirection>,
-}
-
-/// The receipt of one created deck.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckCreationRecord {
-    pub artifact: EntityId,
-    pub version: u64,
-    pub content_hash: [u8; 32],
-    /// Born-from: the kept outline.
-    pub outline: EntityId,
-    pub outline_version: String,
-    pub outline_hash: [u8; 32],
-    pub template: ArtifactVersionRef,
-    pub template_hash: [u8; 32],
-    pub run_ref: String,
-    pub made_by: Option<EntityId>,
-    pub slides: Vec<CreatedSlide>,
-    pub write_set: Vec<String>,
-    pub omitted: Vec<String>,
-    /// Units whose fit emission cannot decide: `(slide, block, shape)`.
-    pub fit_unverified: Vec<(String, String, u32)>,
-    pub estimates: Vec<CreatedEstimate>,
-    pub created_at: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CreatedSlide {
-    pub part: String,
-    pub sld_id: u32,
-    pub page: String,
-    pub layout: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CreatedEstimate {
-    pub block: String,
-    pub need: i64,
-    pub room: i64,
-    /// The face that measured it; `None` for the em rule.
-    pub font: Option<String>,
-}
-
-/// One creation run.
-#[derive(Debug, Clone)]
-pub struct DeckCreateRequest<'a> {
-    pub outline: EntityId,
-    pub template: ArtifactVersionRef,
-    /// Brief asset id to the held PNG, JPEG or SVG version it binds.
-    pub assets: &'a BTreeMap<String, ArtifactVersionRef>,
-    /// Font files (TrueType, OpenType or collections) to measure text with.
-    pub fonts: &'a [ArtifactVersionRef],
-    pub names: Names<'a>,
-    /// The new artifact's name.
-    pub name: &'a str,
-    pub run_ref: &'a str,
-    pub made_by: Option<EntityId>,
-    /// The task or ask the creation answers: the deck's born-from.
-    pub trigger: Option<MadeByTrigger>,
-    pub actor: WriteActor,
-}
-
-#[derive(Debug, Clone)]
-pub enum DeckCreateOutcome {
-    Created(Box<DeckCreationRecord>),
-    /// Pages no rung holds; nothing was written.
-    Ask {
-        pages: Vec<String>,
-    },
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum DeckCreateError {
-    #[error(transparent)]
-    Vault(#[from] Error),
-    #[error("the outline is not usable: {0}")]
-    Outline(&'static str),
-    #[error(transparent)]
-    Compile(#[from] CompileError),
-    #[error(transparent)]
-    Emit(#[from] EmitError),
-    #[error(transparent)]
-    Font(#[from] FontError),
-}
+pub use crate::blob_artifact::deck_creation::record::{
+    ArtifactVersionRef, CitedClaimLifecycle, CreatedEstimate, CreatedInput, CreatedSlide,
+    DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DeckCreationRecord, DesignDirection,
+    DesignSpec, DirectionOutcome, DirectionSlide, EvidenceChange, EvidenceObservation, KeptOutline,
+    OutlineFreshness,
+};
 
 fn invalid(message: &'static str) -> DeckCreateError {
     DeckCreateError::Outline(message)
@@ -551,7 +375,7 @@ impl crate::Vault {
         let txn = &*wtxn;
         let kept = self.fresh_outline_in_txn(txn, request.outline)?;
         let limits = self.docedit_package_limits_in_txn(txn)?;
-        let book = self.font_book_in_txn(txn, request.fonts)?;
+        let (book, font_inputs) = self.font_book_with_inputs_in_txn(txn, request.fonts)?;
         let bindings = self.asset_bindings_in_txn(txn, request.assets)?;
         let template_bytes = self.version_bytes_in_txn(txn, &request.template)?;
         let template = Package::open(
@@ -578,7 +402,7 @@ impl crate::Vault {
             }
             Outcome::Plan(plan) => plan,
         };
-        let records = self.asset_records_in_txn(txn, request.assets, &kept)?;
+        let (records, asset_inputs) = self.asset_records_in_txn(txn, request.assets, &kept)?;
         let stored: BTreeMap<String, StoredAsset<'_>> = records
             .iter()
             .map(|(asset, (record, bytes))| {
@@ -648,6 +472,7 @@ impl crate::Vault {
                     entity_type: ENTITY_TYPE_BLOB_ARTIFACT,
                     occurred,
                     learned_at: now,
+                    row_version: 0,
                     body,
                 },
             )?;
@@ -673,6 +498,8 @@ impl crate::Vault {
                 outline_hash: kept.content_hash,
                 template: request.template,
                 template_hash,
+                asset_inputs,
+                font_inputs,
                 run_ref: request.run_ref.to_owned(),
                 made_by: request.made_by,
                 slides: candidate
@@ -777,9 +604,7 @@ fn outline_content_equal(held: &Value, current: &Value) -> bool {
             // an outline edit (blind review of #4387).
             let engine_mapped = note_pin(pin).is_some()
                 || engine_span(pin).is_some_and(|span| span.claim.is_none());
-            if engine_mapped
-                && let Some(object) = pin.as_object_mut()
-            {
+            if engine_mapped && let Some(object) = pin.as_object_mut() {
                 object.remove("drift");
             }
         });

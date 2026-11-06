@@ -21,7 +21,8 @@ pub struct CanonicalEntityDocument {
     pub summary_meta: BTreeMap<String, Vec<u8>>,
     /// Native record fields projected by the immutable adapter at birth.
     pub record_fields: Vec<String>,
-    /// None once the birth's actor was erased (FIX 6072): it stays no one.
+    /// The stamp token the birth names, as stored (FIX 11964); None once the
+    /// birth named no one (FIX 6072): it stays no one.
     pub birth_actor: Option<[u8; 16]>,
     pub birth_at: u64,
     /// The document's causal state, by value. Absent for a document with no
@@ -156,35 +157,59 @@ pub struct CanonicalDocumentPurge {
     pub live_text_hash: [u8; 32],
 }
 
+/// Resumable reconstruction of the same canonical history text vector.
+pub(crate) struct CanonicalDocumentTexts {
+    texts: Vec<String>,
+}
+
+impl CanonicalDocumentTexts {
+    pub(crate) fn new(history: &CanonicalEntityDocumentHistory) -> Self {
+        Self {
+            texts: Vec::with_capacity(history.versions.len()),
+        }
+    }
+
+    pub(crate) fn advance_row(&mut self, history: &CanonicalEntityDocumentHistory) -> Result<bool> {
+        let index = self.texts.len();
+        let Some(version) = history.versions.get(index) else {
+            return Ok(true);
+        };
+        let base: Vec<char> = match version.parents.first() {
+            None => Vec::new(),
+            Some(&parent) => {
+                let parent = parent as usize;
+                if parent >= index {
+                    return Err(invalid("entity document version parent"));
+                }
+                self.texts[parent].chars().collect()
+            }
+        };
+        let prefix = version.prefix as usize;
+        let suffix = version.suffix as usize;
+        if prefix
+            .checked_add(suffix)
+            .is_none_or(|kept| kept > base.len())
+        {
+            return Err(invalid("entity document version splice"));
+        }
+        let mut text: String = base[..prefix].iter().collect();
+        text.push_str(&version.middle);
+        text.extend(&base[base.len() - suffix..]);
+        self.texts.push(text);
+        Ok(false)
+    }
+
+    pub(crate) fn into_texts(self) -> Vec<String> {
+        self.texts
+    }
+}
+
 impl CanonicalEntityDocumentHistory {
     /// Every version's full text, rebuilt from its splice, in version order.
     pub fn texts(&self) -> Result<Vec<String>> {
-        let mut texts: Vec<String> = Vec::with_capacity(self.versions.len());
-        for (index, version) in self.versions.iter().enumerate() {
-            let base: Vec<char> = match version.parents.first() {
-                None => Vec::new(),
-                Some(&parent) => {
-                    let parent = parent as usize;
-                    if parent >= index {
-                        return Err(invalid("entity document version parent"));
-                    }
-                    texts[parent].chars().collect()
-                }
-            };
-            let prefix = version.prefix as usize;
-            let suffix = version.suffix as usize;
-            if prefix
-                .checked_add(suffix)
-                .is_none_or(|kept| kept > base.len())
-            {
-                return Err(invalid("entity document version splice"));
-            }
-            let mut text: String = base[..prefix].iter().collect();
-            text.push_str(&version.middle);
-            text.extend(&base[base.len() - suffix..]);
-            texts.push(text);
-        }
-        Ok(texts)
+        let mut texts = CanonicalDocumentTexts::new(self);
+        while !texts.advance_row(self)? {}
+        Ok(texts.into_texts())
     }
 
     /// The splice that turns `parent` into `text`: the longest common prefix,

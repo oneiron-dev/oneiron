@@ -4,8 +4,8 @@
 
 use super::{
     ContentPart, FatalLlmError, FinishReason, JsonValue, LlmMessage, LlmMessageRole, LlmResponse,
-    LlmResult, LlmUsage, parse_function_call, parse_responses_usage, reasoning_signature,
-    reasoning_text, responses_finish_reason,
+    LlmResult, LlmUsage, parse_function_call, parse_responses_usage, reasoning_part_texts,
+    reasoning_signature, responses_finish_reason,
 };
 
 /// The `type` of one socket event.
@@ -65,10 +65,39 @@ pub fn parse_openai_responses_output(response: &JsonValue) -> LlmResult<LlmRespo
                 }
             }
             Some("reasoning") => {
-                let text = reasoning_text(item);
-                let signature = reasoning_signature(item, model);
-                if !text.is_empty() || signature.is_some() {
-                    content.push(ContentPart::Reasoning { text, signature });
+                for text in reasoning_part_texts(item, "summary") {
+                    if !text.is_empty() {
+                        content.push(ContentPart::Reasoning {
+                            text: text.to_owned(),
+                            signature: None,
+                            reasoning_kind: oneiron::ReasoningPartKind::Summary,
+                            data: None,
+                        });
+                    }
+                }
+                let mut signature = reasoning_signature(item, model);
+                for (index, text) in reasoning_part_texts(item, "content")
+                    .into_iter()
+                    .enumerate()
+                {
+                    if !text.is_empty() {
+                        content.push(ContentPart::Reasoning {
+                            text: text.to_owned(),
+                            signature: if index == 0 { signature.take() } else { None },
+                            reasoning_kind: oneiron::ReasoningPartKind::Full,
+                            data: None,
+                        });
+                    }
+                }
+                // With no text in part zero, the stream first opens its
+                // signature-bearing part when the reasoning item ends.
+                if signature.is_some() {
+                    content.push(ContentPart::Reasoning {
+                        text: String::new(),
+                        signature,
+                        reasoning_kind: oneiron::ReasoningPartKind::Full,
+                        data: None,
+                    });
                 }
             }
             Some("function_call") => {

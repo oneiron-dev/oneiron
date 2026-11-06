@@ -11,21 +11,20 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
-use super::class_policy::ActPosture;
 use super::constants::{
     ACT_POLICY_CLASS_KEY, ACT_POLICY_POSTURE_KEY, ACT_POLICY_SUBJECT_CLASS_KEY, ACTOR_CEILING_KEY,
-    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_REASON_MAX_BYTES_KEY,
-    ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY, GATE_RETENTION_HORIZON_SECS_KEY,
-    GATE_RETENTION_MAX_SWEEP_ROWS_KEY, GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS,
-    POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
-    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
-    POLICY_CONSULT_FANOUT_PRECEDENCE_KEY, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
-    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
-    POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
+    AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
+    GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACT_POLICY_KEY,
+    POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
+    POLICY_CONSULT_FANOUT_CONTROLS_KEY, POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
+    POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
+    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
     POLICY_PROJECT_CONVERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
@@ -42,12 +41,9 @@ use super::operational_policy::{
     LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
 };
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
-use super::resolution::{
-    DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
-};
+use super::resolution::DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS;
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
-const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 /// Seeded policy data, not a project-constructor or dispatch constant. Both
 /// are fallbacks: a holder-authored vault row replaces them (C1).
 pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u64 = 10;
@@ -56,7 +52,7 @@ pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u64 = 16;
 pub(crate) const fn seeded_project_depth_default() -> u64 {
     SEEDED_PROJECT_DEPTH_DEFAULT
 }
-pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
+pub(crate) use crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
 
 /// Shipped policy data; organ users resolve this row or supply their own
 /// positive budgets. No fallback numbers live in the XML/ZIP implementation.
@@ -74,10 +70,7 @@ pub(in crate::gate) fn default_docedit_resource_row() -> Value {
     ])
 }
 
-pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
-    EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
-        .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
-}
+pub(crate) use crate::store::policy_record::default_policy_manifest_id;
 
 /// The shipped notification rules are manifest data, also used to complete
 /// owner-authenticated manifests that omit this optional rule table.
@@ -120,7 +113,7 @@ pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<V
         default_owner_policy_change_notifications(),
     ));
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(fields))
+    super::value_encoding::write_value(&mut encoded, &Value::Map(fields))
         .map_err(|_| Error::InvariantViolation("policy manifest notification encode"))?;
     Ok(encoded)
 }
@@ -406,6 +399,16 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 // and ref CAS, so an owner review is not its barrier.
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("repo.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("self.code.")),
                     (
                         Value::from(RULE_AXES_KEY),
                         Value::Map(vec![
@@ -1144,7 +1147,7 @@ fn skill_tradeoff_limits_entry() -> (Value, Value) {
     )
 }
 
-/// The shipped attribution limits: precedence and the two byte/count caps.
+/// The shipped attribution limits: precedence and the receipts cap.
 fn attribution_limits_default_entry() -> (Value, Value) {
     (
         Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
@@ -1152,10 +1155,6 @@ fn attribution_limits_default_entry() -> (Value, Value) {
             (
                 Value::from(ATTRIBUTION_PRECEDENCE_KEY),
                 Value::from("nested_narrowing"),
-            ),
-            (
-                Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
-                Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
             ),
             (
                 Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
@@ -1219,7 +1218,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
         // A self-held row is an account the product minted, so the
@@ -1236,7 +1235,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
     ]);

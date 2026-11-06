@@ -5,11 +5,12 @@
 mod container;
 mod lift_history;
 mod mask;
+mod message_parts;
 mod provider_tokens;
 mod release_read;
 mod shapes;
 mod whole_read;
-mod wordlist;
+use oneiron_store::batch::secret_scan::wordlist;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -24,21 +25,23 @@ pub use self::lift_history::{
     SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner, secret_lift_as_owner_toward,
 };
 pub(crate) use self::lift_history::{
-    enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_typed_body_at_in_txn, run_lift_pass,
-    typed_body_at_proposal_due_in_txn,
+    enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_sync_text_in_txn,
+    propose_typed_body_at_in_txn, run_lift_pass, typed_body_at_proposal_due_in_txn,
 };
 pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
-    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
-    scan_document_in_txn,
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, predict_masked_body,
+    predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
-    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
-    mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_unplaced_json,
+    CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
+    mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(super) use self::mask::mask_batch_ops;
-pub(crate) use self::mask::mask_origin_in_txn;
-pub(crate) use self::mask::retained_repo::read::project_marked_retained_repo_blob;
+pub(crate) use self::mask::rebind_mask_origin_in_txn;
+pub(crate) use self::mask::retained_repo::read::{
+    RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
+};
 pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,
@@ -51,6 +54,10 @@ pub(crate) use self::mask::spool::{
     BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
+pub(crate) use self::mask::{
+    mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+};
+pub(crate) use self::message_parts::seal_message_parts_in_txn;
 pub(crate) use self::provider_tokens::embedded_credential;
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};

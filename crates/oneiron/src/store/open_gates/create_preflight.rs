@@ -2,7 +2,7 @@
 
 use crate::config::VaultConfig;
 use crate::error::{Error, Result};
-use crate::store::{RawDatabases, Store};
+use crate::store::{RawDatabases, Store, StoreHooks};
 
 use super::embedding_transform_gates::{
     persist_embedding_transform_if_missing, preflight_embedding_transform,
@@ -20,8 +20,10 @@ pub(super) fn create_preflight(
     registered_path: RegisteredPath,
     config: &VaultConfig,
     seed_mode: DefaultPolicySeedMode,
+    hooks: StoreHooks,
+    clock: crate::ports::StoreClock,
 ) -> Result<Store> {
-    let store = Store::assemble(env, raw, registered_path, config)?;
+    let store = Store::assemble(env, raw, registered_path, config, hooks, clock)?;
 
     // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
     // fails closed before the HNSW compat check below can compare it.
@@ -58,5 +60,8 @@ pub(super) fn create_preflight(
         store.ensure_default_policy_manifest_on_open()?;
     }
     store.reconcile_retrieval_telemetry_on_open()?;
+    // A crashed lease holder's journaled decision times rise into this
+    // store's clock floor before its first decision (review #4484).
+    store.observe_authorization_lease_journal()?;
     Ok(store)
 }

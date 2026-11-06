@@ -65,6 +65,7 @@ mod epoch;
 mod epoch_floor;
 mod epoch_intent;
 pub(crate) mod epoch_vector;
+mod fold_kinds;
 mod fold_words;
 mod folds;
 mod gate;
@@ -75,6 +76,7 @@ mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
+pub use fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
 pub use folds::{
     FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
     FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,
@@ -84,7 +86,7 @@ pub use folds::{
 pub use conversation::{
     ChatLog, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
-    read_chat_log, seal_conversation_flight,
+    read_action_pinned_log, read_chat_log, seal_conversation_flight,
 };
 pub(crate) use conversation::{conversation_receipt_in, put_conversation_receipt_in_txn};
 pub use driver::{
@@ -94,8 +96,8 @@ pub use driver::{
 };
 pub use epoch::{
     EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL,
-    EPOCH_SUMMARY_MAX_DERIVED_EDGES, EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody,
-    decode_epoch_summary_body, encode_epoch_summary_body,
+    EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody, decode_epoch_summary_body,
+    encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
     EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
@@ -499,7 +501,7 @@ const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 /// pass. The compaction door does exactly that
 /// ([`crate::error::CompactionPacketError::SessionMembershipNotRecorded`]).
 pub(crate) fn turn_session_membership_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -549,7 +551,15 @@ pub(crate) fn record_turn_session_membership_in_txn(
     Ok(Some(session))
 }
 
+/// The width a conversation window's `DerivedFrom` set was once cut at; nothing
+/// cuts it now (OF-013), and only the tests still name it.
+#[cfg(test)]
+const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
+
 #[cfg(test)]
 mod tests;
 
 pub mod host_request;
+
+/// The most turns one transcript page returns.
+pub const MAX_TRANSCRIPT_PAGE_TURNS: usize = 200;

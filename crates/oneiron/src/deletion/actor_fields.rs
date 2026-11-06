@@ -14,6 +14,63 @@ use crate::side_table::ActorScrub;
 
 use super::tombstone::HARD_DELETE_MARKER;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PayloadEraseScope {
+    MarkerBound,
+    AcceptedHardPurge,
+}
+
+/// The accepted hard-erase continuation, borrowing its exact writer and
+/// target. Only deletion's hard branches may construct one; receipt scrubs
+/// cannot turn an actor id or an old marker into write authority.
+pub(crate) struct ActorErasureWriter<'write, 'env> {
+    vault: &'write Vault,
+    wtxn: &'write mut heed::RwTxn<'env>,
+    actor: EntityId,
+    payload_scope: PayloadEraseScope,
+}
+
+impl<'write, 'env> ActorErasureWriter<'write, 'env> {
+    pub(in crate::deletion) fn new(
+        vault: &'write Vault,
+        wtxn: &'write mut heed::RwTxn<'env>,
+        actor: EntityId,
+    ) -> Self {
+        Self {
+            vault,
+            wtxn,
+            actor,
+            payload_scope: PayloadEraseScope::MarkerBound,
+        }
+    }
+
+    pub(in crate::deletion) fn for_hard_purge(
+        vault: &'write Vault,
+        wtxn: &'write mut heed::RwTxn<'env>,
+        actor: EntityId,
+    ) -> Self {
+        Self {
+            vault,
+            wtxn,
+            actor,
+            payload_scope: PayloadEraseScope::AcceptedHardPurge,
+        }
+    }
+
+    /// Removes only this hard-erased target's frozen pattern revision witness.
+    pub(crate) fn erase_planned_pack_revision(&mut self) -> Result<()> {
+        crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
+            &self.vault.store,
+            self.wtxn,
+            &self.actor,
+        )
+    }
+
+    pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, EntityId) {
+        (self.vault, &mut *self.wtxn, self.actor)
+    }
+}
+
 /// Identity ops are an entity family, not a side table: their decisions stay
 /// and the actor's author carriers go.
 const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
@@ -23,7 +80,9 @@ const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
 const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_claim_actor_in_txn;
 
 /// An actor's stamp tokens are claims, not a side table: each is hard-erased,
-/// so every commit message and receipt naming it names no one (FIX 10930).
+/// so every commit message, receipt and document entry naming it names no
+/// one (FIX 10930, 11964). One a held record's document names stays until the
+/// hold lifts (FIX 11965).
 const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_tokens_in_txn;
 
 /// Runs in the purge's transaction: the identity ops first, then origin's
@@ -33,57 +92,98 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
 /// (Engine 10-22); a delete writes no marker and keeps the text. Under
-/// `act`, the owner act the erase carries out, the blocked reports' rows go
-/// first, so each custody record their scrub revokes is carried to his other
-/// machines (FIX 11883); their declared scrub then finds none.
+/// `act`, the owner act the erase carries out, the blocked reports' and
+/// model-call rows go first, so each custody record their scrubs revoke is
+/// carried to his other machines; their declared scrubs then find none.
 pub(super) fn erase_actor_fields_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
+    mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<()> {
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    let accepted_hard_purge = erase.payload_scope == PayloadEraseScope::AcceptedHardPurge;
+    let (vault, wtxn, actor) = erase.parts();
+    let actor = &actor;
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
     let hard =
         HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
-    // The asks of the spawns it seated leave the code-run replay rows and
-    // their step starts before its other fields go (FIX 9180).
-    if hard {
+    // An accepted full purge may write its marker later. Its spawn asks leave
+    // the replay rows and step starts before its other fields go (FIX 9180).
+    if hard || accepted_hard_purge {
         let erased = BTreeSet::from([*actor]);
         crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+    }
+    if hard {
+        crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
+            &vault.store,
+            wtxn,
+            actor,
+        )?;
     }
     if act.is_some() {
         crate::self_heal::blocked_reports::erase_blocked_source_actor_as_in_txn(
             vault, wtxn, actor, act,
         )?;
+        crate::code_run::erase_model_call_actor_as_in_txn(vault, wtxn, actor, act)?;
     }
-    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
-    if hard {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, actor)?;
+    // The accepted hard erase must reach reply bodies before the actor scrub
+    // removes their authenticated author. Its marker may be written later.
+    if !names_no_actor(vault, wtxn, actor)? {
+        crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(
+            vault,
+            wtxn,
+            &BTreeSet::from([*actor]),
+        )?;
     }
-    Ok(())
+    scrub_actor_fields_in_txn(&mut erase, act)?;
+    if hard || accepted_hard_purge {
+        return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
+            &mut erase, act,
+        );
+    }
+    Ok(Vec::new())
 }
 
 /// The sweep's scrubs without the attempt payloads, which a restore's sweep
-/// clears for all its ids in one pass.
+/// clears for all its ids in one pass. Pair-copy identities are verified
+/// before the actor and pair scrubs remove their provenance; their bodies
+/// leave afterwards, MESSAGEs before the TURNs that contain only them.
 fn scrub_actor_fields_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
+    erase: &mut ActorErasureWriter<'_, '_>,
+    act: Option<&EraseOwnerAct<'_>>,
 ) -> Result<()> {
+    let (vault, wtxn, actor) = erase.parts();
+    let mut copied_messages = BTreeSet::new();
+    let mut copied_turns = BTreeSet::new();
+    for pair in crate::code_run::contribution_pair_erase_candidates_in_txn(vault, wtxn, &actor)? {
+        for (message, turn) in
+            crate::task_verb::contribution_pair_erase_targets_in_txn(vault, wtxn, &pair)?
+        {
+            copied_messages.insert(message);
+            copied_turns.extend(turn);
+        }
+    }
+    let actor = &actor;
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
     ACTOR_STAMP_TOKENS(vault, wtxn, actor)?;
-    crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)?;
+    vault
+        .store
+        .record_hooks
+        .erase_audience_actor_in_txn(vault, wtxn, actor)?;
     // A fitted section install's receipt names its actor outside `fields()`,
     // so the install and skill erasers above never reach it: the erase-only
     // sweep scrubs it here instead of the derived-rows hook, which also runs
     // on soft deletes that keep attribution (FIX 11060, FIX 812, FIX 6640).
     // Marker-only replay and checkpoint restore reach this sweep, so a
     // restored receipt never brings back a hard-erased actor.
-    crate::context_board::scrub_section_fit_receipt_actors_in_txn(vault, wtxn, actor)?;
+    crate::context_board::scrub_section_fit_receipt_actors_in_txn(erase)?;
+    crate::inbox::scrub_finding_notification_subjects_in_txn(erase)?;
+    let (vault, wtxn, actor) = erase.parts();
     for scrub in crate::side_table::actor_scrubs() {
-        scrub(vault, wtxn, actor)?;
+        scrub(vault, wtxn, &actor)?;
+    }
+    for id in copied_messages.into_iter().chain(copied_turns) {
+        vault.soft_erase_active_store_in_txn(wtxn, &id, true, act)?;
     }
     Ok(())
 }
@@ -91,17 +191,7 @@ fn scrub_actor_fields_in_txn(
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the rows that record actors. Each lane's actor scrub asks it (FIX 8908).
 pub(crate) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
+    crate::ports::names_no_actor_in_txn(&vault.store, txn, id)
 }
 
 /// Every id `vault`'s hard-delete markers name: each hard-erased id, actor or
@@ -113,18 +203,18 @@ pub(crate) fn hard_erased_ids_in(vault: &Vault) -> Result<BTreeSet<EntityId>> {
 }
 
 fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
-    let mut ids = BTreeSet::new();
-    for row in HARD_DELETE_MARKER.iter_raw_from(&vault.store, rtxn, &[])? {
-        let (key, _) = row?;
-        // A key that spells no id names no actor.
-        if let Some(id) = std::str::from_utf8(&key)
-            .ok()
-            .and_then(|hex| EntityId::from_hex(hex).ok())
-        {
-            ids.insert(id);
-        }
-    }
-    Ok(ids)
+    crate::ports::hard_erased_ids_in_txn(&vault.store, rtxn)
+}
+
+/// The authenticated image writer's actual erase targets, derived while
+/// the original restore continuation and its transaction are still borrowed.
+pub(crate) fn restore_erased_payload_targets_in_txn(
+    restore: &mut crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
+) -> Result<BTreeSet<EntityId>> {
+    let (vault, wtxn, live) = restore.parts();
+    let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
+    erased.extend(live);
+    Ok(erased)
 }
 
 /// A checkpoint restore's actor sweep, in its image-write transaction once
@@ -134,12 +224,10 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
 /// erase takes from planned intents and attempt payloads goes again too;
 /// the rest of the restored content stays.
 pub(crate) fn rerun_actor_scrubs_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    live: &BTreeSet<EntityId>,
-) -> Result<()> {
-    let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
-    erased.extend(live);
+    mut restore: crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    let erased = restore_erased_payload_targets_in_txn(&mut restore)?;
+    let (vault, wtxn, _) = restore.parts();
     // The spawn asks the image brings back for any of them, actor or not,
     // leave its replay rows and step starts again (FIX 9180).
     crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
@@ -157,22 +245,27 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     vault
         .store
         .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
+    crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(vault, wtxn, &erased)?;
     for actor in &erased {
-        scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+        {
+            let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);
+            erase.erase_planned_pack_revision()?;
+            scrub_actor_fields_in_txn(&mut erase, None)?;
+        }
         // The image's cleanup rows name it again; they go once more (FIX 7517).
         crate::vault_cleanup::erase_in_txn(&vault.store, wtxn, actor)?;
     }
     // Their dispatch text, carried back by the image's attempt rows, goes
     // again: one pass over the ledger for every id (FIX 7076).
-    crate::attempt_queue::erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
-    Ok(())
+    crate::attempt_queue::ForceCancelAuthority::erase_restored_payloads_in_txn(&mut restore)
 }
 
 /// A legal hold's release, in its own transaction (FIX 6280): the births a
 /// hold kept from an erased actor's scrub, and their window carriers, go
 /// once nothing holds their rows, a carrier whose birth never landed here
-/// too (FIX 6386), and so do the stamp tokens a hold kept (FIX 10930, 11040);
-/// no other scrub runs again. The `dt:` markers and the
+/// too (FIX 6386), and so do the stamp tokens a hold kept, a held record's
+/// document's among them (FIX 10930, 11040, 11965); no other scrub runs
+/// again. The `dt:` markers and the
 /// holds as they now stand say what is owed. A vault that keeps no hold row,
 /// standing or released, owes nothing: only a hold keeps a birth past its
 /// actor's scrub, and a released one keeps its row for 24 months, well past

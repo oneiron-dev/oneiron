@@ -5,19 +5,30 @@
 //! only mint claim writes through an explicit admission helper that requires
 //! entity resolution and routes through the normal Gate-backed candidate path.
 
+mod ag_ui;
+pub use ag_ui::{
+    AG_UI_FILE_PREDICATE, AG_UI_SOURCE_ID, AgUiAppObservation, AgUiCustomMapping, AgUiDecodedEvent,
+    AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
+    AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
+};
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
-pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
+pub(crate) use fingerprint::{
+    invalidate_blob_fingerprint, prepare_binary_blob_artifact_birth, prepare_blob_artifact_birth,
+};
 mod docs;
 mod docs_deep;
 mod docs_import;
 mod summary_ladder;
 pub use docs::{
-    DOCS_EXPORT_SOURCE_ID, DocsExport, DocsExportSource, DocsPage, DocsSegment, docs_extraction_id,
-    docs_semantic_segments,
+    DOCS_EXPORT_SOURCE_ID, DOCS_SEGMENT_MAX_BYTES, DocsExport, DocsExportSource, DocsPage,
+    DocsSegment, docs_extraction_id, docs_semantic_segments,
 };
 pub(crate) use docs_deep::invalidate_docs_source_before_put;
-pub use docs_deep::{DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger};
+pub use docs_deep::{
+    DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepReview, DocsDeepReviewClaim,
+    DocsDeepTrigger,
+};
 pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,
@@ -50,7 +61,7 @@ pub use self::admission::{
 };
 pub(crate) use self::admission::{
     admit_imported_evidence_claim_for_memory, admit_imported_evidence_claim_typed_for_machine,
-    admit_imported_evidence_in_content,
+    admit_imported_evidence_claim_typed_for_machine_in_txn, admit_imported_evidence_in_content,
 };
 pub use self::bulk_review::{
     ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,
@@ -99,6 +110,7 @@ use rmpv::Value as MsgpackValue;
 use serde_json::Value;
 
 mod audience;
+mod connector_archive_link;
 mod connector_conversation;
 pub use connector_conversation::ConnectorWitness;
 mod connector_witness_grant;
@@ -106,6 +118,7 @@ pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,
     ImportAudienceOption, ImportAudienceState, MAX_IMPORT_AUDIENCE_PROJECTS, import_audience_topic,
 };
+pub(crate) use connector_archive_link::erase_in_txn as erase_connector_archive_occurrence_in_txn;
 pub(crate) use connector_witness_grant::{
     CONNECTOR_WITNESS_READ_REASON, connector_witness_read_reason,
 };

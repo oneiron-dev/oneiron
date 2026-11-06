@@ -16,6 +16,11 @@ pub(super) const FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
 pub(super) const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
     SideTable::new(&side_table::OFFICE_BODY_EXPORT);
 
+/// One consecutive actor group's opaque DOCX revision token, by artifact,
+/// export version and zero-based group index (FIX 595).
+pub(super) const EXPORT_AUTHORS: SideTable<(EntityId, u64, u64), OfficeBodyExportAuthor, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_EXPORT_AUTHOR);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OfficeBodyKind {
@@ -145,9 +150,10 @@ impl OfficeRecalcZone {
         if !(-840..=840).contains(&utc_offset_minutes) {
             return Err(invalid("utc_offset_minutes must be in -840..=840"));
         }
-        if iana_timezone.as_deref().is_some_and(|label| {
-            label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
-        }) {
+        if iana_timezone
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty() || label.chars().any(char::is_control))
+        {
             return Err(invalid(
                 "iana_timezone must be non-blank and contain no controls",
             ));
@@ -166,6 +172,13 @@ pub struct OfficeBodyExportRecord {
     pub artifact: EntityId,
     pub version: u64,
     pub frontier: Vec<u8>,
+    /// The frontier the deck's rebinding to this export left (FIX 12325):
+    /// `frontier` and the one commit that bound the deck to this version,
+    /// wherever the head stands since. The deck there holds the slides and
+    /// shapes `frontier` holds, each bound to its ids in this version.
+    /// `None` for DOCX and XLSX, and for a deck export a Keep did not bind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebind_frontier: Option<Vec<u8>>,
     pub source_version: u64,
     pub actor: BodyActor,
     /// The author the export showed; empty once its actor was erased.
@@ -188,6 +201,14 @@ pub struct OfficeBodyExportRecord {
     /// cached results, a picture whose cells were deleted collapses, a note
     /// goes with its cell. One line each; none for DOCX.
     pub effects: Vec<String>,
+}
+
+/// One consecutive actor group's author binding for a multi-revision DOCX
+/// export. `None` is a missing or erased receipt, presented as `erased`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyExportAuthor {
+    pub actor: Option<EntityId>,
+    pub token: String,
 }
 
 impl OfficeBodyExportRecord {

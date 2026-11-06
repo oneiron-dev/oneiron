@@ -21,10 +21,10 @@ use super::{
     QueueWork,
 };
 use crate::EntityId;
-use crate::contract_oracle::ContractOracle;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire};
 use crate::store::code_document_values::CodeDocumentFrontier;
+use crate::store::contract_oracle::ContractOracle;
 use crate::store::{
     code_revision_identity::queue_provenance_id,
     code_revision_record::{CodeRevision, CodeTreeInventory},
@@ -244,7 +244,7 @@ impl MergeQueue<'_> {
                 "the checked-init work is gone",
             );
         };
-        let passing = |receipt: &&super::QueueCheckReceipt, phase: CheckPhase| {
+        let passing = |receipt: &&super::StoredQueueCheckReceipt, phase: CheckPhase| {
             let inputs = &receipt.inputs;
             matches!(
                 &inputs.target,
@@ -274,7 +274,7 @@ impl MergeQueue<'_> {
                 "the checked baseline has no passing receipt for both phases",
             );
         };
-        let link = |receipt: &super::QueueCheckReceipt, phase| QueueReceiptLink {
+        let link = |receipt: &super::StoredQueueCheckReceipt, phase| QueueReceiptLink {
             phase,
             mask: 0,
             work_ref: work.work_ref().to_owned(),
@@ -504,17 +504,28 @@ impl MergeQueue<'_> {
             );
         }
         let tree = GitOid::parse_hex(intent.tree.clone())?;
+        // The checked tree is walked once; the parent only where it differs,
+        // and its measured blobs and proved documents are not read again
+        // (FIX 7349).
+        let entries = CodeTreeInventory::entries(wire, &self.repo, &tree)?;
         let mut documents: BTreeMap<String, (CodeDocumentFrontier, u32)> = BTreeMap::new();
+        let mut known = BTreeMap::new();
+        let mut verified = std::collections::BTreeSet::new();
         if let Some(parent) = parent {
             let Some(parent_tree) = parent.tested_queue.as_ref().map(|tested| &tested.tree) else {
                 return Err(Error::CorruptedIndex("a tested parent has no queue record"));
             };
-            let entries = CodeTreeInventory::entries(wire, &self.repo, &tree)?;
-            let before = CodeTreeInventory::entries(
+            let (changed, gone) = CodeTreeInventory::changed_against(
                 wire,
                 &self.repo,
+                &tree,
                 &GitOid::parse_hex(parent_tree.clone())?,
             )?;
+            known = parent
+                .blob_frontiers
+                .values()
+                .map(|blob| (blob.git_oid.clone(), blob.clone()))
+                .collect();
             let mut edited = BTreeMap::new();
             let mut removed = std::collections::BTreeSet::new();
             for source in sources {
@@ -549,16 +560,17 @@ impl MergeQueue<'_> {
                         .as_ref()
                         .and_then(|metadata| metadata.file_modes.get(&frontier.document_id))
                         .copied()
-                        .unwrap_or(0o100_644);
+                        .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE);
                     (frontier.path.as_str(), (frontier, mode))
                 })
                 .collect();
-            for (path, entry) in &entries {
+            for path in entries.keys() {
                 if let Some(document) = edited.remove(path) {
                     documents.insert(path.clone(), document);
-                } else if before.get(path) == Some(entry) {
+                } else if !changed.contains(path) {
                     if let Some((frontier, mode)) = inherited.get(path.as_str()) {
                         documents.insert(path.clone(), ((*frontier).clone(), *mode));
+                        verified.insert(path.clone());
                     }
                 } else {
                     return held(
@@ -573,10 +585,7 @@ impl MergeQueue<'_> {
                     format!("{path}: a reviewed edit is not in the checked tree"),
                 );
             }
-            if let Some(path) = before
-                .keys()
-                .find(|path| !entries.contains_key(*path) && !removed.contains(*path))
-            {
+            if let Some(path) = gone.iter().find(|path| !removed.contains(*path)) {
                 return held(
                     QueueExportHoldReason::HeldUnreviewedChange,
                     format!("{path} was removed without an admitted reviewed operation"),
@@ -584,7 +593,9 @@ impl MergeQueue<'_> {
             }
         }
         Ok(
-            match CodeTreeInventory::capture(self.vault, wire, &self.repo, &tree, &documents)? {
+            match CodeTreeInventory::capture_entries(
+                self.vault, wire, &self.repo, &entries, &documents, &known, &verified,
+            )? {
                 Ok(inventory) => Ok(inventory),
                 Err(detail) => Err(QueueExportHold::new(
                     QueueExportHoldReason::HeldUnreviewedChange,

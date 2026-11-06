@@ -30,10 +30,27 @@ pub struct ModelsStatus {
     /// One row per host/device admission queue, copied from live state.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<DeviceStatus>,
+    /// The mounted vault's session ownership facts per device worker
+    /// (FIX10370), in the live status only; none when no session row
+    /// stands for the vault. Non-additive facts: they neither alter the
+    /// worker's own row nor any quota or admission; a row's bytes mix
+    /// device pages with host snapshots.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub session_allocations: Vec<SessionAllocationStatus>,
     /// Sealed inference snapshot parking (V2-R3), over the vaults this
     /// process serves, in the live status only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<SnapshotStatus>,
+    /// The next turn's prepared tails on native sessions (I1 = C), in the
+    /// live status only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_tails: Option<PreparedTailStatus>,
+    /// The host tagger's row (FIX 6914), filled by the status route from
+    /// the server's tagger slot; none when no `[oneironer]` tagger is
+    /// configured. Stands whether or not a `[models.providers]` row names
+    /// the tagger: a host encoder serves without a manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tagger: Option<TaggerStatus>,
 }
 
 /// One device queue and its memory ledger, copied without a probe.
@@ -85,6 +102,22 @@ pub struct DeviceExecutorStatus {
     pub external: bool,
     pub idle: bool,
     pub load_class: Option<WorkClass>,
+}
+
+/// The mounted vault's session ownership facts on one device worker
+/// (FIX10370): counts plus the summed mixed-domain bytes. Aggregated
+/// after filtering to the mounted vault, before serialization; names no
+/// handle, binding, epoch or conversation.
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionAllocationStatus {
+    pub device: String,
+    pub worker_id: String,
+    pub sessions: u64,
+    pub reported_sessions: u64,
+    /// Summed `unique_bytes` over reported sessions; `None` unless every
+    /// session of the row is both reported and measured (null on the
+    /// wire, not absent).
+    pub reported_unique_bytes: Option<u64>,
 }
 
 impl DeviceStatus {
@@ -228,6 +261,39 @@ pub struct SnapshotStatus {
     pub skips: SnapshotSkips,
 }
 
+/// The next turn's prepared tails since this process started (I1 = C):
+/// counts and tokens only, never a manifest, a digest or a vault id.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct PreparedTailStatus {
+    /// Whether the policy prepares tails at all (`[models.sessions]
+    /// prepare_tail`).
+    pub enabled: bool,
+    /// Whether the learned planner decides beside the fixed policy.
+    pub planner: bool,
+    /// Prepares sent, those that answered with a tail, and those stopped or
+    /// refused before one (the turn arrived, the session moved on).
+    pub started: u64,
+    pub ready: u64,
+    pub stopped: u64,
+    /// Publishes that prepared nothing, by reason: the policy is off, the
+    /// planner held it back, the worker serves no prepare, or the producer
+    /// knew no tail.
+    pub skipped_off: u64,
+    pub skipped_planner: u64,
+    pub skipped_unsupported: u64,
+    pub skipped_no_tail: u64,
+    /// Forks that attached to a prepared tail, and forks that found one and
+    /// did not (the real turn's tokens diverged before it gave more).
+    pub attached: u64,
+    pub missed: u64,
+    /// Tokens the prepares computed, the turns reused of them, and the
+    /// rest: work thrown away. A stopped prepare's work is not known and is
+    /// in none of them.
+    pub computed_tokens: u64,
+    pub reused_tokens: u64,
+    pub wasted_tokens: u64,
+}
+
 /// Why parks were skipped since this process started, one count each.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct SnapshotSkips {
@@ -243,6 +309,8 @@ pub struct SnapshotSkips {
     pub oversize: u64,
     /// What it was computed with was not named whole.
     pub unsupported: u64,
+    /// Its dependency set was imprecise (a world or author did not read).
+    pub imprecise: u64,
     /// It was too short to pay back its transfer.
     pub short: u64,
 }
@@ -280,6 +348,53 @@ impl ModelsStatus {
     pub(super) fn unconfigured() -> Self {
         Self::default()
     }
+}
+
+/// The host tagger the server's tagger slot serves (FIX 6914). The slot is
+/// the server's, not the models runtime's, so the status route fills this
+/// row from the slot as it stands; a `ModelsStatus` as built carries none.
+#[derive(Clone, Debug, Serialize)]
+pub struct TaggerStatus {
+    /// Which tagger the `[oneironer]` section names: `local`, `endpoint`
+    /// or `none`.
+    pub provider: &'static str,
+    /// `served` once a local engine serves or an endpoint's card was
+    /// accepted at least once; `never_ready` while a slot stands with
+    /// neither yet. This is historical, not a current-health claim; the
+    /// platform workers report their retained state in `runtimes`.
+    pub state: &'static str,
+    /// Each platform runtime's retained worker state and absence reason.
+    /// No worker and no reason means not attempted, never an outage.
+    pub runtimes: Vec<TaggerRuntimeStatus>,
+    /// The checkpoint the section names, when it names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_sha16: Option<String>,
+    /// The checkpoint the last accepted probe card names; none until a
+    /// probe has been accepted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_checkpoint_sha16: Option<String>,
+    /// The engine a local tagger serves on, `runtime/device`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// How that engine was picked: `named`, `measured`, `built-in` or
+    /// `calibrating`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pick: Option<&'static str>,
+}
+
+/// One platform runtime, read without probing or changing worker state.
+#[derive(Clone, Debug, Serialize)]
+pub struct TaggerRuntimeStatus {
+    pub runtime: &'static str,
+    /// The actual worker state, absent when no worker was admitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<&'static str>,
+    /// The recorded absence or transition code, not a health classification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The load failure's text, separate from its fixed reason code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -395,6 +510,9 @@ pub struct SeatStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seat_model: Option<String>,
     pub state: SeatState,
+    /// Why the seat stands in its state, when one cause stands out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub rungs: Vec<RungStatus>,
 }
 
@@ -409,6 +527,7 @@ impl SeatStatus {
             role: role_key(role),
             seat_model: seat_model.map(ToString::to_string),
             state,
+            reason: None,
             rungs,
         }
     }

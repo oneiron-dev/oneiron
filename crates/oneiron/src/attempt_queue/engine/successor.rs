@@ -143,6 +143,7 @@ fn failed_successor(source: &AttemptRecord, id: AttemptId, now: u64) -> AttemptR
         dedupe_actor_ref: source.dedupe_actor_ref.clone(),
         created_at: now,
         updated_at: now,
+        settled_at: None,
         events: Vec::new(),
         manifest: Vec::new(),
         executor_model: None,

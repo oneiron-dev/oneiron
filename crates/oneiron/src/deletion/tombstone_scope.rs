@@ -13,7 +13,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Named, SideTable};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 use oneiron_authority::federation::Scope;
 
 #[cfg(feature = "sync")]
@@ -43,7 +43,19 @@ pub(crate) fn capture_deleted_scope_in_txn(
     id: &EntityId,
     request: Option<&[u8; 16]>,
 ) {
-    if let Err(error) = capture_in_txn(vault, txn, id, request) {
+    capture_deleted_scope_in_store_txn(&vault.store, txn, id, request);
+}
+
+/// [`capture_deleted_scope_in_txn`] for a writer that holds the store alone,
+/// as a Grant's withdrawal does (FIX 11780): the same capture, never failing
+/// the delete it runs in.
+pub(crate) fn capture_deleted_scope_in_store_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    request: Option<&[u8; 16]>,
+) {
+    if let Err(error) = capture_in_txn(store, txn, id, request) {
         warn_uncaptured(id, &error);
     }
 }
@@ -53,7 +65,8 @@ pub(crate) fn capture_deleted_scope_in_txn(
 #[cfg(feature = "sync")]
 pub(crate) fn capture_deleted_scope(vault: &Vault, id: &EntityId, tombstone: &TombstoneValueV2) {
     let request = Some(&tombstone.request_id);
-    if let Err(error) = vault.with_write_txn_grouped(|txn| capture_in_txn(vault, txn, id, request))
+    if let Err(error) =
+        vault.with_write_txn_grouped(|txn| capture_in_txn(&vault.store, txn, id, request))
     {
         warn_uncaptured(id, &error);
     }
@@ -76,7 +89,7 @@ pub(crate) fn capture_received_scope_in_txn(
 pub(crate) fn capture_received_scope(vault: &Vault, id: &EntityId, raw_value: &[u8]) {
     let request = decode_tombstone_value(raw_value).request_id;
     if let Err(error) =
-        vault.with_write_txn_grouped(|txn| capture_in_txn(vault, txn, id, request.as_ref()))
+        vault.with_write_txn_grouped(|txn| capture_in_txn(&vault.store, txn, id, request.as_ref()))
     {
         warn_uncaptured(id, &error);
     }
@@ -97,19 +110,20 @@ pub(crate) fn deleted_scope_in(
 }
 
 /// A live row's scope is written. With no live row (none, or a deleted
-/// shell), an unbound row is bound to `request`; nothing else changes.
+/// shell), a held row is rebound to `request` whenever `request` is some and
+/// differs from the row's; nothing else changes.
 fn capture_in_txn(
-    vault: &Vault,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     request: Option<&[u8; 16]>,
 ) -> Result<()> {
     let key = HexId(*id);
-    let held = TOMBSTONE_SCOPE.get(&vault.store, txn, &key)?;
-    let live = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+    let held = TOMBSTONE_SCOPE.get(store, txn, &key)?;
+    let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .filter(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
     let scope = match live {
-        Some(raw) => crate::federation::record_scope::scope_for_blob(&vault.store, txn, *id, &raw)?,
+        Some(raw) => crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?,
         None => None,
     };
     let row = match (scope, held) {
@@ -117,13 +131,18 @@ fn capture_in_txn(
             scope,
             request: request.copied().or(held.and_then(|row| row.request)),
         },
-        (None, Some(held)) if held.request.is_none() && request.is_some() => DeletedRecordScope {
-            scope: held.scope,
-            request: request.copied(),
-        },
-        (None, _) => return Ok(()),
+        (None, Some(held)) => {
+            if request.is_none() || request == held.request.as_ref() {
+                return Ok(());
+            }
+            DeletedRecordScope {
+                scope: held.scope,
+                request: request.copied(),
+            }
+        }
+        (None, None) => return Ok(()),
     };
-    TOMBSTONE_SCOPE.put(&vault.store, txn, &key, &row)
+    TOMBSTONE_SCOPE.put(store, txn, &key, &row)
 }
 
 fn warn_uncaptured(id: &EntityId, error: &Error) {

@@ -62,7 +62,8 @@
     // `list`, `schema`, `status`, `outbound`) stay the table's rows, and the
     // wrong roots (`tools.`, `connectors.`, `mcp.`, `self.mcp.`,
     // `self.connectors.`) keep their refusal below: none of them ever
-    // reaches a connector.
+    // reaches a connector. The callable `connector.answer` also exposes
+    // missing tool members of the connector named `answer`.
     let connectorCall = null;
     const tools = name => new Proxy(Object.create(null), {
       get: (_, tool) => typeof tool === "string" && !plain.has(tool)
@@ -72,8 +73,10 @@
     // `connector` answers a name it does not hold with that connector's tools.
     guard = (path, object) => {
       for (const [key, value] of Object.entries(object))
-        if (value && typeof value === "object") object[key] = guard(`${path}.${key}`, value);
-      const missing = path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
+        if (value && (typeof value === "object" || typeof value === "function" && (Object.keys(value).length || path === "connector" && key === "answer"))) object[key] = guard(`${path}.${key}`, value);
+      const missing = path === "connector.answer" && connectorCall
+        ? tool => tools("answer")[tool]
+        : path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
       return new Proxy(object, {
         get: (target, key, receiver) => typeof key !== "string" || plain.has(key) || key in target
           ? Reflect.get(target, key, receiver) : missing(key),
@@ -136,12 +139,24 @@
       return Object.freeze(value);
     };
     // `store(value, name?, {sources?, receipt?})` streams the value to the
-    // host as the result frames do, then binds it: a string as given, any
-    // other value as its JSON. The host answers the stored result's card.
+    // host as the result frames do, then binds it: a string as given, a
+    // byte value as its bytes, any other value as its JSON. The host
+    // answers the stored result's card.
     // `sources` are the results it was made from, whose taint it inherits;
     // `receipt` names a fold's source, jobs and summary tree, of which the
     // host computes the fold receipt.
     if ("store" in bare) throw new TypeError("verb row shadows a host import");
+    // A byte value `store` keeps as its bytes, copied at the call (the
+    // frames go out a microtask later): a Uint8Array, an ArrayBuffer, or
+    // another view as the bytes it views. Anything else is no byte value:
+    // a plain array of numbers still stores as a JSON array.
+    const storeByteValue = value => {
+      if (value instanceof Uint8Array) return new Uint8Array(value);
+      if (value instanceof ArrayBuffer) return new Uint8Array(new Uint8Array(value));
+      if (ArrayBuffer.isView(value))
+        return new Uint8Array(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      return null;
+    };
     const listOf = (items, map) => Array.from(items ?? [], map);
     bare.store = (value, name, options) => {
       if (name !== undefined && name !== null && typeof name !== "string") throw new TypeError("store name must be a string");
@@ -161,8 +176,12 @@
       }
       // The value's frames and its call go out together, so two stores
       // begun in one turn never interleave their frames.
-      const sent = verbInput(input), body = text(value);
-      return later(() => { sendFramed("store", body, true); return send("store", sent); }).then(decode).then(card);
+      const sent = verbInput(input), storedBytes = storeByteValue(value), body = storedBytes ? null : text(value);
+      return later(() => {
+        if (storedBytes) sendStoreFramed(storedBytes);
+        else sendFramed("store", body, true);
+        return send("store", sent);
+      }).then(decode).then(card);
     };
     // `summarize(r, {effort?, group?, defer?})`: the row takes its ref and
     // group as refs. A made summary answers its card; a deferred one its
@@ -254,7 +273,8 @@
   // The result streams to the host as it is written (hidden @abi imports),
   // so no step result is held whole here and none has a size budget.
   delete sdk.oneiron.output;
-  const sendText = abi["output-text"], sendBytes = abi["output-bytes"];
+  delete sdk.oneiron.store;
+  const sendText = abi["output-text"], sendBytes = abi["output-bytes"], sendStoreBytes = abi["store-bytes"];
   // A proposed file streams the same way (foreign builds only), so no
   // proposed file is held whole here either.
   delete sdk.oneiron.propose;
@@ -287,6 +307,16 @@
       start = false;
       at = end;
     } while (at < value.length);
+  };
+  // A stored byte value streams the same way, in byte frames; the first
+  // frame starts the value, replacing any store streamed before it.
+  const sendStoreFramed = bytes => {
+    let at = 0, start = true;
+    do {
+      sendStoreBytes(start, subarray(bytes, at, at + BYTE_FRAME));
+      start = false;
+      at += BYTE_FRAME;
+    } while (at < bytes.length);
   };
   // console.log lines gather into frames; a step's lines join with "\n".
   let logParts = [], logUnits = 0, logged = false;

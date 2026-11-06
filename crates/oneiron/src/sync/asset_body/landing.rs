@@ -8,9 +8,11 @@
 //! reference it no longer binds, is not landed. The ladder then judges the
 //! carrier as it judges any (tombstones, delete markers, residence, a
 //! release fence, the echo), and lands the row through the replicated
-//! door. The rows it writes are the window's own: the live mirror never
-//! rewrites the carrier with them. A landed row wakes what waits on it and
-//! notifies the live queries as Observer B's ingest does (FIX 5489).
+//! door, at the tier the transfer's lane lands it at (FIX 12118). A body the
+//! client's proven home served leaves its proof ([`super::home_proof`]). The rows it
+//! writes are the window's own: the live mirror never rewrites the carrier
+//! with them. A landed row wakes what waits on it and notifies the live
+//! queries as Observer B's ingest does (FIX 5489).
 
 use super::references::{AssetBodyRef, bound_in};
 use super::session::AssetBodyPeer;
@@ -51,6 +53,9 @@ pub(super) fn land(
     let key = body.key();
     let _import = crate::sync::manager::import_scope();
     let mut unborn = false;
+    // KS-2A (FIX 12120): a body file is one vault instance, minted before
+    // the writer that stages it opens.
+    let mint = spool.body_mint(vault)?;
     // The staged body outlives the commit: its pin keeps a published file
     // from the collector until the row naming it is durable.
     let (landed, carrier, _staged, change) = vault.with_write_txn_grouped(|wtxn| {
@@ -65,13 +70,13 @@ pub(super) fn land(
         let previous_revision =
             revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
         let known = vault.asset_stream_known_in_txn(wtxn)?;
-        let staged = spool.stage(vault, body.mime.as_deref(), known)?;
+        let staged = spool.stage(vault, body.mime.as_deref(), known, mint.as_ref())?;
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let steps = {
             let lease_vault_id = peer.materializer.lease_vault_id();
             let ingest = IngestCtx::new(vault, window.as_str(), lease_vault_id, &tombstones)
                 .with_residence(Residence::Quarantine(&doc))
-                .with_asset_body(body.id, &staged);
+                .with_asset_body(body.id, &staged, peer.lane.landing_tier());
             ingest_rows_in_savepoint(&ingest, wtxn, &[(key.as_str(), Some(&carrier[..]))])?
         };
         let landed = steps.first().and_then(EntityStep::written) == Some(body.id);
@@ -79,6 +84,23 @@ pub(super) fn land(
         if landed {
             note_delivered_in_txn(vault, wtxn, body.id, &carrier)?;
             let revision = revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
+            // The client's proven home served these bytes for this revision
+            // of the row: the owner's discard of a world copy may let this
+            // one go while the row stays at it (FIX 14534).
+            if let (Some(home), Some(revision)) = (peer.home, revision) {
+                super::home_proof::record_in_txn(
+                    &vault.store,
+                    wtxn,
+                    body.id,
+                    &super::home_proof::HomeBodyProof {
+                        home,
+                        carrier_blake3: body.carrier_blake3,
+                        body_blake3: body.body_blake3,
+                        len: body.len,
+                        revision,
+                    },
+                )?;
+            }
             if previous_revision != revision {
                 change = Some(EntityRevisionChange {
                     entity: body.id,

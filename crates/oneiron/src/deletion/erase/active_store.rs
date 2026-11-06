@@ -45,8 +45,9 @@ impl Vault {
         )
     }
 
-    /// Returns whether local state existed, plus the citing NOTE documents
-    /// whose pins the erasure rewrote, for the caller's post-commit notice.
+    /// Returns whether local state existed, the citing NOTE documents whose
+    /// pins the erasure rewrote, and actual native cancellation generations.
+    /// The caller publishes notices and cancellation signals only after commit.
     /// `erase` is set for a hard reason: only an erase destroys a world's
     /// keys; a soft delete's purge of headerless residue keeps them. `act`
     /// is the owner act an erase carries out, when its door bound one: the
@@ -59,165 +60,215 @@ impl Vault {
         request_id: Option<&[u8; 16]>,
         erase: bool,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
-    ) -> Result<(bool, Vec<EntityId>)> {
+    ) -> Result<(
+        bool,
+        Vec<EntityId>,
+        Vec<(crate::attempt_queue::AttemptId, u32)>,
+    )> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
-        // Its scope outlives the row, for the tombstone's export (FIX 10161).
-        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
-        // A deleted or erased pack source halts the catalog routes bound to
-        // it (FIX 6034, 6086).
-        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
-        // An erased world takes its keys with it (fix 7); a deleted one
-        // keeps them, so it restores from old bundles.
-        if erase {
-            self.destroy_world_keys_for_delete_in_txn(
+        self.store
+            .delete_guards
+            .refuse_revision_delete(&self.store, wtxn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, wtxn, id)?;
+        let outcome = (|| {
+            if erase {
+                super::super::exhaust_erase::begin_native_purge_in_txn(self, wtxn, id)?;
+            }
+            // Its scope outlives the row, for the tombstone's export (FIX 10161).
+            crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(
+                self, wtxn, id, request_id,
+            );
+            // A deleted or erased pack source halts the catalog routes bound to
+            // it (FIX 6034, 6086).
+            self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
+            // An erased world takes its keys with it (fix 7); a deleted one
+            // keeps them, so it restores from old bundles.
+            if erase {
+                self.destroy_world_keys_for_delete_in_txn(
+                    wtxn,
+                    *id,
+                    crate::key_material::WorldKeyDestroyCause::LocalDelete,
+                    request_id.copied(),
+                )?;
+                // An erased custody record is fenced, every key its id names
+                // staged to retire and its kept carriers dropped before its row
+                // goes (KS-6 part 2).
+                self.fence_erased_credential_in_txn(wtxn, id)?;
+                // An erased custody record's known-value history goes, its
+                // entries' retirement staged; another record's stays (KS-3).
+                self.store.stage_known_history_erase_in_txn(wtxn, id)?;
+                crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
+                crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
+                    self, wtxn, id,
+                )?;
+                // An erased pad row takes its key's pad out of custody, never
+                // another of its world's (KS-5, FIX 7192): every caller wrote
+                // the row's hard marker in this transaction, which the
+                // finisher reads after the commit.
+                crate::world_keys::stage_local_pad_row_erase_in_txn(&self.store, wtxn, id);
+                // An erased claim's decisions are redacted and their key retired
+                // here, before the tear, whose own redaction is a delete's (FIX
+                // 7955).
+                self.store.redact_gate_decisions_for_claim_in_txn(
+                    wtxn,
+                    id.as_bytes(),
+                    self.store.clock.now_recorded_at(),
+                    true,
+                )?;
+                crate::runtime_hooks::scrub_hook_source_in_txn(
+                    self,
+                    wtxn,
+                    id,
+                    self.store.clock.now_recorded_at(),
+                )?;
+                // Privacy and explicit owner erases retire checkpoint payload
+                // leaves; ordinary deletes keep them (KS7-4).
+                crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                    request_id,
+                )?;
+            }
+            // Capture before tear: a project's signed history outlives its row.
+            self.capture_project_before_tear_in_txn(wtxn, *id)?;
+            // A purged message's turns stop matching its words: read them while
+            // its edges stand, and drop their vectors once it is gone.
+            let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
+            let settled = match request_id {
+                Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
+                None => false,
+            };
+            if !settled {
+                self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
+            }
+            self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
+            self.store
+                .delete_guards
+                .retire_goal_for_delete(self, wtxn, *id)?;
+            // An erased row takes the space probes written from it, and leaves the
+            // targets of those it only answers (FIX 9829).
+            if erase {
+                crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
+            }
+            crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+            // Canonical blob reference must release while current body descriptor is still present.
+            let write = crate::secret_custody::CustodyWrite::of(self);
+            crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id, &|txn, id| {
+                crate::batch::deindex_entity(&write, txn, id)
+            })?;
+            crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+            // Saved tags read the turn's messages through their PartOf edges, so
+            // they go before the graph is torn down.
+            let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
+            // What a kept turn lacks goes too: the id leaves every list (FIX 3859).
+            let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
+            // The content-hash index row is dropped by `deindex_entity` below;
+            // ONE-1741 removed the verdict relocation that this hook also carried.
+            //
+            // ONE-1447 runs BEFORE the tear: the stale fold reads the skills that
+            // CITED this id, not this id's own rows, and both acts belong to the
+            // one transaction that destroys the evidence.
+            self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
+            let citing = crate::note::erase_citations_in_txn(self, wtxn, id)?;
+            crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+            // A solved run's evidence claim takes its group ref and source
+            // authority with it, and moves its group on (CUA E8a).
+            crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
+            self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
+            // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
+            // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
+            let mut cancelled = Vec::new();
+            if erase {
+                cancelled = crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                    crate::deletion::ActorErasureWriter::for_hard_purge(self, wtxn, *id),
+                    act,
+                )?;
+                // Erase-only: an erased MESSAGE's model-call rows go with the
+                // custody they lifted, under this erase's act.
+                crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
+                crate::secret_custody::revoke_message_part_custody_in_txn(self, wtxn, id, act)?;
+            }
+            let had_refinement =
+                crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
+                    &self.store,
+                    wtxn,
+                    id,
+                )?;
+            let had_merge_receipt =
+                crate::skill_hub::erase_refinement_custody_in_txn(&write, wtxn, id)?;
+            crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
+            // A ChannelIdentity's or contact's own claim heads close while their
+            // claim_of edges still stand (OF-272).
+            let now = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+            crate::counterparty_contact::close_family_claims_for_delete_in_txn(
+                &self.store,
+                &self.config,
+                &self.analyzer,
                 wtxn,
-                *id,
-                crate::key_material::WorldKeyDestroyCause::LocalDelete,
-                request_id.copied(),
+                id,
+                now,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
             )?;
-            // An erased custody record is fenced, every key its id names
-            // staged to retire and its kept carriers dropped before its row
-            // goes (KS-6 part 2).
-            self.fence_erased_credential_in_txn(wtxn, id)?;
-            // An erased custody record's known-value history goes, its
-            // entries' retirement staged; another record's stays (KS-3).
-            self.store.stage_known_history_erase_in_txn(wtxn, id)?;
-            // An erased pad row takes its key's pad out of custody, never
-            // another of its world's (KS-5, FIX 7192): every caller wrote
-            // the row's hard marker in this transaction, which the
-            // finisher reads after the commit.
-            crate::world_keys::stage_local_pad_row_erase_in_txn(&self.store, wtxn, id);
-            // An erased claim's decisions are redacted and their key retired
-            // here, before the tear, whose own redaction is a delete's (FIX
-            // 7955).
-            self.store.redact_gate_decisions_for_claim_in_txn(
-                wtxn,
-                id.as_bytes(),
-                self.store.clock.now_recorded_at(),
-                true,
-            )?;
-            crate::runtime_hooks::scrub_hook_source_in_txn(
+            // A MACHINE claim's signed history controls go with it.
+            let (existed, had_vector, had_graph_mutation, neighbors) =
+                crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
+            crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+            crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
+            let note_removed = crate::note::erase::purge(self, wtxn, id)?;
+            if erase {
+                // Engine 00:43 for parked L01: destructive erase removes the derived
+                // payloads, never just their freshness marker, and always advances
+                // the graph version once, even for an isolated row.
+                ppr::purge_ppr_for_erase_in_txn(&self.store, wtxn, id, &neighbors)?;
+                self.store.clear_ppr_community_cache_in_txn(wtxn)?;
+                crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
+            } else {
+                ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
+                if had_graph_mutation {
+                    crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
+                }
+            }
+            if had_vector {
+                crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
+            }
+            crate::embed::erase_turn_vectors_in_txn(
                 self,
                 wtxn,
-                id,
-                self.store.clock.now_recorded_at(),
+                turns,
+                crate::ports::DependentWalkDoor::Purge,
             )?;
-            // A privacy erase retires the owner's checkpoint payload
-            // leaves; every other delete keeps them (KS7-4).
-            crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
-                &self.store,
-                wtxn,
-                id,
-                request_id,
-            )?;
-        }
-        // Capture before tear: a project's signed history outlives its row.
-        self.capture_project_before_tear_in_txn(wtxn, *id)?;
-        // A purged message's turns stop matching its words: read them while
-        // its edges stand, and drop their vectors once it is gone.
-        let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
-        let settled = match request_id {
-            Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
-            None => false,
-        };
-        if !settled {
-            self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
-        }
-        self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
-        crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
-        // An erased row takes the space probes written from it, and leaves the
-        // targets of those it only answers (FIX 9829).
-        if erase {
-            crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
-        }
-        crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
-        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
-        // Saved tags read the turn's messages through their PartOf edges, so
-        // they go before the graph is torn down.
-        let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
-        // What a kept turn lacks goes too: the id leaves every list (FIX 3859).
-        let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
-        // The content-hash index row is dropped by `deindex_entity` below;
-        // ONE-1741 removed the verdict relocation that this hook also carried.
-        //
-        // ONE-1447 runs BEFORE the tear: the stale fold reads the skills that
-        // CITED this id, not this id's own rows, and both acts belong to the
-        // one transaction that destroys the evidence.
-        self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
-        let citing = crate::note::erase_citations_in_txn(self, wtxn, id)?;
-        crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
-        // A solved run's evidence claim takes its group ref and source
-        // authority with it, and moves its group on (CUA E8a).
-        crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
-        self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
-        // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
-        // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
-        if erase {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, act)?;
-        }
-        let had_refinement =
-            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
-        let had_merge_receipt =
-            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
-        crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
-        // A ChannelIdentity's or contact's own claim heads close while their
-        // claim_of edges still stand (OF-272).
-        let now = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        crate::counterparty_contact::close_family_claims_for_delete_in_txn(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            id,
-            now,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-        )?;
-        // A MACHINE claim's signed history controls go with it.
-        let (existed, had_vector, had_graph_mutation, neighbors) =
-            crate::batch::deindex_entity_with_machine_history(&self.store, wtxn, id)?;
-        crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
-        crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
-        let note_removed = crate::note::erase::purge(self, wtxn, id)?;
-        if erase {
-            // Engine 00:43 for parked L01: destructive erase removes the derived
-            // payloads, never just their freshness marker, and always advances
-            // the graph version once, even for an isolated row.
-            ppr::purge_ppr_for_erase_in_txn(&self.store, wtxn, id, &neighbors)?;
-            self.store.clear_ppr_community_cache_in_txn(wtxn)?;
-            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
-        } else {
-            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
-            if had_graph_mutation {
-                crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
+            if erase {
+                super::super::exhaust_erase::finish_native_purge_in_txn(self, wtxn, id)?;
             }
+            Ok((
+                existed
+                    || note_removed
+                    || had_refinement
+                    || had_merge_receipt
+                    || had_tags
+                    || had_missing,
+                citing,
+                cancelled,
+            ))
+        })();
+        if erase {
+            super::super::exhaust_erase::end_native_purge_in_txn(self, wtxn, id)?;
         }
-        if had_vector {
-            crate::store::vector_index::increment_vector_version(&self.store, wtxn)?;
-        }
-        crate::embed::erase_turn_vectors_in_txn(
-            self,
-            wtxn,
-            turns,
-            crate::ports::DependentWalkDoor::Purge,
-        )?;
-        Ok((
-            existed
-                || note_removed
-                || had_refinement
-                || had_merge_receipt
-                || had_tags
-                || had_missing,
-            citing,
-        ))
+        outcome
     }
 
     /// `erase`: the scrub of an erase (a GDPR or policy delete, a hard
@@ -228,12 +279,15 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         erase: bool,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, bool, bool)> {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
-        crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
+        crate::store::base_agent::guard_actor_delete(id)?;
+        self.store
+            .delete_guards
+            .refuse_revision_delete(&self.store, wtxn, id)?;
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
         // A deleted or erased pack source halts the catalog routes bound to
@@ -257,16 +311,31 @@ impl Vault {
                 id,
                 None,
             )?;
+            // Erase-only: an erased MESSAGE's model-call rows go with the
+            // custody they lifted, under this erase's act (first consume carries).
+            crate::code_run::model_call::erase_message_model_calls_in_txn(self, wtxn, id, act)?;
+            crate::secret_custody::revoke_message_part_custody_in_txn(self, wtxn, id, act)?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // An erased message's turns stop matching its words (see the purge).
         let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
-        crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .reject_ruling_delete(&self.store, wtxn, id)?;
+        // FIX 8740: a grant's rulings keep the admission it gave them while
+        // its body is still here. Every soft path (a delete, an erase, a
+        // replayed soft tombstone, a redirect shell) scrubs it below, so a
+        // later tear finds them witnessed.
+        if let Some(row) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)? {
+            crate::federation::witness_grant_rulings_in_txn(&self.store, wtxn, id, &row)?;
+        }
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, wtxn, id)?;
         // A carried history read no longer stands for an erased control (FIX
         // 4296), as a delete's deindex does; the row is still here to read.
         crate::claim::history_seal::scatter_index_seal_for_delete(&self.store, wtxn, id)?;
@@ -274,17 +343,24 @@ impl Vault {
         let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
         // the same words go here, not at the physical tear.
-        crate::dreamer_wake::erase_in_txn(&self.store, wtxn, id)?;
+        let write = crate::secret_custody::CustodyWrite::of(self);
+        crate::dreamer_wake::erase_in_txn(&write, wtxn, id)?;
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
-        crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
+        self.store
+            .delete_guards
+            .retire_goal_for_delete(self, wtxn, *id)?;
         // An erase's scrub takes the space probes written from the row too
         // (FIX 9829; see the purge); a delete keeps them for its restore.
         if erase {
             crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
         }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
-        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
+        // Canonical blob reference must release while current body descriptor is still present.
+        crate::memory::release_asset_blob_in_txn(&self.store, wtxn, id, &|txn, id| {
+            crate::batch::deindex_entity(&write, txn, id)
+        })?;
+        crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,
@@ -292,8 +368,12 @@ impl Vault {
             self.store.clock.now_recorded_at(),
             erase,
         )?;
-        let (room_had_vector, room_had_graph, room_neighbors) =
-            crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
+        let (room_had_vector, room_had_graph, room_neighbors) = self
+            .store
+            .delete_guards
+            .deindex_project_room(&self.store, wtxn, id, &|txn, id| {
+                crate::batch::deindex_entity(&write, txn, id)
+            })?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
@@ -305,7 +385,7 @@ impl Vault {
             .erase(id, self.store.env.info().last_txn_id);
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         crate::ports::invalidate_source_in_txn(
-            &self.store,
+            &write,
             wtxn,
             id,
             crate::ports::DependentWalkDoor::SoftErase,
@@ -316,7 +396,7 @@ impl Vault {
         // authority with it, and moves its group on (CUA E8a).
         crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
-            deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
+            deindex_lexical_query_hints_for_target(&write, wtxn, id)?;
         if hint_had_graph_mutation {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
@@ -328,8 +408,12 @@ impl Vault {
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::origin::lfs::delete_lfs_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
-        let blob_cleanup =
-            crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
+        let blob_cleanup = crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            &|txn, id| crate::batch::deindex_entity(&write, txn, id),
+        )?;
         if blob_cleanup.had_graph_mutation {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
@@ -338,19 +422,26 @@ impl Vault {
         let mut had_vector =
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
 
-        crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
-        let had_refinement =
-            crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
+        crate::skill_hub::remove_hub_package_in_txn(&write, wtxn, id)?;
+        let had_refinement = crate::store::claim_refinement_control::erase_claim_refinement_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         let had_merge_receipt =
-            crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
-        crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
-        crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
-        crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
-        crate::comm::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
+            crate::skill_hub::erase_refinement_custody_in_txn(&write, wtxn, id)?;
+        crate::store::skill_refinement_custody::remove_refinement_carrier_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
+        crate::skill_hub::retire_refinement_holder_in_txn(&write, wtxn, id)?;
+        crate::agent_def::remove_birth_custody_in_txn(&write, wtxn, id)?;
+        crate::store::pending_comm_stop::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
         let Some(entity_record) =
             crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
         else {
-            let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
+            let cleanup = delete_vad_annotation_metadata_in_txn(&write, wtxn, id)?;
             had_vector |= cleanup.had_vector;
             if cleanup.had_graph_mutation {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
@@ -387,7 +478,7 @@ impl Vault {
             id,
             header.entity_type,
         )?;
-        crate::deletion::tear_derived_rows_in_txn(&self.store, wtxn, id, false)?;
+        crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
@@ -404,7 +495,7 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         let mut cleanup = VadAnnotationCleanup::default();
         delete_vad_annotation_metadata_for_type_in_txn(
-            &self.store,
+            &write,
             wtxn,
             id,
             header.entity_type,
@@ -416,14 +507,16 @@ impl Vault {
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
         }
 
-        crate::claim::remove_claim_projection_index(&self.store, wtxn, *id)?;
+        crate::store::claim_projection::remove_claim_projection_index(&self.store, wtxn, *id)?;
         crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store
             .port_entity_scrub(wtxn, id, scrubbed, mutation_recorded_at)?;
-        crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
+        self.store
+            .scope_stamps
+            .retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         crate::embed::erase_turn_vectors_in_txn(

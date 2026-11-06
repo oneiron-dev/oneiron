@@ -162,3 +162,20 @@ pub(crate) async fn vault_federation_burst_replay(
     )
     .await
 }
+
+pub(crate) async fn vault_sync_retained_work_wait_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: sdk::RetainedWorkWaitSetRequest,
+) -> Listed<u64> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.sync.retained_work.wait.set",
+        move |server, owner| {
+            sdk::set_retained_work_wait_secs_as_owner(server.vault(), owner, input)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}

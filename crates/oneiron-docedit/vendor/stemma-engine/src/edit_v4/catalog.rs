@@ -231,7 +231,9 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
             // 1-3). See the `insert` op documentation for the full contract.
             r#"{"op":"insert","target":{"anchor":"<block_id>","position":"after"},"content":[{"type":"toc"}]}"#,
         ],
-        "delete" => &[r#"{"op":"delete","target":"<block_id>"}"#],
+        "delete" => &[
+            r#"{"op":"delete","target":"<block_id>","guard":"<current block guard>","expect":"<current block text>"}"#,
+        ],
         // Single block, then the contiguous range form (moves several blocks,
         // a section, in one op; `from`/`to` in either doc order).
         "move" => &[

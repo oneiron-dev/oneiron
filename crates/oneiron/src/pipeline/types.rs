@@ -37,17 +37,7 @@ pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 /// A scored entity result. Defined in `oneiron-retrieval`, where fusion ranks it.
 pub use oneiron_retrieval::pipeline::ScoredEntity;
 
-/// Retrieval signal type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
-#[non_exhaustive]
-pub enum Signal {
-    Vector,
-    Text,
-    Phonetic,
-    Temporal,
-    Ppr,
-    Hyde,
-}
+pub use crate::store::retrieval_signal::Signal;
 
 pub(super) const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 pub(super) const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
@@ -257,6 +247,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) embedding_matches: HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// A dense list answered: the text index's or a declared space's.
     pub(crate) vector_completed: bool,
+    /// The primary text scan exhausted its admitted matches without a fold or
+    /// result-window cut. Only a text-only run can use this to finish paging.
+    pub(crate) text_exhausted: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     /// The ids whose words a reranker scored at their pin in `revisions`.
     /// Those words are what the pack serves, never a later projection.
@@ -273,6 +266,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(crate) claims_suppressed: usize,
     pub(crate) read_suppressed: usize,
+    /// Raw rejected candidates; scoped receipts qualify them before counting.
+    pub(crate) read_suppressed_candidates: std::collections::HashSet<EntityId>,
     pub(crate) cosine_ghosts_dampened: usize,
     /// Scored rows the pack's disclosure clamp withheld before selection
     /// (`PipelineBuilder::disclosure_preselect`).

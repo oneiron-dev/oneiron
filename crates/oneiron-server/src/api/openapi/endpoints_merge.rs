@@ -111,7 +111,6 @@ pub(crate) fn openapi_document() -> Value {
     merge_booking_components(&mut spec);
     merge_retrieval_depth_components(&mut spec);
     super::owner_paths::merge_owner_paths(&mut spec);
-    super::owner_rest_paths::merge_owner_rest_shapes(&mut spec);
     super::left_slip_paths::merge_left_slip_paths(&mut spec);
     super::facade_paths::merge_facade_paths(&mut spec);
     super::openai_proxy_paths::merge_openai_proxy_paths(&mut spec);
@@ -119,6 +118,7 @@ pub(crate) fn openapi_document() -> Value {
     super::signing_paths::merge_signing_paths(&mut spec);
     super::signing_paths::merge_editor_paths(&mut spec);
     super::voice_bank_paths::merge_voice_bank_paths(&mut spec);
+    super::pairing_paths::merge_pairing_paths(&mut spec);
     merge_typed_rest_bodies(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);

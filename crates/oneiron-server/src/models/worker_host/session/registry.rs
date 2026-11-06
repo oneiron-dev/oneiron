@@ -12,23 +12,25 @@
 //! region or a buffer) is a [`HostCopy`] counted against that vault, so a
 //! lock can wait for its vault's to go.
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use oneiron::EntityId;
 use oneiron::inference_snapshot::SnapshotId;
+use oneiron::inference_snapshot::retention::SNAPSHOT_HEADROOM_BYTES;
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, MessageStamp, SessionBinding, SessionDrop,
     SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionReleased, SessionResidency,
     SessionTarget, VaultRef,
 };
-use oneiron_driver::InferenceWorker;
+use oneiron_contracts::limit_ask::available_memory_bytes;
+use oneiron_driver::{DeviceLedger, InferenceWorker, SessionAllocation, SessionAllocationOwner};
 use serde_json::Value as JsonValue;
 use tokio::sync::Notify;
 
 use super::{CheckpointAuthority, SnapshotScope, lifecycle, policy};
 use crate::models::native_exl3::{OpFault, session_send};
+use crate::models::worker_host::NativeLaunch;
 
 /// Every managed worker's sessions, by worker id: held by the process's one
 /// worker host, beside the supervisors.
@@ -39,9 +41,13 @@ pub(in crate::models::worker_host) struct Registry(Mutex<BTreeMap<String, Worker
 /// and epoch, and its supervisor, whose activity the answers feed.
 #[derive(Clone)]
 pub(super) struct Place {
-    pub(super) socket: PathBuf,
+    pub(super) launch: NativeLaunch,
     pub(super) epoch: String,
     pub(super) worker: InferenceWorker,
+    /// The device ledger of the worker incarnation's actual launch
+    /// device, resolved before the registry lock is taken; `None` where
+    /// the launch names no device or its hosted row was replaced.
+    pub(super) ledger: Option<Arc<DeviceLedger>>,
 }
 
 /// Whether an incarnation serves sessions, once its hello was read.
@@ -61,6 +67,8 @@ pub(super) struct Ops {
     /// `session.export` and `session.import`, in the snapshot format this
     /// side speaks.
     pub(super) snapshot: bool,
+    /// `session.prepare` (I1 = C).
+    pub(super) prepare: bool,
 }
 
 /// One worker incarnation's sessions.
@@ -85,6 +93,8 @@ struct Owed {
     target: SessionTarget,
     residency: SessionResidency,
     lease: Option<SnapshotId>,
+    /// The retired session's fact row, retained until the worker answers.
+    owner: Option<SessionAllocationOwner>,
 }
 
 /// Where a session stands for parking and restore.
@@ -121,6 +131,9 @@ pub(super) struct Session {
     pub(super) generation: u64,
     pub(super) published: Option<CanonicalCheckpointRef>,
     pub(super) residency: SessionResidency,
+    /// The ledger fact row this session owns; moved into its owed release
+    /// on retirement, `None` where its worker names no device.
+    pub(super) owner: Option<SessionAllocationOwner>,
     pub(super) pending: Option<PendingTurn>,
     /// Why its published checkpoint stopped serving, seen at a fork: it is
     /// dropped instead of advanced.
@@ -146,6 +159,18 @@ impl Session {
         SessionTarget {
             handle: self.handle,
             binding: self.key.binding(),
+        }
+    }
+
+    /// Records a worker answer's `residency` as this session's own and on
+    /// its ledger fact row, atomically under the registry lock the caller
+    /// holds. The row keeps the mixed-domain report the worker measured
+    /// (device pages plus host snapshots), never a split the worker did
+    /// not name.
+    pub(super) fn observe(&mut self, residency: SessionResidency) {
+        self.residency = residency;
+        if let Some(owner) = &self.owner {
+            owner.observe(Some(residency));
         }
     }
 }
@@ -178,7 +203,7 @@ pub(super) fn bind<'a>(
     place: &Place,
 ) -> &'a mut Worker {
     let current = workers.get(worker_id).is_some_and(|worker| {
-        worker.place.epoch == place.epoch && worker.place.socket == place.socket
+        worker.place.epoch == place.epoch && worker.place.launch.socket() == place.launch.socket()
     });
     if !current {
         let ended = workers.insert(
@@ -208,9 +233,33 @@ pub(super) fn current<'a>(
     worker_id: &str,
     place: &Place,
 ) -> Option<&'a mut Worker> {
-    workers
-        .get_mut(worker_id)
-        .filter(|worker| worker.place.epoch == place.epoch && worker.place.socket == place.socket)
+    workers.get_mut(worker_id).filter(|worker| {
+        worker.place.epoch == place.epoch && worker.place.launch.socket() == place.launch.socket()
+    })
+}
+
+/// Mints the ledger fact guard for a session of `vault` at `target` on
+/// `place`'s worker incarnation, carrying `report` (`None` while no
+/// residency report was observed for it); `None` where the worker names
+/// no device. Takes only the ledger's own lock; no host or registry
+/// lookup.
+pub(super) fn mint_owner(
+    place: &Place,
+    vault: VaultRef,
+    target: SessionTarget,
+    report: Option<SessionResidency>,
+) -> Option<SessionAllocationOwner> {
+    let ledger = place.ledger.as_ref()?;
+    Some(SessionAllocationOwner::new(
+        ledger,
+        SessionAllocation {
+            worker_id: place.worker.spec().worker_id.clone(),
+            epoch: place.epoch.clone(),
+            vault,
+            target,
+            report,
+        },
+    ))
 }
 
 impl Worker {
@@ -218,26 +267,43 @@ impl Worker {
     /// again, and its release is owed until [`release`] hears the worker.
     pub(super) fn retire(&mut self, binding: &SessionBinding) -> Option<(SessionTarget, Place)> {
         let session = self.sessions.remove(binding)?;
-        let owed = self.owe(
-            session.key.anchor.vault,
-            session.target(),
-            session.residency,
+        Some(self.owe_session(session))
+    }
+
+    /// Owes the release of the registered `session`: its target and place,
+    /// for that release. Its fact guard, lease and residency move into the
+    /// owed release, so the ledger row is retained until the worker
+    /// answers; no fresh row is minted.
+    pub(super) fn owe_session(&mut self, session: Session) -> (SessionTarget, Place) {
+        let target = session.target();
+        let owner = session.owner;
+        let lease = session.lease;
+        self.releasing.insert(
+            target.handle,
+            Owed {
+                vault: session.key.anchor.vault,
+                target: target.clone(),
+                residency: session.residency,
+                lease,
+                owner,
+            },
         );
-        if let Some(entry) = self.releasing.get_mut(&session.handle) {
-            entry.lease = session.lease;
-        }
-        Some(owed)
+        (target, self.place.clone())
     }
 
     /// Owes the release of `target`, a handle of `vault` holding
     /// `residency`, whether or not a session of it was registered: its
-    /// target and place, for that release.
+    /// target and place, for that release. `report` is the honest worker
+    /// observation for a fresh fact row: `Some` from an actual worker
+    /// answer, `None` where no report was observed for it.
     pub(super) fn owe(
         &mut self,
         vault: VaultRef,
         target: SessionTarget,
         residency: SessionResidency,
+        report: Option<SessionResidency>,
     ) -> (SessionTarget, Place) {
+        let owner = mint_owner(&self.place, vault, target.clone(), report);
         self.releasing.insert(
             target.handle,
             Owed {
@@ -245,6 +311,7 @@ impl Worker {
                 target: target.clone(),
                 residency,
                 lease: None,
+                owner,
             },
         );
         (target, self.place.clone())
@@ -313,7 +380,7 @@ pub(super) async fn release_acked(
         reason,
     };
     let answer: Result<SessionReleased, OpFault> = session_send(
-        &place.socket,
+        &place.launch,
         &place.epoch,
         SessionOp::Drop,
         &body,
@@ -448,7 +515,7 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
     conversation: Option<&JsonValue>,
 ) -> Result<R, SessionInvalidation> {
     session_send(
-        &place.socket,
+        &place.launch,
         &place.epoch,
         op,
         body,
@@ -462,11 +529,15 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
     })
 }
 
-/// The host's plaintext copies of each vault's snapshots, counted while
-/// they live.
+/// The host's plaintext copies of each vault's snapshots, counted with
+/// their bytes while they live, so a park or restore admits against what
+/// the process already holds (FIX 11289); plus the bytes admitted but not
+/// yet held, so two racers cannot both pass the screen before either
+/// registers its copy.
 #[derive(Default)]
 struct Copies {
-    live: Mutex<BTreeMap<VaultRef, u64>>,
+    live: Mutex<BTreeMap<VaultRef, (u64, u64)>>,
+    reserved: Mutex<u64>,
     dropped: Notify,
 }
 
@@ -478,23 +549,43 @@ fn copies() -> &'static Copies {
 
 /// One plaintext copy of a vault's snapshot the host holds (a region an
 /// export passed or an import sends, or a buffer read from one or opened
-/// from a sealed body), counted against its vault until it drops.
+/// from a sealed body), counted with its `bytes` against its vault until
+/// it drops.
 pub(super) struct HostCopy<T> {
     vault: VaultRef,
+    bytes: u64,
     copy: Option<T>,
 }
 
 impl<T> HostCopy<T> {
-    /// Counts `copy` against `vault` from now until it drops.
-    pub(super) fn hold(vault: VaultRef, copy: T) -> Self {
-        *copies()
-            .live
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(vault)
-            .or_insert(0) += 1;
+    /// Counts `copy` with its `bytes` against `vault` from now until it drops.
+    pub(super) fn hold(vault: VaultRef, copy: T, bytes: u64) -> Self {
+        Self::hold_reserved(vault, copy, bytes, None)
+    }
+
+    fn hold_reserved(
+        vault: VaultRef,
+        copy: T,
+        bytes: u64,
+        reservation: Option<&mut HostReservation>,
+    ) -> Self {
+        let copies = copies();
+        let mut live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(reservation) = reservation {
+            let mut reserved = copies
+                .reserved
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let covered = bytes.min(reservation.bytes);
+            reservation.bytes -= covered;
+            *reserved = reserved.saturating_sub(covered);
+        }
+        let entry = live.entry(vault).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 = entry.1.saturating_add(bytes);
         Self {
             vault,
+            bytes,
             copy: Some(copy),
         }
     }
@@ -507,15 +598,16 @@ impl<T> HostCopy<T> {
 }
 
 impl<T> Drop for HostCopy<T> {
-    /// The copy goes first; only then does its count drop.
+    /// The copy goes first; only then do its count and bytes drop.
     fn drop(&mut self) {
         drop(self.copy.take());
         let copies = copies();
         {
             let mut live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(count) = live.get_mut(&self.vault) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
+            if let Some(entry) = live.get_mut(&self.vault) {
+                entry.0 = entry.0.saturating_sub(1);
+                entry.1 = entry.1.saturating_sub(self.bytes);
+                if entry.0 == 0 {
                     live.remove(&self.vault);
                 }
             }
@@ -531,8 +623,106 @@ pub(super) fn host_copies(vault: &VaultRef) -> u64 {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(vault)
-        .copied()
+        .map(|entry| entry.0)
         .unwrap_or(0)
+}
+
+/// The plaintext bytes of every vault's snapshots the host holds now,
+/// plus the bytes admitted but not yet held: what a new copy must still
+/// fit beside.
+pub(super) fn host_committed_bytes() -> u64 {
+    let copies = copies();
+    // One order everywhere both locks are taken: live, then reserved.
+    let live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+    let reserved = copies
+        .reserved
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    live.values()
+        .fold(*reserved, |held, entry| held.saturating_add(entry.1))
+}
+
+/// A host-memory reservation for snapshot bytes not yet held as a copy:
+/// admitted atomically with the headroom screen. Covered registrations
+/// transfer reserved bytes to live bytes; unused credit is released on drop.
+/// The guard keeps credit for copies that have not been allocated yet.
+pub(super) struct HostReservation {
+    bytes: u64,
+}
+
+impl HostReservation {
+    /// Keeps at least `bytes` reserved for the copies still to be allocated.
+    pub(super) async fn ensure(&mut self, bytes: u64) -> Option<()> {
+        if self.bytes < bytes {
+            let mut extra = reserve_host(bytes - self.bytes).await?;
+            self.bytes = bytes;
+            extra.bytes = 0;
+        }
+        Some(())
+    }
+
+    /// Releases credit no longer needed by the remaining allocation phase.
+    pub(super) fn release_excess(&mut self, keep: u64) {
+        let excess = self.bytes.saturating_sub(keep);
+        if excess == 0 {
+            return;
+        }
+        let mut reserved = copies()
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(excess);
+        self.bytes -= excess;
+    }
+
+    /// Registers a covered copy without charging its reserved bytes twice.
+    pub(super) fn hold<T>(&mut self, vault: VaultRef, copy: T, bytes: u64) -> HostCopy<T> {
+        HostCopy::hold_reserved(vault, copy, bytes, Some(self))
+    }
+}
+
+impl Drop for HostReservation {
+    fn drop(&mut self) {
+        let mut reserved = copies()
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(self.bytes);
+    }
+}
+
+/// Screens `bytes` against `available` past the headroom and the committed
+/// bytes and reserves them on fit, in one lock: no await inside, so the
+/// screen and the admission are atomic. The caller reads `available` off
+/// the runtime (as `fits_host` does); only microseconds separate the read
+/// from this lock.
+pub(super) fn try_reserve_host(available: u64, bytes: u64) -> Option<HostReservation> {
+    let copies = copies();
+    let live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut reserved = copies
+        .reserved
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let committed = live
+        .values()
+        .fold(*reserved, |held, entry| held.saturating_add(entry.1));
+    let fits = bytes
+        .saturating_add(SNAPSHOT_HEADROOM_BYTES)
+        .saturating_add(committed)
+        <= available;
+    fits.then(|| {
+        *reserved = reserved.saturating_add(bytes);
+        HostReservation { bytes }
+    })
+}
+
+/// `try_reserve_host` with the `/proc` read off the runtime, as `fits_host`
+/// does it (FIX 11290).
+pub(super) async fn reserve_host(bytes: u64) -> Option<HostReservation> {
+    let available = tokio::task::spawn_blocking(available_memory_bytes)
+        .await
+        .ok()??;
+    try_reserve_host(available, bytes)
 }
 
 /// Waits until the host holds no plaintext copy of `vault`'s snapshots, or

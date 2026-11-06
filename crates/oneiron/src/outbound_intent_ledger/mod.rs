@@ -6,7 +6,7 @@
 
 mod codec;
 mod dispatch;
-pub mod email_headers;
+pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
 mod resolution;
@@ -36,8 +36,8 @@ pub(crate) use self::dispatch::execute_outbound_call;
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 pub(crate) use self::payload::{
-    LedgerPayloadContext, erase_outbound_intent_actor_in_txn, payload_recipient_in_txn,
-    stored_admission_in_txn,
+    LedgerPayloadContext, admitting_actor_in_txn, erase_outbound_intent_actor_in_txn,
+    payload_recipient_in_txn, stored_admission_in_txn,
 };
 pub(crate) use self::pinned_approval::{
     PinnedApproval, PinnedApprovalFamily, keep_pinned_approval_in_txn, keep_press_after_admission,
@@ -46,15 +46,18 @@ pub(crate) use self::pinned_approval::{
 pub(crate) use self::resolution::{
     ConnectorIntentBinding, IntentResolution, RetryDisposition, UnconfirmedDelivery,
 };
-pub(crate) use self::settlement::{intent_settlement, provider_wait_edge, reserve_budget_in_txn};
+pub(crate) use self::settlement::{
+    intent_settlement, keep_reported_cost, provider_wait_edge, reserve_budget_in_txn,
+};
 pub(crate) use self::store::check_intent_attempt_format_in_txn;
 pub(crate) use self::store::checkpoint;
 pub(crate) use self::store::{
     abandon_record, admitted_calls_since_in_txn, begin_definite_non_delivery_retry,
-    complete_record_bridged, defer_record, force_sync, hash_frozen_payload, insert_pending_in_txn,
-    insert_suppressed_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
-    reconcile_connector_intent_in_txn, record_definite_non_delivery, record_possible_delivery,
-    record_provider_refusal, renew_admission_in_txn,
+    call_row_erased_in_txn, complete_record_bridged, defer_record, force_sync, hash_frozen_payload,
+    insert_pending_in_txn, insert_suppressed_in_txn, outbound_intent_ledger_record_accepts_masked,
+    read_intent_for_attempt_in_txn, read_intent_record_in_txn, reconcile_connector_intent_in_txn,
+    record_definite_non_delivery, record_possible_delivery, record_provider_refusal,
+    renew_admission_in_txn,
 };
 // DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume;
 // FIX 7188: their abandon in the owner's Stop of that try.
@@ -64,6 +67,7 @@ pub(crate) use self::store::pending::{
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
 pub(crate) use self::types::AdmittedApproval;
+pub(crate) use self::types::CallAccounting;
 #[cfg(test)]
 pub(crate) use self::types::OutboundSender;
 

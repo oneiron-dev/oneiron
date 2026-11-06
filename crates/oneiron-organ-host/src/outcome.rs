@@ -7,10 +7,11 @@ use std::sync::Mutex;
 
 #[cfg(unix)]
 use oneiron_organ_protocol::MappedRegion;
-use oneiron_organ_protocol::{Hash32, TypedBody};
+use oneiron_organ_protocol::{Hash32, TypedBody, Value};
 
-use crate::budget::Kept;
+use crate::budget::{Kept, Lease};
 use crate::receipt::CallReceipt;
+use crate::resource_memory::FloorLease;
 
 /// What an organ proposed, checked by the host. Nothing here is in the vault
 /// yet: the caller lands it through the write gate, or drops it.
@@ -18,8 +19,10 @@ use crate::receipt::CallReceipt;
 pub struct OrganOutcome {
     pub body: Option<TypedBody>,
     pub outputs: Vec<OrganOutput>,
-    pub report: rmpv::Value,
+    pub report: Value,
     pub receipt: CallReceipt,
+    /// The decoded reply's room, held while its body and report live.
+    pub(crate) _frame: Option<Lease>,
 }
 
 /// One file an organ made, hashed by the host.
@@ -40,11 +43,11 @@ pub struct OrganOutput {
 /// A lease of the machine's memory an output's bytes hold until they drop.
 pub(crate) struct Leased {
     /// Never read: it goes back as the bytes drop.
-    _held: Mutex<Box<dyn Send>>,
+    _held: Mutex<Box<dyn FloorLease>>,
 }
 
 impl Leased {
-    pub(crate) fn new(held: Box<dyn Send>) -> Self {
+    pub(crate) fn new(held: Box<dyn FloorLease>) -> Self {
         Self {
             _held: Mutex::new(held),
         }

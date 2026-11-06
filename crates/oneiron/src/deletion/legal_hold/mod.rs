@@ -463,18 +463,23 @@ impl Vault {
     /// its request asked: an explicit lift-and-erase hard, an owner's plain
     /// delete under its own reason (FIX 1465), and in a shared vault with
     /// two or more Owners an explicit one only once its own `erase` act
-    /// completed (FIX 9781). A failed one stays for the next pass. One
+    /// completed (FIX 9781); an explicit one whose act never started has it
+    /// started first (FIX 10401). A failed one stays for the next pass. One
     /// whose request went or was replaced before its writer ran is
     /// cancelled: nothing erased, counted or dropped (FIX 6337). A released
     /// gate-decision partition runs it too.
     pub(crate) fn run_due_legal_hold_erases(&self) -> Result<u64> {
+        self.start_missing_erase_acts()?;
         // What a released hold kept from an erase's scrubs goes first,
         // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
         // an erase it kept from completing completes (FIX 5844).
-        let due = self.with_write_txn_grouped(|txn| {
-            self.settle_held_scrubs_in_txn(txn)?;
-            hold_store::due_erases_in_txn(&self.store, txn)
+        let (due, cancelled) = self.with_write_txn_grouped(|txn| {
+            let cancelled = self.settle_held_scrubs_in_txn(txn)?;
+            let due = hold_store::due_erases_in_txn(&self.store, txn)?;
+            Ok((due, cancelled))
         })?;
+        crate::attempt_queue::AttemptQueue::new(self)
+            .erased_payload_cancellations_committed(&cancelled);
         self.finish_redaction_erases_logged();
         let mut erased = 0_u64;
         for (record, pending) in due {
@@ -543,7 +548,7 @@ impl Vault {
     /// 8849). Enforcing it on reads is the scope checks' (L02).
     pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
         let txn = self.store.env.read_txn()?;
-        hold_store::use_limit_in_txn(&self.store, &txn, record)
+        hold_store::legal_hold_use_limit_in_txn(&self.store, &txn, record)
     }
 }
 

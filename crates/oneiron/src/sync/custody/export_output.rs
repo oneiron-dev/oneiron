@@ -22,10 +22,12 @@
 //!   rechecked in the writer that keeps it, with or without the request's
 //!   result folded there (FIX 12312). Only the recipient machine opens it;
 //!   no install that keeps or relays it can.
-//! - A copy past one row rides in numbered parts by these same rules, and
-//!   is joined before it is judged (FIX 12063, `parts`).
+//! - A copy past one row rides in numbered parts by these same rules, each
+//!   part signed by its holder with the key that signed the result and
+//!   proven alone, and is joined before it is judged (FIX 12063, 12373,
+//!   `parts`).
 
-mod parts;
+pub(super) mod parts;
 
 use std::collections::BTreeSet;
 
@@ -174,6 +176,57 @@ pub(super) fn mirror_export_outputs(
     Ok(wrote)
 }
 
+/// Export supplements prepared against the caller's current authority snapshot.
+pub(in crate::sync) struct ExportOutputBatch {
+    due: Vec<KeptExportOutput>,
+}
+
+impl ExportOutputBatch {
+    pub(in crate::sync) fn prepare_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        doc: &LoroDoc,
+        rows: &[(String, Vec<u8>)],
+    ) -> Result<Self> {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let mut due = Vec::new();
+        for (map_key, bytes) in rows {
+            let Some(output) = KeptExportOutput::decode(bytes) else {
+                continue;
+            };
+            if *map_key == output_row(&output.request)
+                && !fold.export_supplement_imported(&output.request)
+                && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
+            {
+                due.push(output);
+            }
+        }
+        for output in parts::joined_copies(doc, &fold, rows) {
+            if !fold.export_supplement_imported(&output.request)
+                && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
+            {
+                due.push(output);
+            }
+        }
+        Ok(Self { due })
+    }
+
+    pub(in crate::sync) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+        let mut kept = 0;
+        for output in &self.due {
+            if keep_relayed_export_output_in_txn(vault, wtxn, &fold, output)? {
+                kept += 1;
+            }
+        }
+        Ok(kept)
+    }
+}
+
 /// Keeps each relayed copy, filed under its own request, that stands on
 /// this vault's fold and that it keeps no copy for yet, checked again in the
 /// writer that keeps it. A copy the fold holds an import mark of is not
@@ -189,43 +242,14 @@ pub(super) fn keep_relayed_export_outputs(
         return;
     }
     let outcome = (|| -> Result<usize> {
-        let due = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut due = Vec::new();
-            for (map_key, bytes) in &rows {
-                let Some(output) = KeptExportOutput::decode(bytes) else {
-                    continue;
-                };
-                if *map_key == output_row(&output.request)
-                    && !fold.export_supplement_imported(&output.request)
-                    && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
-                {
-                    due.push(output);
-                }
-            }
-            for output in parts::joined_copies(doc, &rows) {
-                if !fold.export_supplement_imported(&output.request)
-                    && relayed_export_output_due_in_txn(vault, &rtxn, &fold, &output)?
-                {
-                    due.push(output);
-                }
-            }
-            due
+            ExportOutputBatch::prepare_in_txn(vault, &rtxn, doc, &rows)?
         };
-        if due.is_empty() {
+        if batch.due.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-            let mut kept = 0;
-            for output in &due {
-                if keep_relayed_export_output_in_txn(vault, wtxn, &fold, output)? {
-                    kept += 1;
-                }
-            }
-            Ok(kept)
-        })
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {

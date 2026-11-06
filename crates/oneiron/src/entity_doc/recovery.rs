@@ -87,6 +87,7 @@ pub(crate) fn capture(
         metadata: doc.metadata_bytes()?,
         summary_meta: summary_meta::bytes(&doc.doc),
         record_fields: doc.record_fields()?,
+        // The stored stamp token, carried as it stands (FIX 11964).
         birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
         history: history(&vault.store, txn, &entity, &doc)?,
@@ -723,6 +724,7 @@ fn bind_rows(
                     .as_ref()
                     .ok_or(invalid("entity document fork metadata"))?,
             )?;
+            super::document::restate_birth(&branch.doc);
             branch.doc.commit();
             ENTITY_DOC_FORK_SNAPSHOT.put(
                 store,

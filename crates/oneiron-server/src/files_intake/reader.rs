@@ -13,9 +13,10 @@
 //!
 //! A PDF's note is the text of its pages, read from its bytes: no frontmatter
 //! and no links out, though a note's link can name it. A PDF with no text
-//! layer (a scan) holds no text, and one that is encrypted or does not parse
-//! reads none: both are held by name, with the bytes the walk read (FIX
-//! 11276).
+//! layer (a scan) reads its page images through the ingest station's OCR; a
+//! scan with no OCR to read it holds no text, and one that is encrypted or
+//! does not parse reads none: both are held by name, with the bytes the walk
+//! read (FIX 11276).
 //!
 //! A file of any size is read (rule 5). Text past the note bound lands in
 //! parts: the file's own note holds the first, and each next part is a note of
@@ -26,7 +27,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::ops::Range;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::ingest::{PdfText, pdf_text};
@@ -205,13 +206,14 @@ pub(crate) fn read_folder(
     folder: &Path,
     counts: &mut NoteCounts,
 ) -> anyhow::Result<(Vec<Note>, Vec<NameOnlyFile>)> {
-    let (notes, name_only, _, _) = read_folder_inner(folder, counts, None)?;
+    let (notes, name_only, _, _) = read_folder_inner(folder, counts, None, None)?;
     Ok((notes, name_only))
 }
 
 /// [`read_folder`] for a rescan (FIX 1365): a file whose size and mtime both
 /// match `prior`'s record is not read, and its path is skipped. Beside the
-/// notes, the facts of every file read, by path, and the paths skipped.
+/// notes, the facts of every file read, by path, the paths skipped and the
+/// folders that would not open, whose earlier notes stay (FIX 10246).
 pub(crate) fn read_folder_rescan(
     folder: &Path,
     counts: &mut NoteCounts,
@@ -221,8 +223,22 @@ pub(crate) fn read_folder_rescan(
     Vec<NameOnlyFile>,
     HashMap<String, FileFacts>,
     Vec<String>,
+    Vec<String>,
 )> {
-    read_folder_inner(folder, counts, prior)
+    let mut unopened_paths = Vec::new();
+    let (notes, name_only, facts, skipped) =
+        read_folder_inner(folder, counts, prior, Some(&mut unopened_paths))?;
+    let unopened_dirs = unopened_paths
+        .iter()
+        .filter_map(|shown| match relative(folder, shown) {
+            Some(path) => Some(path),
+            None => {
+                counts.unreadable_name += 1;
+                None
+            }
+        })
+        .collect();
+    Ok((notes, name_only, facts, skipped, unopened_dirs))
 }
 
 /// [`read_folder`], skipping what `prior` records when it does: a file whose
@@ -232,6 +248,7 @@ fn read_folder_inner(
     folder: &Path,
     counts: &mut NoteCounts,
     prior: Option<&HashMap<String, FileFacts>>,
+    unopened_dirs: Option<&mut Vec<PathBuf>>,
 ) -> anyhow::Result<(
     Vec<Note>,
     Vec<NameOnlyFile>,
@@ -242,7 +259,7 @@ fn read_folder_inner(
     let mut name_only = Vec::new();
     let mut facts = HashMap::new();
     let mut skipped = Vec::new();
-    super::walk_notes(folder, &mut |shown, file| {
+    let mut visit = |shown: &Path, file: std::fs::File| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
             return Ok(());
@@ -290,7 +307,16 @@ fn read_folder_inner(
             });
         }
         Ok(())
-    })?;
+    };
+    if let Some(unopened_dirs) = unopened_dirs {
+        super::walk_notes_rescan(
+            folder,
+            &mut |shown| unopened_dirs.push(shown.to_path_buf()),
+            &mut visit,
+        )?;
+    } else {
+        super::walk_notes(folder, &mut visit)?;
+    }
     Ok((notes, name_only, facts, skipped))
 }
 

@@ -31,6 +31,10 @@ use oneiron_llm_anthropic::{
     AnthropicMessagesConfig, build_anthropic_messages_request, classify_anthropic_status,
     parse_anthropic_messages_response,
 };
+use oneiron_llm_gemini::{
+    build_request as build_gemini_chat_request, classify_status as classify_gemini_status,
+    parse_response as parse_gemini_chat_response,
+};
 use oneiron_llm_openai::{
     OpenAiCompatConfig, build_openai_chat_request, classify_openai_status,
     parse_openai_chat_response,
@@ -99,6 +103,7 @@ impl KeyDoor for VaultKeyDoor {
 enum Wire {
     OpenAi(OpenAiCompatConfig),
     Anthropic(AnthropicMessagesConfig),
+    Gemini,
 }
 
 /// One `key_secret` provider's backend: its wire adapter's request builder,
@@ -183,11 +188,13 @@ impl BrokerSite {
 }
 
 /// One `key_secret` provider's backend, over the broker at `site` and the
-/// key door `keys`.
+/// key door `keys`. `solo` says the provider's server reads the host's
+/// solo marker, which only EXL3's does (FIX 6976).
 pub(super) fn broker_backend(
     provider: &ProviderConfig,
     catalog: Vec<LlmCatalogEntry>,
     cap: OutputCap,
+    solo: bool,
     site: &BrokerSite,
     keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<BrokerBackend> {
@@ -200,7 +207,7 @@ pub(super) fn broker_backend(
         .ok_or_else(|| anyhow::anyhow!("this server has no vault custody door"))?;
     let client = site.client(Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN)?;
     let url = reqwest::Url::parse(&provider.base_url)?;
-    let prefix = url.path().trim_end_matches('/').to_owned();
+    let mut prefix = url.path().trim_end_matches('/').to_owned();
     let catalog: BTreeMap<ModelId, LlmCatalogEntry> = catalog
         .into_iter()
         .map(|mut entry| {
@@ -211,8 +218,6 @@ pub(super) fn broker_backend(
         })
         .collect();
     let rows = catalog.values().cloned();
-    // Only an own server reads the host's solo marker (INF 1).
-    let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
     let wire = match provider.kind {
         ProviderKind::AnthropicCompat => {
             Wire::Anthropic(AnthropicMessagesConfig::from_catalog(rows))
@@ -224,7 +229,12 @@ pub(super) fn broker_backend(
         ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
             anyhow::bail!("a speech provider sends no model call")
         }
-        ProviderKind::Gemini => anyhow::bail!("a gemini provider sends media calls only"),
+        ProviderKind::Gemini => {
+            // The adapter owns the versioned paths: the base is the API's origin.
+            prefix = prefix.strip_suffix("/v1beta").unwrap_or(&prefix).to_owned();
+            drop(rows);
+            Wire::Gemini
+        }
         ProviderKind::Soniox => anyhow::bail!("a soniox provider hears live audio only"),
     };
     Ok(BrokerBackend {
@@ -246,6 +256,30 @@ pub(super) fn broker_backend(
 }
 
 impl BrokerBackend {
+    pub(super) fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub(super) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub(super) fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    pub(super) fn client(&self) -> &BrokerClient {
+        &self.client
+    }
+
+    pub(super) fn keys(&self) -> &Arc<dyn KeyDoor> {
+        &self.keys
+    }
+
+    pub(super) fn secret(&self) -> &str {
+        &self.secret
+    }
+
     /// The call frame's header and the exact body bytes it carries, checked
     /// as the broker will check them. `call` is the broker's call id; the
     /// digest does not cover it.
@@ -261,14 +295,34 @@ impl BrokerBackend {
         let (shape, path, wire_headers, mut body) = match &self.wire {
             Wire::OpenAi(config) => {
                 let wire = build_openai_chat_request(config, request, false)?;
-                (Shape::OpenAiChat, wire.path, wire.headers, wire.body)
+                let shape = if wire.path == "/chat/completions" {
+                    Shape::OpenAiChatUnversioned
+                } else {
+                    Shape::OpenAiChat
+                };
+                (shape, wire.path, wire.headers, wire.body)
             }
             Wire::Anthropic(config) => {
                 let wire = build_anthropic_messages_request(config, request, false)?;
                 (Shape::AnthropicMessages, wire.path, wire.headers, wire.body)
             }
+            Wire::Gemini => {
+                let entry = self
+                    .catalog
+                    .get(&request.model)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                let wire = build_gemini_chat_request(entry, request, false)?;
+                (Shape::GeminiGenerate, wire.path, BTreeMap::new(), wire.body)
+            }
         };
-        self.cap.apply(&mut body);
+        match &self.wire {
+            Wire::Gemini => {
+                if let Some(generation) = body.get_mut("generationConfig") {
+                    self.cap.apply(generation);
+                }
+            }
+            Wire::OpenAi(_) | Wire::Anthropic(_) => self.cap.apply(&mut body),
+        }
         super::openai::send_format(self.response_format, &mut body);
         let wire_model = self
             .catalog
@@ -335,6 +389,7 @@ impl BrokerBackend {
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
                 Wire::Anthropic(_) => classify_anthropic_status(status, &headers, &body),
+                Wire::Gemini => classify_gemini_status(status, &body),
             });
         }
         let mut body = parsed.map_err(|_| LlmError::from(RetryableLlmError::ServerError))?;
@@ -358,6 +413,11 @@ impl BrokerBackend {
             Wire::Anthropic(_) => {
                 super::anthropic::carry_served_model(&mut body);
                 parse_anthropic_messages_response(&body)
+            }
+            Wire::Gemini => {
+                let mut answer = parse_gemini_chat_response(body)?;
+                answer.usage.bind_inference_model(model);
+                Ok(answer)
             }
         }
     }
@@ -412,6 +472,75 @@ pub(super) async fn call_with_key_released(
         .map_err(broker_error)
 }
 
+/// Opens one streaming call with its key read at the door, leaving the reply
+/// stream to the caller. Nothing reads the key before the broker is reached.
+/// The caller's `release`, when given, runs after the key is read,
+/// immediately before the broker sends, as [`call_with_key_released`]'s.
+pub(super) async fn open_with_key(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    if let Some(release) = release {
+        release()?;
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
+    connection
+        .open(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens one Responses call with its whole turn for a same-socket full retry.
+pub(super) async fn open_with_whole(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    connection
+        .open_with_whole(header, body, whole, key)
+        .await
+        .map_err(broker_error)
+}
+
 /// The provider's status and headers when it answered, or the error a call
 /// with no answer is.
 pub(super) fn answered(outcome: Outcome) -> LlmResult<(u16, Vec<(String, String)>)> {
@@ -456,7 +585,7 @@ fn no_streaming(model: &ModelId) -> LlmError {
     .into()
 }
 
-fn broker_error(error: BrokerError) -> LlmError {
+pub(crate) fn broker_error(error: BrokerError) -> LlmError {
     match error {
         // Nothing was written: no key read, no send.
         BrokerError::Unreachable => RetryableLlmError::StreamCut.into(),

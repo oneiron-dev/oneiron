@@ -9,23 +9,27 @@
 //! the result in its run, check the reader's grant and the rows it was
 //! served from, and read it through [`ResultRead`], which checks the taint
 //! of the run's occurrence of it (Docs Q08). `can({read: r})` asks the same
-//! checks for their verdict and reads no byte.
+//! checks for their verdict and reads no byte. A scoped child's read also
+//! stops at its live cutoff (FIX 8233; see `run_body`).
 
 mod arm;
 mod chunks;
 mod outside;
 mod query;
+mod run_body;
 mod search;
 mod shape;
 mod slice;
 mod unplaced;
 
 pub(crate) use self::outside::{read_result_in, result_cards_in};
+use self::run_body::{LiveCutoff, RunBody};
 pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunOutputKind,
     CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, RESPONSE_ERASED,
+    ScopedCallControl,
 };
 use crate::engine_executor::{
     JsResultRef, JsResultTarget, RESULT_REPLY_INLINE_BYTES, is_result_output_path,
@@ -42,7 +46,7 @@ use serde_json::{Value, json};
 const UNKNOWN_HANDLE_LIVE_NAMES: usize = 64;
 
 /// Bytes one read of a body takes at most.
-const READ_PIECE_BYTES: usize = 1 << 20;
+pub(super) const READ_PIECE_BYTES: usize = 1 << 20;
 
 /// Bytes of a body's head its card's shape is sniffed from.
 const SHAPE_HEAD_BYTES: usize = 64 * 1024;
@@ -85,53 +89,22 @@ pub(crate) trait ResultBody {
     fn line_index(&self) -> Option<Vec<u64>>;
     /// Where the window starts in the whole body.
     fn base(&self) -> u64;
-}
-
-/// One result body of a run, read by range through the run's storage.
-pub(crate) struct RunBody<'s, 'a> {
-    storage: &'s ExecutorStorage<'a>,
-    output: &'s CodeRunRawOutput,
-    base: u64,
-    len: u64,
-}
-
-impl ResultBody for RunBody<'_, '_> {
-    fn len(&self) -> u64 {
-        self.len
+    /// Notes the scan-bound search credit issued for this window: the exact
+    /// emitted (`offset`, `line`, `credit`) (FIX 1189 discount, #4311 P1-B).
+    /// A run's body records it on its storage's vault; any other body keeps
+    /// the no-op default and its resumes take no discount.
+    fn note_search_credit(&self, _offset: u64, _line: u64, _credit: u64) {}
+    /// Whether (`offset`, `line`, `credit`) is the credit last issued for
+    /// this window: the full tuple must match, else the resume takes no
+    /// discount. Only a run's body attests; the default denies.
+    fn valid_search_credit(&self, _offset: u64, _line: u64, _credit: u64) -> bool {
+        false
     }
 
-    fn kind(&self) -> CodeRunOutputKind {
-        self.output.kind
-    }
-
-    fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
-        let take = usize::try_from(self.len.saturating_sub(offset).min(len as u64))
-            .map_err(|_| Error::ArithmeticOverflow("code-run result read"))?;
-        let mut bytes = Vec::with_capacity(take);
-        while bytes.len() < take {
-            let at = self.base + offset + bytes.len() as u64;
-            let piece = self
-                .storage
-                .read_code_run_raw_output_range(
-                    self.output,
-                    at,
-                    (take - bytes.len()).min(READ_PIECE_BYTES),
-                )?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            if piece.is_empty() {
-                break;
-            }
-            bytes.extend_from_slice(&piece);
-        }
-        Ok(bytes)
-    }
-
-    fn line_index(&self) -> Option<Vec<u64>> {
-        self.storage.code_run_line_index(self.output).ok().flatten()
-    }
-
-    fn base(&self) -> u64 {
-        self.base
+    /// The live cutoff the read stops at (FIX 8233): a run's body read for
+    /// a scoped child has one; any other body keeps the default, none.
+    fn live_cutoff(&self) -> LiveCutoff<'_> {
+        LiveCutoff::default()
     }
 }
 
@@ -161,18 +134,27 @@ pub(crate) struct ResultRead {
     range: Option<(u64, u64)>,
     state: ArtifactTaintState,
     secret: Option<String>,
+    /// Whether the read is for a caller other than `owner`: a delegated
+    /// source keeps its caller's name, while an unnamed child finding uses
+    /// its exact occurrence.
+    foreign: bool,
+    /// The live cutoff of the scoped child the read is made for (FIX 8233).
+    live_cutoff: Option<ScopedCallControl>,
 }
 
 impl ResultRead {
     /// `output` as `name` binds it in run `owner`, narrowed to `range`, the
     /// taint of the run's occurrence of it read now. A range that is not
-    /// inside the body is refused.
+    /// inside the body is refused. `foreign` says the read is for a caller
+    /// other than `owner` (a delegated source or a finding). Delegated names
+    /// stay local to that caller; findings keep their occurrence refs.
     pub(crate) fn new(
         storage: &ExecutorStorage<'_>,
         owner: EntityId,
         output: CodeRunRawOutput,
         name: Option<String>,
         range: Option<(u64, u64)>,
+        foreign: bool,
     ) -> Result<std::result::Result<Self, Value>> {
         if let Some((start, end)) = range
             && (start >= end || end > output.raw_len)
@@ -189,7 +171,19 @@ impl ResultRead {
             range,
             state,
             secret,
+            foreign,
+            live_cutoff: None,
         }))
+    }
+
+    /// This read, stopped at `control`, the live cutoff of the scoped child
+    /// it is made for (FIX 8233). Each piece of the body it reads, and each
+    /// long loop of its facets, checks it first. A read it cuts stops with
+    /// an error, and its caller answers `reader_task_settled` in its place.
+    /// A read for any other reader holds none and reads no clock.
+    pub(crate) fn with_live_cutoff(mut self, control: Option<&ScopedCallControl>) -> Self {
+        self.live_cutoff = control.cloned();
+        self
     }
 
     /// The result read.
@@ -212,25 +206,36 @@ impl ResultRead {
         self.state.is_tainted()
     }
 
-    /// The reference a reply names the result by: a range by its parent's
-    /// handle, a whole result by its name, or its handle when it has none.
-    fn reference(&self) -> String {
-        match self.range {
-            Some((start, end)) => format!("{}#{start}-{end}", self.output.handle),
-            None => self
-                .name
-                .clone()
-                .unwrap_or_else(|| self.output.handle.clone()),
-        }
+    /// Whether this is a delegated source named in the caller's own run,
+    /// rather than an unnamed child finding or one of the owner's results.
+    fn caller_named(&self) -> bool {
+        self.foreign && self.name.is_some()
     }
 
-    fn body<'s, 'a>(&'s self, storage: &'s ExecutorStorage<'a>) -> RunBody<'s, 'a> {
-        let (base, end) = self.range.unwrap_or((0, self.output.raw_len));
-        RunBody {
-            storage,
-            output: &self.output,
-            base,
-            len: end - base,
+    /// Ranges and unnamed foreign findings keep the owner's exact occurrence.
+    /// A delegated source keeps its caller's name; other whole results keep
+    /// their name or content handle.
+    fn reference(&self) -> String {
+        // A range must not switch occurrences when a local name is rebound
+        // or another child reports the same bytes. Delegated sources retain
+        // the name the caller's job binds to its authorized source.
+        let legacy = || {
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.output.handle.clone())
+        };
+        match self.range {
+            Some((start, end)) if !self.caller_named() => {
+                match occurrence_ref(self.owner, &self.output.path) {
+                    Some(parent) => format!("{parent}#{start}-{end}"),
+                    None => format!("{}#{start}-{end}", legacy()),
+                }
+            }
+            Some((start, end)) => format!("{}#{start}-{end}", legacy()),
+            None if self.foreign && !self.caller_named() => {
+                occurrence_ref(self.owner, &self.output.path).unwrap_or_else(legacy)
+            }
+            None => legacy(),
         }
     }
 
@@ -240,13 +245,13 @@ impl ResultRead {
     /// its parent's, with the range's `ref`, bytes and preview. A body that
     /// is not clean shows no preview and no shape.
     pub(crate) fn card(&self, storage: &ExecutorStorage<'_>) -> Result<Value> {
-        self.card_of(&self.body(storage))
+        self.card_of(&RunBody::of(self, storage))
     }
 
     /// [`Self::card`] over `body`, the result's bytes where they are held: a
     /// run's storage, or a shadow arm's own store (`arm`).
     fn card_of(&self, body: &dyn ResultBody) -> Result<Value> {
-        let mut card = result_handle_json(&self.output);
+        let mut card = result_handle_json(self.owner, &self.output);
         card["name"] = json!(self.name);
         card["taint"] = json!({"state": taint_word(self.state), "secret": self.secret});
         card["more"] = json!(ResultFacet::ALL.map(ResultFacet::as_str));
@@ -258,6 +263,15 @@ impl ResultRead {
                 fields.remove("lines");
             }
         }
+        if self.caller_named() && self.range.is_none() {
+            // Delegated sources keep their caller's name. An unnamed child
+            // finding keeps the native card's exact occurrence ref.
+            card["ref"] = json!(
+                self.name
+                    .clone()
+                    .unwrap_or_else(|| self.output.handle.clone())
+            );
+        }
         if self.state.is_tainted() {
             card["preview"] = json!(withheld_preview(self.secret.as_deref()));
             return Ok(card);
@@ -267,7 +281,7 @@ impl ResultRead {
             let cut = floor_boundary(&head, RANGE_PREVIEW_BYTES);
             card["preview"] = json!(String::from_utf8_lossy(&head[..cut]));
         }
-        card["shape"] = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+        card["shape"] = shape::shape_of(body, head)?;
         if let Some(reason) = unmarked_secret(&json!([card["preview"], card["shape"]])) {
             card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
             card["taint"] = json!({
@@ -336,7 +350,7 @@ impl ResultRead {
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
-        let body = self.body(storage);
+        let body = RunBody::of(self, storage);
         self.read_of(&body, storage.limit_watch(), facet, input, spill)
     }
 
@@ -357,15 +371,27 @@ impl ResultRead {
             watch,
         };
         let reference = self.reference();
+        // Chunk and page refs name the same parent the ref above names: the
+        // owner's immutable occurrence, so a page of a renamed result still
+        // reparses to its occurrence, not to the first result with its
+        // bytes. Only a named delegated source keeps the caller's name,
+        // as its ref does.
+        let parent = if self.caller_named() {
+            self.name
+                .clone()
+                .unwrap_or_else(|| self.output.handle.clone())
+        } else {
+            occurrence_ref(self.owner, &self.output.path).unwrap_or_else(|| {
+                self.name
+                    .clone()
+                    .unwrap_or_else(|| self.output.handle.clone())
+            })
+        };
         let reply = match facet {
             ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
             ResultFacet::Search => search::search(body, &reference, input, &bounds),
-            ResultFacet::Query => {
-                query::query(body, &reference, &self.output.handle, input, &bounds, spill)
-            }
-            ResultFacet::Chunks => {
-                chunks::chunks(body, &reference, &self.output.handle, input, &bounds)
-            }
+            ResultFacet::Query => query::query(body, &reference, &parent, input, &bounds, spill),
+            ResultFacet::Chunks => chunks::chunks(body, &reference, &parent, input, &bounds),
         }?;
         // A spilled selection is a new body, which its own sink's scan marks.
         Ok(match reply {
@@ -395,7 +421,7 @@ impl ResultRead {
         facet: Option<ResultFacet>,
         input: Value,
     ) -> Result<Value> {
-        let read = match Self::new(storage, owner, output, name, range)? {
+        let read = match Self::new(storage, owner, output, name, range, false)? {
             Ok(read) => read,
             Err(refused) => return Ok(refused),
         };
@@ -422,7 +448,7 @@ impl ResultRead {
 /// (OF-067): a body stored before its scan read every rule may hold a secret
 /// no mark names, so a card or an answer that shows one is withheld as a
 /// marked body's is. The body's row keeps its taint as it was.
-fn unmarked_secret(shown: &Value) -> Option<&'static str> {
+pub(crate) fn unmarked_secret(shown: &Value) -> Option<&'static str> {
     crate::batch::secret_scan::write_payload_hit(shown.to_string().as_bytes())
 }
 
@@ -458,16 +484,30 @@ pub(crate) fn card(
         output.clone(),
         name.map(str::to_owned),
         None,
+        false,
     )? {
         Ok(read) => read.card(storage),
         Err(_) => Err(Error::InvariantViolation("a whole result has no range")),
     }
 }
 
+/// The immutable ref of run `owner`'s occurrence at `path`: `None` when the
+/// derivation fails, which leaves the caller on the legacy name or handle.
+fn occurrence_ref(owner: EntityId, path: &str) -> Option<String> {
+    crate::code_run::ResultOccurrence::owned(owner, path)
+        .ok()
+        .map(|occurrence| format!("occurrence:{}", occurrence.id().to_hex()))
+}
+
 /// The run's result a reference names among `outputs`, and the live name
 /// bound to it. `live` is the run's live names, oldest first. Only the
-/// run's own results resolve: a handle names nothing else.
+/// run's own results resolve: a handle names nothing else. An
+/// `occurrence:<hex>` ref names the run's exact occurrence at `owner`'s
+/// path, never the first occurrence that happens to hold the same bytes:
+/// whole-result cards carry one because the guest prefers `ref` over
+/// `handle`.
 pub(crate) fn resolve<'r>(
+    owner: EntityId,
     mut outputs: impl Iterator<Item = &'r CodeRunRawOutput>,
     live: &[&'r CodeRunResultBinding],
     reference: &JsResultRef,
@@ -475,15 +515,45 @@ pub(crate) fn resolve<'r>(
     match reference {
         JsResultRef::Name(name) => {
             let binding = live.iter().find(|binding| binding.name == *name)?;
-            let output = outputs.find(|output| output.handle == binding.handle)?;
+            let output = outputs.find(|output| {
+                output.handle == binding.handle
+                    && (binding.path.is_empty() || output.path == binding.path)
+            })?;
             Some((output.clone(), Some(binding.name.clone())))
         }
         JsResultRef::Handle(handle) => {
+            if let Some(wanted) = handle.strip_prefix("occurrence:") {
+                let mut selected: Option<CodeRunRawOutput> = None;
+                for output in outputs {
+                    let Ok(occurrence) =
+                        crate::code_run::ResultOccurrence::owned(owner, &output.path)
+                    else {
+                        continue;
+                    };
+                    if occurrence.id().to_hex() == wanted {
+                        selected = Some(output.clone());
+                        break;
+                    }
+                }
+                let output = selected?;
+                let name = live
+                    .iter()
+                    .rev()
+                    .find(|binding| {
+                        binding.handle == output.handle
+                            && (binding.path.is_empty() || binding.path == output.path)
+                    })
+                    .map(|binding| binding.name.clone());
+                return Some((output, name));
+            }
             let output = outputs.find(|output| names_result(output, handle))?;
             let name = live
                 .iter()
                 .rev()
-                .find(|binding| binding.handle == output.handle)
+                .find(|binding| {
+                    binding.handle == output.handle
+                        && (binding.path.is_empty() || binding.path == output.path)
+                })
                 .map(|binding| binding.name.clone());
             Some((output.clone(), name))
         }
@@ -647,6 +717,16 @@ impl Scan {
         Self { left: bound }
     }
 
+    /// `bound` plus `credit` already-read bytes the resume re-reads: the
+    /// first `credit` bytes are not charged twice. Reads stay sequential
+    /// from the resume point, so `bound + credit` caps NEW bytes at `bound`
+    /// (FIX 1189).
+    fn with_credit(bound: u64, credit: u64) -> Self {
+        Self {
+            left: bound.saturating_add(credit),
+        }
+    }
+
     /// Up to `len` bytes from `offset`, as many as the bound still allows:
     /// none once it is spent.
     fn read(&mut self, body: &dyn ResultBody, offset: u64, len: usize) -> Result<Vec<u8>> {
@@ -678,22 +758,264 @@ enum Seek {
     Limit(LinePos),
 }
 
-/// The whole body's line index, for a lookup in a window that is the whole
-/// body; a window of it counts its own lines.
-fn whole_index(body: &dyn ResultBody) -> Option<Vec<u64>> {
-    if body.base() == 0 {
-        body.line_index()
+/// A window's line index, in its own offsets: the window-relative start of
+/// each whole-body 64 KiB block inside it, with the newlines before that
+/// start inside the window. Sorted by offset; a short tail has no later
+/// entries. A missing, short, corrupt, single-block or tight-bound shape is
+/// `None`, and the lookup scans (FIX 1186a). A ranged index sought from
+/// inside its prefix stays pending: `blocks` empty until the seek builds
+/// them once at the boundary, or freezes them empty on a failed build.
+struct WindowIndex {
+    blocks: Vec<LinePos>,
+    pending: Option<PendingIndex>,
+}
+
+/// A ranged line index deferred to the seek (B2): pure window metadata —
+/// the whole-body table, the window's base and end, its first block
+/// number and its prefix length. No prefix bytes are read for setup; the
+/// seek builds once at the boundary from its own scan.
+struct PendingIndex {
+    abs: Vec<u64>,
+    base: u64,
+    end: u64,
+    k_block: usize,
+    prefix_len: u64,
+}
+
+/// The bytes of the window's line-index prefix `[base, next_block)`
+/// (B1/B2): the same no-read shape checks as the index plan, with no
+/// `Scan` and no read. `Some(0)` for an aligned window; `None` for a
+/// missing or empty index, a zero length, an unrepresentable `k`, a `k`
+/// past the table, or a prefix past the window.
+fn index_prefix_len(body: &dyn ResultBody) -> Option<u64> {
+    let abs = body.line_index()?;
+    if abs.is_empty() {
+        return None;
+    }
+    let len = body.len();
+    if len == 0 {
+        return None;
+    }
+    let base = body.base();
+    if base == 0 {
+        return Some(0);
+    }
+    let block_bytes = LINE_INDEX_BLOCK_BYTES;
+    let k = base.div_ceil(block_bytes);
+    let next = k.checked_mul(block_bytes)?;
+    let prefix_len = next.checked_sub(base)?;
+    if k >= abs.len() as u64 || prefix_len >= len {
+        return None;
+    }
+    Some(prefix_len)
+}
+
+/// The window's line index for a seek from `from`, in the window's own
+/// offsets. A whole window maps its entries directly with no read. A range
+/// sought from inside its prefix defers to a pending index with no setup
+/// read; sought from at or past the prefix end it keeps the eager prefix
+/// read/rebase, except a setup no block can use is skipped. An impossible
+/// hand cursor, and any missing, short, corrupt or tight-bound shape, is
+/// `None`: the lookup scans.
+fn window_index(
+    body: &dyn ResultBody,
+    scan: &mut Scan,
+    from: LinePos,
+) -> Result<Option<WindowIndex>> {
+    let Some(abs) = body.line_index() else {
+        return Ok(None);
+    };
+    if abs.is_empty() {
+        return Ok(None);
+    }
+    let len = body.len();
+    if len == 0 {
+        return Ok(None);
+    }
+    let base = body.base();
+    let Some(end) = base.checked_add(len) else {
+        return Ok(None);
+    };
+    if from.offset == 0 && from.lfs != 0 {
+        // An inconsistent hand cursor: byte 0 holds no newlines before
+        // it. A pending build would bake the lie into every block, so the
+        // lookup pure-scans exactly as the old code.
+        return Ok(None);
+    }
+    if base == 0 {
+        let mut blocks = Vec::with_capacity(abs.len());
+        let mut prev = 0_u64;
+        for (i, &count) in abs.iter().enumerate() {
+            let Some(start) = (i as u64).checked_mul(LINE_INDEX_BLOCK_BYTES) else {
+                return Ok(None);
+            };
+            if start >= end {
+                break;
+            }
+            if i == 0 && count != 0 {
+                return Ok(None);
+            }
+            if count < prev {
+                return Ok(None);
+            }
+            prev = count;
+            blocks.push(LinePos {
+                offset: start,
+                lfs: count,
+            });
+        }
+        if blocks.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(WindowIndex {
+            blocks,
+            pending: None,
+        }));
+    }
+    let block_bytes = LINE_INDEX_BLOCK_BYTES;
+    let k = base.div_ceil(block_bytes);
+    let Some(next) = k.checked_mul(block_bytes) else {
+        return Ok(None);
+    };
+    let Some(prefix_len) = next.checked_sub(base) else {
+        return Ok(None);
+    };
+    if k >= abs.len() as u64 || prefix_len >= len {
+        return Ok(None);
+    }
+    let k_block = k as usize;
+    if from.offset < prefix_len {
+        // The seek may end inside the prefix: defer the build to the
+        // boundary, with no setup read.
+        return Ok(Some(WindowIndex {
+            blocks: Vec::new(),
+            pending: Some(PendingIndex {
+                abs,
+                base,
+                end,
+                k_block,
+                prefix_len,
+            }),
+        }));
+    }
+    // A setup no candidate can use is skipped: with no block starting
+    // strictly after `from`, no jump can satisfy `candidate.offset >
+    // at.offset`, so the index is provably useless and the pure scan is
+    // old-exact. Block offsets need no prefix read.
+    let mut after = false;
+    for i in k_block..abs.len() {
+        let Some(start) = (i as u64).checked_mul(block_bytes) else {
+            break;
+        };
+        if start >= end {
+            break;
+        }
+        if start - base > from.offset {
+            after = true;
+            break;
+        }
+    }
+    if !after {
+        return Ok(None);
+    }
+    let base_lfs = if prefix_len == 0 {
+        abs[k_block]
     } else {
-        None
+        if scan.left <= prefix_len {
+            return Ok(None);
+        }
+        let Ok(take) = usize::try_from(prefix_len) else {
+            return Ok(None);
+        };
+        let prefix = scan.read(body, 0, take)?;
+        if prefix.len() != take {
+            return Ok(None);
+        }
+        let counted = count_lf(&prefix);
+        let Some(base_lfs) = abs[k_block].checked_sub(counted) else {
+            return Ok(None);
+        };
+        base_lfs
+    };
+    let mut blocks = Vec::with_capacity(abs.len().saturating_sub(k_block));
+    for (i, &count) in abs.iter().enumerate().skip(k_block) {
+        let Some(start) = (i as u64).checked_mul(block_bytes) else {
+            return Ok(None);
+        };
+        if start >= end {
+            break;
+        }
+        if count < base_lfs {
+            return Ok(None);
+        }
+        if i > k_block && count < abs[i - 1] {
+            return Ok(None);
+        }
+        let Some(offset) = start.checked_sub(base) else {
+            return Ok(None);
+        };
+        let Some(lfs) = count.checked_sub(base_lfs) else {
+            return Ok(None);
+        };
+        blocks.push(LinePos { offset, lfs });
+    }
+    if blocks.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(WindowIndex {
+        blocks,
+        pending: None,
+    }))
+}
+
+/// The pending index's blocks from the seek's own prefix count (B2): the
+/// existing re-base math over `counted` in place of a setup read. `None`
+/// on underflow, invalid count, nonmonotonicity or emptiness: the seek
+/// freezes empty blocks and continues its pure scan.
+fn build_pending(meta: &PendingIndex, counted: u64) -> Option<Vec<LinePos>> {
+    let base_lfs = meta.abs.get(meta.k_block)?.checked_sub(counted)?;
+    let mut blocks = Vec::with_capacity(meta.abs.len().saturating_sub(meta.k_block));
+    for (i, &count) in meta.abs.iter().enumerate().skip(meta.k_block) {
+        let start = (i as u64).checked_mul(LINE_INDEX_BLOCK_BYTES)?;
+        if start >= meta.end {
+            break;
+        }
+        if count < base_lfs {
+            return None;
+        }
+        if i > meta.k_block && count < meta.abs[i - 1] {
+            return None;
+        }
+        let offset = start.checked_sub(meta.base)?;
+        let lfs = count.checked_sub(base_lfs)?;
+        blocks.push(LinePos { offset, lfs });
+    }
+    (!blocks.is_empty()).then_some(blocks)
+}
+
+/// Moves `at` to the last block whose count is below `lfs` — that newline
+/// is in it — when the jump moves forward past what the scan reached.
+fn jump_to_block(blocks: &[LinePos], at: &mut LinePos, lfs: u64) {
+    let found = blocks.partition_point(|pos| pos.lfs < lfs);
+    if found > 0 {
+        let candidate = blocks[found - 1];
+        if candidate.offset > at.offset && candidate.lfs >= at.lfs {
+            *at = candidate;
+        }
     }
 }
 
 /// Where the line after the `lfs`-th newline starts, looking forward from
 /// `from` (a line start, or a place no earlier than the line's own start).
-/// With the line index it reads only the block the line starts in.
+/// With the line index it reads only the block the line starts in. A
+/// pending index builds once at the prefix boundary from the seek's own
+/// scan: targets and limits inside the prefix return before any build
+/// with old-exact charging, and a failed build freezes empty blocks and
+/// continues the pure scan from the boundary. Each step checks the read's
+/// live cutoff first (FIX 8233).
 fn seek_line(
     body: &dyn ResultBody,
-    index: Option<&[u64]>,
+    mut index: Option<&mut WindowIndex>,
     from: LinePos,
     lfs: u64,
     scan: &mut Scan,
@@ -702,24 +1024,50 @@ fn seek_line(
         return Ok(Seek::At(from.offset));
     }
     let mut at = from;
-    if let Some(index) = index {
-        // The last block whose count is below `lfs`: that newline is in it.
-        let block = index
-            .partition_point(|count| *count < lfs)
-            .saturating_sub(1);
-        if let Some(&count) = index.get(block) {
-            let start = block as u64 * LINE_INDEX_BLOCK_BYTES;
-            if start > at.offset {
-                at = LinePos {
-                    offset: start,
-                    lfs: count,
-                };
-            }
-        }
+    if let Some(built) = index.as_deref()
+        && built.pending.is_none()
+    {
+        jump_to_block(&built.blocks, &mut at, lfs);
     }
     let len = body.len();
     while at.offset < len {
-        let piece = scan.read(body, at.offset, READ_PIECE_BYTES)?;
+        body.live_cutoff().check()?;
+        let mut want = READ_PIECE_BYTES;
+        if let Some(idx) = index.as_deref_mut()
+            && let Some(prefix_len) = idx.pending.as_ref().map(|meta| meta.prefix_len)
+        {
+            if at.offset > prefix_len {
+                // Past the boundary with no tiling count: the count is not
+                // the prefix's, so the build is refused and the pure scan
+                // continues. Unreachable from the window's own pending
+                // tokens, which start below the boundary and consume at it.
+                idx.pending = None;
+            } else if at.offset == prefix_len {
+                // The FIRST boundary crossing consumes pending whether the
+                // build succeeds or falls back; it is never retried in
+                // this call, and later seeks reuse the frozen blocks. At
+                // this point `at.lfs` is exactly the eager setup's counted
+                // prefix lines for a consistent `from`.
+                match idx
+                    .pending
+                    .take()
+                    .and_then(|meta| build_pending(&meta, at.lfs))
+                {
+                    Some(built) => {
+                        idx.blocks = built;
+                        jump_to_block(&idx.blocks, &mut at, lfs);
+                    }
+                    None => idx.blocks = Vec::new(),
+                }
+            } else {
+                // Below the boundary with the build still ahead: cap the
+                // read so it cannot cross `prefix_len` before the build.
+                // Every byte still charges exactly once; only piece
+                // boundaries move.
+                want = want.min(usize::try_from(prefix_len - at.offset).unwrap_or(usize::MAX));
+            }
+        }
+        let piece = scan.read(body, at.offset, want)?;
         if piece.is_empty() {
             return Ok(Seek::Limit(at));
         }
@@ -733,22 +1081,24 @@ fn seek_line(
 }
 
 /// The newlines before `offset`, from the line index's block when there is
-/// one, else counted from the start. `None` past the scan bound.
+/// one, else counted from the start. `None` past the scan bound. An
+/// unbuilt pending index holds no blocks, so it pure-scans as `None` does.
+/// Each step checks the read's live cutoff first (FIX 8233).
 fn lfs_before(
     body: &dyn ResultBody,
-    index: Option<&[u64]>,
+    index: Option<&WindowIndex>,
     offset: u64,
     scan: &mut Scan,
 ) -> Result<Option<u64>> {
-    let block = offset / LINE_INDEX_BLOCK_BYTES;
-    let mut at = usize::try_from(block)
-        .ok()
-        .and_then(|block| index.and_then(|index| index.get(block)))
-        .map_or(LinePos::START, |&count| LinePos {
-            offset: block * LINE_INDEX_BLOCK_BYTES,
-            lfs: count,
-        });
+    let mut at = LinePos::START;
+    if let Some(index) = index {
+        let found = index.blocks.partition_point(|pos| pos.offset <= offset);
+        if found > 0 {
+            at = index.blocks[found - 1];
+        }
+    }
     while at.offset < offset {
+        body.live_cutoff().check()?;
         let want = usize::try_from(offset - at.offset)
             .unwrap_or(READ_PIECE_BYTES)
             .min(READ_PIECE_BYTES);

@@ -225,7 +225,7 @@ pub(super) fn put_retrieval_age(
 }
 
 pub(super) fn prune_retrieval_runs(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     reserve: usize,
 ) -> Result<bool> {
@@ -236,7 +236,7 @@ pub(super) fn prune_retrieval_runs(
         return Ok(false);
     };
     let (max_age_secs, max_runs) = policy.effective();
-    let now = store.clock.now_recorded_at();
+    let now = store.clock().now_recorded_at();
     let cutoff = now.saturating_sub(max_age_secs);
     // Collect keys before any delete; heed forbids mutating under an active cursor.
     let age_rows = RETRIEVAL_AGE
@@ -257,7 +257,7 @@ pub(super) fn prune_retrieval_runs(
 /// Publication and finalization must refuse when the manifest is rejected;
 /// unlike a healthy open they cannot use an invalid policy to admit a row.
 pub(super) fn require_prune_retrieval_runs(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     reserve: usize,
 ) -> Result<()> {

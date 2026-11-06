@@ -13,17 +13,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
-| `src/embedded.rs` | src | m | 1 fn · 1 type · 1 re-export · 22 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
+| `src/embedded.rs` | src | m | 1 fn · 1 type · 1 re-export · 23 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/embedded/host_root.rs` | src | s | 1 crate-vis | — | The embedded half of [`crate::OneironClient::open_with_host_root`] (FIX 4730): the shared open, then this… |
 | `src/embedded/read_credential.rs` | src | s | 1 fn | — | A delegated reader's credential on an embedded handle (FIX 647): the verified slip the server's HTTP door… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
 | `src/export_to.rs` | src | s | 1 fn | — | `vault.export` written into the caller's sink (FIX 3676): over a server, the export is kept there as a… |
-| `src/generated/agent_verbs.rs` | src | generated | 1220 fn | — | — |
+| `src/generated/agent_verbs.rs` | src | generated | 1264 fn | — | — |
 | `src/in_process.rs` | src | s | 3 struct · 1 trait · 1 fn | InProcessReply, InProcessRequest, InProcessStream, InProcessTransport | A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket… |
 | `src/invocation.rs` | src | s | 2 fn · 1 crate-vis | — | Client invocation ids (ARCH-0080 §3, OF-580) |
 | `src/lens_frames.rs` | src | s | 2 struct · 1 enum · 2 fn | CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest | A host-rendered lens card's events and its close (OF-181), over the server routes `POST… |
-| `src/lib.rs` | src | m | 3 struct · 21 fn · 1 mod · 5 re-export | HostRootProfile, OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
+| `src/lib.rs` | src | m | 3 struct · 22 fn · 1 mod · 6 re-export | HostRootProfile, OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
 | `src/llm.rs` | src | s | 1 struct · 1 trait · 2 fn | OwnServerTransport, RemoteLlmClient | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
+| `src/native_limit_questions.rs` | src | s | 1 struct · 3 crate-vis | NativeLimitQuestion | Native SDK host snapshots of the shared vault's engine-limit crossings |
 | `src/remote/checkpoint.rs` | src | s | 2 fn | — | A pinned authority checkpoint's image and attestations (OF-469), over the server route `GET… |
 | `src/remote/custody_submit.rs` | src | s | 2 crate-vis | — | An owner's sealed custody change past the facade's request ceiling (FIX 11454) |
 | `src/remote/export_transfer.rs` | src | s | 2 crate-vis | — | A kept whole-vault export's transfer routes (FIX 3676): `GET` and `DELETE… |
@@ -31,7 +32,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/pairing.rs` | src | s | 3 crate-vis | — | — |
 | `src/remote/renewal.rs` | src | s | 1 fn | — | FIX 3377: a paired owner device renews its own credential over the server route `POST /v1/core/slips/renew` |
-| `src/remote/response.rs` | src | s | 10 crate-vis | — | — |
+| `src/remote/request.rs` | src | s | 6 crate-vis | — | Serialized facade requests, spillable before their HTTP body is read |
+| `src/remote/response.rs` | src | s | 11 crate-vis | — | — |
 | `src/remote/tests.rs` | test | s | — | — | — |
 | `src/remote/wire.rs` | src | s | 3 crate-vis | — | The transport seam under [`RemoteClient`] (OF-237): what carries a request this client signed, and the reply… |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |

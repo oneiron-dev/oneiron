@@ -2,7 +2,7 @@
 
 use super::{
     ContentPart, FatalLlmError, FinishReason, LlmMessage, LlmMessageRole, LlmResult,
-    LlmStreamEvent, LlmUsage, ReplyAssertions,
+    LlmStreamEvent, LlmUsage, ReasoningPartKind, ReplyAssertions,
 };
 use std::collections::BTreeMap;
 
@@ -12,6 +12,8 @@ enum PendingPart {
     Reasoning {
         text: String,
         signature: Option<String>,
+        reasoning_kind: ReasoningPartKind,
+        data: Option<String>,
     },
     Tool {
         call_id: String,
@@ -60,6 +62,17 @@ impl StreamAssembly {
         text: &str,
         signature: Option<String>,
     ) -> LlmResult<Vec<LlmStreamEvent>> {
+        self.reasoning_with_kind(id, text, signature, ReasoningPartKind::Full, None)
+    }
+
+    pub fn reasoning_with_kind(
+        &mut self,
+        id: &str,
+        text: &str,
+        signature: Option<String>,
+        reasoning_kind: ReasoningPartKind,
+        data: Option<String>,
+    ) -> LlmResult<Vec<LlmStreamEvent>> {
         let mut events = Vec::new();
         if !self.pending.contains_key(id) {
             self.start(
@@ -67,20 +80,29 @@ impl StreamAssembly {
                 PendingPart::Reasoning {
                     text: String::new(),
                     signature: signature.clone(),
+                    reasoning_kind,
+                    data: data.clone(),
                 },
             )?;
             events.push(LlmStreamEvent::ReasoningStart {
                 part_id: id.into(),
                 signature: signature.clone(),
+                reasoning_kind,
+                data: data.clone(),
             });
         }
         let Some(PendingPart::Reasoning {
             text: value,
             signature: stored,
+            reasoning_kind: stored_kind,
+            data: stored_data,
         }) = self.pending.get_mut(id)
         else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
+        if *stored_kind != reasoning_kind || *stored_data != data {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
         if signature.is_some() {
             *stored = signature;
         }
@@ -160,9 +182,22 @@ impl StreamAssembly {
                 ContentPart::Text { text },
                 LlmStreamEvent::TextEnd { part_id: id.into() },
             ),
-            PendingPart::Reasoning { text, signature } => (
-                ContentPart::Reasoning { text, signature },
-                LlmStreamEvent::ReasoningEnd { part_id: id.into() },
+            PendingPart::Reasoning {
+                text,
+                signature,
+                reasoning_kind,
+                data,
+            } => (
+                ContentPart::Reasoning {
+                    text,
+                    signature: signature.clone(),
+                    reasoning_kind,
+                    data,
+                },
+                LlmStreamEvent::ReasoningEnd {
+                    part_id: id.into(),
+                    signature,
+                },
             ),
             PendingPart::Tool {
                 call_id,
@@ -209,8 +244,24 @@ impl StreamAssembly {
             }
         }
         let content = self.content();
-        if content.is_empty() || content.iter().all(|p| matches!(p, ContentPart::Text { text } | ContentPart::Reasoning { text, .. } if text.is_empty())) {
-            return Err(if reason == FinishReason::ContentFiltered { FatalLlmError::ContentFiltered } else { FatalLlmError::EmptyResponse }.into());
+        if content.is_empty()
+            || content.iter().all(|p| match p {
+                ContentPart::Text { text } => text.is_empty(),
+                ContentPart::Reasoning {
+                    text,
+                    signature,
+                    data,
+                    ..
+                } => text.is_empty() && signature.is_none() && data.is_none(),
+                _ => false,
+            })
+        {
+            return Err(if reason == FinishReason::ContentFiltered {
+                FatalLlmError::ContentFiltered
+            } else {
+                FatalLlmError::EmptyResponse
+            }
+            .into());
         }
         self.done = true;
         events.push(LlmStreamEvent::Done {

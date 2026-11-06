@@ -74,19 +74,16 @@ impl Vault {
     }
 }
 
-/// The NOTE laws an EntityDoc-plane commit of `note`'s text keeps: the NOTE
-/// body bound, and a sealed NOTE's frozen document. `changes` answers whether
-/// the commit moves the document; it is asked only of a sealed NOTE.
+/// The NOTE law an EntityDoc-plane commit of `note`'s text keeps: a sealed
+/// NOTE's frozen document. No body length refuses the commit (rule 5, FIX
+/// 10345). `changes` answers whether the commit moves the document; it is
+/// asked only of a sealed NOTE.
 pub(crate) fn check_doc_plane_note_commit_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
-    text: &str,
     changes: impl FnOnce() -> Result<bool>,
 ) -> Result<()> {
-    if text.len() > super::document::MAX_NOTE_BYTES {
-        return Err(invalid("NOTE body exceeds bound"));
-    }
     if super::lifecycle::note_sealed_in_txn(store, txn, note)? && changes()? {
         return Err(invalid(
             "this NOTE is sealed; its document is frozen and an edit opens a fork",

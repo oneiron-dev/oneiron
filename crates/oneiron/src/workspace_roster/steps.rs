@@ -290,6 +290,7 @@ pub(super) fn grant_member_bundle(
                 entity_type: ENTITY_TYPE_FEDERATION_GRANT,
                 occurred,
                 learned_at: intent.occurred_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -753,8 +754,19 @@ pub(super) fn ensure_companion_profile_grant(
             if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            let existing =
-                crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let existing = match crate::access_grant::decode_access_grant_body(body) {
+                Ok(existing) => existing,
+                // FIX 4980: an erased standing grant is no longer the
+                // expected live grant, so replay reports the existing
+                // already-bound mismatch.
+                Err(_) if crate::access_grant::decode_erased_grant_body(body).is_ok() => {
+                    return Err(invalid(
+                        "profile_grant_ref is already bound to a different access grant",
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
             if existing != expected {
                 return Err(invalid(
                     "profile_grant_ref is already bound to a different access grant",
@@ -775,6 +787,7 @@ pub(super) fn ensure_companion_profile_grant(
                     end: intent.occurred_at,
                 },
                 learned_at: intent.occurred_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -837,6 +850,7 @@ fn put_roster_entity_in_txn(
             entity_type,
             occurred: TimeRange { start: at, end: at },
             learned_at: at,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: false,

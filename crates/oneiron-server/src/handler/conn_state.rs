@@ -15,9 +15,18 @@ pub(super) struct ConnState {
     limit_asked: bool,
     /// Only windows rechecked under a live bound grant can exchange full VVs.
     pub(super) promoted_windows: std::collections::HashMap<WindowKey, SyncSelector>,
+    /// The filtered copy of each window this federation socket was last
+    /// sent, with the selector that admitted it: the rows whose by-reference
+    /// bodies it is served (FIX 12118). Its copies are bounded; a dropped
+    /// one is filtered again on its next use.
+    pub(super) admitted_windows: super::admitted_windows::AdmittedWindows,
     /// Each promoted window's baseline: the home's version when this socket promoted it. A
     /// vector behind it never receives older history. It only rises.
     pub(super) promotion_baselines: std::collections::HashMap<WindowKey, loro::VersionVector>,
+    /// The version fraction of this socket's own updates held on their ruled
+    /// cause, per window (FIX 10598): witnessed back to this socket only, so
+    /// its queue retires the held updates. Never another socket's input.
+    pub(super) held_window_vv: std::collections::HashMap<WindowKey, loro::VersionVector>,
     pub(super) documents:
         std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
     /// Owner-lane NOTE subscriptions of an own device, with its last VV.
@@ -37,8 +46,15 @@ pub(super) struct ConnState {
     pub(super) bound_auth: Option<CoreAuth>,
     /// Where this socket's peer sits; a bound auth reads from there.
     pub(super) locality: oneiron::claim::CallerLocality,
+    /// This socket's actual upgrade observations, for signing audit only.
+    pub(super) signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// This socket's last touch that named an item by reference, so its
+    /// parts slice one export (FIX 12116); the next touch replaces it.
+    pub(super) residence_touch: Option<crate::livequery::ResidenceTouchStage>,
+    /// Tracked durable-work attachments, independent of the verb-RPC gate.
+    pub(super) residence_work: crate::livequery::ResidenceWorkState,
     /// The authority entry this socket's machine appends in parts, held
     /// until it is whole; it goes with the socket (FIX 8246).
     pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
@@ -61,6 +77,11 @@ pub(super) struct ConnState {
     /// socket's loop takes it, through `&mut`; the mutex keeps the state
     /// `Sync`.
     pub(super) asset_bodies: std::sync::Mutex<oneiron::sync::AssetBodySession>,
+    /// The peer's hello listed sealed world-update frames (DEC-0005 fix 8).
+    pub(super) sealed_world_updates: bool,
+    /// The peer asked for sealed world updates on this socket: stored ones
+    /// are pushed to it from then on.
+    pub(super) sealed_updates_live: bool,
 }
 
 impl ConnState {
@@ -69,7 +90,9 @@ impl ConnState {
             subscribed_windows: SubscribedWindows::default(),
             limit_asked: false,
             promoted_windows: std::collections::HashMap::new(),
+            admitted_windows: super::admitted_windows::AdmittedWindows::default(),
             promotion_baselines: std::collections::HashMap::new(),
+            held_window_vv: std::collections::HashMap::new(),
             documents: std::collections::HashMap::new(),
             owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
@@ -78,7 +101,10 @@ impl ConnState {
             protocol_version,
             bound_auth: None,
             locality: oneiron::claim::CallerLocality::OffDevice,
+            signing_request_transport: None,
             residence_index: None,
+            residence_touch: None,
+            residence_work: Default::default(),
             authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
@@ -86,6 +112,8 @@ impl ConnState {
             window_pad_carrier: std::collections::HashSet::new(),
             repo_copy_generations: std::sync::Mutex::default(),
             asset_bodies: std::sync::Mutex::default(),
+            sealed_world_updates: false,
+            sealed_updates_live: false,
         }
     }
 

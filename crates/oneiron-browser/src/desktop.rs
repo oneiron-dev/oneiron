@@ -451,7 +451,23 @@ impl DesktopSession {
 
     /// The windows on screen.
     fn listed(&self) -> Result<Vec<Listed>, BrowserError> {
-        let reply = self.tool("list_windows", json!({"on_screen_only": true}))?;
+        self.listed_until(None)
+    }
+
+    /// The windows on screen, giving the RPC no longer than `until` when
+    /// set: a settle poll's recovery never stretches past its cap (FIX
+    /// 3782, REVIEW-4454 P1).
+    fn listed_until(&self, until: Option<Instant>) -> Result<Vec<Listed>, BrowserError> {
+        let bound = match until {
+            Some(until) => {
+                Instant::now() + CALL.min(until.saturating_duration_since(Instant::now()))
+            }
+            None => Instant::now() + CALL,
+        };
+        let reply = self
+            .mcp
+            .tool("list_windows", json!({"on_screen_only": true}), bound)
+            .map_err(BrowserError::from)?;
         Ok(reply
             .output
             .get("windows")

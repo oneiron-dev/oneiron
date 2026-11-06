@@ -183,6 +183,14 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
                 Value::from(ingress.canonical_store.to_hex()),
             ),
         ],
+        RepoProjectionRecord::CommitOriginals { copy, originals } => vec![
+            ("kind", Value::from("commit_originals")),
+            ("copy", oid(copy)),
+            (
+                "originals",
+                Value::Array(originals.iter().map(oid).collect()),
+            ),
+        ],
     }
 }
 

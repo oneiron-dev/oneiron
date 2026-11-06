@@ -116,6 +116,38 @@ pub(crate) fn bind_staged_role_swap_in_txn(
     RUNS.put(&vault.store, txn, &receipt.run, &run)
 }
 
+/// Takes back the training side of an embedder swap whose manifest binding and
+/// space move were already undone. The swap receipts stay as history; only the
+/// role's current-receipt index and the run's state move back.
+pub(crate) fn undo_training_role_swap_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut run = run_in_txn(vault, txn, id)?;
+    if run.state != TrainingState::Bound {
+        return Ok(());
+    }
+    let (role, _) = run
+        .plan
+        .target
+        .role_binding()
+        .ok_or_else(|| invalid(QUESTION_HAS_NO_ROLE))?;
+    let key = role_key(role)?;
+    if ROLES
+        .get(&vault.store, txn, &key)?
+        .is_some_and(|receipt| receipt.run == *id)
+    {
+        ROLES.delete(&vault.store, txn, &key)?;
+    }
+    run.state = if run.evaluation.is_some() {
+        TrainingState::Scored
+    } else {
+        TrainingState::Returned
+    };
+    RUNS.put(&vault.store, txn, id, &run)
+}
+
 /// Every training run as `txn` reads it, in id order. Read-only.
 pub(crate) fn training_runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<TrainingRun>> {
     RUNS.iter_from(&vault.store, txn, &[])?
@@ -264,7 +296,7 @@ impl Vault {
         id: &EntityId,
         evaluation: &HeldOutResult,
     ) -> Result<TrainingRun> {
-        self.with_write_txn_grouped(|txn| {
+        let run = self.with_write_txn_grouped(|txn| {
             let mut run = run_in_txn(self, txn, id)?;
             if let Some(existing) = &run.evaluation {
                 if existing == evaluation {
@@ -291,9 +323,12 @@ impl Vault {
             run.source_rows = crate::skill_optimize::live_source_rows_in(self, txn, sources)?;
             run.evaluation = Some(evaluation.clone());
             run.state = TrainingState::Scored;
+            run.hold = None;
             RUNS.put(&self.store, txn, id, &run)?;
             Ok(run)
-        })
+        })?;
+        crate::task_verb::issue_training_swap_asks(self, self.store.clock.now_recorded_at());
+        Ok(run)
     }
 
     /// No connector, completion or evaluation calls this door. The owner is
@@ -307,8 +342,51 @@ impl Vault {
     ) -> Result<RoleSwapOutcome> {
         self.recheck_owner(owner)?;
         self.with_write_txn_grouped(|txn| {
-            self.approve_training_role_swap_in_txn(txn, owner, id, choice, teacher_approval, None)
+            let outcome = self.approve_training_role_swap_in_txn(
+                txn,
+                owner,
+                id,
+                choice,
+                teacher_approval,
+                None,
+            )?;
+            let now = self.store.clock.now_recorded_at();
+            crate::task_verb::void_training_swap_asks_in(self, txn, id, None, now)?;
+            Ok(outcome)
         })
+    }
+
+    /// Cancel a trained embedder swap while its binding still waits or fills.
+    /// The staged move is abandoned in the same owner write; an applied swap
+    /// keeps using the existing space-move undo door.
+    pub fn cancel_training_embedder_swap(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+    ) -> Result<PendingEmbedderBinding> {
+        let setup = self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let run = run_in_txn(self, txn, id)?;
+            let (role, _) = run
+                .plan
+                .target
+                .role_binding()
+                .ok_or_else(|| invalid(QUESTION_HAS_NO_ROLE))?;
+            if role != ModelRole::RetrievalEmbedder {
+                return Err(invalid(
+                    "only a trained embedder swap stages a binding move",
+                ));
+            }
+            if crate::embed::live_binding_move_in(self, txn, id)?.is_none() {
+                return Err(invalid("the training run has no pending embedder swap"));
+            }
+            let (_, setup) = crate::embed::undo_staged_binding_in_txn(self, txn, id, actor)?;
+            Ok(setup)
+        })?;
+        self.embedding_setup_committed(setup);
+        self.embedding_move_ended();
+        self.embedder_binding_move(id)?
+            .ok_or_else(|| invalid("the cancelled training embedder swap is missing"))
     }
 
     /// The owner's direct swap of the result they viewed (OF-577). In one
@@ -435,6 +513,17 @@ impl Vault {
                 "a trained checkpoint cannot move its role to another slot",
             ));
         }
+        // An evaluated swap preflights its cohort before the manifest moves:
+        // its ask settles these errors as NeedsSetup in the same commit.
+        // Write the manifest before counting any exposure; overrides open none.
+        // The staged embedder path writes no manifest here.
+        if matches!(&choice, SwapChoice::Evaluated) {
+            self.eval_cohort_serves_in_txn(txn, &run.corpus.cohort.id)?;
+        }
+        if role != ModelRole::RetrievalEmbedder {
+            manifest.roles.insert(role, binding.clone());
+            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
+        }
         let promotion_exposure = if matches!(&choice, SwapChoice::Evaluated) {
             let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?)
                 .to_hex()
@@ -479,8 +568,6 @@ impl Vault {
                 crate::embed::stage_embedder_binding_in_txn(self, txn, source, previous, binding)?;
             return Ok(RoleSwapOutcome::Staged(Box::new(pending)));
         }
-        manifest.roles.insert(role, receipt.binding.clone());
-        self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
         SWAPS.put(&self.store, txn, &receipt.id, &receipt)?;
         ROLES.put(&self.store, txn, &key, &receipt)?;
         run.state = TrainingState::Bound;

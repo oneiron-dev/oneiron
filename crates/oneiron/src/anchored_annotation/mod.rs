@@ -47,10 +47,13 @@
 //! ([`ReanchorOp`]) is a MINIMAL local representation — see its docs for the
 //! ARTL-3 reconciliation seam.
 mod anchor_text;
+mod body_anchor;
 mod codec;
 mod comment_parts;
 mod conversation;
+mod deck_anchor;
 mod docx_settle;
+mod failed_stamps;
 mod model;
 mod pptx_reanchor;
 mod pptx_settle;
@@ -63,11 +66,11 @@ mod verbs;
 mod wire;
 pub use self::recovery::{ReattachOffer, UnattachedThread};
 pub use self::wire::{
-    AnnotationAnchorView, AnnotationAssignRequest, AnnotationBriefView, AnnotationCommentRequest,
-    AnnotationCommentView, AnnotationDriftView, AnnotationLocator, AnnotationPinRequest,
-    AnnotationResolution, AnnotationStateRequest, AnnotationThreadOpenRequest,
-    AnnotationThreadRequest, AnnotationThreadState, AnnotationThreadView, ArtifactUnitView,
-    ArtifactUnitsRequest, ArtifactUnitsView,
+    AnnotationAnchorView, AnnotationAssignRequest, AnnotationBodyAnchorView, AnnotationBriefView,
+    AnnotationCommentRequest, AnnotationCommentView, AnnotationDriftView, AnnotationLocator,
+    AnnotationPinRequest, AnnotationResolution, AnnotationStateRequest,
+    AnnotationThreadOpenRequest, AnnotationThreadRequest, AnnotationThreadState,
+    AnnotationThreadView, ArtifactUnitView, ArtifactUnitsRequest, ArtifactUnitsView,
 };
 pub(crate) use threads::thread_brief_ref;
 
@@ -76,8 +79,8 @@ pub use self::model::{
     A1Range, ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE,
     ANNOTATION_COMMENT_TEXT_MAX_BYTES, ANNOTATION_LOCATOR_RANGE_MAX_BYTES,
     ANNOTATION_LOCATOR_TEXT_MAX_BYTES, ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment,
-    AnnotationThread, DriftMarker, Locator, ReanchorOp, ReanchorOutcome, ReanchorSummary,
-    TaskBrief, ThreadState,
+    AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOp, ReanchorOutcome,
+    ReanchorSummary, TaskBrief, ThreadState,
 };
 pub use self::reanchor::replay_locator;
 

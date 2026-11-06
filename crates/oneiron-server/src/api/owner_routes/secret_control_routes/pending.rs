@@ -13,7 +13,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::pending_custody::{self, PendingPage, ReceiptView};
@@ -27,6 +27,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/custody/pending",
                 summary: "Each restore batch whose credentials wait on their source's evidence, by handle, and each batch an owner kept, with its receipt and a generic owner card.",
                 row: None,
+                shape: None,
             },
             get(pending),
         ),
@@ -36,6 +37,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/custody/pending",
                 summary: "With {\"batch\", \"confirm\": \"keep_without_source\"}: keeps the batch without its source's evidence, the owner's election; returns its receipt.",
                 row: None,
+                shape: Some(RestShape::json(
+                    release_body_schema,
+                    pending_release_receipt_schema,
+                )),
             },
             post(release),
         ),

@@ -16,8 +16,8 @@ use super::consent::{
     gate_decision_matches_pending_candidate, reject_gate_decision,
 };
 use super::dreamer_run::{
-    dreamer_isolation_decision, dreamer_precommit_denial, dreamer_run_id_from_write_envelope,
-    pending_consent_dreamer_run_id,
+    dreamer_attempt_id_from_write_envelope, dreamer_isolation_decision, dreamer_precommit_denial,
+    dreamer_run_id_from_write_envelope, pending_consent_dreamer_run_id,
 };
 use super::peripheral::{
     ClaimGateWrite, GateWriteMode, auto_check_value_preview, edge_actor_class_str,
@@ -228,6 +228,7 @@ fn check_claim_policy_for_write_with_record_inner(
         defer_metrics_until_commit,
         transition,
         owner_authored,
+        pending_prompt,
     } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
@@ -598,10 +599,14 @@ fn check_claim_policy_for_write_with_record_inner(
             grant_ref: weave_grant,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
-            context: decision_context::claim_decision_context(
+            context: decision_context::claim_decision_context_store_in(
+                store,
+                &*wtxn,
                 id,
                 body,
                 input.provenance.dreamer_run_id.as_deref(),
+                envelope.and_then(dreamer_attempt_id_from_write_envelope),
+                pending_prompt,
             ),
             redacted_at: None,
         };

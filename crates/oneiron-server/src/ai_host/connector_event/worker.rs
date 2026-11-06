@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::context_board::{TurnWake, turn_wake_line};
 use oneiron::ingest::ConnectorWitness;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::memory::TranscriptMessage;
@@ -59,6 +60,17 @@ pub(crate) fn run_connector_reply_job(
     }
     project_comm_touches(server.vault());
     result
+}
+
+/// Repays completed jobs through the very same answerability policy as sends,
+/// without drafting, dispatching or charging another reply.
+pub(crate) fn repair_connector_reply_witnesses(
+    vault: &oneiron::Vault,
+    now: u64,
+) -> oneiron::memory::MemoryResult<usize> {
+    vault.repair_connector_reply_witnesses(REPLY_REF, now, |job| {
+        Ok(super::answerable_origin(&job.event, job.agent)?.is_some())
+    })
 }
 
 /// Runs one communication projector pass after a job: the message's inbound
@@ -136,9 +148,16 @@ fn answer(
                     message(LlmMessageRole::System, job.budget_steering.join("\n")),
                 );
             }
+            // FIX 15011: the event started this turn, so the wake opener
+            // closes it, after the event's briefing and outside its foreign
+            // text. An empty answer stays the no-send outcome below.
             context.push(message(
                 LlmMessageRole::User,
                 briefing(&origin, event_id, &text),
+            ));
+            context.push(message(
+                LlmMessageRole::User,
+                turn_wake_line(vault.now_recorded_ms(), TurnWake::Channel),
             ));
             let answer = generate(
                 server,
@@ -153,13 +172,18 @@ fn answer(
             if answer.is_empty() {
                 return Ok(());
             }
-            vault.save_connector_reply_body(
-                event_id,
+            let Some(kept) = vault.save_connector_reply_body(
+                &job.event,
                 agent,
                 REPLY_REF,
                 answer,
                 super::super::unix_now(),
             )?
+            else {
+                result.reason = Some(Error::EntityNotFound.to_string());
+                return Ok(());
+            };
+            kept
         }
     };
     result.body_ref = Some(kept.content_ref.clone());
@@ -190,6 +214,12 @@ fn answer(
     };
     result.outcome = Some(dispatched.outcome.as_str().to_owned());
     result.gate_reason_codes = dispatched.gate_reason_codes;
+    // FIX 11026: a requeue waits for the edge the receipt names.
+    result.retry_at = dispatched
+        .receipt
+        .fields
+        .get("retry_at")
+        .and_then(|edge| edge.parse().ok());
     // Only words that reached the channel join the conversation: a held,
     // degraded, suppressed, let-go, failed or ambiguous reply was not said,
     // and a later run that delivers it witnesses it then. The kept words,

@@ -13,11 +13,13 @@ use oneiron_docedit::ooxml::XmlTree;
 use oneiron_docedit::retained_opc::Package;
 
 use super::super::{
-    EXPORTS, OfficeBodyExportRecord, document_refused, document_resources, invalid, version_key,
+    EXPORT_AUTHORS, EXPORTS, OfficeBodyExportAuthor, OfficeBodyExportRecord, document_refused,
+    document_resources, invalid, version_key,
 };
-use super::{DOCUMENT_PART, revision_token};
+use super::{DOCUMENT_PART, index, revision_token};
 use crate::Vault;
 use crate::deletion::carrier_actor_merged;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::typed_body::BodyActor;
 
@@ -35,17 +37,12 @@ impl Vault {
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
-        let mut records = Vec::new();
-        for (_, record) in EXPORTS.scan(&self.store, txn)? {
-            if record
-                .token
-                .as_deref()
-                .is_some_and(|token| tokens.contains(token.as_bytes()))
-            {
-                records.push(record);
-            }
-        }
-        Ok(records)
+        // The token lookup (FIX 12403) reads the same rows a scan would, in
+        // the same key order; the validators and mergers below are untouched.
+        Ok(index::lookup_exports(&self.store, txn, &tokens)?
+            .into_iter()
+            .map(|(_, record)| record)
+            .collect())
     }
 
     /// Validate carried records against the actual DOCX tokens and each
@@ -58,7 +55,8 @@ impl Vault {
         records: &[OfficeBodyExportRecord],
     ) -> Result<()> {
         let tokens = revision_tokens(self, txn, bytes)?;
-        let mut carried: BTreeMap<Vec<u8>, &OfficeBodyExportRecord> = BTreeMap::new();
+        let mut carried: BTreeMap<Vec<u8>, OfficeBodyExportRecord> = BTreeMap::new();
+        let mut live_authors: BTreeMap<Vec<u8>, (BodyActor, String)> = BTreeMap::new();
         for record in records {
             let Some(token) = record.token.as_deref().filter(|token| !token.is_empty()) else {
                 return Err(invalid("a DOCX author carrier has no token"));
@@ -68,8 +66,22 @@ impl Vault {
                     "a DOCX author carrier's token is not in these bytes",
                 ));
             }
-            if let Some(held) = carried.insert(token.as_bytes().to_vec(), record) {
-                merge_carrier_facts(held, record)?;
+            let key = token.as_bytes().to_vec();
+            if record.actor != BodyActor::Erased {
+                let live = (record.actor, record.author.clone());
+                if let Some(previous) = live_authors.insert(key.clone(), live.clone())
+                    && previous != live
+                {
+                    return Err(invalid(
+                        "DOCX author carrier live actors or display authors disagree",
+                    ));
+                }
+            }
+            if let Some(held) = carried.get(&key) {
+                let merged = merge_carrier_facts(held, record)?;
+                carried.insert(key, merged);
+            } else {
+                carried.insert(key, record.clone());
             }
         }
         Ok(())
@@ -97,8 +109,109 @@ impl Vault {
                 None => carried,
             };
             EXPORTS.put(&self.store, wtxn, &key, &merged)?;
+            // The token lookup names this row in the same writer (FIX 12403).
+            if let Some(token) = merged.token.as_deref() {
+                index::note_export_put(&self.store, wtxn, &key, token)?;
+            }
         }
         Ok(())
+    }
+
+    /// Every per-group revision-author row whose token is bound by these
+    /// bytes, with its (artifact, version, group index) storage key.
+    pub(crate) fn docx_export_author_rows_for_bytes_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        bytes: &[u8],
+    ) -> Result<Vec<((EntityId, u64, u64), OfficeBodyExportAuthor)>> {
+        let tokens = revision_tokens(self, txn, bytes)?;
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The token lookup (FIX 12403) reads the same rows a scan would, in
+        // the same key order; the validators and mergers below are untouched.
+        index::lookup_authors(&self.store, txn, &tokens)
+    }
+
+    /// Validate per-group revision-author rows against the DOCX bytes and
+    /// each other. A token with no row is a missing binding, never erasure.
+    pub(crate) fn validate_docx_export_author_rows_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        bytes: &[u8],
+        records: &[((EntityId, u64, u64), OfficeBodyExportAuthor)],
+    ) -> Result<()> {
+        let tokens = revision_tokens(self, txn, bytes)?;
+        let mut carried: BTreeMap<(EntityId, u64, u64), OfficeBodyExportAuthor> = BTreeMap::new();
+        let mut tokens_seen = BTreeMap::new();
+        let mut live_actors: BTreeMap<Vec<u8>, EntityId> = BTreeMap::new();
+        for (key, record) in records {
+            if record.token.is_empty() || !tokens.contains(record.token.as_bytes()) {
+                return Err(invalid(
+                    "a DOCX revision-author carrier's token is not in these bytes",
+                ));
+            }
+            if let Some(previous) = tokens_seen.insert(record.token.as_bytes().to_vec(), *key)
+                && previous != *key
+            {
+                return Err(invalid(
+                    "a DOCX revision-author token names two export groups",
+                ));
+            }
+            if let Some(actor) = record.actor {
+                if let Some(previous) = live_actors.insert(record.token.as_bytes().to_vec(), actor)
+                    && previous != actor
+                {
+                    return Err(invalid("DOCX revision-author live actors disagree"));
+                }
+            }
+            if let Some(held) = carried.get(key) {
+                let merged = merge_export_author_facts(held, record)?;
+                carried.insert(*key, merged);
+            } else {
+                carried.insert(*key, record.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate and merge per-group revision-author rows in the caller's
+    /// writer. Tokens are fixed; optional actors merge erased-wins with the
+    /// local hard-delete marker applied to both copies.
+    pub(crate) fn merge_docx_export_author_rows_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        bytes: &[u8],
+        records: &[((EntityId, u64, u64), OfficeBodyExportAuthor)],
+    ) -> Result<()> {
+        self.validate_docx_export_author_rows_in_txn(wtxn, bytes, records)?;
+        for (key, record) in records {
+            let carried = self.locally_erased_export_author_in_txn(wtxn, record.clone())?;
+            let merged = match EXPORT_AUTHORS.get(&self.store, wtxn, key)? {
+                Some(held) => {
+                    let held = self.locally_erased_export_author_in_txn(wtxn, held)?;
+                    merge_export_author_facts(&held, &carried)?
+                }
+                None => carried,
+            };
+            EXPORT_AUTHORS.put(&self.store, wtxn, key, &merged)?;
+            // The token lookup names this row in the same writer (FIX 12403).
+            index::note_author_put(&self.store, wtxn, key, &merged.token)?;
+        }
+        Ok(())
+    }
+
+    fn locally_erased_export_author_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        mut record: OfficeBodyExportAuthor,
+    ) -> Result<OfficeBodyExportAuthor> {
+        if let Some(actor) = record.actor
+            && self.carrier_actor_erased_in_txn(txn, &actor)?
+        {
+            record.actor = None;
+        }
+        Ok(record)
     }
 
     fn locally_erased_author_record_in_txn(
@@ -161,6 +274,23 @@ fn revision_tokens(vault: &Vault, txn: &RoTxn<'_>, bytes: &[u8]) -> Result<BTree
         .filter_map(revision_token)
         .map(|token| token.as_bytes().to_vec())
         .collect())
+}
+
+/// Two per-group author rows with the same key. The token is fixed; the
+/// optional actor merges erased-wins, with `None` as the erased form.
+fn merge_export_author_facts(
+    held: &OfficeBodyExportAuthor,
+    carried: &OfficeBodyExportAuthor,
+) -> Result<OfficeBodyExportAuthor> {
+    if held.token != carried.token {
+        return Err(invalid("DOCX revision-author tokens disagree"));
+    }
+    let actor = carrier_actor_merged(held.actor, carried.actor, None)
+        .ok_or_else(|| invalid("DOCX revision-author actors disagree"))?;
+    Ok(OfficeBodyExportAuthor {
+        actor,
+        token: carried.token.clone(),
+    })
 }
 
 /// Two copies with the same storage identity and token. Every field except
