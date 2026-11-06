@@ -1079,7 +1079,12 @@ fn stage_retained_context_pack_retrieval_run_finalize(
         RETRIEVAL_RUN_PROVISIONAL.contains(target, wtxn, &run_id)?
     };
     if provisional {
-        super::retention::require_prune_retrieval_runs(target, wtxn, 1)?;
+        super::retention::require_prune_retrieval_runs_with_memory(
+            target,
+            wtxn,
+            1,
+            memory.as_deref_mut(),
+        )?;
     }
     stage_context_pack_retrieval_run_finalize(
         target,
