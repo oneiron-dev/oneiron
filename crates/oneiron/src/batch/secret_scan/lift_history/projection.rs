@@ -29,9 +29,9 @@ use crate::settings::ReadDestination;
 /// note-proposal carriers also name their actual source entity in their row keys. Other
 /// side rows and carriers stay unknown, except live LFS objects whose native
 /// record binds their manifest ASSET in the same snapshot. Run, receipt and retry counts omit only
-/// contributors with a proven source withheld. A parentless eval case's
-/// known dependencies come from its native receipts' frozen read sets, not
-/// its mutable source list or labels. Any proven withheld dependency omits
+/// contributors with a proven source withheld. An eval case's known receipt
+/// dependencies include same-seat, same-family ancestors' native receipts and
+/// use their frozen read sets, not mutable source lists or labels. Any proven withheld dependency omits
 /// that contributor once; unknown dependencies never withhold or cancel
 /// dependencies that are proven.
 ///
