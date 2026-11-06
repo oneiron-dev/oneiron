@@ -151,6 +151,25 @@ pub(crate) fn active_in_txn(
     only_active(instances_in_txn(dbs, txn, subtype, owner)?)
 }
 
+/// The entity tree generations a history purge left pending reseal, read
+/// in the purge's writer so its receipt can name them before retirement is
+/// staged. The live generation is never included.
+pub(crate) fn purged_generations_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Vec<(PayloadItem, u64)>> {
+    if !CHECKPOINT_PAYLOADS_ENABLED {
+        return Ok(Vec::new());
+    }
+    let owner = OwnerRef::entity(entity);
+    Ok(INSTANCES
+        .scan_from(dbs, txn, &owner_prefix(owner.subtype, &owner.owner32)?)?
+        .into_iter()
+        .filter_map(|(item, row)| row.purged_through.map(|through| (item, through)))
+        .collect())
+}
+
 /// One incarnation by its item; `None` while the switch is off or when it
 /// has no row.
 pub(crate) fn instance_in_txn(
