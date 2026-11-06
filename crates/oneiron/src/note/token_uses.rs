@@ -44,7 +44,7 @@ fn stamp_token(message: &str) -> Option<EntityId> {
 }
 
 /// The tokens `doc`'s live authorship entries name (FIX 11964): every entry
-/// but the birth's own, which names the NOTE core's author. An entry that
+/// but the birth's own, whose author is read from the NOTE core. An entry that
 /// does not read names none.
 fn authorship_tokens(doc: &LoroDoc, note: EntityId) -> Vec<EntityId> {
     let mut tokens = Vec::new();

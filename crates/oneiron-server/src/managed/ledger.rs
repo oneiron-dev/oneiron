@@ -162,6 +162,20 @@ impl WakeLedger {
         )
     }
 
+    /// The existing widen transcript over a body's counted length and exact bytes.
+    pub(super) fn widen_transcript(
+        &self,
+        holder_ref: &str,
+        body_len: u64,
+    ) -> oneiron_vault_contract::ManagedWidenTranscript {
+        oneiron_vault_contract::ManagedWidenTranscript::new(
+            &self.token,
+            &self.vault_name,
+            holder_ref,
+            body_len,
+        )
+    }
+
     pub(super) fn verify_widen_action(
         &self,
         action: &oneiron_vault_contract::ManagedWidenAction,
@@ -236,7 +250,7 @@ impl WakeLedger {
         if let Some(entry) = sync_deadline(server) {
             entries.push(entry);
         }
-        if let Some(entry) = housekeeping_deadline(&self.vault)? {
+        if let Some(entry) = housekeeping_deadline(server)? {
             entries.push(entry);
         }
         validate_wake_entries(&entries).map_err(|error| ManagedError::LedgerRefused {
@@ -669,10 +683,16 @@ fn sync_deadline(server: &SyncServer) -> Option<WakeEntry> {
 /// due (a secret lease's expiry, a voice print's retention deadline, a critical
 /// confirm's window, a waiting erasure). Exact, because the retirement is due
 /// then, not somewhere in a window after it.
-fn housekeeping_deadline(vault: &oneiron::Vault) -> Result<Option<WakeEntry>, ManagedError> {
-    let at = vault
+fn housekeeping_deadline(server: &SyncServer) -> Result<Option<WakeEntry>, ManagedError> {
+    let mut at = server
+        .vault()
         .housekeeping_wake_at()
         .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+    // One entry, now over the served vault and every retained shared env:
+    // a parked host wakes for whichever owed pass is due first (FIX 11136).
+    if let Some(shared) = server.shared_housekeeping_wake_at() {
+        at = Some(at.map_or(shared, |seen| seen.min(shared)));
+    }
     Ok(at.map(|at| WakeEntry {
         id: WAKE_ID_HOUSEKEEPING.to_owned(),
         at: Schedule::Exact { at },

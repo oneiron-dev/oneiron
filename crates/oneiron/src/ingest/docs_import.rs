@@ -176,6 +176,7 @@ fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
             end: now,
         },
         learned_at: now,
+        row_version: None,
         data: encoded(&body)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -412,7 +413,13 @@ impl Vault {
             // the chunks derived from it.
             self.require_docs_put_kind(&txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
             if !source_bytes_unchanged {
-                crate::memory::release_asset_blob_in_txn(&self.store, &mut txn, &asset)?;
+                let write = crate::secret_custody::CustodyWrite::of(self);
+                crate::memory::release_asset_blob_in_txn(
+                    &self.store,
+                    &mut txn,
+                    &asset,
+                    &|txn, id| crate::batch::deindex_entity(&write, txn, id),
+                )?;
             }
             self.put_asset_body_in_txn(
                 &mut txn,

@@ -188,8 +188,10 @@ impl ExecutorStorage<'_> {
 
     /// [`Self::put_code_run_replay_record_if_generation_with_heal`], with
     /// the record's owner, `actor`'s run `run`, stamped in the same writer
-    /// unless it has one (FIX 5718): how a run's start and a write's
-    /// reservation name whose replies the record will hold. A session's run
+    /// unless it has one (FIX 5718), before the erase fence reads that owner:
+    /// a first save after the actor is gone cannot publish fresh replies.
+    /// This is how a run's start and a write's reservation name whose replies
+    /// the record will hold. A session's run
     /// stamps it only on an on-record stretch, where its rows land in base
     /// (FIX 7429); an off-record row stamps none.
     ///
@@ -204,11 +206,12 @@ impl ExecutorStorage<'_> {
         actor: EntityId,
     ) -> Result<CodeRunReplayGeneration> {
         match self {
-            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
+            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_prepared(
                 record,
                 expected,
                 None,
                 |wtxn| stamp_response_owner_in_txn(*vault, wtxn, record.run_id, run, actor),
+                |_| Ok(()),
             ),
             Self::Session(binding) => {
                 binding.put_owned_replay_record_if_generation(record, expected, run, actor)
