@@ -99,11 +99,11 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
         VERSIONS.delete(store, wtxn, &key)?;
     }
     if !kept_versions.is_empty() {
-        if let Some((_, head)) = VERSIONS
+        let survivor = VERSIONS
             .iter_rev_from(store, wtxn, id.as_bytes())?
             .next()
-            .transpose()?
-        {
+            .transpose()?;
+        if let Some((_, head)) = survivor {
             HEAD.put(store, wtxn, id, &head)?;
         }
     }
