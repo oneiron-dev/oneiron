@@ -13,7 +13,7 @@ use crate::sync::selector::authority_beside::AuthorityBeside;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use loro::LoroDoc;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// All writes here are speculative LMDB pages. The transaction is ALWAYS
 /// aborted: a bad later entity/edge cannot publish an earlier valid record.
@@ -32,6 +32,26 @@ pub(crate) fn preflight_validated_canonical_recovery(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
 ) -> Result<()> {
+    preflight_canonical_recovery(vault, materializer, snapshot, doc, None)
+}
+
+pub(crate) fn preflight_validated_canonical_recovery_in_note_scope(
+    vault: &Vault,
+    materializer: &Materializer,
+    snapshot: &CanonicalSnapshot,
+    doc: &LoroDoc,
+    note_scope: &BTreeSet<[u8; 16]>,
+) -> Result<()> {
+    preflight_canonical_recovery(vault, materializer, snapshot, doc, Some(note_scope))
+}
+
+fn preflight_canonical_recovery(
+    vault: &Vault,
+    materializer: &Materializer,
+    snapshot: &CanonicalSnapshot,
+    doc: &LoroDoc,
+    note_scope: Option<&BTreeSet<[u8; 16]>>,
+) -> Result<()> {
     let analyzer = vault
         .analyzer
         .manifest()
@@ -46,7 +66,7 @@ pub(crate) fn preflight_validated_canonical_recovery(
     let mut parent = vault.store.env.write_txn()?;
     let refusals = vault.store.begin_refusal_attempt();
     let preflight = match vault.store.env.nested_write_txn(&mut parent) {
-        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn),
+        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn, note_scope),
         Err(err) => Err(err.into()),
     };
     drop(guard);
@@ -61,9 +81,13 @@ fn preflight_in_txn(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     txn: &mut RwTxn<'_>,
+    note_scope: Option<&BTreeSet<[u8; 16]>>,
 ) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
-    snapshot.preflight_note_recovery(vault, txn)?;
+    match note_scope {
+        Some(scope) => snapshot.preflight_note_recovery_in_scope(vault, txn, scope)?,
+        None => snapshot.preflight_note_recovery(vault, txn)?,
+    }
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     // Each AUTHORITY_LOG row is judged beside the snapshot's others, as a
     // carrier's are (FIX 11959).

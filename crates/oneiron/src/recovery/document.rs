@@ -3,6 +3,8 @@
 #[cfg(feature = "sync")]
 mod materialize;
 #[cfg(feature = "sync")]
+pub(super) use materialize::NoteScopeRows;
+#[cfg(feature = "sync")]
 pub(crate) use materialize::run_in_txn as materialize_recovery_notes_in_txn;
 mod retained;
 mod workflow;
