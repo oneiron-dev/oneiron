@@ -8,7 +8,7 @@ use super::connector_task::{
     SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, SendExecutorFence, SendExecutorLease,
     SendExecutorLeaseTake, log_send_executor_stand_down, mark_send_lookup_cleared,
     project_connector_send_task_outcome, project_connector_send_task_outcome_in_txn,
-    send_receipt_exists_for_task, take_send_executor_lease,
+    renew_send_executor_lease_in_txn, send_receipt_exists_for_task, take_send_executor_lease,
 };
 use super::dispatch_pipeline::{
     ALTERNATIVE_OUTCOME_FIELD, GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD,
@@ -263,8 +263,10 @@ impl Vault {
             // machine.
             if taken.uncertain_send.is_some() {
                 retry_connector_task_attempt_at(
+                    self,
                     &queue,
                     &attempt,
+                    task_ref,
                     now,
                     UNCERTAIN_SEND_AWAITS_OWNER_REASON,
                     now.saturating_add(UNCERTAIN_SEND_ANSWER_POLL_SECS),
@@ -330,8 +332,10 @@ impl Vault {
                     // the drain's `now` before computing this retry's edge.
                     let now = self.now_recorded_at();
                     retry_connector_task_attempt(
+                        self,
                         &queue,
                         &attempt,
+                        task_ref,
                         now,
                         "dispatch_uncertain",
                         None,
@@ -540,8 +544,11 @@ fn stand_down_connector_task_attempt(
 
 /// The ledger attempt ids `task`'s local sends are keyed under: its logical
 /// send's, and its bound ambient alternative's (FIX 7962), each derived from
-/// the ledger identity its dispatch request carries.
-fn connector_task_ledger_attempt_ids(task: &ConnectorSendTask) -> Result<Vec<AttemptId>, Error> {
+/// the ledger identity its dispatch request carries. The stand-down abandons
+/// under them, and the reaper's take supersedes what it abandoned (FIX 4747).
+pub(super) fn connector_task_ledger_attempt_ids(
+    task: &ConnectorSendTask,
+) -> Result<Vec<AttemptId>, Error> {
     let logical_ref = connector_logical_send_intent_ref(task);
     let mut ledger_refs = Vec::with_capacity(2);
     if let Some(alternative) = task.ambient_alternative.as_ref() {
@@ -721,8 +728,10 @@ fn connector_task_retry_at(
 }
 
 fn retry_connector_task_attempt(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
     now: u64,
     reason: &str,
     provider_retry_after_secs: Option<u64>,
@@ -733,26 +742,37 @@ fn retry_connector_task_attempt(
         curve: ConnectorRetryCurve::Transport,
     };
     let backoff_until = connector_task_retry_at(queue, attempt, now, &arm)?;
-    retry_connector_task_attempt_at(queue, attempt, now, reason, backoff_until)
+    retry_connector_task_attempt_at(vault, queue, attempt, task_ref, now, reason, backoff_until)
 }
 
 /// Re-arms at an ALREADY-COMPUTED instant, so a caller that stamped the exact
-/// `retry_at` onto a receipt re-arms the queue at that same instant.
+/// `retry_at` onto a receipt re-arms the queue at that same instant. In the
+/// same writer, this machine's send executor lease on `task_ref` is renewed
+/// through that instant (FIX 4747 slice 4), so the park keeps its lease.
 fn retry_connector_task_attempt_at(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
     now: u64,
     reason: &str,
     backoff_until: u64,
 ) -> Result<(), Error> {
-    queue.retry(RetryAttempt {
-        id: attempt.id,
-        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-        attempt_count: attempt.attempt_count,
-        backoff_until,
-        last_error: Some(reason.to_owned()),
-        now,
+    vault.with_write_txn_grouped(|wtxn| {
+        queue.retry_in_txn(
+            wtxn,
+            RetryAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                backoff_until,
+                last_error: Some(reason.to_owned()),
+                now,
+            },
+        )?;
+        renew_send_executor_lease_in_txn(vault, wtxn, task_ref, backoff_until, now)
     })?;
+    vault.store.notify_attempt_observers();
     Ok(())
 }
 

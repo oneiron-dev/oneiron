@@ -61,10 +61,11 @@ pub(crate) use self::store::{
 };
 // DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume;
 // FIX 7188: their abandon in the owner's Stop of that try; FIX 4747: the abandon of
-// the ones that certainly never went when a connector send's executor stands down.
+// the ones that certainly never went when a connector send's executor stands down,
+// and their supersession when that send's lease comes back (slice 4).
 pub(crate) use self::store::pending::{
     abandon_attempt_pending_intents_in_txn, abandon_attempt_undelivered_intents_in_txn,
-    attempt_has_pending_intent_in_txn,
+    attempt_has_pending_intent_in_txn, supersede_stood_down_intents_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
