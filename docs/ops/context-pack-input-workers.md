@@ -355,11 +355,18 @@ It records that lookup's own target vector before its read, then its returned
 batch after a successful read. Both holders stay inside that lookup; the original
 kind filter, ambiguous-successor return and receipt restriction are unchanged.
 Ordinary public observation methods use a no-op callback and keep their signatures
-and behavior. The original inbound-edge collection and filtering are unchanged;
-its temporary edge vector and optional short-id strings remain separate storage.
-Decoded records, deletion metadata's possible heap storage, retained maps and
-later replay vectors also remain separate allocations. Allocation and
-reallocation peaks are not covered by these post-allocation holders.
+and behavior.
+
+Each successor lookup also records the actual inbound-edge vector slots and each
+present short-id string's capacity after the original edge query returns. Its
+holder lives in the scope that consumes the original edge vector through the
+same filter, map and collection. That scope ends before the resulting target
+vector gets its holder. This does not assume that collection allocates a new
+buffer: an allocation reused for the targets is not counted by both holders at
+once. Temporary overlap during collection remains outside this post-allocation
+accounting. Decoded records, deletion metadata's possible heap storage, edge-query
+scratch, retained maps and later replay vectors remain separate allocations.
+Allocation and reallocation peaks are not covered by these holders.
 
 
 ## Chat capture buffer custody

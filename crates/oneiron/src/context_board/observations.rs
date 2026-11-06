@@ -211,13 +211,25 @@ fn successor<G>(
     // Supersedes is directed new -> old. Do not follow to an unobserved chain head.
     // Only an unambiguous, currently readable successor can enter the response.
     let _targets_storage;
-    let targets: Vec<_> = read
-        .vault()
-        .edges_in(&id)?
-        .into_iter()
-        .filter(|edge| edge.kind == crate::EdgeKind::Supersedes)
-        .map(|edge| PointRead::id(edge.target))
-        .collect();
+    let targets: Vec<_> = {
+        let _edges_storage;
+        let edges = read.vault().edges_in(&id)?;
+        _edges_storage = observe(edges.iter().fold(
+            (edges.capacity() as u64).saturating_mul(std::mem::size_of::<crate::EdgeInfo>() as u64),
+            |bytes, edge| {
+                bytes.saturating_add(
+                    edge.target_short_id
+                        .as_ref()
+                        .map_or(0, |short_id| short_id.capacity() as u64),
+                )
+            },
+        ));
+        edges
+            .into_iter()
+            .filter(|edge| edge.kind == crate::EdgeKind::Supersedes)
+            .map(|edge| PointRead::id(edge.target))
+            .collect()
+    };
     _targets_storage = observe(
         (targets.capacity() as u64).saturating_mul(std::mem::size_of::<PointRead<'_>>() as u64),
     );
