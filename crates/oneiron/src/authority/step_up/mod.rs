@@ -22,11 +22,17 @@
 //! drops every row here with them.
 
 mod admin_inputs;
+mod erase;
 mod webauthn;
 
 pub use admin_inputs::{
     WeaveAdminDigestRequest, WeaveAdminItemWrongRequest, WeaveAdminLensRequest,
     WeaveAdminLinkWrongRequest, WeaveAdminReportRequest,
+};
+use erase::drop_step_ups_with_passkey_in_txn;
+pub(crate) use erase::{
+    erase_step_up_challenges_actor_in_txn, erase_step_up_passkeys_actor_in_txn,
+    erase_step_up_records_actor_in_txn,
 };
 
 use heed::RwTxn;
@@ -466,6 +472,9 @@ impl Vault {
         }
         let stored = verified_registration(registration, &challenge, now).ok_or_else(refused)?;
         let key = (holder, webauthn::sha256(&stored.credential_id));
+        // A step-up an earlier enrollment of this credential id verified
+        // never stands with this one.
+        drop_step_ups_with_passkey_in_txn(self, &mut txn, holder, &key.1)?;
         PASSKEYS.put(&self.store, &mut txn, &key, &stored)?;
         txn.commit()?;
         Ok(enrolled(&stored))
@@ -559,8 +568,9 @@ impl Vault {
     }
 
     /// Removes the person's passkey `credential_id` (base64url), after a
-    /// current step-up on `request`. Every step-up that used it stops
-    /// standing with it. `false` when no such passkey is enrolled.
+    /// current step-up on `request`. Every step-up that used it goes with
+    /// it, so a later enrollment of the same credential id revives none.
+    /// `false` when no such passkey is enrolled.
     ///
     /// # Errors
     /// `AuthorityRefused` with [`STEP_UP_NOT_HOLDER`] or
@@ -583,6 +593,7 @@ impl Vault {
         };
         let key = (holder, webauthn::sha256(&credential_id));
         let removed = PASSKEYS.delete(&self.store, &mut txn, &key)?;
+        drop_step_ups_with_passkey_in_txn(self, &mut txn, holder, &key.1)?;
         txn.commit()?;
         Ok(removed)
     }
@@ -729,58 +740,4 @@ fn enrolled(stored: &StoredPasskey) -> EnrolledPasskey {
         enrolled_at: stored.enrolled_at,
         last_used_at: stored.last_used_at,
     }
-}
-
-/// An erase of `actor` drops every passkey they enrolled.
-pub(crate) fn erase_step_up_passkeys_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    let keys: Vec<(EntityId, [u8; 32])> = PASSKEYS
-        .scan_from(&vault.store, wtxn, actor.as_bytes())?
-        .into_iter()
-        .map(|(key, _)| key)
-        .filter(|(holder, _)| holder == actor)
-        .collect();
-    for key in keys {
-        PASSKEYS.delete(&vault.store, wtxn, &key)?;
-    }
-    Ok(())
-}
-
-/// An erase of `actor` drops every ceremony they opened.
-pub(crate) fn erase_step_up_challenges_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    let keys: Vec<[u8; 32]> = CHALLENGES
-        .scan(&vault.store, wtxn)?
-        .into_iter()
-        .filter(|(_, pending)| pending.holder == *actor)
-        .map(|(key, _)| key)
-        .collect();
-    for key in keys {
-        CHALLENGES.delete(&vault.store, wtxn, &key)?;
-    }
-    Ok(())
-}
-
-/// An erase of `actor` drops every step-up they made.
-pub(crate) fn erase_step_up_records_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    let keys: Vec<[u8; 32]> = RECORDS
-        .scan(&vault.store, wtxn)?
-        .into_iter()
-        .filter(|(_, record)| record.holder == *actor)
-        .map(|(key, _)| key)
-        .collect();
-    for key in keys {
-        RECORDS.delete(&vault.store, wtxn, &key)?;
-    }
-    Ok(())
 }
