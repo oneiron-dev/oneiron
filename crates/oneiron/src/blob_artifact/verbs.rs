@@ -1135,15 +1135,19 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its
-    /// run ref (`proposal_ref`), under the consent a Discard needs.
+    /// run ref (`proposal_ref`), under the consent a Discard needs, judged
+    /// in the writer that drops it (FIX 9621).
     pub fn artifacts_release_wait(
         &self,
         input: &ProposalSettleRequest,
     ) -> MemoryResult<ReleasedWait> {
-        self.artifact_consent(input.brief_ref.clone())?;
-        let released = self
-            .vault()
-            .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
+        let consent = self.artifact_consent(input.brief_ref.clone())?;
+        let released = self.vault().release_organ_wait_as(
+            &entity(&input.artifact_ref)?,
+            &input.proposal_ref,
+            &consent,
+            self.artifact_actor(),
+        )?;
         Ok(ReleasedWait { released })
     }
 
