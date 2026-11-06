@@ -8909,6 +8909,7 @@ class EvalAuthoringReport(TypedDict):
     cases_reused: int
     labels_added: int
     cohorts_cut: list[EntityId]
+    source_receipts: list[ScopedReadReceipt]
     cuts_with_coverage_gaps: int
     cohorts_retired: list[EntityId]
     cohorts_kept: int

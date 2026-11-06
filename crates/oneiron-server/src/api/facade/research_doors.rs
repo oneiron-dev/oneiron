@@ -6,7 +6,7 @@ use std::sync::Arc;
 use oneiron::skill_optimize::{EvalAuthoringInventory, EvalAuthoringReport, EvalCohortSetup};
 use oneiron::task_verb::sdk::{EvalInventoryWire, ResearchChildReceipt, ResearchChildWire};
 
-use super::host_doors::support::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -59,23 +59,28 @@ pub(crate) async fn vault_evals_inventory(
 /// `vault.evals.cohorts.setup` (`host_door_lists`): unlike the inventory,
 /// each cut's near-copy audit reads case text before the report counts its
 /// coverage, so the door lists every TURN, MESSAGE and proposal artifact
-/// those audits read, from the same reads
-/// ([`oneiron::Vault::setup_eval_cohorts_listing`]). A setup that cuts
-/// nothing audits no text and lists none.
+/// those audits read, and every admitted Repair source, from the same reads
+/// ([`oneiron::Memory::setup_eval_cohorts_listing`]). A setup that cuts
+/// nothing audits no text and lists none. Source receipts ride in the report.
 pub(crate) async fn vault_evals_cohorts_setup(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EvalCohortSetup,
 ) -> Listed<EvalAuthoringReport> {
     const VERB: &str = "vault.evals.cohorts.setup";
-    let owner = match owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
-        Err(error) => return (Err(error), Vec::new()),
-    };
-    let server = Arc::clone(server);
-    super::clock_ingress::run_blocking(move || {
-        oneiron::task_verb::sdk::eval_cohorts_setup_as_owner_listing(server.vault(), &owner, input)
+    let clock_server = Arc::clone(server);
+    let (answer, mut rows) = owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
+        // Keep the inner result and row list together even on a refusal.
+        Ok(memory.setup_eval_cohorts_listing(owner, input, clock_server.vault().now_recorded_at()))
     })
-    .await
-    .unwrap_or_else(|_| (Err(internal(VERB)), Vec::new()))
+    .await;
+    match answer {
+        Ok((answer, audited)) => {
+            rows.extend(audited);
+            rows.sort_unstable();
+            rows.dedup();
+            (answer, rows)
+        }
+        Err(error) => (Err(error), rows),
+    }
 }

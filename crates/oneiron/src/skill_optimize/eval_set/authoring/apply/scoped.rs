@@ -2,17 +2,8 @@
 
 use super::super::super::cut_audit::prepare_cut_audit_scoped_listing;
 use super::*;
-use crate::claim::ScopedReadReceipt;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryResult};
-
-/// The ordinary setup report and every Repair source admission used by its
-/// audits. No source text or expected response is returned or kept in the rows.
-#[derive(Debug, Clone)]
-pub struct EvalCohortSetupRead {
-    pub report: EvalAuthoringReport,
-    pub receipts: Vec<ScopedReadReceipt>,
-}
 
 impl Memory<'_> {
     /// Set up cohorts as the authenticated owner, using this handle's original
@@ -24,7 +15,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         setup: EvalCohortSetup,
         now: u64,
-    ) -> MemoryResult<EvalCohortSetupRead> {
+    ) -> MemoryResult<EvalAuthoringReport> {
         self.setup_eval_cohorts_listing(owner, setup, now).0
     }
 
@@ -36,7 +27,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         setup: EvalCohortSetup,
         now: u64,
-    ) -> (MemoryResult<EvalCohortSetupRead>, Vec<EntityId>) {
+    ) -> (MemoryResult<EvalAuthoringReport>, Vec<EntityId>) {
         let mut rows = Vec::new();
         let answer = setup_scoped(self, owner, setup, now, &mut rows);
         rows.sort_unstable();
@@ -51,10 +42,9 @@ fn setup_scoped(
     setup: EvalCohortSetup,
     now: u64,
     rows: &mut Vec<EntityId>,
-) -> MemoryResult<EvalCohortSetupRead> {
+) -> MemoryResult<EvalAuthoringReport> {
     let vault = memory.vault();
     let (plan, provenance, mut report) = prepare_setup(vault, owner, setup, now)?;
-    let mut receipts = Vec::new();
     if !plan.cuts.is_empty() {
         let lineage = LineageReader::read(vault)?;
         for cut in &plan.cuts {
@@ -66,9 +56,9 @@ fn setup_scoped(
                 provenance.clone(),
                 rows,
             )?;
-            receipts.extend(read.receipts);
+            report.source_receipts.extend(read.receipts);
             apply_cut(vault, cut, read.audit, now, &mut report)?;
         }
     }
-    Ok(EvalCohortSetupRead { report, receipts })
+    Ok(report)
 }
