@@ -21,6 +21,12 @@ apply. No owner authority is fabricated and the owner resolution doors are
 unchanged. A missing host model-request witness retains the existing
 `repo_provenance_required` answer.
 
+Conflict validation uses an attached repository's physical branch. A detached
+source can use its frozen `refs/heads/*` import branch only after the engine
+proves the same object store and its exact registered, engine-derived queue
+source root. A tag import or another detached worktree supplies no logical
+branch.
+
 The host records the actual `self.code.proposal_resolve` effect and
 `self.code.proposal_resolve.v1` derivation in the provenance claim. Ordinary
 submit provenance remains `self.code.proposal_submit.v1`.
