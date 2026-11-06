@@ -48496,6 +48496,18 @@ pub struct DeckDesignView {
     pub presentation: Option<DeckPresentation>,
 }
 
+/// `oneiron_docedit::graphic::GraphicLimits`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphicLimits {
+    #[serde(rename = "svg_bytes")]
+    pub svg_bytes: u64,
+    #[serde(rename = "raster_bytes")]
+    pub raster_bytes: u64,
+    #[serde(rename = "raster_pixels")]
+    pub raster_pixels: u64,
+}
+
 /// `oneiron::blob_artifact::deck_creation::DeckEmissionNames`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -48528,6 +48540,8 @@ pub struct DeckEmissionRequest {
     pub assets: Option<std::collections::HashMap<String, ArtifactVersionRef>>,
     #[serde(rename = "fonts", default, skip_serializing_if = "Option::is_none")]
     pub fonts: Option<Vec<ArtifactVersionRef>>,
+    #[serde(rename = "graphics", default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
     #[serde(rename = "names")]
     pub names: DeckEmissionNames,
     #[serde(rename = "name")]
@@ -48853,18 +48867,6 @@ pub struct DeckInspectionView {
     pub ambiguities: Vec<DeckIdentityAmbiguity>,
     #[serde(rename = "comments")]
     pub comments: DeckCommentInspection,
-}
-
-/// `oneiron_docedit::graphic::GraphicLimits`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct GraphicLimits {
-    #[serde(rename = "svg_bytes")]
-    pub svg_bytes: u64,
-    #[serde(rename = "raster_bytes")]
-    pub raster_bytes: u64,
-    #[serde(rename = "raster_pixels")]
-    pub raster_pixels: u64,
 }
 
 /// `oneiron_docedit::edit::transaction::StepTarget`.
