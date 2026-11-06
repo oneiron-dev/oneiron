@@ -20,12 +20,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, LegacyJson, Named, Raw, RawValue, SideTable};
 
+mod anchor;
 mod rubric;
+
+pub use self::anchor::judge_label_anchor;
+pub(crate) use self::anchor::{
+    judge_label_anchor_sourced, skill_label_anchor, skill_label_anchor_sourced,
+};
 
 use self::rubric::repin_before_pick_in_txn;
 
@@ -458,77 +463,6 @@ pub(crate) fn judge_ask_room(vault: &Vault, person: EntityId) -> Result<JudgeAsk
         room: slots.saturating_sub(waiting),
         asked,
     })
-}
-
-/// `skill` and every revision it superseded, through admitted succession
-/// (`Supersedes`, new to old): the revisions whose human picks are this
-/// revision's anchor. A fork is another skill and carries none.
-fn label_lineage_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    skill: EntityId,
-) -> Result<BTreeSet<EntityId>> {
-    let mut lineage = BTreeSet::from([skill]);
-    let mut next = vec![skill];
-    while let Some(revision) = next.pop() {
-        for older in vault.filtered_edge_peers(
-            txn,
-            crate::ports::EdgeDirection::Out,
-            &revision,
-            EdgeKind::Supersedes,
-            Some(crate::registry::ENTITY_TYPE_SKILL),
-        )? {
-            if lineage.insert(older) {
-                next.push(older);
-            }
-        }
-    }
-    Ok(lineage)
-}
-
-/// List labels for one skill and campaign, the picks its superseded
-/// revisions took included. The persisted anchor is only these rows, never
-/// the proposed asks, and never a pick a rubric edit left waiting on its
-/// person's re-grade. Order is stable by ask identity.
-pub fn judge_label_anchor(
-    vault: &Vault,
-    skill: EntityId,
-    campaign: &str,
-) -> Result<Vec<JudgeLabel>> {
-    let txn = vault.store.env.read_txn()?;
-    let lineage = label_lineage_in_txn(vault, &txn, skill)?;
-    let mut labels = Vec::new();
-    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
-        let (key, label) = row?;
-        if key != label.ask.id {
-            return Err(Error::CorruptedIndex("judge label identity"));
-        }
-        if label.in_anchor() && lineage.contains(&label.ask.skill) && label.ask.campaign == campaign
-        {
-            labels.push(label);
-        }
-    }
-    Ok(labels)
-}
-
-/// Every label in one skill's anchor, whatever campaign asked it and
-/// whichever of its superseded revisions it was asked on: the human picks
-/// the skill-edit gate measures the judge against. Order is stable by ask
-/// identity.
-pub(crate) fn skill_label_anchor(vault: &Vault, skill: EntityId) -> Result<Vec<JudgeLabel>> {
-    let txn = vault.store.env.read_txn()?;
-    let lineage = label_lineage_in_txn(vault, &txn, skill)?;
-    let mut labels = Vec::new();
-    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
-        let (key, label) = row?;
-        if key != label.ask.id {
-            return Err(Error::CorruptedIndex("judge label identity"));
-        }
-        if label.in_anchor() && lineage.contains(&label.ask.skill) {
-            labels.push(label);
-        }
-    }
-    Ok(labels)
 }
 
 /// How many labels the whole anchor gained after `since`, by pick time: the
