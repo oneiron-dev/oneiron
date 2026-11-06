@@ -212,26 +212,12 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
         };
         let mut changes = Vec::new();
         for event in array(&page, "value") {
-            let id = graph_id(event.get("id"))?;
-            let uid = format!("graph:{id}");
-            if event.get("@removed").is_some() {
-                changes.push(RemoteCalendarChange::Delete { href: id, uid });
-                continue;
-            }
-            // A series master is not an occurrence; the view lists those.
-            if event.get("type").and_then(Value::as_str) == Some("seriesMaster") {
-                continue;
-            }
-            let days = self.all_day_days(source, event)?;
-            let ics = event_ics(&uid, event, days.as_ref())?.into_bytes();
-            changes.push(RemoteCalendarChange::Upsert(RemoteCalendarObject {
-                href: id,
-                etag: text_of(event.get("@odata.etag")),
-                uid,
-                sequence: 0,
-                content_hash: *blake3::hash(&ics).as_bytes(),
-                ics,
-            }));
+            let change = if event.get("@removed").is_some() {
+                self.removed(source, event)?
+            } else {
+                self.upsert(source, event)?
+            };
+            changes.extend(change);
         }
         let next_page = text_of(page.get("@odata.nextLink"));
         let (next, complete) = if cursor.far.is_some() {
@@ -302,6 +288,59 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
 }
 
 impl HttpGraphCalendarWire<'_> {
+    /// One listed event as its resource; nothing for a series master, which
+    /// is not an occurrence (the view lists those).
+    fn upsert(
+        &self,
+        source: &MailSyncSource,
+        event: &Value,
+    ) -> Result<Option<RemoteCalendarChange>> {
+        if event.get("type").and_then(Value::as_str) == Some("seriesMaster") {
+            return Ok(None);
+        }
+        let id = graph_id(event.get("id"))?;
+        let uid = format!("graph:{id}");
+        let days = self.all_day_days(source, event)?;
+        let ics = event_ics(&uid, event, days.as_ref())?.into_bytes();
+        Ok(Some(RemoteCalendarChange::Upsert(RemoteCalendarObject {
+            href: id,
+            etag: text_of(event.get("@odata.etag")),
+            uid,
+            sequence: 0,
+            content_hash: *blake3::hash(&ics).as_bytes(),
+            ics,
+        })))
+    }
+
+    /// An event the view names removed. The view names so an event deleted
+    /// in its range, and also one outside its range added, changed or
+    /// deleted (Graph's event delta), such as one the far listing landed
+    /// (fix list row 16313). So the event is read again: one that still
+    /// exists lands as it is now, and only one gone is a delete.
+    fn removed(
+        &self,
+        source: &MailSyncSource,
+        event: &Value,
+    ) -> Result<Option<RemoteCalendarChange>> {
+        let id = graph_id(event.get("id"))?;
+        let url = format!(
+            "{GRAPH_ME_URL}/events/{}",
+            super::microsoft365::path_segment(&id)
+        );
+        match self.get(source, &url, &[])? {
+            RestAnswer::Found(current) => self.upsert(source, &current),
+            RestAnswer::Failed {
+                status: 404 | 410, ..
+            } => Ok(Some(RemoteCalendarChange::Delete {
+                uid: format!("graph:{id}"),
+                href: id,
+            })),
+            RestAnswer::Failed { status, .. } => Err(Error::InvalidConfig(format!(
+                "graph_calendar_status_{status}"
+            ))),
+        }
+    }
+
     /// The days an all-day event covers (FIX 16309), `YYYYMMDD` start and
     /// exclusive end, in the zone it was made in. The view answers in UTC, so
     /// its midnight-to-midnight arrives shifted by that zone's offset: a UTC
