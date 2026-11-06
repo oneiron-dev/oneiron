@@ -45,6 +45,51 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        self.write_txn_door_classed_after_commit(callback, class, f, Ok)
+    }
+
+    /// Publishes a write's session segment on its calling thread as soon as
+    /// the base commit is durable, before postcommit work can take a writer.
+    /// A failed base write drops its result without calling `after_commit`.
+    pub(crate) fn with_write_txn_grouped_after_commit<T, U>(
+        &self,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<T>,
+        after_commit: impl FnOnce(T) -> crate::error::Result<U>,
+    ) -> crate::error::Result<U> {
+        self.write_txn_door_after_commit(Callback::Audited, write, after_commit)
+    }
+
+    /// The same publication point for an engine write with a typed error
+    /// and its original grouped or opaque callback discipline.
+    pub(crate) fn write_txn_door_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        write: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door_classed_after_commit(
+            callback,
+            BackupWriteClass::Content,
+            write,
+            after_commit,
+        )
+    }
+
+    fn write_txn_door_classed_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        class: BackupWriteClass,
+        f: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         // Scan checks raised since the last write are kept first, in a write
         // of their own (no scan opens one). It takes the writer where this
         // write is about to, holding nothing more: no answer exists yet to
@@ -61,6 +106,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
+            consent_answered,
             (
                 task_ids,
                 rows,
@@ -130,6 +176,7 @@ impl Vault {
                     result,
                     approved,
                     postcommit.proactivity_changed,
+                    postcommit.consent_answered,
                     (
                         postcommit.task_ids,
                         postcommit.rows,
@@ -145,9 +192,16 @@ impl Vault {
                 Err(err) => Rows::Discard(Err(E::from(err))),
             }
         })?;
+        // Release the segment permit before any postcommit writer can wait
+        // on another writer that is itself waiting for this publication.
+        // Even a publication error keeps the durable write's postcommit work.
+        let result = after_commit(result);
         // A fence this write's erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         self.store.notify_attempt_observers();
+        if consent_answered {
+            self.notify_consent_answer();
+        }
         if proactivity_changed {
             self.store.notify_proactivity_changes();
         }
@@ -204,7 +258,7 @@ impl Vault {
         // older debts, as the door did here (FIX 11702, Engine 10-31 04:1x).
         if self.claim_vad_payment_worker_attached() {
             self.hand_claim_vads_for_payment(approved_vad_ids);
-            return Ok(result);
+            return result;
         }
         // With none (an embedded SDK, the CLI), nothing pays after the
         // answer, so the door pays before it. The canonical consolidator
@@ -225,7 +279,7 @@ impl Vault {
                 "the owed claim VAD drain after a commit failed; the housekeeping sweep retries it"
             );
         }
-        Ok(result)
+        result
     }
 
     /// Pays up to [`WRITE_DOOR_OWED_VAD_DRAIN`] owed claim VADs after a

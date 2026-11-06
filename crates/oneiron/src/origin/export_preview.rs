@@ -12,7 +12,7 @@
 //! store failures stay errors. The caller's credential, sight and Grant
 //! are judged above it, at the door (`memory::origin_doors::preview`).
 mod handles;
-mod types;
+use oneiron_store::origin::export_preview::types;
 
 use std::collections::{BTreeMap, BTreeSet};
 

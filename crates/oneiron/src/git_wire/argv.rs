@@ -1,7 +1,7 @@
-//! Frozen typed argv: one constructor per git verb plus the token validators.
+//! Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+pub(crate) use oneiron_store::git_wire::argv::*;
 
 use super::config::{GIT_WIRE_MAX_ARG_BYTES, GIT_WIRE_MAX_REF_BYTES};
 use super::failure::invalid;
@@ -12,6 +12,8 @@ use super::{
     GitWireResult,
 };
 use crate::error::Result;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 /// A frozen git argv: a fixed verb, validated argument positions, and an
 /// optional stdin payload.
@@ -456,65 +458,4 @@ impl FrozenGitArgv {
             .as_ref()
             .map(|(path, commit)| (path.as_path(), commit))
     }
-}
-
-/// Stdin revisions for a `--stdin` walk: each of `include`, then each of
-/// `exclude` as `^<oid>`.
-fn revision_lines(include: &[GitOid], exclude: &[GitOid]) -> Vec<u8> {
-    let mut payload = Vec::new();
-    for oid in include {
-        payload.extend_from_slice(oid.as_str().as_bytes());
-        payload.push(b'\n');
-    }
-    for oid in exclude {
-        payload.push(b'^');
-        payload.extend_from_slice(oid.as_str().as_bytes());
-        payload.push(b'\n');
-    }
-    payload
-}
-
-pub(super) fn os_args(args: &[&str]) -> Vec<OsString> {
-    args.iter().map(|arg| OsString::from(*arg)).collect()
-}
-
-fn validate_revision(revision: &str) -> Result<()> {
-    if revision.is_empty() || revision.len() > GIT_WIRE_MAX_REF_BYTES {
-        return Err(invalid("git revision must be non-empty and bounded"));
-    }
-    if revision.starts_with('-') {
-        return Err(invalid("git revision must not be parsed as an option"));
-    }
-    if revision
-        .bytes()
-        .any(|byte| byte.is_ascii_control() || byte == b' ')
-    {
-        return Err(invalid(
-            "git revision must not contain control or space bytes",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_path_arg(path: &Path) -> Result<()> {
-    if path.as_os_str().is_empty() {
-        return Err(invalid("git path argument must be non-empty"));
-    }
-    if path.as_os_str().as_encoded_bytes().contains(&0) {
-        return Err(invalid("git path argument must not contain NUL"));
-    }
-    if !path.is_absolute() {
-        return Err(invalid("git path argument must be absolute"));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_argv_token(arg: &str) -> Result<()> {
-    if arg.len() > GIT_WIRE_MAX_ARG_BYTES {
-        return Err(invalid("git argument exceeds the frozen length bound"));
-    }
-    if arg.contains('\0') {
-        return Err(invalid("git argument must not contain NUL"));
-    }
-    Ok(())
 }

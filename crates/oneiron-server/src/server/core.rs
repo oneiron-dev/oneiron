@@ -141,6 +141,9 @@ pub struct SyncServer {
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
+    /// Dedicated shared environments retained for leave checks and their own
+    /// housekeeping (FIX 2051, FIX 11136); installed once at serve startup.
+    pub(crate) shared_envs: std::sync::OnceLock<crate::shared_envs::SharedEnvRegistry>,
     /// The live sockets of proven machines and the custody carrier leaf-key
     /// requests relayed between them, in memory only (FIX 11785).
     pub(crate) leaf_keys: crate::handler::LeafKeyRelay,
@@ -155,6 +158,8 @@ pub struct SyncServer {
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
+    /// Each client address's unanswered pairing redemptions (FIX 12477).
+    pub(crate) pairing_backoff: crate::api::PairingRedeemBackoff,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -168,6 +173,10 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// The credential-helper registrations each seat run's host made for it
+    /// (FIX 10624 step 2): `POST /v1/seat/credential-helper` answers into
+    /// them.
+    pub(crate) seat_helpers: crate::runtime::SeatHelperRuns,
     /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
     /// line and its mesh staging budget, one set its runtime's adapters and
     /// every mesh site share.
@@ -287,6 +296,10 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Where the API listener is bound, set by the serve path once it is
+    /// bound (FIX 10624 step 2): the origin a seat CLI's credential helper
+    /// calls back on. `None` where no API listener of this process serves.
+    api_addr: Option<std::net::SocketAddr>,
     /// Managed serve's artifact origin on a unix socket of its own
     /// (`--artifact-http-socket`), which has no port to advertise.
     artifact_socket: bool,
@@ -375,7 +388,8 @@ impl SyncServer {
                 runs,
                 Arc::clone(self.wire_telemetry.limit_questions()),
             )
-            .with_reader_seats(self.reader_runner.seats()),
+            .with_reader_seats(self.reader_runner.seats())
+            .with_git_door_base(self.config.git_door_base.clone()),
         );
         // Reader children run on the same provider and pool.
         self.reader_runner.bind_host(Arc::clone(&host));
@@ -724,6 +738,29 @@ impl SyncServer {
         self.artifact_port
     }
 
+    /// Records that the API listener is bound at `addr` (FIX 10624 step 2).
+    #[must_use]
+    pub fn with_api_listener(mut self, addr: std::net::SocketAddr) -> Self {
+        self.api_addr = Some(addr);
+        self
+    }
+
+    /// The loopback origin this device's own callers reach the API on: the
+    /// bound port on loopback, when the listener is bound to loopback or to
+    /// every address. `None` when no listener is recorded or it listens on
+    /// one other address alone.
+    pub(crate) fn loopback_api_origin(&self) -> Option<String> {
+        let addr = self.api_addr?;
+        let ip = addr.ip();
+        if ip.is_loopback() {
+            Some(format!("http://{addr}"))
+        } else if ip.is_unspecified() {
+            Some(format!("http://127.0.0.1:{}", addr.port()))
+        } else {
+            None
+        }
+    }
+
     /// Records that the artifact-only router serves this server's `/a/` on a
     /// unix socket of its own (managed serve, OF-356). As with a port, the
     /// API's own `/a/` then sandboxes code bundles.
@@ -743,6 +780,38 @@ impl SyncServer {
     /// assert sync_state durability).
     pub fn vault(&self) -> &Arc<oneiron::Vault> {
         &self.vault
+    }
+
+    /// Installs this serve's dedicated shared environments once. A second
+    /// installation is a startup bug, logged without replacing the first.
+    pub(crate) fn install_shared_envs(&self, registry: crate::shared_envs::SharedEnvRegistry) {
+        if self.shared_envs.set(registry).is_err() {
+            tracing::warn!("shared environments were installed twice; keeping the first registry");
+        }
+    }
+
+    /// Every retained shared environment handle, active and left alike, for
+    /// the existing housekeeping task to walk sequentially (FIX 11136).
+    pub(crate) fn shared_vault_handles(&self) -> Vec<Arc<oneiron::Vault>> {
+        self.shared_envs
+            .get()
+            .map_or_else(Vec::new, |registry| registry.vault_handles())
+    }
+
+    /// The earliest wake any retained shared environment asks for, so a
+    /// managed host does not sleep through a left env's owed collection.
+    pub(crate) fn shared_housekeeping_wake_at(&self) -> Option<u64> {
+        self.shared_envs
+            .get()
+            .and_then(|registry| registry.housekeeping_wake_at())
+    }
+
+    /// Drops shared lanes before their vault handles. Active leave checks
+    /// and housekeeping passes retain their own Arcs and finish first.
+    pub(crate) async fn stop_shared_envs(&self) {
+        if let Some(registry) = self.shared_envs.get() {
+            registry.stop().await;
+        }
     }
 
     /// `caller`'s turn to run one piece of task work on this vault (`can`,

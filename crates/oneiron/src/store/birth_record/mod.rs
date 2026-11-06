@@ -13,6 +13,8 @@ use crate::write_envelope::provenance::made_by::{MadeByInputRole, MadeByTrigger}
 use heed::{RoTxn, RwTxn};
 
 pub(crate) mod prompted;
+mod saved_room;
+pub(crate) use saved_room::SavedRoomBirth;
 
 /// One row's birth envelope. Key: id16 (the born row).
 pub(crate) const ROW_BIRTH: SideTable<EntityId, RowBirth, Named> =
