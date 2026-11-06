@@ -53,6 +53,64 @@ pub(super) struct ConnectorInputResume {
     sealed: Vec<u8>,
 }
 
+/// One round's opaque resume bytes, transferred from the host to the engine.
+/// This in-memory carrier is zeroized on drop; only its sealed form is stored.
+pub struct ConnectorResumeState {
+    pub generation: u64,
+    pub protocol: ConnectorResumeProtocol,
+    pub state: Zeroizing<Vec<u8>>,
+}
+
+impl ConnectorResumeState {
+    /// Resume persistence is best-effort, isolated from the live row's writes.
+    pub(super) fn seal_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        call_ref: &EntityId,
+    ) -> Option<ConnectorInputResume> {
+        let sealed_at = custody_generation(self.generation)?;
+        let seal = (|| {
+            let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+            let resume = ConnectorInputResume::seal_in_txn(
+                vault,
+                &mut savepoint,
+                call_ref,
+                sealed_at,
+                self.protocol,
+                &self.state,
+            )?;
+            savepoint.commit()?;
+            Ok::<_, Error>(resume)
+        })();
+        match seal {
+            Ok(resume) => Some(resume),
+            Err(error) => {
+                tracing::warn!(%error, "connector call resume state not kept");
+                None
+            }
+        }
+    }
+}
+
+impl ConnectorInputResume {
+    fn seal_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        call_ref: &EntityId,
+        sealed_at: u32,
+        protocol: ConnectorResumeProtocol,
+        state: &[u8],
+    ) -> crate::Result<Self> {
+        let sealed = seal_connector_resume_in_txn(&vault.store, txn, call_ref, sealed_at, state)?;
+        Ok(Self {
+            protocol,
+            generation: sealed_at,
+            sealed,
+        })
+    }
+}
+
 /// One unanswered round's resume state, opened by the vault: what a server
 /// starting takes the exchange up again from.
 pub struct OpenedConnectorResume {
@@ -118,13 +176,9 @@ impl Vault {
             }) else {
                 return Ok(false);
             };
-            let sealed =
-                seal_connector_resume_in_txn(&self.store, txn, call_ref, sealed_at, state)?;
-            input.resume = Some(ConnectorInputResume {
-                protocol,
-                generation: sealed_at,
-                sealed,
-            });
+            input.resume = Some(ConnectorInputResume::seal_in_txn(
+                self, txn, call_ref, sealed_at, protocol, state,
+            )?);
             PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
             Ok(true)
         })?)

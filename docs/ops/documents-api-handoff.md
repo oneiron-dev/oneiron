@@ -162,6 +162,21 @@ where work moves to another runtime, and that runtime (the session image) is the
   the reply lists it. Passing those back as `slide_creation_ids` replays the same bytes; a mint the
   edits do not need, or one they need and the list lacks, refuses as `bad_request`.
 
+## Vault DOCX revision attribution
+
+A shared DOCX body's default-author export keeps one native revision per consecutive actor group
+when the package can represent it. A terminal group that only deletes the final paragraph can
+keep those revisions when the native view proves the exact live text and order, with one empty
+physical final-mark carrier. This slice requires unmoved, unsplit text-only paragraphs, no
+literal prefixes, and exactly one deleted break on the carrier's immediate physical predecessor.
+Earlier groups' text revisions keep their own marks and authors. This is a read-only witness;
+it does not resolve revisions or rewrite the package's identities.
+
+Every unproved final-deletion shape keeps the existing whole-window default-author projection.
+This includes nonterminal or mixed-operation groups, moves, inserted blocks, nontext content,
+labels, and an empty live body. The stateless `docx.project` call and all contract schemas are
+unchanged.
+
 ## Not on schema 2
 
 - **Live office bodies:** the shared Loro bodies, forks, landing and export projection (OF-505,
