@@ -86,6 +86,7 @@ pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 pub(super) mod model_setting_routes;
+mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
 pub(super) mod owner_key_enrollment_routes;
@@ -175,6 +176,7 @@ fn owner_tables() -> OwnerTable {
         support_grant_routes::owner_table(),
         support_repair_routes::owner_table(),
         agent_grant_routes::owner_table(),
+        oauth_authorization_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
         weave_digest_channel_routes::owner_table(),
