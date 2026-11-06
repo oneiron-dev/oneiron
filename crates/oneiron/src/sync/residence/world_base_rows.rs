@@ -22,7 +22,7 @@ use super::content_world::{ContentWorld, content_world_in};
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -110,6 +110,14 @@ fn discard_window_rows(
 ) -> Result<Vec<EntityId>> {
     let mut held = Vec::new();
     for batch in ids.chunks(BASE_ROW_BATCH) {
+        // A staged import's confirmation reads its receipt, then imports: a
+        // discard that may cancel that receipt waits for it, and holds no
+        // window while it waits (part E, E4 = A).
+        let _confirming = vault
+            .store
+            .staged_import_confirm_lock
+            .lock()
+            .map_err(|_| Error::InvariantViolation("staged import lock poisoned"))?;
         vault.unload_idle_window(window)?;
         let step = vault.while_window_closed(window, || {
             vault.with_write_txn_grouped(|txn| {

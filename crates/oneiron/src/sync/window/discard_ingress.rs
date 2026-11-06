@@ -20,9 +20,7 @@ use heed::RwTxn;
 use loro::{LoroDoc, VersionVector};
 
 use super::super::bridge::{persist_window_update, persist_window_update_in_txn};
-use super::super::loro_support::{
-    doc_from_snapshot, export_all_updates, export_updates_from, import_doc,
-};
+use super::super::loro_support::{doc_from_snapshot, export_updates_from, import_doc};
 use super::super::schema::create_window_doc;
 use super::super::types::WindowKey;
 use super::discard_projection::{
@@ -183,9 +181,10 @@ pub(crate) fn project_unsent_update(
         Projected::Deferred(why) => Err(Error::InvalidConfig(format!(
             "an update that holds discarded rows the projection cannot place: {why}"
         ))),
-        Projected::Joined { bytes, .. } => {
-            Ok(Some(export_all_updates(&doc_from_snapshot(&bytes)?)?))
-        }
+        Projected::Joined { bytes, .. } => Ok(Some(export_updates_from(
+            &doc_from_snapshot(&bytes)?,
+            &VersionVector::default(),
+        )?)),
     }
 }
 
