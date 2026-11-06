@@ -17,6 +17,8 @@
 //!   P-256 key the Secure Enclave holds and never releases (hardware).
 //! - Windows: `WindowsDpapiKeystore`, one file per slot sealed by DPAPI to this
 //!   user on this machine (platform).
+//! - Linux, hardware tier: `LinuxTpmKeystore`, one file per slot holding a
+//!   TPM 2.0 sealed data object under this machine's storage key (hardware).
 //! - Other Unix: `LocalFileKeystore`, 0600 files in a 0700 directory outside the
 //!   vault, tagged so that backup tools skip it (software).
 //! - Tests: `MemoryKeystore`, process memory only, built under `cfg(test)` or the
@@ -36,6 +38,8 @@ mod apple;
 mod apple_enclave;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file;
+#[cfg(target_os = "linux")]
+mod linux_tpm;
 #[cfg(any(test, feature = "test-keystore"))]
 mod memory;
 #[cfg(windows)]
@@ -47,6 +51,8 @@ pub use apple::AppleKeychain;
 pub use apple_enclave::SecureEnclaveKeychain;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub use file::LocalFileKeystore;
+#[cfg(target_os = "linux")]
+pub use linux_tpm::LinuxTpmKeystore;
 #[cfg(any(test, feature = "test-keystore"))]
 pub use memory::MemoryKeystore;
 #[cfg(windows)]
@@ -396,22 +402,31 @@ pub fn platform_keystore(
     }
 }
 
-/// This platform's hardware-wrapped keystore: the Secure Enclave on Apple.
-/// Refused where there is none, never answered with a weaker one; the caller
-/// picks the platform tier itself if it wants it.
+/// This platform's hardware-wrapped keystore: the Secure Enclave on Apple,
+/// the TPM 2.0 on Linux (its sealed slots in `dir`, which must lie outside
+/// every vault directory in `vault_dirs`). Refused where there is none, never
+/// answered with a weaker one; the caller picks the platform tier itself if
+/// it wants it.
 pub fn hardware_keystore(
     service: &str,
     dir: &std::path::Path,
     vault_dirs: &[&std::path::Path],
 ) -> Result<std::sync::Arc<dyn DeviceKeystore>> {
-    let _ = (dir, vault_dirs);
     #[cfg(target_vendor = "apple")]
     {
+        let _ = (dir, vault_dirs);
         Ok(std::sync::Arc::new(SecureEnclaveKeychain::new(service)?))
     }
-    #[cfg(not(target_vendor = "apple"))]
+    #[cfg(target_os = "linux")]
     {
         let _ = service;
+        Ok(std::sync::Arc::new(LinuxTpmKeystore::open(
+            dir, vault_dirs,
+        )?))
+    }
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
+    {
+        let _ = (service, dir, vault_dirs);
         Err(KeystoreError::Unavailable(
             "no hardware-wrapped keystore on this platform",
         ))
