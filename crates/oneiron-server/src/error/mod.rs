@@ -34,6 +34,8 @@ pub enum ErrorCode {
     SnapshotMismatch,
     #[serde(rename = "DAILY_BUDGET_EXHAUSTED")]
     DailyBudgetExhausted,
+    #[serde(rename = "TOO_MANY_ATTEMPTS")]
+    TooManyAttempts,
     #[serde(rename = "MIRROR_NOT_READY")]
     MirrorNotReady,
     #[serde(rename = "UNSUPPORTED_FORMAT")]
@@ -113,6 +115,7 @@ impl ErrorCode {
         Self::InvalidState,
         Self::SnapshotMismatch,
         Self::DailyBudgetExhausted,
+        Self::TooManyAttempts,
         Self::MirrorNotReady,
         Self::UnsupportedFormat,
         Self::NotAcceptable,
@@ -148,6 +151,7 @@ impl ErrorCode {
             Self::InvalidState => "INVALID_STATE",
             Self::SnapshotMismatch => "SNAPSHOT_MISMATCH",
             Self::DailyBudgetExhausted => "DAILY_BUDGET_EXHAUSTED",
+            Self::TooManyAttempts => "TOO_MANY_ATTEMPTS",
             Self::MirrorNotReady => "MIRROR_NOT_READY",
             Self::UnsupportedFormat => "UNSUPPORTED_FORMAT",
             Self::NotAcceptable => "NOT_ACCEPTABLE",
@@ -192,7 +196,7 @@ impl ErrorCode {
             | Self::IdempotencyReplayConflict
             | Self::InvalidState
             | Self::SnapshotMismatch => StatusCode::CONFLICT,
-            Self::DailyBudgetExhausted => StatusCode::TOO_MANY_REQUESTS,
+            Self::DailyBudgetExhausted | Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
             Self::MirrorNotReady
             | Self::DeepRetrievalUnavailable
             | Self::EmbedderUnavailable
@@ -246,6 +250,11 @@ pub enum ApiErrorDetails {
         used: Option<u64>,
         reset_at: Option<String>,
     },
+    /// A door that counts a caller's failed attempts makes it wait before
+    /// it tries again (FIX 12477): how long, in whole seconds, also sent as
+    /// `Retry-After`.
+    #[serde(rename = "TOO_MANY_ATTEMPTS", rename_all = "camelCase")]
+    TooManyAttempts { retry_after_secs: u64 },
     #[serde(rename = "MIRROR_NOT_READY", rename_all = "camelCase")]
     MirrorNotReady { mirror: Option<String> },
     #[serde(rename = "UNSUPPORTED_FORMAT", rename_all = "camelCase")]
@@ -335,6 +344,7 @@ impl ApiErrorDetails {
             Self::InvalidState { .. } => ErrorCode::InvalidState,
             Self::SnapshotMismatch { .. } => ErrorCode::SnapshotMismatch,
             Self::DailyBudgetExhausted { .. } => ErrorCode::DailyBudgetExhausted,
+            Self::TooManyAttempts { .. } => ErrorCode::TooManyAttempts,
             Self::MirrorNotReady { .. } => ErrorCode::MirrorNotReady,
             Self::UnsupportedFormat { .. } => ErrorCode::UnsupportedFormat,
             Self::NotAcceptable { .. } => ErrorCode::NotAcceptable,
@@ -415,6 +425,17 @@ impl ApiError {
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
             ["Send Authorization: Bearer credentials and retry."],
+        )
+    }
+
+    /// A 429 for a caller that must wait `retry_after_secs` before its next
+    /// attempt at a door that counts failed attempts (FIX 12477); the
+    /// envelope sends the wait as `Retry-After` too.
+    pub fn too_many_attempts(retry_after_secs: u64) -> Self {
+        Self::new(
+            format!("too many attempts from this address: retry in {retry_after_secs} s"),
+            ApiErrorDetails::TooManyAttempts { retry_after_secs },
+            ["Wait the time Retry-After names, check the code, then retry."],
         )
     }
 
@@ -763,9 +784,20 @@ impl EnvelopedApiError {
 impl IntoResponse for EnvelopedApiError {
     fn into_response(self) -> Response {
         let status = self.0.status();
+        let retry_after = match *self.0.details {
+            ApiErrorDetails::TooManyAttempts { retry_after_secs } => Some(retry_after_secs),
+            _ => None,
+        };
         let mut envelope = ApiErrorEnvelope::new(self.0);
         envelope.narrowing = self.1.map(|receipt| *receipt);
-        (status, Json(envelope)).into_response()
+        let mut response = (status, Json(envelope)).into_response();
+        if let Some(seconds) = retry_after {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(seconds),
+            );
+        }
+        response
     }
 }
 
