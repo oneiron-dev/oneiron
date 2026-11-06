@@ -154,8 +154,14 @@ expressions are evaluated.
 Uninitialized root `var module` and `var exports` redeclare the CommonJS wrapper
 parameters, including hoisted or repeated redeclarations. Direct simple `var`
 initializers update the same alias state in
-source order. Lexical and function shadows remain distinct from wrapper bindings.
-Destructured, conditional and loop-carried initializer flows are not modeled.
+source order. A direct root `var exports` initializer can also use the same flat
+whole-slot prefix when its final element reads the current native module slot,
+such as `var exports = (module.exports = {a: 1}, module.exports)`. It applies the
+fresh prefix values in order and reconnects that actual wrapper binding; an
+all-current prefix preserves keys. Fresh or `exports` final values retain the
+ordinary initializer handling. Lexical and function shadows remain distinct from
+wrapper bindings. Destructured, conditional and loop-carried initializer flows
+are not modeled.
 A direct `module = module` or `var module = module` preserves its current
 wrapper identity; assigning an unrelated value does not. This does not infer
 arbitrary alias identities. Rebinding `exports` does not replace the module value. Replacing
