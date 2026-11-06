@@ -128,10 +128,18 @@ async fn serve(
             () = stop.turned() => break,
             Some(answered) = calls.join_next(), if !calls.is_empty() => {
                 let Ok(Ok(reply)) = answered else { break };
-                for frame in reply.queued(conn_id) {
-                    if let Some(frame) = release.release_for(caller.locality, caller.machine, &frame)
-                        && !transport.send_binary(frame).await
-                    { break 'serving; }
+                for mut frame in reply.queued(conn_id) {
+                    if crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
+                        let Some(released) =
+                            release.release_for(caller.locality, caller.machine, &frame)
+                        else {
+                            continue;
+                        };
+                        frame = released;
+                    }
+                    if !transport.send_binary(frame).await {
+                        break 'serving;
+                    }
                 }
                 continue;
             }

@@ -15,8 +15,9 @@ Each booking call resolves the original managed session holder again and runs
 through the existing facade RPC dispatcher. The native booking doors recheck
 publication, action tokens, admission, grants and payer. The upgrade's verified
 locality and machine accompany both the caller and the send-time row release.
-No live-query session or subscription is opened. Replies use the existing
-`Connection::release_for` and guarded transport.
+No live-query session or subscription is opened. Routed replies use the existing
+`Connection::release_for`; unwrapped refusal frames need no row release. Both
+paths send through the guarded transport, as the ordinary app connection does.
 
 Call context is captured at arrival. Missing room and session fields retain the
 upgrade's placing headers; a supplied call context still goes through the
