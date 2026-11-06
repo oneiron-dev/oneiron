@@ -38,6 +38,7 @@ impl ContextPackBuilder<'_> {
             replay_config: run.replay_config,
             critical: run.critical,
             world_share: run.world_share,
+            telemetry_memory: run.telemetry_memory,
         };
         if let Err(error) = lane.end_recall_plan() {
             pending.discard_telemetry();
@@ -69,6 +70,7 @@ impl ContextPackBuilder<'_> {
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&pending.value, &telemetry),
             replay_config,
+            pending.telemetry_memory.as_ref(),
         ) {
             discard_failed_context_pack_telemetry(pending.telemetry, run_id);
             return Err(error);

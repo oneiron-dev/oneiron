@@ -93,16 +93,17 @@ impl SessionRetrievalTelemetry<'_> {
     pub(crate) fn finalize_run(
         &self,
         finalize: crate::store::RetrievalRunFinalize<'_>,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         match self.landing.route.target() {
             RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => self.staged(move |view, wtxn| {
-                view.finalize_context_pack_retrieval_run_in_txn(wtxn, finalize)
+                view.finalize_context_pack_retrieval_run_in_txn(wtxn, finalize, memory)
             }),
             RouteTarget::Base => self.published(finalize.run_id, move |admit| {
                 self.vault
                     .store
-                    .finalize_context_pack_retrieval_run_admitted(finalize, admit)
+                    .finalize_context_pack_retrieval_run_admitted(finalize, admit, memory)
             }),
         }
     }

@@ -69,6 +69,7 @@ impl<'a> ContextPackBuilder<'a> {
             replay_config: run.replay_config,
             critical: run.critical,
             world_share: run.world_share,
+            telemetry_memory: run.telemetry_memory,
         })
     }
 
@@ -90,6 +91,7 @@ impl<'a> ContextPackBuilder<'a> {
                 replay_config: None,
                 critical: Default::default(),
                 world_share: None,
+                telemetry_memory: self.pipeline.media_memory().cloned(),
             });
         }
         let started = Instant::now();
@@ -128,6 +130,7 @@ impl<'a> ContextPackBuilder<'a> {
                 .as_ref()
                 .is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone))
         .then(|| self.pack_replay_config());
+        let telemetry_memory = self.pipeline.media_memory().cloned();
         let mut pipeline = self.pipeline;
         let default_deadline =
             crate::retrieval_depth::RetrievalDeadline::after(DEFAULT_CONTEXT_PACK_DEADLINE);
@@ -647,6 +650,7 @@ impl<'a> ContextPackBuilder<'a> {
                 replay_config,
                 critical,
                 world_share,
+                telemetry_memory,
             })
         })();
 

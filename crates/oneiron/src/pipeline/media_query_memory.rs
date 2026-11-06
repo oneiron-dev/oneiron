@@ -87,6 +87,10 @@ fn query_bytes(query: &MediaQuery) -> u64 {
 }
 
 impl super::builder::PipelineBuilder<'_> {
+    pub(crate) fn media_memory(&self) -> Option<&MachineMemory> {
+        self.media_search.memory()
+    }
+
     /// Account for copied media queries on the host's existing memory line.
     pub fn media_query_memory(mut self, memory: &MachineMemory) -> Self {
         self.media_search.bind_memory(memory);

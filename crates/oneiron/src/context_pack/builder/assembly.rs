@@ -121,6 +121,7 @@ impl ContextPackBuilder<'_> {
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
             replay_config,
+            run.telemetry_memory.as_ref(),
         )?;
         Ok((
             RetrievalWithTelemetry {
@@ -158,6 +159,7 @@ impl ContextPackBuilder<'_> {
             replay_config: run.replay_config,
             critical: run.critical,
             world_share: run.world_share,
+            telemetry_memory: run.telemetry_memory,
         };
         lane.end_recall_plan()?;
         let receipt = match pending.filter_scoped_under(lane, disclosure.as_ref()) {
@@ -245,6 +247,7 @@ impl ContextPackBuilder<'_> {
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
             replay_config,
+            run.telemetry_memory.as_ref(),
         )?;
         Ok(RetrievalWithTelemetry {
             retrieval_quality: run.pack.retrieval_quality,

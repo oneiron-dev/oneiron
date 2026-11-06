@@ -159,6 +159,29 @@ bound detached path. Serialization scratch, keys and values of marker, index,
 session and other unbound writes, finalized rows and later decoded records are
 separate allocations outside it.
 
+
+A bound context pack also carries that same supplied host-memory handle through
+its run and deferred-pack owners after the pipeline is consumed. Each terminal
+passes it to the original canonical or session finalizer. The canonical
+detached finalize owns its original payload and an optional private lease in
+one self-consuming owner, with payload fields before the lease. Session-overlay
+and admitted-base finalizers lend their local optional lease only inside the
+original synchronous write. The session route, saver admission and discard
+behavior remain unchanged.
+
+At the existing finalized retrieval-row put, that lease separately records the
+actual backing capacities of the native typed staged row's encoded key and
+serialized value, once. The same staged buffers reach the same put and drop
+before the lease on success, error and unwind. An unstarted detached write
+keeps its payload and lease together. An unbound terminal keeps the original
+direct put without an added accounting walk or a new memory line.
+
+This charge covers only those final encoded buffers. The newly decoded record,
+mutation copies, finalizer input storage, hash sets, config-map and number
+internals, serialization scratch, marker/index/retention keys and values,
+construction peaks and pre-growth admission remain outside it. It does not
+establish a full working-set bound or a compiler/runtime result.
+
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
 working-set bound remain open.

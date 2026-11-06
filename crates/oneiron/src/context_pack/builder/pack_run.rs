@@ -86,10 +86,11 @@ impl ContextPackTelemetry<'_> {
     pub(in crate::context_pack) fn finalize(
         self,
         finalize: RetrievalRunFinalize<'_>,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         match self {
-            Self::Base(store) => store.finalize_context_pack_retrieval_run(finalize),
-            Self::Session(session) => session.finalize_run(finalize),
+            Self::Base(store) => store.finalize_context_pack_retrieval_run(finalize, memory),
+            Self::Session(session) => session.finalize_run(finalize, memory),
         }
     }
 
@@ -122,6 +123,7 @@ pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) critical: PackCriticalAccounting,
     /// An `All`-world pack's world share, for a cut after assembly (FIX 9759).
     pub(in crate::context_pack) world_share: Option<PackWorldShare>,
+    pub(in crate::context_pack) telemetry_memory: Option<crate::host_memory::MachineMemory>,
 }
 
 pub struct UnfinalizedContextPack<'a> {
@@ -133,6 +135,7 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) replay_config: Option<serde_json::Value>,
     pub(super) critical: PackCriticalAccounting,
     pub(super) world_share: Option<PackWorldShare>,
+    pub(super) telemetry_memory: Option<crate::host_memory::MachineMemory>,
 }
 
 impl UnfinalizedContextPack<'_> {
@@ -281,6 +284,7 @@ impl UnfinalizedContextPack<'_> {
                 &surfaced_result_ids,
             ),
             replay_config,
+            self.telemetry_memory.as_ref(),
         )
         .ok()
         .flatten();
@@ -326,15 +330,18 @@ impl UnfinalizedContextPack<'_> {
             value["terminal_kind"] = "structured".into();
         }
         if let Some(run_id) = telemetry_run_id
-            && let Err(error) = self.telemetry.finalize(RetrievalRunFinalize {
-                run_id,
-                elapsed_us: self.value.stats.query_time_us,
-                total_in_scope: self.value.stats.candidates_considered,
-                claims_suppressed: self.value.stats.claims_suppressed,
-                surfaced_result_ids: &surfaced_result_ids,
-                empty_reason: context_pack_empty_reason(&self.value, &surfaced_result_ids),
-                pack_config: replay_config,
-            })
+            && let Err(error) = self.telemetry.finalize(
+                RetrievalRunFinalize {
+                    run_id,
+                    elapsed_us: self.value.stats.query_time_us,
+                    total_in_scope: self.value.stats.candidates_considered,
+                    claims_suppressed: self.value.stats.claims_suppressed,
+                    surfaced_result_ids: &surfaced_result_ids,
+                    empty_reason: context_pack_empty_reason(&self.value, &surfaced_result_ids),
+                    pack_config: replay_config,
+                },
+                self.telemetry_memory.as_ref(),
+            )
         {
             discard_failed_context_pack_telemetry(self.telemetry, Some(run_id));
             return Err(error);
