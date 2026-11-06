@@ -1276,6 +1276,7 @@ pub enum AgentVerb {
     SelfBrowserLibraryRun,
     SelfBrowserHandover,
     SelfBrowserSwitchEngine,
+    VaultClaimsPut,
     VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
@@ -2564,6 +2565,7 @@ impl AgentVerb {
         Self::SelfBrowserLibraryRun,
         Self::SelfBrowserHandover,
         Self::SelfBrowserSwitchEngine,
+        Self::VaultClaimsPut,
         Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
@@ -3889,6 +3891,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfBrowserHandover => "self.browser.handover",
             Self::SelfBrowserSwitchEngine => "self.browser.switch_engine",
+            Self::VaultClaimsPut => "vault.claims.put",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
@@ -5157,6 +5160,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::SelfBrowserSwitchEngine
+                | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -6474,6 +6478,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::SelfBrowserSwitchEngine
+                | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -7885,6 +7890,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::SelfBrowserSwitchEngine
+                | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -8642,6 +8648,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::SelfBrowserSwitchEngine
+                | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -9981,6 +9988,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
             Self::SelfBrowserSwitchEngine => &["spec"],
+            Self::VaultClaimsPut => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -11270,6 +11278,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
             Self::SelfBrowserSwitchEngine => &["spec"],
+            Self::VaultClaimsPut => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -15013,6 +15022,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserSwitchEngine => {
                 "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds."
+            }
+            Self::VaultClaimsPut => {
+                "Puts one claim through this credential's attached generated-writing run and its existing gates: Auto when the gates allow it, Proposed with its pending review for a declared-critical class or a pending gate; spec is {id,predicate,subject,value,confidence,occurred,learnedAt}, never an actor, source or approval override."
             }
             Self::VaultClaimsSupersede => {
                 "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."

@@ -12,6 +12,7 @@ mod resolve;
 
 pub(in crate::memory) use self::batch::{BatchClaim, BatchRefusal};
 use self::resolve::refuse_typed_claim_family;
+use crate::gate::gate_rejection_pends;
 
 impl Memory<'_> {
     /// Recovers a hook proposal without re-putting an already landed exact
@@ -96,16 +97,4 @@ impl Memory<'_> {
         }
         self.commit_receipt(write.id, write.prior, approval)
     }
-}
-
-/// Whether `err` is a Gate write rejection whose outcome is Pending, the one
-/// rejection an Auto request may be resubmitted as Proposed after. A Deny,
-/// and any error that is not a Gate rejection, is not.
-fn gate_rejection_pends(err: &Error) -> bool {
-    matches!(
-        err,
-        Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
-            if crate::error::GateDenialOutcome::parse(outcome)
-                == Some(crate::error::GateDenialOutcome::Pending)
-    )
 }

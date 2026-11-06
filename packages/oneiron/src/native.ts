@@ -1285,6 +1285,7 @@ selfBrowserLibraryRetired(input: unknown): unknown
 selfBrowserLibraryRun(input: unknown): unknown
 selfBrowserHandover(input: unknown): unknown
 selfBrowserSwitchEngine(input: unknown): unknown
+vaultClaimsPut(input: unknown): unknown
 vaultClaimsSupersede(input: unknown): unknown
 selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown

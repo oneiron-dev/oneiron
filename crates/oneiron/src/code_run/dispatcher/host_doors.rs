@@ -103,6 +103,65 @@ impl<'a> HostSelfDispatcher<'a> {
         }
     }
 
+    /// The attached generated writer puts one claim through its existing
+    /// consent, envelope and claim gates (FIX 3983). The host stamps the
+    /// actor, `Generated` source, lineage and provenance; no field of the
+    /// request names them. Where it lands is decided per predicate
+    /// (ARCH-0040, #mcp:5, #ONE-1184-D1): a claim of a class the policy
+    /// declares critical asks Proposed and parks with its pending review; any
+    /// other asks Auto and lands at once when the gates allow it, and a gate
+    /// that pends the Auto request (an actor ceiling, a missing source-trust
+    /// permit, a checker hold) lands it Proposed with its pending review, as
+    /// the Memory claim door does.
+    pub fn put_claim_from_host(
+        &self,
+        input: crate::code_run::MemoryClaimInput,
+    ) -> MemoryResult<crate::code_run::MemoryWriteOutput> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a live-run claim put requires canonical live-run storage",
+            ));
+        };
+        let declared_critical = {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            crate::gate::resolve_policy_manifest(&vault.store, &txn)?
+                .declares_predicate_critical(&input.predicate)
+        };
+        let call =
+            crate::code_run::run_verb_call::claim_put_call(input, crate::unix_seconds_now())?;
+        let outcome = if declared_critical {
+            self.dispatch_memory_put_claim_requesting(
+                call,
+                crate::claim::ClaimApprovalStatus::Proposed,
+            )?
+        } else {
+            match self.dispatch_memory_put_claim_requesting(
+                call.clone(),
+                crate::claim::ClaimApprovalStatus::Auto,
+            ) {
+                Err(error) if crate::gate::gate_rejection_pends(&error) => self
+                    .dispatch_memory_put_claim_requesting(
+                        call,
+                        crate::claim::ClaimApprovalStatus::Proposed,
+                    )?,
+                outcome => outcome?,
+            }
+        };
+        match outcome {
+            SelfDispatchOutcome::MemoryWrite(written) => {
+                Ok(crate::code_run::MemoryWriteOutput { id: written.id })
+            }
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
     /// The host door's `self.leader.split`, under its admitted credential
     /// and hooks. TASK, project, actor and parent attempt come only from the
     /// run's acquired lease. The existing split signs and gates the write.

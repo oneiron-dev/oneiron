@@ -19302,7 +19302,13 @@
       "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "MemoryPutClaim"
+      "effect": "MemoryPutClaim",
+      "host": {
+        "host_door_precheck": false,
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemoryClaimInput>",
+        "description": "Puts one claim through this credential's attached generated-writing run and its existing gates: Auto when the gates allow it, Proposed with its pending review for a declared-critical class or a pending gate; spec is {id,predicate,subject,value,confidence,occurred,learnedAt}, never an actor, source or approval override.",
+        "host_door_lists": true
+      }
     },
     {
       "name": "vault.claims.supersede",

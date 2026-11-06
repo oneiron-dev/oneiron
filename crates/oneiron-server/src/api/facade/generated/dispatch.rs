@@ -39412,6 +39412,41 @@ async fn self_browser_switch_engine(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_claims_put(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.claims.put")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.claims.put", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.claims.put", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_claims_put(
+            server,
+            auth,
+            call.session()?,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_claims_supersede(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -42551,6 +42586,7 @@ async fn call_verb_row(
         "self.browser.switch_engine" => {
             Box::pin(self_browser_switch_engine(server, call, input)).await
         }
+        "vault.claims.put" => Box::pin(vault_claims_put(server, call, input)).await,
         "vault.claims.supersede" => Box::pin(vault_claims_supersede(server, call, input)).await,
         "self.fold" => Box::pin(self_fold(server, call, input)).await,
         "self.compact" => Box::pin(self_compact(server, call, input)).await,
@@ -42586,7 +42622,6 @@ async fn call_verb_row(
         | "self.desktop.handover" => Err(context_required(verb, VerbContext::Browser)),
         "vault.worlds.privacy.set"
         | "vault.search"
-        | "vault.claims.put"
         | "vault.edges.put"
         | "tasks.consult.result"
         | "self.workflows.dispatch_bound"

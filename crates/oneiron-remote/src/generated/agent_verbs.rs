@@ -3877,6 +3877,9 @@ impl OneironClient {
                 "self.browser.switch_engine" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserSwitchEngineOutput,
                 >(client, verb, &input),
+                "vault.claims.put" => remote_agent_verb_output::<
+                    oneiron::code_run::MemoryWriteOutput,
+                >(client, verb, &input),
                 "vault.claims.supersede" => remote_agent_verb_output::<
                     oneiron::code_run::MemoryWriteOutput,
                 >(client, verb, &input),
@@ -19332,6 +19335,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.browser.switch_engine", value)
+    }
+    pub fn vault_claims_put(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemoryClaimInput>,
+    ) -> Result<oneiron::code_run::MemoryWriteOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.put", value)
     }
     pub fn vault_claims_supersede(
         &self,
