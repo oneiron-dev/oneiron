@@ -28,6 +28,15 @@ pub enum EngineLimit {
     /// Serialized bytes of one keyed-memory search filter
     /// (`vault.kv.search`).
     KeyedFilterJsonBytes,
+    /// Segments of one keyed-memory namespace, prefix or suffix a caller
+    /// names (`vault.kv`). Past it the namespace is kept and served whole.
+    KeyedNamespaceSegments,
+    /// UTF-8 bytes of one keyed-memory namespace, prefix or suffix, its
+    /// segments together. Past it the namespace is kept and served whole.
+    KeyedNamespaceBytes,
+    /// UTF-8 bytes of one keyed-memory key. Past it the key is kept and
+    /// served whole.
+    KeyedKeyBytes,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.
