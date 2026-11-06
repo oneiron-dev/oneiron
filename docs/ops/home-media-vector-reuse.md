@@ -50,7 +50,7 @@ supplied by a caller without an input binding remains unbound and still works;
 its current body is never used to invent an original-input claim. This binding
 alone does not enable image/audio residence reuse. Text hashes keep their
 existing meaning. The internal media-row codec stores an explicit hash-presence
-byte; no old-format reader or migration is added.
+byte under storage ABI 29; no old-format reader or migration is added.
 
 Image/audio rows, default text index vectors, other machine directions and
 devices without the live opened home-query path remain outside this slice.
