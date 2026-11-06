@@ -3,14 +3,19 @@
 //! (moved out of the row-family module whole).
 
 use super::*;
-use crate::result_body::ResultBodyPin;
 use crate::store::result_body_rows::body_handle;
 pub(crate) use crate::store::result_body_rows::code_run_body_row_key;
 
 mod context;
 mod context_output;
+mod finish;
 mod host_occurrence;
 mod reader;
+
+pub(crate) use self::finish::FinishedOutput;
+pub(in crate::code_run::storage) use self::finish::{
+    finish_output, finish_output_sourced, owned_body, raw_put_publishes_descriptor,
+};
 
 impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
@@ -458,140 +463,6 @@ impl Vault {
 }
 
 pub(crate) use crate::store::result_manifest::StagedSinks;
-
-/// A finished body: its manifest, its row and the secret scan's hit. A
-/// spilled body's file is already whole on disk.
-pub(crate) struct FinishedOutput {
-    pub(crate) output: CodeRunRawOutput,
-    pub(in crate::code_run::storage) body: StoredBody,
-    pub(in crate::code_run::storage) secret: Option<&'static str>,
-    /// A sealed file's key row, committed with the body's row (FIX 5348).
-    pub(in crate::code_run::storage) key: Option<StagedBodyKey>,
-    /// The reader pin on the body's final digest, taken before its file was
-    /// published under it and held until the row naming it commits or the
-    /// write is dropped: the collector leaves the file be meanwhile (FIX
-    /// 5399b).
-    _pin: ResultBodyPin,
-}
-
-impl FinishedOutput {
-    /// The manifest of these bytes at `path`, as one owner's occurrence.
-    pub(crate) fn at(&self, path: String, complete: bool) -> Result<CodeRunRawOutput> {
-        let output = CodeRunRawOutput {
-            path,
-            complete,
-            ..self.output.clone()
-        };
-        validate_raw_output(&output)?;
-        Ok(output)
-    }
-}
-
-/// Finishes `sink` into the output's manifest, its row and the secret
-/// scan's hit. A body that took the disk below `[limits]
-/// code_result_disk_floor_bytes` asks that row's question; it is stored
-/// whole all the same, as a body the scan marked is. `pin` pins the body's
-/// final digest, its sweep's tail written through once, before a spilled
-/// file is published under it (FIX 5399b).
-pub(in crate::code_run::storage) fn finish_output(
-    path: String,
-    sink: BodySink,
-    complete: bool,
-    watch: &LimitWatch,
-    pin: impl FnOnce([u8; 32]) -> ResultBodyPin,
-) -> Result<FinishedOutput> {
-    finish_output_sourced(path, sink, complete, None, watch, pin)
-}
-
-/// [`finish_output`] with the occurrence's complete input rows, or `None`
-/// when any constituent is unknown (FIX 7104).
-pub(in crate::code_run::storage) fn finish_output_sourced(
-    path: String,
-    sink: BodySink,
-    complete: bool,
-    input_rows: Option<Vec<EntityId>>,
-    watch: &LimitWatch,
-    pin: impl FnOnce([u8; 32]) -> ResultBodyPin,
-) -> Result<FinishedOutput> {
-    let (facts, sunk, pin) =
-        sink.finish_pinned(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS, pin)?;
-    let mut output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
-    output.input_rows = input_rows;
-    let (body, key) = match sunk {
-        SunkBody::Inline(bytes) => (StoredBody::Inline { bytes, held: false }, None),
-        SunkBody::File { free_bytes, key } => {
-            if let Some(free_bytes) = free_bytes {
-                watch.floor(EngineLimit::CodeResultDiskFloorBytes, free_bytes);
-            }
-            (
-                StoredBody::File {
-                    len: facts.len,
-                    held: false,
-                },
-                key,
-            )
-        }
-    };
-    Ok(FinishedOutput {
-        output,
-        body,
-        secret: facts.secret,
-        key,
-        _pin: pin,
-    })
-}
-
-/// `output` as an occurrence `owner` holds: one per owner and path.
-pub(in crate::code_run::storage) fn owned_body(
-    owner: EntityId,
-    output: &CodeRunRawOutput,
-    body: &StoredBody,
-) -> Result<crate::provenance::body::OwnedBody> {
-    use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
-    let body = BodyRef {
-        blake3: output.raw_blake3,
-        bytes: output.raw_len,
-        location: match body {
-            StoredBody::Inline { .. } => BodyLocation::Inline,
-            StoredBody::File { .. } => BodyLocation::File,
-        },
-    };
-    Ok(OwnedBody {
-        owner,
-        occurrence: ResultOccurrence::of(Some(owner), output)?.id(),
-        state: if output.complete {
-            BodyState::Complete { body }
-        } else {
-            BodyState::Incomplete {
-                retained: Some(body),
-            }
-        },
-        result: None,
-    })
-}
-
-/// Whether a raw output put publishes `body`, its owner's descriptor of the
-/// bytes, over `prior`, the one that occurrence has now (FIX 7283): only
-/// where the owned publisher neither refuses nor lets other bytes go. A
-/// complete descriptor is final, so one naming other bytes would refuse the
-/// put; an incomplete one holding bytes would release them; a prior that
-/// does not read would fail it. There the put stays as it was, its row
-/// holding its body on its own with no descriptor (FIX 5399b), so no raw
-/// put that lands today is refused or costs another body its hold. A
-/// session row an on-record route writes in base asks it too (FIX 7363).
-pub(in crate::code_run::storage) fn raw_put_publishes_descriptor(
-    prior: &Result<Option<crate::provenance::body::OwnedBody>>,
-    body: &crate::provenance::body::OwnedBody,
-) -> bool {
-    use crate::provenance::body::BodyState;
-    match prior {
-        Ok(None) => true,
-        Ok(Some(prior)) => {
-            prior == body || matches!(prior.state, BodyState::Incomplete { retained: None })
-        }
-        Err(_) => false,
-    }
-}
 
 /// The body file of `output` in the first of `dirs` that holds it, as
 /// `key`, its key row in the snapshot that found its row, names it.
