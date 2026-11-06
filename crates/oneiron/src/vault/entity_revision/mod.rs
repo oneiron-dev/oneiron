@@ -3,6 +3,10 @@
 //! born at its first edit or citation, and retains its full operation history.
 
 mod citations;
+mod document_mutation;
+pub(crate) use document_mutation::{
+    advance_document_mutation_head_in_txn, document_mutation_head_in_txn,
+};
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
