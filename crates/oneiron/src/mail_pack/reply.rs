@@ -297,6 +297,20 @@ fn sending_identity(row: &MailSourceRow) -> MemoryResult<EntityId> {
     })
 }
 
+/// The actor a delegated identity is bound to: its sends go out as that
+/// actor, whoever approved them.
+fn bound_sender(vault: &Vault, identity: EntityId) -> MemoryResult<EntityId> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    crate::channel_identity::channel_identity_facts_in_txn(&vault.store, &txn, &identity)?
+        .and_then(|facts| facts.binding.actor_ref())
+        .ok_or_else(|| {
+            MemoryError::bad_request_with(
+                "the mailbox's identity is bound to no sender",
+                &["reconnect the mailbox with the gmail.send scope"],
+            )
+        })
+}
+
 /// The adapter of a delegated identity granted `gmail.send`.
 fn adapter_of(vault: &Vault, identity: EntityId) -> MemoryResult<GmailDelegatedAdapter> {
     GmailDelegatedAdapter::from_campaign_sender_row(vault, identity).map_err(|error| {
@@ -381,7 +395,8 @@ fn plan_for(
     .map_err(|error| refuse(&error.to_string()))
 }
 
-/// The one dispatch request a draft's revision is, sent by `actor`.
+/// The one dispatch request a draft's revision is, sent as `actor`, the
+/// identity's bound sender.
 fn request_for(
     id: EntityId,
     row: &MailReplyDraftRow,
@@ -635,10 +650,13 @@ impl Vault {
             ));
         }
         let adapter = adapter_of(self, identity)?;
+        // The reply goes out as the actor the identity is bound to (an agent
+        // of the owner's, or the owner); the owner's proof is the approval.
+        let sender = bound_sender(self, identity)?;
         let now = crate::unix_seconds_now();
-        let request = request_for(id, &row, actor, now);
+        let request = request_for(id, &row, sender, now);
         let digest = crate::channel_identity_provider::native_mail::canonical_mail_send_digest(
-            &request, identity, actor,
+            &request, identity, sender,
         )?;
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
