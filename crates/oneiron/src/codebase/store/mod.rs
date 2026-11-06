@@ -23,6 +23,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
+mod capture;
 pub(crate) mod checkpoint;
 mod index_rows;
 mod ingest_writer;
@@ -310,8 +311,13 @@ impl Vault {
         // Evaluate custody exclusions in the transaction that persists the snapshot.
         let repo_marks =
             crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(self, &wtxn)?;
-        let (files, custody_report) =
-            self.repo_snapshot_inputs_in_txn(&wtxn, &repo_marks, snapshot, file_contents)?;
+        let (files, custody_report) = self.repo_snapshot_inputs_in_txn(
+            &wtxn,
+            &repo_marks,
+            snapshot,
+            crate::secret_snapshot::snapshot_root(&snapshot.repo_ref),
+            file_contents,
+        )?;
         let filtered_snapshot = CodebaseSnapshot::new(
             snapshot.project_id.clone(),
             snapshot.repo_ref.clone(),

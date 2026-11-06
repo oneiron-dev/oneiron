@@ -3676,6 +3676,11 @@ export_facade! {
     let output = client.vault_code_snapshots_ingest(&input)?;
     crate::codec::lift_record("vault.code.snapshots.ingest", &output)
 };
+"vault.code.snapshots.capture" => fn vault_code_snapshots_capture(&self, input: CodeSnapshotCaptureRequest) -> CodeSnapshotView = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotCaptureRequest = crate::codec::lower_record("vault.code.snapshots.capture", input)?;
+    let output = client.vault_code_snapshots_capture(&input)?;
+    crate::codec::lift_record("vault.code.snapshots.capture", &output)
+};
 "vault.code.snapshots.get" => fn vault_code_snapshots_get(&self, input: CodeSnapshotRequest) -> Option<CodeSnapshotView> = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotRequest = crate::codec::lower_record("vault.code.snapshots.get", input)?;
     let output = client.vault_code_snapshots_get(&input)?;

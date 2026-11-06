@@ -770,6 +770,7 @@ vaultCodeViewsBuild(input: unknown): unknown
 vaultCodeCacheGet(input: unknown): unknown
 vaultCodeCacheReuse(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
+vaultCodeSnapshotsCapture(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
