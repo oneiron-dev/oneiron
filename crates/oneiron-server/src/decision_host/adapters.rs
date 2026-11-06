@@ -273,6 +273,7 @@ impl HouseRead {
                 state: call.state,
                 deadline: call.deadline,
                 run: call.run,
+                labels: call.labels,
             },
             generation,
         )?;

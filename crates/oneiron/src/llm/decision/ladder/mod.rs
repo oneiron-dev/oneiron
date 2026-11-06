@@ -6,7 +6,8 @@ use super::policy::{
 use super::types::invalid;
 use super::{
     DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung,
-    HostRuleRef, ImagePin, PairedReading, ProviderPin, ReasoningCause, StopCause,
+    DecisionWireLabels, HostRuleRef, ImagePin, PairedReading, ProviderPin, ReasoningCause,
+    StopCause,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
@@ -246,6 +247,7 @@ pub(super) struct OpenPack<'a> {
     policy: &'a DecisionBandPolicy,
     reversibility: Reversibility,
     deadline: &'a RetrievalDeadline,
+    labels: Option<&'a dyn DecisionWireLabels>,
 }
 
 impl OpenPack<'_> {
@@ -271,6 +273,7 @@ struct Route<'a> {
     policy: &'a DecisionBandPolicy,
     reversibility: Reversibility,
     deadline: &'a RetrievalDeadline,
+    labels: Option<&'a dyn DecisionWireLabels>,
 }
 
 /// A state is a JSON object that serializes. Its size is no refusal here (Rule 5): the
