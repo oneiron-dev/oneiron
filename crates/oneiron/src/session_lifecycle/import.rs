@@ -71,7 +71,13 @@ impl Vault {
         let mut open_call = session_hook_call(HOST_SESSION_OPEN, hint.id, hint.key.actor, 0);
         open_call.reader = crate::runtime_hooks::VerbCall::reader_of(memory, HOST_SESSION_OPEN)?;
         let open_check = |rewritten: &Value| host_args_kept(&open_args, rewritten);
-        let open = match self.pre_verb_hooks(open_call, open_args.clone(), &open_check)? {
+        let open = match self.pre_verb_hooks_resumable(
+            open_call,
+            open_args.clone(),
+            &open_check,
+            None,
+            memory.task_work_turn(),
+        )? {
             Ok(pre) => pre,
             Err(stop) => return Ok(Err(stop)),
         };
@@ -86,7 +92,13 @@ impl Vault {
                 }
             };
         let close_check = |rewritten: &Value| host_args_kept(&close_args, rewritten);
-        let close = match self.pre_verb_hooks(close_call, close_args.clone(), &close_check) {
+        let close = match self.pre_verb_hooks_resumable(
+            close_call,
+            close_args.clone(),
+            &close_check,
+            None,
+            memory.task_work_turn(),
+        ) {
             Ok(close) => close,
             Err(error) => {
                 if crate::runtime_hooks::verb::error_failed_storage(&error) {

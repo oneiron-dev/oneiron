@@ -26,6 +26,9 @@ use oneiron_contracts::memory::{
 /// The holder every host root names (`ensure_host_root_slip`).
 const HOST_HOLDER: &str = "host";
 
+mod stored;
+pub(crate) use stored::StoredHostAction;
+
 /// The owner a host credential acts as, resolved in one snapshot.
 ///
 /// Opaque: only [`Vault::host_action_authority`] and

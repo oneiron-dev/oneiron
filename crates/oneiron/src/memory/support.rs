@@ -19,7 +19,10 @@ mod builders;
 mod constructors;
 mod refs;
 mod transactions;
+mod transcript_caller;
 mod wire;
+
+pub(crate) use transcript_caller::TranscriptRetainedCaller;
 
 pub(crate) use self::actors::*;
 pub use self::refs::*;
