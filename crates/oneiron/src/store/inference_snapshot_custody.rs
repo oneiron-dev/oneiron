@@ -37,7 +37,10 @@ fn snapshot_subject(binding: &CustodyBinding, catalog_id: &[u8; 16]) -> Result<C
 /// The wrapped key `secret` holds: exactly
 /// [`INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES`], of the sealed format.
 fn copy_wrapped(secret: &CustodySecret) -> Result<WrappedSnapshotKey> {
-    WrappedSnapshotKey::parse(secret.expose()).map_err(|_| CustodyKind::InferenceSnapshot.corrupt())
+    WrappedSnapshotKey::parse(secret.expose()).map_err(|error| match error {
+        Error::Io(error) if error.kind() == std::io::ErrorKind::OutOfMemory => Error::Io(error),
+        _ => CustodyKind::InferenceSnapshot.corrupt(),
+    })
 }
 
 impl Store {
