@@ -99,6 +99,12 @@ fn exchange_admitted(
     let vault = server.vault();
     // Resolve the real setup before consuming a single-use Google code.
     vault.pack_setup(owner, PACK, request.source.as_deref())?;
+    if !request.replace_existing && vault.resolve_secret_ref(GRANT)?.is_some() {
+        return Err(Error::Secret(SecretError::SecretNameInUse {
+            name: GRANT.to_owned(),
+        })
+        .into());
+    }
     let checks = ProviderConnectionChecks::new()?;
     let mut grant = None;
     vault.inject_secret_at_door(&request.client_secret, EFFECTOR, &mut |client_bytes| {
