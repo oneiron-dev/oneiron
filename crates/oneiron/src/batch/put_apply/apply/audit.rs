@@ -154,6 +154,9 @@ pub(super) fn audit_and_stage_body(
         row_version,
         data,
     )?;
+    // FIX 4817: the row's new revision withdraws, in this commit, each
+    // self-written summary that wore the row as a home part at another one.
+    crate::ports::withdraw_changed_home_dependents_in_txn(write, wtxn, &fixed.id)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(
             store,
