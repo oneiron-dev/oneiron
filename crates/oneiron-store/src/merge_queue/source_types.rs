@@ -27,4 +27,3 @@ pub struct ServedQueueSource {
     /// The import manifest claim, by its deterministic id.
     pub manifest: EntityId,
 }
-
