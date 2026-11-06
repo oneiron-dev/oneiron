@@ -301,6 +301,18 @@ impl Memory<'_> {
                         ));
                     }
                     validate_regeneration(self.vault, txn, &state.seed)?;
+                    // A Retry opened after its requester's hard erase stores
+                    // no slip: that erase's one-time scrub of stored seeds
+                    // has already run (FIX 10765, after FIX 10668).
+                    if let Some(action) = state.seed.action.as_mut() {
+                        let requester = action.actor;
+                        if self
+                            .vault
+                            .local_hard_delete_marker_exists_in_txn(txn, &requester)?
+                        {
+                            action.scrub_actor_instrument(&requester);
+                        }
+                    }
                     // Supplied initial content is the first checkpoint.
                     storage::ACTIVE.put(
                         &self.vault.store,
@@ -746,15 +758,16 @@ pub(super) fn committed_text(
     // The stored birth parts ride the expected envelope, so a Continue on a
     // parted MESSAGE compares the full body it was born with instead of
     // failing against a part-less rebuild. Absent on a text-only MESSAGE.
-    let parts: Option<Vec<crate::ContentPart>> = value
+    let parts: Option<Vec<crate::store::witness_message_body::StoredMessagePart>> = value
         .get("parts")
         .map(|parts| serde_json::from_value(parts.clone()))
         .transpose()
         .map_err(|_| Error::CorruptedIndex("message parts"))?;
-    let expected: serde_json::Value = rmp_serde::from_slice(
-        &witness_message_envelope(&seed.message_with_parts(text.clone(), parts)).encode_body()?,
-    )
-    .map_err(|_| Error::CorruptedIndex("message envelope"))?;
+    let message = seed.message_with_parts(text.clone(), None);
+    let mut envelope = witness_message_envelope(&message);
+    envelope.parts = parts;
+    let expected: serde_json::Value = rmp_serde::from_slice(&envelope.encode_body()?)
+        .map_err(|_| Error::CorruptedIndex("message envelope"))?;
     if value != expected {
         return Err(MessageStreamError::InvalidRequest(
             "continuation axes differ",

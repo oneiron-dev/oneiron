@@ -253,7 +253,7 @@ fn recorded_run_id(body: &ClaimBody) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn step_error(error: DurableStepError) -> MemoryError {
+pub(super) fn step_error(error: DurableStepError) -> MemoryError {
     match error {
         DurableStepError::Engine(error) => error.into(),
         _ => Error::InvalidClaimBody("dreamer step response did not decode").into(),

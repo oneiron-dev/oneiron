@@ -11,7 +11,7 @@ mod citation_floor;
 mod commit_receipts;
 mod doc_actor;
 mod document;
-pub mod document_resources;
+pub use oneiron_store::entity_doc::document_resources;
 mod forks;
 mod history_erase;
 mod lift;
@@ -33,10 +33,10 @@ mod registry;
 mod summary;
 pub(crate) use summary::{
     birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn, summary_meta_in_txn,
-    summary_read_in_txn, summary_text_in_txn,
+    summary_meta_through_in, summary_read_in_txn, summary_text_in_txn,
 };
 pub mod review_explainer;
-mod side_keys;
+use oneiron_store::entity_doc::side_keys;
 mod storage;
 #[cfg(feature = "sync")]
 mod sweep;
@@ -109,6 +109,24 @@ pub(crate) fn source_frontier_in_txn(
     let doc = storage::load(store, txn, &head)?;
     let mut pin = head.incarnation.into_bytes();
     pin.extend_from_slice(&doc.frontier());
+    Ok(Some(pin))
+}
+
+/// The pin [`source_frontier_in_txn`] names for `frontier`, a retained state
+/// of `entity`'s record document the caller has proved (FIX 10203): the
+/// document's identity and that frontier. `None` for an unmigrated row.
+pub(crate) fn source_frontier_at_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+    frontier: &[u8],
+) -> crate::Result<Option<Vec<u8>>> {
+    if !storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    let head = storage::head(store, txn, entity)?;
+    let mut pin = head.incarnation.into_bytes();
+    pin.extend_from_slice(frontier);
     Ok(Some(pin))
 }
 
