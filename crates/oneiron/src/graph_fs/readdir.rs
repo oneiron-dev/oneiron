@@ -77,7 +77,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
         if self.snapshot.is_some() {
-            return self.snapshot_readdir(&normalized, cursor);
+            return self.snapshot_readdir(&normalized, cursor, reader);
         }
         match components.as_slice() {
             [] => Ok(self.fixed_page(
