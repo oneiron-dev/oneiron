@@ -22,6 +22,14 @@ replacement order. Unchanged JSON keeps its original bytes. Changed JSON
 uses the native compact serialization. Inline event and question bodies
 still use `SentValue::clear_bytes`.
 
+When the raw and trimmed credential are equal, or the trimmed form is
+empty, clearing needs at most one replacement pass. These cases detect
+change during the existing string and key walk without cloning the whole
+parsed Value. A nonempty all-whitespace credential still has its raw pass.
+A credential with two effective passes retains the original full-Value
+clone and final comparison. This distinction does not change the returned
+bytes, replacement order, or handling of malformed bodies.
+
 The raw body is cleared before the reply becomes acknowledged, deferred,
 or handed to a question worker. An unreadable spool or failed clear write
 uses the existing `connector_reply_unreadable` ambiguous outcome at that

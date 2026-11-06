@@ -629,7 +629,9 @@ fn provider_check(
     // What comes back is cleared inside the send's own door, with the value
     // that went (FIX 4491, FIX 7647).
     let text = handle_text(target.handle);
-    let scrub = |string: &mut String, value: &[u8]| clear_text(string, value, &text);
+    let scrub = |string: &mut String, value: &[u8]| {
+        clear_text(string, value, &text);
+    };
     let evidence = match target.grant {
         None => {
             let (custody, run) = (&target.custody, target.run());

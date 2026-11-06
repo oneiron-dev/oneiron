@@ -79,10 +79,7 @@ impl RawOutboundBody {
         let mut parsed: serde_json::Value =
             serde_json::from_reader(super::ZeroizingBufReader::new(self.reader()))
                 .map_err(io::Error::other)?;
-        let before = parsed.clone();
-        value.clear_json(&mut parsed);
-        let changed = parsed != before;
-        super::zeroize_json(before);
+        let changed = value.clear_json_changed(&mut parsed);
         if !changed {
             super::zeroize_json(parsed);
             return Ok(self);
