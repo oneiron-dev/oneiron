@@ -337,6 +337,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _host: CompactionHostBinding,
         _credential: &str,
         _spend: Option<&SpendScopeId>,
+        _owner_attempt: Option<oneiron::AttemptId>,
     ) -> Option<RunCompaction> {
         None
     }
@@ -414,9 +415,10 @@ pub trait McpCodeModeProvider: Send + Sync {
         host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
+        owner_attempt: Option<oneiron::AttemptId>,
         _planned: &PlannedModel,
     ) -> Option<RunCompaction> {
-        self.compaction(host, credential, spend)
+        self.compaction(host, credential, spend, owner_attempt)
     }
 }
 
@@ -466,8 +468,16 @@ pub type PlannedMeter = Arc<
 /// binding (its write actor, its caller's place and its proof), the
 /// credential its passes queue under (its registered fingerprint's stream
 /// connection) and the spend scope its calls spend under, if any.
-pub type RunCompactionSeat =
-    Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
+pub type RunCompactionSeat = Arc<
+    dyn Fn(
+            CompactionHostBinding,
+            &str,
+            Option<&SpendScopeId>,
+            Option<oneiron::AttemptId>,
+        ) -> RunCompaction
+        + Send
+        + Sync,
+>;
 
 /// Copies the ordinary backend with one run's actual frozen model list.
 pub(crate) type ModelListBackend =
@@ -696,7 +706,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         request.actor.locality(),
                         opener.clone(),
                     );
-                    provider.compaction(host, &request.actor.stream_connection.0, None)
+                    provider.compaction(host, &request.actor.stream_connection.0, None, None)
                 });
             if let Some(seat) = seat.as_mut() {
                 // Its summaries are born where the run's credential writes.

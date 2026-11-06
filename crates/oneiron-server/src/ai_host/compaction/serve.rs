@@ -7,6 +7,7 @@
 //! prefix is still warm (FIX 6029).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::agent_dispatch::AgentDispatcher;
@@ -210,27 +211,42 @@ impl ServedCompactionBackend {
             serde_json::to_vec(&call.request).ok()
         };
         let model = call.request.model.clone();
-        let run = self
-            .models
-            .funded_run(COMPACTION_RUN, guard.clone(), payer)
-            .with_work_context(WorkContext {
-                class: WorkClass::Foreground,
-                ..Default::default()
-            })
-            .sourced(union_source_rows([sources, home_rows]));
+        let run = match &self.meter {
+            CompactionMeter::Scope {
+                scope,
+                owner_attempt,
+            } => self.models.funded_run_on_scope(
+                COMPACTION_RUN,
+                guard.clone(),
+                payer,
+                Arc::clone(&self.vault),
+                scope.clone(),
+                *owner_attempt,
+            ),
+            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => {
+                self.models.funded_run(COMPACTION_RUN, guard.clone(), payer)
+            }
+        }
+        .with_work_context(WorkContext {
+            class: WorkClass::Foreground,
+            ..Default::default()
+        })
+        .sourced(union_source_rows([sources, home_rows]));
         // A run's scope lends this call a live lease, as a reader child's
         // (FIX 11748): its admission meets the room the scope has left now,
         // siblings' spend included, and its own spend books once.
         let live = match &self.meter {
-            CompactionMeter::Scope(scope) => {
+            CompactionMeter::Scope {
+                scope,
+                owner_attempt,
+            } => {
                 let limit = guard.read().limit_units;
-                Some(LiveLease::new(
-                    &self.vault,
-                    Some(scope.clone()),
-                    guard.clone(),
-                    limit,
-                    0,
-                ))
+                let mut live =
+                    LiveLease::new(&self.vault, Some(scope.clone()), guard.clone(), limit, 0);
+                if let Some(owner_attempt) = owner_attempt {
+                    live = live.with_owner_attempt(*owner_attempt);
+                }
+                Some(live)
             }
             CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => None,
         };
@@ -255,6 +271,13 @@ impl ServedCompactionBackend {
                 ))
             }
         };
+        if let CompactionMeter::Scope {
+            scope,
+            owner_attempt,
+        } = &self.meter
+        {
+            crate::models::record_scoped_model_return(&self.vault, scope, &run, *owner_attempt);
+        }
         if let Some(live) = &live
             && let Err(error) = live.book_rest()
         {
@@ -340,7 +363,7 @@ impl ServedCompactionBackend {
             // A chat turn's flight bills the payer its turn resolved, on its
             // own guard on the chat actor's line (FIX 4465 D).
             CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
-            CompactionMeter::Scope(scope) => {
+            CompactionMeter::Scope { scope, .. } => {
                 let payer =
                     scope_funding(&self.vault, Some(scope), false).map_err(
                         |fault| match fault {
@@ -395,7 +418,9 @@ impl CompactionBackend for ServedCompactionBackend {
     /// yes, read as [`Self::ready`] first read it (FIX 3740).
     fn funded(&self) -> bool {
         match &self.meter {
-            CompactionMeter::Scope(scope) => scope_funding(&self.vault, Some(scope), false).is_ok(),
+            CompactionMeter::Scope { scope, .. } => {
+                scope_funding(&self.vault, Some(scope), false).is_ok()
+            }
             CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => true,
         }
     }

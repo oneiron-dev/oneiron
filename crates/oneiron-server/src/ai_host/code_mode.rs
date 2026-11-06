@@ -299,8 +299,11 @@ fn pinned_compaction(
     let compaction = compaction.clone();
     let live: Arc<dyn LiveAdmission> = live;
     Arc::new(
-        move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
-            let seat = compaction.for_run(host, credential, spend, &live);
+        move |host: CompactionHostBinding,
+              credential: &str,
+              spend: Option<&SpendScopeId>,
+              owner_attempt: Option<oneiron::AttemptId>| {
+            let seat = compaction.for_run(host, credential, spend, owner_attempt, &live);
             match slots.load().embedder.clone() {
                 Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
                 None => seat,
