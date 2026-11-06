@@ -92,6 +92,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::OriginCut(cut) => {
             vec![Grant::InstallKey(cut.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::DeviceSuccession(succession) => {
+            vec![Grant::InstallKey(
+                succession.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         AuthorityOp::ConversationTrainingSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }
@@ -105,6 +111,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
             )]
         }
         AuthorityOp::AgentGrantAct(record) => {
+            vec![Grant::InstallKey(
+                record.machine,
+                entry.signer_key().clone(),
+            )]
+        }
+        AuthorityOp::MembershipExecution(record) => {
             vec![Grant::InstallKey(
                 record.machine,
                 entry.signer_key().clone(),

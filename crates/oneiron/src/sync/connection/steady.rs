@@ -319,6 +319,8 @@ impl SyncConnection {
                                     windows_evicted = eviction.windows_evicted,
                                     windows_busy = eviction.windows_busy,
                                     windows_unconfirmed = eviction.windows_unconfirmed,
+                                    windows_with_local_members =
+                                        eviction.windows_with_local_members,
                                     removed = eviction.removed,
                                     kept = eviction.kept,
                                     cached_items_removed = eviction.cached_items_removed,

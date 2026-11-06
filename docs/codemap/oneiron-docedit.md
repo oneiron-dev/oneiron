@@ -34,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 11 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const · 2 re-export | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
-| `src/docx_body/projection.rs` | src | m | 2 struct · 5 fn · 3 crate-vis | DocxGroupEvents, DocxProjection | In-memory multi-revision DOCX projection and its shared op builder |
+| `src/docx_body/projection.rs` | src | m | 2 struct · 6 fn · 3 crate-vis | DocxGroupEvents, DocxProjection | In-memory multi-revision DOCX projection and its shared op builder |
 | `src/docx_body/stories.rs` | src | s | 2 struct · 2 enum · 1 fn | DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope | Native non-body stories, kept separate from the document body's id space |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
@@ -70,8 +70,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/asset.rs` | src | s | 2 crate-vis | — | Asset admission: the binding, provenance and stored bytes, checked before any byte is interpreted; and… |
 | `src/graphic/drawingml.rs` | src | s | 1 fn | — | A compiled drawing as DrawingML: one `p:grpSp` whose child space is the viewBox, for a slide's `p:spTree` |
 | `src/graphic/geometry.rs` | src | m | 14 crate-vis | — | Geometry for the closed subset: basic shapes as presets under a kept transform, polylines, polygons and… |
-| `src/graphic/mod.rs` | src | m | 16 struct · 9 enum · 3 fn · 1 const | AssetRecord, AssetUse, Cap, CompiledGraphic, Drawing, Extent, Frame, GenerationReceipt +17 | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
+| `src/graphic/mod.rs` | src | m | 16 struct · 9 enum · 3 fn · 1 const · 1 crate-vis | AssetRecord, AssetUse, Cap, CompiledGraphic, Drawing, Extent, Frame, GenerationReceipt +17 | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
+| `src/graphic/raster.rs` | src | s | 1 crate-vis | — | A PNG compatibility image for held SVG geometry the native compiler already understands |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
 | `src/hex_digest.rs` | src | s | 4 fn · 1 mod | — | A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its… |
@@ -141,7 +142,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/reshape/workbook.rs` | src | m | 4 crate-vis | — | A rewritten chart's own embedded workbook, edited in place (OF-510, FIX 3493) |
 | `src/live/reshape/workbook/range.rs` | src | s | 11 crate-vis | — | A chart reference's cells as the workbook edit reads them: a direct one-row or one-column range on one… |
 | `src/live/reshape/workbook/slots.rs` | src | m | 3 crate-vis | — | A rewritten chart's held and new series planned into its own workbook: each sequence at its own cells, a… |
-| `src/live/svg_fallback.rs` | src | s | 4 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
+| `src/live/svg_fallback.rs` | src | m | 4 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 6 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/chart/cache.rs` | src | s | 1 crate-vis | — | A series cache written in place (FIX 7987): only the points whose values the write changes, and the count… |
 | `src/native_patch/chart/categories.rs` | src | s | 7 crate-vis | — | Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first… |
