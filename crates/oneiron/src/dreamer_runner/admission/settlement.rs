@@ -189,7 +189,7 @@ impl DreamerRunnerStore<'_> {
                     native,
                 );
                 super::native_call::record_native_aggregate_observations_in_txn(
-                    self.vault, wtxn, &input, actual, native,
+                    self.vault, wtxn, &input, actual, native, &unpinned,
                 );
             }
             if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
@@ -277,7 +277,12 @@ impl DreamerRunnerStore<'_> {
                     native,
                 );
                 super::native_call::record_native_aggregate_observations_in_txn(
-                    self.vault, wtxn, &input, actual, native,
+                    self.vault,
+                    wtxn,
+                    &input,
+                    actual,
+                    native,
+                    step_bindings,
                 );
             }
             if let DreamerBudgetSettlementOutcome::Settled(ref actual) = settled
