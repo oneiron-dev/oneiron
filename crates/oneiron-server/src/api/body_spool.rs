@@ -124,6 +124,18 @@ impl SpooledField {
     }
 }
 
+impl BodySpool {
+    /// The complete spool length, without allocating a reader buffer.
+    pub(in crate::api) fn byte_len(&self) -> io::Result<u64> {
+        self.file.metadata().map(|metadata| metadata.len())
+    }
+
+    /// Reads into caller-owned storage without allocating a reader buffer.
+    pub(in crate::api) fn read_exact_into(&mut self, bytes: &mut [u8]) -> io::Result<()> {
+        self.file.read_exact(bytes)
+    }
+}
+
 /// How a body ended before it was spooled.
 pub(super) enum Unspooled {
     /// The vault's disk refused a write for want of room, or reached the
