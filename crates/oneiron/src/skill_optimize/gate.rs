@@ -147,7 +147,8 @@ mod judge_binding;
 mod ledger;
 pub(crate) use ledger::{
     CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
-    canonical_skill_edit_verdict_in_txn, verdict_rows_sourced_observed_in_txn,
+    canonical_skill_edit_verdict_in_txn, canonical_skill_edit_verdicts_in_txn,
+    verdict_rows_sourced_observed_in_txn,
 };
 mod live;
 mod measurement;

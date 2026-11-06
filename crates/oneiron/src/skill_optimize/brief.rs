@@ -103,6 +103,9 @@ pub struct SkillOptimizeBrief {
     /// constituent is witnessed; the author's call carries it, and calls never
     /// refuse for `None`.
     pub source_rows: Option<Vec<EntityId>>,
+    /// Partial native-family witness from the original Coach request. It is
+    /// not a complete brief/attempt declaration or a downstream read grant.
+    pub(crate) native_verdict_sources: Option<super::coach_read::NativeVerdictSources>,
 }
 
 /// The failure a heal's skill repair is aimed at: its class as its source
@@ -232,6 +235,16 @@ pub(crate) fn optimize_brief_bound_at(
     principal: Option<EntityId>,
     now: u64,
 ) -> Result<SkillOptimizeBrief> {
+    optimize_brief_with_read_at(vault, candidate, principal, now, None)
+}
+
+pub(super) fn optimize_brief_with_read_at(
+    vault: &Vault,
+    candidate: &SkillOptimizeCandidate,
+    principal: Option<EntityId>,
+    now: u64,
+    source_read: Option<&super::coach_read::CoachReadRequest>,
+) -> Result<SkillOptimizeBrief> {
     let record = vault
         .get_skill_record(&candidate.skill)?
         .ok_or(Error::EntityNotFound)?;
@@ -307,7 +320,11 @@ pub(crate) fn optimize_brief_bound_at(
     // the gate scored; do not display it as that body's edit.
     let mut rejected_edits = Vec::new();
     let mut rejection_rows: Vec<EntityId> = Vec::new();
-    for verdict in skill_edit_verdicts(vault)? {
+    let (verdicts, native_verdict_sources) = match source_read {
+        Some(read) => read.verdicts(vault)?,
+        None => (skill_edit_verdicts(vault)?, None),
+    };
+    for verdict in verdicts {
         if verdict.skill != candidate.skill || verdict.disposition != SkillEditDisposition::Rejected
         {
             continue;
@@ -421,7 +438,14 @@ pub(crate) fn optimize_brief_bound_at(
         rejected_edits,
         failure: None,
         policy_dials,
-        source_rows,
+        // The native witness is not the whole source set. The Coach job
+        // cannot publish these native ids through the old ENTITY-only union.
+        source_rows: if source_read.is_some() {
+            None
+        } else {
+            source_rows
+        },
+        native_verdict_sources,
     })
 }
 

@@ -7,7 +7,7 @@ mod canonical;
 mod codec;
 pub(crate) use canonical::{
     CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
-    canonical_skill_edit_verdict_in_txn,
+    canonical_skill_edit_verdict_in_txn, canonical_skill_edit_verdicts_in_txn,
 };
 
 use self::codec::decode_verdict_with_marker;

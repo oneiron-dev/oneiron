@@ -133,6 +133,7 @@
 mod ask_band;
 pub(crate) mod audit_rate;
 mod brief;
+mod coach_read;
 mod decisions;
 mod dials;
 mod eval_set;
@@ -287,8 +288,8 @@ pub use gate::{
 };
 pub(crate) use gate::{
     CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
-    canonical_skill_edit_verdict_in_txn, skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn,
-    verdict_rows_sourced_observed_in_txn,
+    canonical_skill_edit_verdict_in_txn, canonical_skill_edit_verdicts_in_txn,
+    skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn, verdict_rows_sourced_observed_in_txn,
 };
 pub(crate) use gate::{
     SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,
