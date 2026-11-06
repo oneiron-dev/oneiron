@@ -22,6 +22,13 @@ replacement order. Unchanged JSON keeps its original bytes. Changed JSON
 uses the native compact serialization. Inline event and question bodies
 still use `SentValue::clear_bytes`.
 
+After that original clear, the first `tools/call` answer moves any byte-backed
+raw body into the same anonymous spool before acknowledgement, deferral, or
+retry-question handoff. This releases the old allocation when its last owner
+drops. An existing spool is kept without another copy. If the storage move
+fails, the original byte-backed body is retained without a new send failure.
+The typed response remains in memory; this does not stream the event parser.
+
 Clearing detects change during the existing string and key walk without
 cloning the whole parsed Value when there is at most one effective pass,
 both passes can only shrink or only grow strings, or the credential and
