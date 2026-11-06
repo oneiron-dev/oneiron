@@ -17754,7 +17754,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 3
      }
     },
@@ -46744,7 +46744,7 @@
      "purpose": "Code proposal submission and the repository mutation log read",
      "surface": {
       "crate-vis": 3,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -48780,7 +48780,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 4,
-      "fn": 2,
+      "fn": 3,
       "struct": 1,
       "trait": 1
      }
@@ -61572,6 +61572,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/repo_mutation/proposal/resolve_handles/rereview.rs",
+     "purpose": "Explicit fresh review of a handle resolution",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/repo_mutation/proposal/review.rs",
      "purpose": "The shared authenticated critic writer for engine and public owner doors",
      "surface": {
@@ -70362,7 +70373,7 @@
      "path": "src/store/body_envelope/rows.rs",
      "purpose": "A body instance's row (FIX 5348, KS-2A): one per digest, in `PROVENANCE_BODY_KEY`, beside the body's…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -90494,7 +90505,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90979,7 +90990,7 @@
    },
    "over_bar": 159,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6390,
+   "source_files": 6391,
    "test_files": 895
   },
   "oneiron-android": {
