@@ -2408,6 +2408,14 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_decision_ask({name}, output)'
             elif row['output'] == 'Vec<crate::llm::decision::DecisionAsk>':
                 result = f'crate::codec::lift_decision_asks({name}, output)'
+            elif row['output'] == 'crate::ingest::AgUiFileRead':
+                result = f'crate::codec::lift_ag_ui_file_read({name}, output)'
+            elif row['output'] == 'crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>':
+                result = f'crate::codec::lift_scoped_claim({name}, output)'
+            elif row['output'] == 'crate::memory::ClaimSettlement':
+                result = f'crate::codec::lift_claim_settlement({name}, output)'
+            elif row['output'] == 'Option<crate::memory::SignalExtractionResult>':
+                result = f'crate::codec::lift_signal_extraction_result({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):

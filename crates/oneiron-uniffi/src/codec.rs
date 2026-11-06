@@ -36,6 +36,8 @@ use crate::dto::{
 };
 use crate::error::OneironError;
 
+mod ag_ui;
+pub(crate) use ag_ui::lift_ag_ui_file_read;
 mod ai_answers;
 pub(crate) use ai_answers::{lift_ai_answer, lift_ai_video_job};
 
@@ -50,6 +52,10 @@ mod ai_options;
 mod browser_answers;
 mod browser_batch;
 mod checkpoints;
+mod claim_results;
+pub(crate) use claim_results::{
+    lift_claim_settlement, lift_scoped_claim, lift_signal_extraction_result,
+};
 mod claims;
 mod core_write;
 mod connector_manifests;
