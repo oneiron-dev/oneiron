@@ -24,7 +24,9 @@
 //! words were read from, in the write that files them, so withdrawing one
 //! withdraws the step as it withdraws the summary. A record already gone or
 //! withdrawn when the step files refuses the filing, which the pass's
-//! receipt names as unfiled; the compaction itself still answers.
+//! receipt names as unfiled; the compaction itself still answers. A base
+//! filing whose call read a live room row refuses as a tainted base write,
+//! as the base epoch mint does (FIX 6184), before any base liveness check.
 
 use rmpv::Value;
 
@@ -45,12 +47,12 @@ use crate::code_run::ExecutorStorage;
 use crate::compaction::{COMPACTION_STEP_RESPONSE_NAME, CompactionCall, CompactionStepRef};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
+use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::OffRecordSession;
 use crate::ports::EntityStoreRead as _;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use crate::{Vault, WriteActor};
@@ -104,6 +106,27 @@ impl FiledCall {
         self.sources
             .as_deref()
             .ok_or(Error::InvalidClaimBody(COMPACTION_STEP_SOURCES_UNKNOWN))
+    }
+
+    /// Refuses a base filing whose call read a record that is still a live
+    /// room-overlay member (FIX 6184), with the taint refusal the base epoch
+    /// mint takes: no durable step derives from room content. It runs before
+    /// the base liveness check, so a room row never reads as missing.
+    fn refuse_overlay_sources(&self, store: &Store) -> Result<()> {
+        let rooms = &store.off_record_sessions;
+        if !rooms.has_overlay_entities()? {
+            return Ok(());
+        }
+        for source in self.sources()? {
+            if rooms.contains_entity(source)? {
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordTaintedBaseWrite {
+                        entity_ref: source.to_hex(),
+                    },
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Refuses the filing when a record this call read is gone or withdrawn
@@ -246,6 +269,7 @@ impl StepFiling<'_> {
         let occurred = self.occurred();
         let mut filed = Vec::with_capacity(calls.len());
         for call in calls {
+            call.refuse_overlay_sources(&vault.store)?;
             call.sources_stand_in(&vault.store, wtxn)?;
             let sources = call.sources()?;
             let claim_id = vault.store.clock.entity_id()?;
