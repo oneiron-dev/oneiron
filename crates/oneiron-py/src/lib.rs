@@ -648,6 +648,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_board_layout(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.board.layout")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.board.layout", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_board_fold(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.board.fold")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.board.fold", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_board_unfold(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.board.unfold")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.board.unfold", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_board_size(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.board.size")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.board.size", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_board_filter(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.board.filter")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.board.filter", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_board_replace(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.board.replace")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.board.replace", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_memory_diary(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.memory.diary")?;
         let output = py

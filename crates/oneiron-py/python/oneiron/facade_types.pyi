@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1257 facade rows, 4549 declarations.
-Inputs: 1188 of 1257 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1091 of 1257 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1263 facade rows, 4562 declarations.
+Inputs: 1194 of 1263 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1263 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -328,6 +328,52 @@ class ScratchpadWriteReply(TypedDict):
     sealed_prior: NotRequired[EntityId | None]
 class ScratchpadSealRequest(TypedDict):
     session_id: str
+class FoldBaseline(TypedDict):
+    total: int
+    counts: NotRequired[dict[str, int]]
+class SectionFold(TypedDict):
+    note: NotRequired[str | None]
+    keep: NotRequired[list[EntityId]]
+    baseline: NotRequired[FoldBaseline | None]
+    section_baselines: NotRequired[dict[str, FoldBaseline]]
+BoardActorClass = Literal["human", "agent", "system"]
+class BoardWhoFilterMine(TypedDict):
+    kind: Literal["mine"]
+class BoardWhoFilterActor(TypedDict):
+    kind: Literal["actor"]
+    actor: EntityId
+BoardWhoFilterClass = TypedDict("BoardWhoFilterClass", {"kind": Literal["class"], "class": BoardActorClass})
+class BoardWhoFilterGroup(TypedDict):
+    kind: Literal["group"]
+    group: EntityId
+BoardWhoFilter = BoardWhoFilterMine | BoardWhoFilterActor | BoardWhoFilterClass | BoardWhoFilterGroup
+class SectionFilter(TypedDict):
+    who: NotRequired[BoardWhoFilter | None]
+    status: NotRequired[list[str]]
+class SectionLayout(TypedDict):
+    share_pct: NotRequired[int | None]
+    fold: NotRequired[SectionFold | None]
+    filter: NotRequired[SectionFilter | None]
+class BoardLayout(TypedDict):
+    sections: NotRequired[dict[str, SectionLayout]]
+class BoardLayoutState(TypedDict):
+    live: BoardLayout
+    pending: NotRequired[BoardLayout | None]
+    owner_override: NotRequired[BoardLayout]
+class BoardFoldRequest(TypedDict):
+    section: str
+    note: NotRequired[str | None]
+    keep: NotRequired[list[EntityId]]
+class BoardSectionRequest(TypedDict):
+    section: str
+class BoardSizeRequest(TypedDict):
+    section: str
+    share_pct: NotRequired[int | None]
+class BoardFilterRequest(TypedDict):
+    section: str
+    filter: NotRequired[SectionFilter | None]
+class BoardReplaceRequest(TypedDict):
+    layout: BoardLayout
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]

@@ -98,6 +98,24 @@ impl OneironClient {
                 "self.focus.scratchpad.seal" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ScratchpadWriteReply,
                 >(client, verb, &input),
+                "self.board.layout" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.fold" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.unfold" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.size" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.filter" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.replace" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
@@ -4178,6 +4196,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.focus.scratchpad.seal", value)
+    }
+    pub fn self_board_layout(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.layout", value)
+    }
+    pub fn self_board_fold(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardFoldRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.fold", value)
+    }
+    pub fn self_board_unfold(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardSectionRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.unfold", value)
+    }
+    pub fn self_board_size(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardSizeRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.size", value)
+    }
+    pub fn self_board_filter(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardFilterRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.filter", value)
+    }
+    pub fn self_board_replace(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardReplaceRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.replace", value)
     }
     pub fn self_memory_diary(
         &self,
