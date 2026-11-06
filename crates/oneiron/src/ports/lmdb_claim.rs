@@ -151,24 +151,7 @@ impl Vault {
 
 impl ClaimStore for Vault {
     fn port_claim_get(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<ClaimBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
-            return Ok(None);
-        };
-        // History keeps every lifecycle status, never words a deletion withdrew
-        // or a source that no longer stands.
-        if !super::safe_read::raw_readable_in_txn(&self.store, rtxn, id, &raw)? {
-            return Ok(None);
-        }
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
-        }
-        crate::write_envelope::claim_body::decode_claim_body(
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-            true,
-        )
-        .map(Some)
+        claim_body_in_read(&self.store, rtxn, id)
     }
     fn port_claim_put(
         &self,
@@ -307,4 +290,27 @@ pub(super) fn current_claim_head(
             .any(|&(at, a)| at == question && source_outranks(&policy, a, held.source))
     };
     heads.into_iter().find(|(_, body)| !outranked(body))
+}
+
+/// The stored CLAIM body in the caller's content snapshot, before native
+/// machine-history projection.
+pub(crate) fn claim_body_in_read(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<ClaimBody>> {
+    let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    // History keeps every lifecycle status, never words a deletion withdrew
+    // or a source that no longer stands.
+    if !super::safe_read::raw_readable_in_txn(store, rtxn, id, &raw)? {
+        return Ok(None);
+    }
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+    }
+    crate::write_envelope::claim_body::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        .map(Some)
 }
