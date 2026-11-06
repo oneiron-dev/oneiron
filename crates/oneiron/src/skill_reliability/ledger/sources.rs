@@ -32,7 +32,7 @@ pub(crate) fn attributed_outcomes_weighted_sourced(
     weighted_read(vault, rtxn, skill, None)
 }
 
-pub(super) fn weighted_read(
+pub(in crate::skill_reliability) fn weighted_read(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
