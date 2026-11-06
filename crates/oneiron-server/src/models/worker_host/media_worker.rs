@@ -187,6 +187,7 @@ impl ProcessLauncher {
             backend_model: Some(record),
             bundle_sha256: &installation.bundle_sha256,
             draft_record_sha256: None,
+            draft_weights_digest: None,
             env_freeze_sha256: Some(env.freeze_sha256.as_str()),
             env_lock_sha256: Some(env.lock_sha256.as_str()),
             kind: self.row.kind,

@@ -172,12 +172,29 @@ impl AgentDispatcher<'_> {
         spawn: &AgentSpawnContext,
     ) -> Result<LaunchPlan> {
         let txn = self.vault.store.env.read_txn()?;
+        let budget = if spawn.budget.is_none()
+            && spawn.plan.is_none()
+            && matches!(&input.target, AgentDispatchTarget::Custom(_))
+        {
+            let (project, _) =
+                self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
+            let type_ref =
+                self.spawn_type_in_txn(&txn, project, input.target.agent_definition_ref()?, spawn)?;
+            crate::learning_setting_choice::owner_spawn_budget_in_txn(
+                self.vault,
+                &txn,
+                Some(project),
+                &type_ref,
+            )?
+        } else {
+            spawn.budget
+        };
         Ok(self
             .admit_launch_in_txn(
                 &txn,
                 input.parent_attempt,
                 spawn.spend.as_ref(),
-                spawn.budget,
+                budget,
                 &input.target,
                 spawn.plan.as_ref().map(|plan| &plan.plan.model),
                 input.now,

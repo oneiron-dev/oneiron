@@ -46,6 +46,8 @@ pub(super) struct ConnState {
     pub(super) bound_auth: Option<CoreAuth>,
     /// Where this socket's peer sits; a bound auth reads from there.
     pub(super) locality: oneiron::claim::CallerLocality,
+    /// This socket's actual upgrade observations, for signing audit only.
+    pub(super) signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
     /// This socket's last touch that named an item by reference, so its
@@ -99,6 +101,7 @@ impl ConnState {
             protocol_version,
             bound_auth: None,
             locality: oneiron::claim::CallerLocality::OffDevice,
+            signing_request_transport: None,
             residence_index: None,
             residence_touch: None,
             residence_work: Default::default(),
