@@ -818,7 +818,13 @@ fn stage_context_pack_retrieval_run_finalize(
         pack_config,
     } = finalize;
     let Some(mut record) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)? else {
-        RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+        if let Some(memory) = memory.as_deref_mut() {
+            RETRIEVAL_RUN_PROVISIONAL.delete_with_key_capacity(target, wtxn, &run_id, |bytes| {
+                memory.materialized(0, bytes);
+            })?;
+        } else {
+            RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+        }
         return Ok(());
     };
     if let Some(memory) = memory.as_deref_mut() {
@@ -1044,7 +1050,13 @@ fn stage_context_pack_retrieval_run_finalize(
             memory.as_deref_mut(),
         )?;
     }
-    RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+    if let Some(memory) = memory.as_deref_mut() {
+        RETRIEVAL_RUN_PROVISIONAL.delete_with_key_capacity(target, wtxn, &run_id, |bytes| {
+            memory.materialized(0, bytes);
+        })?;
+    } else {
+        RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+    }
     Ok(())
 }
 

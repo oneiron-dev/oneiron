@@ -511,7 +511,19 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         txn: &mut RwTxn<'_>,
         key: &K,
     ) -> Result<bool> {
+        self.delete_with_key_capacity(dbs, txn, key, |_| {})
+    }
+
+    /// Deletes one row, observing its encoded key capacity before the database attempt.
+    pub(crate) fn delete_with_key_capacity(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        key: &K,
+        observe: impl FnOnce(u64),
+    ) -> Result<bool> {
         let full = self.key_bytes(key);
+        observe(full.capacity() as u64);
         match self.decl.db {
             SideDb::VaultMeta => dbs.side_vault_meta().delete(txn, &full),
             SideDb::SyncState => dbs.side_sync_state()?.delete(txn, self.str_key(&full)?),

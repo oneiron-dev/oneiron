@@ -343,10 +343,25 @@ staged buffers. Provisional-delete keys, other index and retention buffers,
 encoding allocation peaks and a full working-set bound remain outside this
 charge. No new memory line, refusal, wait or configured limit is introduced.
 
+The same bound finalizer records the actual encoded provisional-marker key
+capacity at both its missing-row delete and its final delete. The native typed
+delete makes its original key once and reports that buffer's capacity before
+the original database match. The same caller lease records those bytes even
+when the row is absent or the database operation returns an error. This does
+not estimate a key length, encode a second key or allocate another lease.
+
+The unbound finalizer keeps its ordinary delete call, and all existing deletes
+share the same native key construction and database branches. Return values,
+errors, the missing-row exit and the original finalization order stay unchanged.
+The key drops inside the delete before the caller's lease, including error and
+unwind; its capacity stays charged conservatively until that lease drops.
+This separate charge does not cover overlay key copies, database pages,
+transaction scratch, key construction peaks or a full working-set bound.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,
-serialization scratch, marker/index/retention keys and values, construction
+serialization scratch, other marker/index/retention keys and values, construction
 peaks or pre-growth admission. They do not establish a full working-set bound
 or a compiler/runtime result.
 
