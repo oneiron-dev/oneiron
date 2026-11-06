@@ -18,7 +18,7 @@ multibyte character crosses chunk boundaries. A socket reply still uses its
 existing owned byte vector and `serde_json::from_slice` at this stage.
 
 This removes the HTTP concatenation for valid JSON, not all reply allocations.
-All HTTP chunks remain held through collection and parsing; their backing
+All nonempty HTTP chunks remain held through collection and parsing; their backing
 allocations may exceed their visible lengths. The chunk list, reader buffer,
 JSON decoder's field scratch, and owned JSON value also remain. Invalid JSON
 still uses a concatenated diagnostic buffer. The bridge's input/reply limits,
