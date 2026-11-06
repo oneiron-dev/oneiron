@@ -5,8 +5,8 @@ import { blake3 } from "@noble/hashes/blake3";
 import { encode, decode } from "@msgpack/msgpack";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import type { WitnessTurn, RecallOptions } from "oneiron";
-import { BlockedDoor, LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource } from "./run.ts";
-import type { Artifacts, ProcessResult } from "./run.ts";
+import { BlockedDoor, LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource, recordStart } from "./run.ts";
+import { Artifacts, type ProcessResult } from "./run.ts";
 import { requireAsset } from "./fixtures.ts";
 import type { BuildManifest } from "./fixtures.ts";
 
@@ -50,6 +50,7 @@ export interface HttpOptions {
   readonly credential?: string;
   readonly timeoutMs?: number;
   readonly artifacts?: Artifacts;
+  readonly label?: string;
 }
 export class PublicHttpClient {
   readonly url: URL;
@@ -65,16 +66,28 @@ export class PublicHttpClient {
     const bound = this.options.credential ? boundHeaders(this.options.credential) : new Headers();
     for (const [name,value] of new Headers(headers)) bound.set(name,value);
     if (body !== undefined && !bound.has("content-type")) bound.set("content-type","application/json");
-    const response = await fetch(url,{method,headers:bound,redirect:"manual",signal:AbortSignal.timeout(this.options.timeoutMs ?? LIMITS.requestMs),
-      ...(body === undefined ? {} : {body: typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body)})});
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const raw = new TextDecoder().decode(bytes);
-    let parsed: unknown = raw;
-    try { parsed = JSON.parse(raw) } catch { /* Raw text is part of the response, not a fabricated envelope. */ }
-    const reply = {status:response.status,headers:response.headers,body:parsed as T,raw,bytes};
-    // Bodies can contain fixture secrets; log only on explicit Artifacts calls by the test.
-    await this.options.artifacts?.json(`http-${secretHex(6)}.json`,{method,path:url.pathname,status:response.status,headers:Object.fromEntries(response.headers)});
-    return reply;
+    const rpc = (url.pathname === "/mcp" || url.pathname === "/mcp/tool-first") && body && typeof body === "object" && "method" in body
+      ? {rpcMethod:body.method} : {};
+    const stepId = await recordStart("http",{method,path:url.pathname,client:this.options.label,...rpc},this.options.artifacts);
+    try {
+      const response = await fetch(url,{method,headers:bound,redirect:"manual",signal:AbortSignal.timeout(this.options.timeoutMs ?? LIMITS.requestMs),
+        ...(body === undefined ? {} : {body: typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body)})});
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const raw = new TextDecoder().decode(bytes);
+      let parsed: unknown = raw;
+      try { parsed = JSON.parse(raw) } catch { /* Raw text is part of the response, not a fabricated envelope. */ }
+      const reply = {status:response.status,headers:response.headers,body:parsed as T,raw,bytes};
+      // Bodies can contain fixture secrets; persist only transport metadata.
+      const artifacts = this.options.artifacts ?? (process.env.E2E_ARTIFACTS_DIR ? new Artifacts(process.env.E2E_ARTIFACTS_DIR) : undefined);
+      await artifacts?.json(`http-${stepId}.json`,{stepId,phase:"complete",finishedAt:new Date().toISOString(),method,path:url.pathname,
+        client:this.options.label,...rpc,status:response.status,headers:Object.fromEntries(response.headers)});
+      return reply;
+    } catch (error) {
+      const artifacts = this.options.artifacts ?? (process.env.E2E_ARTIFACTS_DIR ? new Artifacts(process.env.E2E_ARTIFACTS_DIR) : undefined);
+      await artifacts?.json(`http-${stepId}.json`,{stepId,phase:"error",finishedAt:new Date().toISOString(),method,path:url.pathname,
+        client:this.options.label,...rpc,error:error instanceof Error ? {name:error.name,message:error.message} : String(error)});
+      throw error;
+    }
   }
   async request<T = unknown>(method: string, path: string, body?: unknown, headers?: HeadersInit): Promise<WireReply<T>> {
     const reply = await this.raw<T>(method,path,body,headers);
@@ -207,8 +220,9 @@ export class WsRpcError extends Error {
 
 export class CliClient {
   constructor(readonly binary: string, readonly cwd: string, readonly env: Readonly<Record<string,string>>,readonly artifacts?: Artifacts) {}
-  async run(args: readonly string[], input?: string, timeoutMs: number = LIMITS.requestMs, privateOutput = false): Promise<ProcessResult> {
-    return runProcess([this.binary,...args],{cwd:this.cwd,env:this.env,label:`cli-${secretHex(6)}`,privateOutput,
+  async run(args: readonly string[], input?: string, timeoutMs: number = LIMITS.requestMs, privateOutput = false, diagnosticOutput = false): Promise<ProcessResult> {
+    return runProcess([this.binary,...args],{cwd:this.cwd,env:this.env,label:`cli-${secretHex(6)}`,privateOutput,diagnosticOutput,
+      operation:{kind:"cli",method:args.slice(0,2).join(" "),...(args[0] === "api" && args[1] === "call" ? {path:args[2]!} : {})},
       ...(this.artifacts ? {artifacts:this.artifacts} : {}),...(input === undefined ? {} : {input})},timeoutMs);
   }
   async json<T = unknown>(args: readonly string[], input?: unknown): Promise<T> {
@@ -234,6 +248,7 @@ export type SdkOperation =
   | { readonly verb:"recall";readonly query:string;readonly options?:RecallOptions }
   | { readonly verb:"receipts";readonly limit?:number }
   | { readonly verb:"selfActor" }
+  | { readonly verb:"people";readonly input:FacadeInput<"vault.people.list"> }
   | { readonly verb:"neighbors";readonly input:FacadeInput<"vault.neighbors"> }
   | { readonly verb:"get";readonly input:FacadeInput<"vault.get"> };
 export interface PythonWitnessTurn {
@@ -249,38 +264,57 @@ export type SdkTarget = {readonly mode:"remote";readonly url:string;readonly cre
   {readonly mode:"embedded";readonly path:string;readonly dimensions?:number};
 export interface SdkDriverResult { readonly process:ProcessResult;readonly results:readonly ({ok:true;value:unknown}|{ok:false;error:unknown})[] }
 const JS_DRIVER = String.raw`
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const p=JSON.parse(readFileSync(0,'utf8'));
 const {Oneiron}=await import(pathToFileURL(p.module).href);
 function error(e){return {name:e.name,code:e.code,message:e.message,suggestions:e.suggestions,wrongRoot:e.wrongRoot,hook:e.hook}}
+function trace(index,verb,phase,code){
+ if(!p.trace?.root)return;
+ mkdirSync(p.trace.root,{recursive:true,mode:0o700});
+ const stepId=p.trace.stepId+'-'+index;
+ writeFileSync(join(p.trace.root,'sdk-'+stepId+'-'+phase+'.json'),JSON.stringify({stepId,parentStepId:p.trace.stepId,kind:'sdk',phase,
+  [phase==='start'?'startedAt':'finishedAt']:new Date().toISOString(),method:verb,path:p.target.mode,...(code?{code}:{})})+'\n',{mode:0o600});
+}
 try {
  if(p.pair){const paired=Oneiron.pair(p.pair);process.stdout.write(JSON.stringify({credential:paired.credential,pin:paired.pin}));}
  else {
   const t=p.target;const m=t.mode==='remote'?Oneiron.connect(t.url,t.credential):Oneiron.open(t.path,{dimensions:t.dimensions});
-  const results=p.operations.map(o=>{try {
+  const results=p.operations.map((o,index)=>{trace(index,o.verb,'start');try {
    let value;
    switch(o.verb){case 'witness':value=m.vault.witness(o.input);break;case 'claimUpsert':value=m.vault.claims.upsert(o.input);break;
     case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;
-    case 'selfActor':value=m.self.actor({});break;case 'neighbors':value=m.vault.neighbors(o.input);break;
+    case 'selfActor':value=m.self.actor({});break;case 'people':value=m.vault.people.list(o.input);break;case 'neighbors':value=m.vault.neighbors(o.input);break;
     case 'get':value=m.vault.get(o.input);break;default:throw new Error('Unknown SDK operation')}
-   return {ok:true,value};
-  }catch(e){return {ok:false,error:error(e)}}});
+   trace(index,o.verb,'complete');return {ok:true,value};
+  }catch(e){trace(index,o.verb,'error',e.code);return {ok:false,error:error(e)}}});
   process.stdout.write(JSON.stringify(results));
  }
 }catch(e){const failure=JSON.stringify({error:error(e)});process.stdout.write(failure);process.stderr.write(failure);process.exitCode=1;}
 `;
 const PY_DRIVER = String.raw`
-import json,sys
+import json,sys,os
+from datetime import datetime,timezone
 from oneiron import Oneiron
 p=json.load(sys.stdin)
+def trace(index,verb,phase,code=None):
+ t=p.get('trace')
+ if not t or not t.get('root'): return
+ os.makedirs(t['root'],mode=0o700,exist_ok=True)
+ step_id=t['stepId']+'-'+str(index)
+ row={'stepId':step_id,'parentStepId':t['stepId'],'kind':'sdk','phase':phase,'startedAt' if phase=='start' else 'finishedAt':datetime.now(timezone.utc).isoformat(),'method':verb,'path':p['target']['mode']}
+ if code: row['code']=code
+ with open(os.path.join(t['root'],'sdk-'+step_id+'-'+phase+'.json'),'w') as f: json.dump(row,f)
+ os.chmod(f.name,0o600)
 def err(e):
  return {k:getattr(e,k,None) for k in ('code','message','suggestions','wrong_root','hook')}
 try:
  t=p['target']
  m=Oneiron.connect(t['url'],t['credential']) if t['mode']=='remote' else Oneiron.open(t['path'],dimensions=t.get('dimensions'))
  results=[]
- for o in p['operations']:
+ for index,o in enumerate(p['operations']):
+  trace(index,o['verb'],'start')
   try:
    v=o['verb']
    if v=='witness': value=m.vault.witness(o['input'])
@@ -288,8 +322,9 @@ try:
    elif v=='recall': value=m.vault.recall(o['query'],**o.get('options',{}))
    elif v=='receipts': value=m.vault.receipts(o.get('limit',100))
    else: raise ValueError('Unknown SDK operation')
-   results.append({'ok':True,'value':value})
-  except Exception as e: results.append({'ok':False,'error':err(e)})
+   trace(index,o['verb'],'complete');results.append({'ok':True,'value':value})
+  except Exception as e:
+   trace(index,o['verb'],'error',getattr(e,'code',None));results.append({'ok':False,'error':err(e)})
  json.dump(results,sys.stdout)
 except Exception as e:
  failure={'error':err(e)};json.dump(failure,sys.stdout);json.dump(failure,sys.stderr);sys.exit(1)
@@ -299,7 +334,7 @@ export class SdkProcessDriver {
   async pair(link:string): Promise<{credential:string;pin:unknown}> {
     redactor.add(link);
     const result=await runProcess([requireAsset(this.build,"node"),"--input-type=module","-e",JS_DRIVER],
-      {cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),pair:link}),privateOutput:true,label:"sdk-pair",...(this.artifacts ? {artifacts:this.artifacts} : {})});
+      {cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),pair:link}),privateOutput:true,label:"sdk-pair",operation:{kind:"sdk",method:"pair"},...(this.artifacts ? {artifacts:this.artifacts} : {})});
     if(result.exitCode!==0) throw new CliError(result,"sdk-pair");
     const paired=JSON.parse(result.stdout) as {credential:string;pin:unknown};credentialParts(paired.credential);return paired;
   }
@@ -313,7 +348,11 @@ export class SdkProcessDriver {
       throw new TypeError("Embedded SDK requires its own absolute vault path, never the served vault");
     if(target.mode==="remote") credentialParts(target.credential);
     const argv=language==="python" ? [requireAsset(this.build,"python"),"-c",PY_DRIVER] : [requireAsset(this.build,"node"),"--input-type=module","-e",JS_DRIVER];
-    const result=await runProcess(argv,{cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),target,operations}),privateOutput:true,label:`sdk-${language}`,...(this.artifacts ? {artifacts:this.artifacts} : {})});
+    const stepId = secretHex(6);
+    const trace = {stepId,root:this.artifacts?.root ?? process.env.E2E_ARTIFACTS_DIR};
+    const result=await runProcess(argv,{cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),target,operations,trace}),
+      privateOutput:true,label:`sdk-${language}`,stepId,operation:{kind:"sdk",method:language,path:target.mode,operations:operations.map(operation=>operation.verb)},
+      ...(this.artifacts ? {artifacts:this.artifacts} : {})});
     if(result.exitCode!==0) throw new CliError(result,`sdk-${language}`);
     return {process:result,results:JSON.parse(result.stdout) as SdkDriverResult["results"]};
   }

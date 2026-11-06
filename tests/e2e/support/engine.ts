@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { Artifacts, BlockedDoor, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline } from "./run.ts";
+import { Artifacts, BlockedDoor, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart } from "./run.ts";
 import { loadBuildManifest, requireAsset } from "./fixtures.ts";
 import type { BuildManifest, Profile } from "./fixtures.ts";
 import { CliClient, CliError, PublicHttpClient, McpClient, SdkProcessDriver, WsClient, credentialParts } from "./clients.ts";
@@ -43,7 +43,7 @@ export interface EngineOptions {
   /** Optional readiness predicate made solely of public reads; never retries a write. */
   readonly ready?:(client:PublicHttpClient)=>Promise<boolean>;
 }
-interface Schema {readonly paths?:Readonly<Record<string,unknown>>}
+interface Schema {readonly paths?:Readonly<Record<string,Readonly<Record<string,unknown>>>>}
 async function reservePort():Promise<{port:number;release:()=>Promise<void>}> {
   const server=createServer();
   await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
@@ -73,6 +73,7 @@ export class EngineFixture {
   client!:PublicHttpClient;
   mcp!:McpClient;
   private server:ManagedProcess|undefined;
+  private schema:Schema|undefined;
   private closed=false;
   private disown:()=>void=()=>{};
   private constructor(readonly root:string,readonly build:BuildManifest,readonly env:Readonly<Record<string,string>>,readonly options:EngineOptions,port:number) {
@@ -82,21 +83,29 @@ export class EngineFixture {
     this.sdk=new SdkProcessDriver(build,root,env,this.artifacts);
   }
   static async start(options:EngineOptions):Promise<EngineFixture> {
+    const startupId = await recordStart("stage",{method:"fixture.start",path:options.id??"engine"});
+    let startupArtifacts:Artifacts|undefined;
+    const stage = (method:string) => recordStart("stage",{method,path:options.id??"engine",startupId},startupArtifacts);
     const profile=process.env.E2E_PROFILE;
     if(profile&&profile!==options.profile) throw new BlockedDoor("Engine profile differs from scheduled profile");
+    await stage("load-build");
     const build=await loadBuildManifest(options.profile);
     for(const capability of options.capabilities??[]) if(!build.capabilities.includes(capability)) throw new BlockedDoor(`waits on ${capability}`);
     const peers=options.peers??0;
     if(!Number.isInteger(peers)||peers<0) throw new TypeError("peers must be a nonnegative integer");
     if(peers>0&&process.env.E2E_FILE_SLOTS!=="2") throw new BlockedDoor("Multi-peer flows require a two-slot file");
     if(options.fastDims!==undefined&&(!Number.isInteger(options.fastDims)||options.fastDims<1)) throw new TypeError("fastDims must be a positive integer");
+    await stage("temp-root");
     const root=await tempRoot(options.id??"engine");
+    await stage("isolate-environment");
     const env=isolatedEnv(root,build.environment);
     for(const key of Object.keys(env)) if(key.startsWith("ONEIRON_")) delete env[key];
     env.ONEIRON_AUTH_SECRET=secretHex();redactor.add(env.ONEIRON_AUTH_SECRET);
     await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
+    await stage("reserve-port");
     const reservation=await reservePort();
     const engine=new EngineFixture(root,build,env,options,reservation.port);
+    startupArtifacts=engine.artifacts;
     let released=false;
     try {
       const config=resolve(root,"oneiron.toml");
@@ -110,32 +119,43 @@ export class EngineFixture {
         ...("allowAll" in embedder.egress?["--embedder-egress-allow-all"]:["--embedder-egress-allow",embedder.egress.entityIds.join(",")])]:["--embedder","none"];
       const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
         "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
+      await stage("write-config");
       await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
-      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true);
+      await stage("cli-init");
+      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
       if(init.exitCode!==0) throw new CliError(init,"vault-init");
+      await stage("cli-bootstrap");
       const bootstrap=await engine.cli.run(["token","bootstrap","--url",engine.url,"--config",config],undefined,LIMITS.readyMs,true);
       if(bootstrap.exitCode!==0) throw new CliError(bootstrap,"owner-bootstrap");
       const link=bootstrap.stdout.trim();redactor.add(link);
       const principalRef=new URL(link).hash.slice(1).split(".")[1];
       if(!principalRef||!/^[a-f0-9]{32}$/.test(principalRef)) throw new Error("Owner bootstrap returned no bound principal");
       await reservation.release();released=true;
+      await stage("server-launch-and-health");
       await engine.launch();
+      await stage("sdk-owner-pair");
       const paired=await engine.sdk.pair(link);
       engine.pairedActor=engine.actor(principalRef,"human",paired);
       engine.client=engine.pairedActor.client;engine.mcp=engine.pairedActor.mcp;engine.cli=engine.pairedActor.cli;
+      await stage("schema-snapshot");
       const schema=await engine.client.request<Schema>("GET","/api/openapi.json");
+      engine.schema=schema.body;
       await engine.artifacts.json("public-schema.json",schema.body);
+      await stage("public-readiness");
       if(options.ready) await awaitPublic(()=>options.ready!(engine.client),Boolean,{timeoutMs:LIMITS.readyMs,label:"requested public capabilities"});
       const configBytes=await readFile(config);
       await engine.artifacts.json("launch.json",{profile:options.profile,buildHead:build.head,url:engine.url,
         buildManifestSha256:process.env.E2E_BUILD_MANIFEST_SHA256,configSha256:createHash("sha256").update(configBytes).digest("hex"),
         config:redactor.text(configBytes.toString()),capabilities:options.capabilities??[]});
       engine.disown=ownResource(()=>engine.close());
+      await stage("owner-policy");
       if(options.policy) await options.policy(engine);
+      await stage("peers");
       for(let i=0;i<peers;i++) {
         const {peers:_count,...peerOptions}=options;
         engine.peers.push(await EngineFixture.start({...peerOptions,id:`${options.id??"engine"}-peer-${i}`,peers:0}));
       }
+      await stage("fixture.ready");
       return engine;
     } catch(error) {
       if(!released) await reservation.release();
@@ -143,16 +163,16 @@ export class EngineFixture {
     }
   }
   private actor(principalRef:string,actorClass:PairedActor["actorClass"],paired:{credential:string;pin:unknown}):PairedActor {
-    const client=new PublicHttpClient(this.url,{credential:paired.credential,artifacts:this.artifacts});
+    const client=new PublicHttpClient(this.url,{credential:paired.credential,artifacts:this.artifacts,label:`${actorClass}:${principalRef}`});
     const {bearer,seed}=credentialParts(paired.credential);
     const cli=new CliClient(requireAsset(this.build,"cli"),this.root,{...this.env,ONEIRON_URL:this.url,ONEIRON_TOKEN:bearer,ONEIRON_SECRET:bearer,ONEIRON_BINDING_KEY:seed},this.artifacts);
     return {principalRef,actorClass,...paired,client,mcp:new McpClient(client,this.options.surface),cli};
   }
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
-      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts});
+      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
     this.server=server;
-    const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000});
+    const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000,artifacts:this.artifacts,label:"health"});
     await awaitPublic(async()=>{
       if(!server.running) throw new Error(`Owned server exited: ${server.tail()}`);
       return publicClient.raw("GET","/api/health");
@@ -173,14 +193,15 @@ export class EngineFixture {
       {timeoutMs,label:`receipt ${ref}`}).then(page=>page.receipts.find(row=>row.receipt_ref===ref));
   }
   async websocket(actor:PairedActor=this.pairedActor):Promise<WsClient> {return WsClient.connect(this.url,actor.credential)}
-  /** Requires an existing typed door; never maps a missing canon verb to a generic endpoint. */
+  /** OpenAPI covers non-facade endpoints; generated facade types are the facade contract. */
   async requireHttpDoor(path:string,method:string):Promise<void> {
-    const schema=await this.client.request<{paths:Record<string,Record<string,unknown>>}>("GET","/api/openapi.json");
-    if(!schema.body.paths[path]?.[method.toLowerCase()]) throw new BlockedDoor(`waits on ${method} ${path}`);
+    if(!this.schema) this.schema=(await this.client.request<Schema>("GET","/api/openapi.json")).body;
+    if(!this.schema.paths?.[path]?.[method.toLowerCase()]) throw new BlockedDoor(`waits on ${method} ${path}`);
   }
   async restart():Promise<void> {
     if(this.closed) throw new Error("Cannot restart closed fixture");
     await this.server?.stop();await this.launch();
+    this.schema=undefined;
     await this.client.call("vault.receipts",{limit:1});
   }
   /** Caller first observes a public receipt, ACK or provider barrier; this method invents none. */

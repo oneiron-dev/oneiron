@@ -1,15 +1,20 @@
 import { afterAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders } from "./support/providers.ts";
-import { defineFile, ownResource } from "./support/run.ts";
+import { defineFile, ownResource, recordStart, redactor } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
 const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /* Source-only proposal against the current public catalog. Canon expectations
  * and authored inputs come from retrieval-scenarios and retrieval-evidence.
@@ -85,9 +90,6 @@ function readReceipt(receipt: ReadReceipt) {
   expect(Array.isArray(receipt.narrowed_axes)).toBe(true);
   expect(Array.isArray(receipt.replan_hint)).toBe(true);
 }
-async function requireFacades(engine: EngineFixture, verbs: readonly string[]) {
-  for (const verb of verbs) await engine.requireHttpDoor(`/v1/core/facade/${verb}`, "POST");
-}
 async function claim(engine: EngineFixture, scope: Facade.ClaimScope,
   input: Omit<FacadeInput<"vault.claims.upsert">, "scope" | "subject_ref" | "source" | "confidence"> & {
     readonly subject_ref?: string; readonly confidence?: number;
@@ -145,7 +147,7 @@ async function recordBoundReader(engine: EngineFixture, ids: readonly string[]) 
     holder_seed: [...Buffer.from(seed, "hex")], caveat: { records: [...ids] },
   });
   if (!narrowed.token.startsWith("v2.slip.")) throw new Error("Expected public attenuated slip");
-  const credential = `v2.cred.${narrowed.token.slice(8)}.${Buffer.from(narrowed.binding_key).toString("hex")}`;
+  const credential = `v2.cred.${narrowed.token.slice(8)}.${seed}`;
   return new PublicHttpClient(engine.url, { credential, artifacts: engine.artifacts });
 }
 const rerankConfig = (endpoint: string) => `
@@ -213,6 +215,10 @@ function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (read
         if (body.model !== fixture.embedder.modelKey || !Array.isArray(body.input) || body.input.length === 0) {
           throw new Error("Vector fixture needs its declared model and a nonempty input array");
         }
+        const unexpected = body.input.filter((text: unknown) => typeof text !== "string" || !vectors.has(text));
+        if (unexpected.length) await recordStart("fixture", {method:"POST",path:"/v1/embeddings",model:body.model,
+          rejectedInputs:unexpected.map((text:unknown) => typeof text === "string"
+            ? {sha256:createHash("sha256").update(text).digest("hex"),text:redactor.text(text)} : {type:typeof text})});
         const data = body.input.map((text: unknown, index: number) => {
           if (typeof text !== "string" || !vectors.has(text)) {
             throw new Error("Unexpected canonical text sent to vector fixture");
@@ -258,8 +264,9 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
       endpoint: provider.endpoint, modelKey: vectorFixture.embedder.modelKey,
       modelId: vectorFixture.embedder.modelId, dimensions: fixture.queryVector.length, egress: { allowAll: true },
     } });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.search.hybrid", "vault.vectors.put", "vault.structural.put"]);
     const records = new Map<string, Facade.EntityRefReceipt>();
     for (const row of fixture.corpus) {
       const record = await task(engine, row.text, utc(row.occurredUtc ?? fixture.anchorUtc), [], row.name);
@@ -316,7 +323,19 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
       expect(stored.value?.body).toMatchObject({ title: fixture.corpus.find(row => row.label === label)!.text });
     }
     await engine.artifacts.json("retrieval-five-channel.json", { input, first, repeated });
-  } finally { await engine.close(); await provider.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await provider.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-02: lexical originals and explicit phonetic query codes. */
@@ -326,8 +345,9 @@ suite.test(test, "RETRIEVAL-02", "Multilingual lexical retrieval should work", a
     names: { label: string; name: string; queries: string[] }[];
   }>("RETRIEVAL-02");
   const engine = await EngineFixture.start({ id: "RETRIEVAL-02", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.witness", "vault.search.bm25", "vault.search.hybrid", "vault.people.create", "vault.refs.resolve"]);
     const at = utc("2026-08-01T00:00:00Z");
     const originals = new Map<string, Awaited<ReturnType<typeof witnessedText>>>();
     for (const row of fixture.texts) originals.set(row.label, await witnessedText(engine, row.text, at));
@@ -378,7 +398,18 @@ suite.test(test, "RETRIEVAL-02", "Multilingual lexical retrieval should work", a
       expect(read.value!.body).toEqual(originals.get(row.label)!.message.body);
     }
     await engine.artifacts.json("retrieval-multilingual.json", observations);
-  } finally { await engine.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-03: real stored dates, independent occurrence/learning axes. */
@@ -389,8 +420,9 @@ suite.test(test, "RETRIEVAL-03", "Bitemporal widening should work", async () => 
     expected: { occurredMatch: string; learnedMatch: string; widenedOccurredMatch: string; maximumAdaptiveRounds: number };
   }>("RETRIEVAL-03");
   const engine = await EngineFixture.start({ id: "RETRIEVAL-03", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.search.temporal", "vault.claims.upsert"]);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const records = new Map<string, Awaited<ReturnType<typeof claim>>>();
     for (const label of fixture.ingestionOrder) {
@@ -440,7 +472,18 @@ suite.test(test, "RETRIEVAL-03", "Bitemporal widening should work", async () => 
       expect(hit.occurred_end).toBeLessThanOrEqual(outer.end);
     }
     await engine.artifacts.json("retrieval-bitemporal.json", observations);
-  } finally { await engine.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* The stale producer and filtered claim reads exist. They do not provide the
@@ -455,6 +498,8 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
   }>("RETRIEVAL-05");
   // Unconfigured is a separate fresh vault, not an error hidden by a fallback.
   const plain = await EngineFixture.start({ id: "RETRIEVAL-05-unconfigured", profile });
+  let plainPrimaryFailed: boolean = false;
+  let plainPrimary: unknown;
   try {
     const rows = await effortCorpus(plain);
     const reader = await recordBoundReader(plain, [plain.pairedActor.principalRef, ...rows.map(row => row.id)]);
@@ -468,15 +513,25 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
         expect(read.retrieval_meta.rerank).toEqual({ status: "skipped", reason: fixture.expected.noRerankerReason });
       }
     }
-  } finally { await plain.close(); }
+  } catch (error) {
+    plainPrimaryFailed = true;
+    plainPrimary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await plain.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (plainPrimaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(plainPrimary)}; cleanup: ${cleanups.join("; ")}`);
+      throw plainPrimary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
   const providers = await ScriptedProviders.start({ id: "retrieval-effort",
     steps: [rerankStep("high"), rerankStep("xhigh"), rerankStep("max"), rerankStep("deadline-base")] });
   const engine = await EngineFixture.start({ id: "RETRIEVAL-05", profile,
     initArgs: ["--dimensions", "4"], serverConfig: rerankConfig(providers.urls.reranker!) });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.recall", "vault.models.roles.read",
-      "vault.retrieval.hyde.configure", "vault.retrieval.hyde.get", "vault.retrieval.hyde.pending",
-      "vault.retrieval.hyde.complete", "vault.retrieval.hyde.receipt"]);
     const rows = await effortCorpus(engine);
     const reader = await recordBoundReader(engine, [engine.pairedActor.principalRef, ...rows.map(row => row.id)]);
     const role = await engine.client.call("vault.models.roles.read", { role: "reranker" });
@@ -556,7 +611,19 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     expect(providers.seenFixtureCalls.every(call => call.role === "reranker" && call.path === "/v1/rerank")).toBe(true);
     await engine.artifacts.json("retrieval-effort-deadline.json", { observations, held, completion, delivered: reply.body,
       providerCalls: providers.seenFixtureCalls });
-  } finally { await engine.close(); await providers.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-06 — Evidence abstention not invented recall should work.
@@ -576,6 +643,8 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
     embedder: { endpoint: provider.endpoint, modelKey: fixture.embedder.modelKey,
       modelId: fixture.embedder.modelId, dimensions: fixture.embedder.dimensions,
       egress: { allowAll: true } } });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     await engine.requireHttpDoor("/v1/core/context-pack", "POST");
     await engine.requireHttpDoor("/api/search/vector", "GET");
@@ -666,9 +735,18 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
         occurred_end: fixture.occurredAt, learned_at: fixture.learnedAt });
     }
     await engine.artifacts.json("retrieval-evidence.json", { fixtureId: "retrieval-evidence", observed });
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    await engine.close();
-    await provider.close();
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await provider.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -679,9 +757,9 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
     oldValue: string; newValue: string;
   }>("RETRIEVAL-07");
   const engine = await EngineFixture.start({ id: "RETRIEVAL-07", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.retrieval.aging.get", "vault.retrieval.aging.configure",
-      "vault.search.hybrid", "vault.claims.history"]);
     const current = await engine.client.call("vault.retrieval.aging.get", {});
     const profiles: Facade.ClaimAgingProfiles = {
       durable: { half_life_secs: 365 * 86400, floor: 0.0001 },
@@ -751,7 +829,18 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
     expect(newest).toMatchObject({ value: fixture.newValue, confidence: fixture.confidence, lifecycle: "active" });
     for (const row of history.value) expect(row.confidence).toBe(fixture.confidence);
     await engine.artifacts.json("retrieval-aging.json", { configured, observations, factors: Object.fromEntries(factors), present, history });
-  } finally { await engine.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-08: the real journaled rerank wait permits in-process SLIM. */
@@ -763,8 +852,9 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
   const providers = await ScriptedProviders.start({ id: "retrieval-slim", steps: [rerankStep("slim-wait", "journaled-rerank-held")] });
   const engine = await EngineFixture.start({ id: "RETRIEVAL-08", profile, serverConfig: rerankConfig(providers.urls.reranker!) });
   let pending: Promise<FacadeResult<"vault.recall">> | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.slim.drop_heavy", "vault.slim.state", "vault.slim.resume", "vault.slim.resume_step"]);
     const rows = await effortCorpus(engine);
     const at = utc("2026-08-01T00:00:00Z");
     const records = new Map<string, Facade.EntityRefReceipt>();
@@ -840,11 +930,21 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
     expect(sorted(delivered.items.map(item => item.short_id))).toEqual(sorted(rows.map(row => row.ref)));
     expect(providers.seenFixtureCalls).toHaveLength(1);
     await engine.artifacts.json("retrieval-slim-parity.json", { cold, warm, before, dropped, slim, saved, resumed, rebuilt, rewarm, full });
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
     providers.releaseBarrier("journaled-rerank-held");
     // Settle the owned request before stopping its server on assertion failure.
     await pending?.catch(() => {});
-    await engine.close(); await providers.close();
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -855,9 +955,9 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     queryAffect: Facade.QueryAffect;
   }>("RETRIEVAL-09");
   const engine = await EngineFixture.start({ id: "RETRIEVAL-09", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.retrieval.weights.get", "vault.retrieval.weights.configure",
-      "vault.affect.annotations.put", "vault.affect.claims.consolidate", "vault.retrieval.run"]);
     const zero: Facade.RetrievalWeights = { affect: 0, arousal: 0, community: 0, vad: 0 };
     expect((await engine.client.call("vault.retrieval.weights.get", {})).weights).toEqual(zero);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
@@ -967,7 +1067,18 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       expect(stored.approval).toBe(records.get(row.label)!.receipt.approval);
     }
     await engine.artifacts.json("retrieval-optional-priors.json", snapshots);
-  } finally { await engine.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 type ClusterVerb = "vault.cluster" | "vault.cluster.propose" | "vault.cluster.proposal" | "vault.cluster.resolve_proposal";
@@ -986,8 +1097,9 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
     clusters: Record<string, string[]>; ambiguousBridge: string;
   }>("RETRIEVAL-10");
   const engine = await EngineFixture.start({ id: "RETRIEVAL-10", profile, surface: "tool-first" });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
-    await requireFacades(engine, ["vault.cluster", "vault.cluster.propose", "vault.cluster.proposal", "vault.cluster.resolve_proposal"]);
     await engine.mcp.initialize();
     const listed = await engine.mcp.request<{ tools: { name: string }[] }>("tools/list");
     for (const verb of ["vault.cluster", "vault.cluster.propose", "vault.cluster.proposal", "vault.cluster.resolve_proposal"]) {
@@ -1088,7 +1200,18 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
     for (const row of before) expect(after.find(other => other.claim_ref === row.claim_ref)).toEqual(row);
     await engine.artifacts.json("retrieval-clustering.json", { proposed, parked, refused, accepted, acceptedSplit,
       originalRecall, mergedRecall, splitRecall });
-  } finally { await engine.close(); }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
 
 /* RETRIEVAL-11: evidence inspection and vetting exist, but a Generated/Auto
@@ -1101,7 +1224,7 @@ suite.todo(test, "RETRIEVAL-11", "waits on a complete typed public caller-owned 
 
 /* RETRIEVAL-12 replacement section. Drop-in for retrieval.test.ts: delete the
  * RETRIEVAL-12 suite.todo block and paste this whole section in its place.
- * Uses existing helpers only (scenario, utc, readReceipt, requireFacades,
+ * Uses existing helpers only (scenario, utc, readReceipt,
  * task, endpointInitArgs, startVectorTable, EvidenceFixture, profile, suite);
  * the r12*-named additions below are new and collide with nothing.
  * Requires the EngineOptions.fastDims support edit from retrieval12-setup.md
@@ -1165,9 +1288,9 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
   const ordinary = await EngineFixture.start({ id: "RETRIEVAL-12-ordinary", profile,
     fastDims: fixture.fastDims, initArgs: endpointInitArgs(ordinaryProvider.endpoint),
     embedder: embedderOf(ordinaryProvider.endpoint) });
+  let ordinaryPrimaryFailed: boolean = false;
+  let ordinaryPrimary: unknown;
   try {
-    await requireFacades(ordinary, ["vault.search.vector", "vault.search.vector.config",
-      "vault.vectors.put", "vault.structural.put", "vault.get"]);
     const config = await ordinary.client.call("vault.search.vector.config", {});
     readReceipt(config.narrowing);
     expect(config.value.dimensions).toBe(4);
@@ -1203,7 +1326,19 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
       expect(String(await r12PinnedTitle(ordinary, hit))).toMatch(/^R12 ordinary /);
     }
     await ordinary.artifacts.json("retrieval-mrl-ordinary.json", { query: fixture.query, first, repeated });
-  } finally { await ordinary.close(); await ordinaryProvider.close(); }
+  } catch (error) {
+    ordinaryPrimaryFailed = true;
+    ordinaryPrimary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await ordinary.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await ordinaryProvider.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (ordinaryPrimaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(ordinaryPrimary)}; cleanup: ${cleanups.join("; ")}`);
+      throw ordinaryPrimary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 
   /* Vault 2: voice_hot lane on the independently authored geometry. Prefix
    * scores tie by construction, so the tie order stays unpinned: presence
@@ -1213,9 +1348,9 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
   const voice = await EngineFixture.start({ id: "RETRIEVAL-12-voice", profile,
     fastDims: fixture.fastDims, initArgs: endpointInitArgs(voiceProvider.endpoint),
     embedder: embedderOf(voiceProvider.endpoint) });
+  let voicePrimaryFailed: boolean = false;
+  let voicePrimary: unknown;
   try {
-    await requireFacades(voice, ["vault.search.vector", "vault.search.vector.config",
-      "vault.vectors.put", "vault.structural.put", "vault.get"]);
     const config = await voice.client.call("vault.search.vector.config", {});
     readReceipt(config.narrowing);
     expect(config.value.dimensions).toBe(4);
@@ -1251,5 +1386,17 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
       expect(String(await r12PinnedTitle(voice, hit))).toMatch(/^R12 voice /);
     }
     await voice.artifacts.json("retrieval-mrl-voice.json", { query: [...r12VoiceGeometry.query], first, repeated });
-  } finally { await voice.close(); await voiceProvider.close(); }
+  } catch (error) {
+    voicePrimaryFailed = true;
+    voicePrimary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await voice.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await voiceProvider.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (voicePrimaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(voicePrimary)}; cleanup: ${cleanups.join("; ")}`);
+      throw voicePrimary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
 });
