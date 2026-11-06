@@ -4,7 +4,7 @@
 use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Whether each of `peers` reads the revision `raw` too, under this
     /// read's claim-status contract; each as a personal ceiling's peer
     /// (`room_peer`) when `room_peer`. Each peer's own row admission is its
@@ -17,7 +17,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         room_peer: bool,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         for peer in peers {
             let mut peer = self
