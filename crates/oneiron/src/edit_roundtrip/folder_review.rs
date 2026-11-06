@@ -4,17 +4,14 @@
 //! The files themselves are never written. A folder is the caller's
 //! selection; every file is read as the asker, by its own artifact id.
 
-use super::artifact_question::{
-    ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, answer_cell, invalid,
-};
-use super::judgment::{SheetAnswerBundle, SheetCellAnswer};
+use super::artifact_question::{ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, invalid};
+use super::judgment::{SheetAnswerBundle, finish_decided_sheet_unit};
 use super::judgment_cells::named_sheet_cells;
 use super::{CellRef, CellValue, OfficeFormat, RangeRef};
 use crate::edit_settle::{
     DecidedSheetAnswers, DecidedSheetInputs, DecidedSheetProgress, DecidedSheetRequest,
-    DecidedSheetShape,
+    DecidedSheetShape, DecidedSheetUnitDecision,
 };
-use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionImage, EvidenceVersion, MAX_DECISION_IMAGE_BYTES};
 use crate::llm::image::ImageBytes;
 use crate::office_body::document_resources;
@@ -142,6 +139,7 @@ impl Vault {
                     progress: Some(DecidedSheetProgress {
                         next: 0,
                         inputs: DecidedSheetInputs::FolderItems { before },
+                        decision: None,
                     }),
                     unmasked,
                 },
@@ -178,9 +176,14 @@ impl Vault {
                 "row": item.row,
                 "cell": target.to_a1(),
             });
-            // A completed unit commits below, including no-call outcomes.
-            // Errors in this unit leave every earlier committed unit intact.
+            let has_decision = progress.decision.is_some();
+            // A paid result commits before conversion; completed and no-call
+            // outcomes advance the cursor in their own canonical commit.
             (|| -> Result<()> {
+                if has_decision {
+                    finish_decided_sheet_unit(self, output, &mut row, unit, target, before)?;
+                    return Ok(());
+                }
                 if matches!(before, CellValue::Formula { .. }) {
                     row.refused.push(UnitRefusal {
                         unit,
@@ -262,29 +265,22 @@ impl Vault {
                     });
                     return Ok(());
                 };
-                let value = answer_cell(&decision.answer)?;
-                if value.is_none() {
-                    // A unit asked of its role holder keeps its ask (FIX 11231).
-                    keep_artifact_unit_ask(self, &pin, &unit, &decision);
-                    row.abstained.push(UnitAbstention {
-                        unit,
-                        decision: Some(decision.clone()),
-                        judged_live: judged_live.clone(),
-                    });
-                }
-                row.bundle.answers.push(SheetCellAnswer {
-                    cell: target,
-                    before: Some(before),
-                    value,
+                row.progress
+                    .as_mut()
+                    .expect("partial folder answers")
+                    .decision = Some(DecidedSheetUnitDecision {
                     decision,
                     source: Some(pin),
-                    judged_version: Some(head.version),
-                    judged_live,
+                    version: head.version,
+                    live: judged_live,
                 });
                 Ok(())
             })()?;
             row.unmasked |= unmasked;
-            row.progress.as_mut().expect("partial folder answers").next += 1;
+            let progress = row.progress.as_mut().expect("partial folder answers");
+            if progress.decision.is_none() {
+                progress.next += 1;
+            }
             row = self.advance_decided_sheet_answers(output, &expected, row)?;
         }
         self.stage_decided_sheet_answers(output, &row, ask.deadline)

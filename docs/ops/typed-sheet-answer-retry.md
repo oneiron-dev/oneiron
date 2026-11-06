@@ -2,8 +2,9 @@
 
 `vault.artifacts.ask` and `vault.artifacts.admit` preserve sheet-row and
 folder-item progress after each completed unit, before the next paid call.
-They use the same content row that retains the complete answer bundle before
-the native workbook writer stages it. The stored row includes the original
+Each validated unit decision is also committed before cell conversion and the
+outcome commit. They use the same content row that retains the complete answer
+bundle before the native workbook writer stages it. The stored row includes the original
 question, principal, reversibility, evidence and selected units, every committed
 decision and receipt, the workbook version and content hash, the read rows,
 and the abstentions and refusals.
@@ -15,7 +16,9 @@ values are captured before the first paid call. A retry uses those original
 inputs with their original version, content hash and live pin, not a new live
 head relabelled with an old pin. Folder output cells use the original workbook
 basis. Remaining files are read as the original loop reads each file; completed
-files keep their own source, version and live pins. Their later edits remain
+files keep their own source, version and live pins. A saved current-unit decision
+also keeps those pins and its original read rows. A retry converts that decision
+without rereading the file or calling the decider again. Later edits remain
 subject to the existing withdrawal-at-Keep rules, not a new resume gate.
 
 If staging fails after all units complete, the retry restages the stored bundle
@@ -54,13 +57,18 @@ They are not part of the archive's consume-once settlement-ledger export.
 
 ## Remaining FIX 9815 work
 
-A unit that fails before its outcome commits can still be called again. This
-includes failure in the decider, answer conversion or the progress commit
-itself; earlier committed units remain intact. Concurrent callers are not
-single-flight and may both call the next unit. The first prepared basis wins;
+A unit that fails before its validated decision commits can still be called
+again. This includes a decider error, decision validation failure, or failure of
+the initial decision save itself; earlier committed units remain intact. Once
+that save succeeds, conversion or outcome-commit failure leaves the saved
+decision available for retry, with no further decider call. A deterministic
+conversion error remains an error; the engine does not silently replace the
+saved decision. Release the answer-progress row to deliberately ask again.
+Concurrent callers are not single-flight and may both call the next unit before
+one saves its decision. The first prepared basis wins;
 a continuation commits only if the stored row still equals the exact prefix
-it read, including original inputs, decisions, receipts, pins, visibility and
-generation. A losing writer adopts the canonical row instead of overwriting it.
+it read, including original inputs, saved current-unit decision, completed
+outcomes, receipts, pins, visibility and generation. A losing writer adopts the canonical row instead of overwriting it.
 The first complete row is never extended or overwritten.
 
 Progress writes and local prefix clones are not full-heap admission. No runtime,

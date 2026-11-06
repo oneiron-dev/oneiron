@@ -14,6 +14,7 @@ use crate::edit_roundtrip::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::decision::{EvidenceVersion, TypedDecision};
 use crate::model_decision::{DecisionQuestion, Reversibility};
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -86,9 +87,20 @@ pub(crate) enum DecidedSheetInputs {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct DecidedSheetUnitDecision {
+    pub(crate) decision: TypedDecision,
+    pub(crate) source: Option<EvidenceVersion>,
+    pub(crate) version: u64,
+    pub(crate) live: Option<crate::office_body::LivePin>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DecidedSheetProgress {
     pub(crate) next: usize,
     pub(crate) inputs: DecidedSheetInputs,
+    /// The validated result for `next`, before cell conversion and outcome commit.
+    pub(crate) decision: Option<DecidedSheetUnitDecision>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
