@@ -18,7 +18,9 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{AgentGrantStanding, FederationGrant, FederationGrantScope};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
 
@@ -179,9 +181,9 @@ fn principal_standing_or_lapse_in(
 }
 
 /// Whether `agent` is a live agent principal acting as `class`: an enabled,
-/// active agent definition the archive has not taken, acting as an agent, or
-/// a base agent's MACHINE principal, which acts as the system class. The
-/// cleanup-archive marker is read as every module outside deletion reads it.
+/// active agent definition or native published-app PERSON the archive has
+/// not taken, acting as an agent, or a base agent's MACHINE principal acting
+/// as the system class. The cleanup-archive marker keeps its ordinary rule.
 pub(crate) fn live_agent_principal_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -190,6 +192,18 @@ pub(crate) fn live_agent_principal_in(
 ) -> Result<bool> {
     use crate::ports::{DeletionMarker, TombstoneStoreRead};
     match (class, live_entity_row_in_txn(store, txn, &agent)?) {
+        (
+            EdgeActorClass::Agent,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PERSON,
+                body,
+            },
+        ) => {
+            if store.port_deletion_marked(txn, DeletionMarker::Archive, &agent)? {
+                return Ok(false);
+            }
+            Ok(crate::artifact_hosting::is_backend_principal(agent, &body))
+        }
         (
             EdgeActorClass::Agent,
             LiveEntityRow::Live {
