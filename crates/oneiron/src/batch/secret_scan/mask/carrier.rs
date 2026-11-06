@@ -295,20 +295,77 @@ impl LiftedKeys {
         txn: &RoTxn<'_>,
         texts: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Result<Self> {
+        Self::of_in_txn_paced(store, txn, texts, None)
+    }
+
+    /// [`Self::of_in_txn`] with the caller's reader checked while collecting keys.
+    pub(crate) fn of_in_txn_with_reader(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        texts: impl IntoIterator<Item = impl AsRef<str>>,
+        reader: &ContainerReader,
+    ) -> Result<Self> {
+        Self::of_in_txn_paced(store, txn, texts, Some(reader))
+    }
+
+    fn of_in_txn_paced(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        texts: impl IntoIterator<Item = impl AsRef<str>>,
+        reader: Option<&ContainerReader>,
+    ) -> Result<Self> {
         let mut keys = Vec::new();
         for text in texts {
             let text = text.as_ref();
-            let hash = blake3::hash(text.as_bytes());
+            let hash = if let Some(reader) = reader {
+                reader
+                    .pacing
+                    .checkpoint(ReadProgress::Member)
+                    .map_err(withheld)?;
+                let mut hash = blake3::Hasher::new();
+                for chunk in text.as_bytes().chunks(blake3::CHUNK_LEN) {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
+                    hash.update(chunk);
+                }
+                hash.finalize()
+            } else {
+                blake3::hash(text.as_bytes())
+            };
             let Some(file) = masked_file_in_txn(store, txn, hash.as_bytes())? else {
                 continue;
             };
             for key in &file.keys {
+                if let Some(reader) = reader {
+                    reader
+                        .pacing
+                        .checkpoint(ReadProgress::Member)
+                        .map_err(withheld)?;
+                }
                 let value = usize::try_from(key.start)
                     .ok()
                     .zip(usize::try_from(key.end).ok())
                     .and_then(|(start, end)| text.get(start..end))
                     .ok_or(Error::CorruptedIndex("a lifted text's key span"))?;
-                if value.is_empty() || keys.iter().any(|(held, _)| held == value) {
+                if value.is_empty() {
+                    continue;
+                }
+                let mut duplicate = false;
+                for (held, _) in &keys {
+                    if let Some(reader) = reader {
+                        reader
+                            .pacing
+                            .checkpoint(ReadProgress::Member)
+                            .map_err(withheld)?;
+                    }
+                    if held == value {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if duplicate {
                     continue;
                 }
                 let handle = store

@@ -78,11 +78,13 @@ impl GraphFsResolver<'_, '_> {
                             if let Some(mut value) = value {
                                 let mut texts = Vec::new();
                                 strings(&value, &mut texts, reader)?;
-                                let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-                                    &self.scoped_read.vault().store,
-                                    txn,
-                                    texts,
-                                )?;
+                                let keys =
+                                    crate::batch::secret_scan::LiftedKeys::of_in_txn_with_reader(
+                                        &self.scoped_read.vault().store,
+                                        txn,
+                                        texts,
+                                        reader,
+                                    )?;
                                 if mask(&mut value, &keys, reader)? {
                                     let mut output = PacedBodyIo::new(
                                         Vec::new(),
@@ -99,11 +101,13 @@ impl GraphFsResolver<'_, '_> {
                                     *body = bytes;
                                 }
                             } else if let Ok(text) = std::str::from_utf8(body) {
-                                let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-                                    &self.scoped_read.vault().store,
-                                    txn,
-                                    [text],
-                                )?;
+                                let keys =
+                                    crate::batch::secret_scan::LiftedKeys::of_in_txn_with_reader(
+                                        &self.scoped_read.vault().store,
+                                        txn,
+                                        [text],
+                                        reader,
+                                    )?;
                                 if let Some(masked) = keys.masked_with_reader(text, reader)? {
                                     *body = masked.into_bytes();
                                 }
