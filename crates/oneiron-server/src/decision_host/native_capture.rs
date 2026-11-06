@@ -45,6 +45,7 @@ impl DecisionReadObserver for HouseReadObserver<'_> {
         request: &LabelReadRequest<'_>,
         outcome: DecisionReadOutcome<'_>,
         gate_run: Option<&RunAdmission>,
+        native_admission: Option<&oneiron::llm::decision::DecisionCallAdmission>,
     ) {
         let Some(caller) = &self.caller else {
             return;
@@ -64,10 +65,15 @@ impl DecisionReadObserver for HouseReadObserver<'_> {
                     return;
                 };
                 // Only the content-free failure class survives; never retain the error.
-                NativeReadOutcome::Failed {
-                    failure,
-                    usage: None,
-                }
+                let usage =
+                    native_admission.and_then(|admission| match admission.terminal_usage() {
+                        Ok(usage) => usage,
+                        Err(error) => {
+                            tracing::warn!(%error, "native decision usage was not available");
+                            None
+                        }
+                    });
+                NativeReadOutcome::Failed { failure, usage }
             }
             DecisionReadOutcome::Malformed(answer) => NativeReadOutcome::Failed {
                 failure: NativeReadFailure::LabelRead(LabelReadFailure::Malformed),
