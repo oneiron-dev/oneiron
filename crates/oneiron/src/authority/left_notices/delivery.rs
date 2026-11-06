@@ -62,8 +62,23 @@ impl Vault {
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
         let now = self.store.clock.now_recorded_at();
+        let holder = slip.current_binding_key();
         let copies = match slip.transferred_bounds() {
-            None => self.removal_exports_in_txn(&txn, person, now)?,
+            // Only an archive the holder has not acknowledged at its current
+            // version is read from its file (FIX 3679).
+            None => {
+                let mut owed = Vec::new();
+                for stored in self.removal_exports_in_txn(&txn, person, now)? {
+                    let key = delivery_key(person, &stored.copy.receipt_id, holder);
+                    let acked = REMOVAL_DELIVERY
+                        .get(&self.store, &txn, &key)?
+                        .is_some_and(|cursor| cursor.acked >= stored.copy.delivered_at);
+                    if !acked {
+                        owed.push(stored);
+                    }
+                }
+                self.removal_export_copies_in_txn(&txn, owed)?
+            }
             Some(bounds) => self.transferred_exports_in_txn(
                 &mut txn,
                 issuer,
@@ -73,7 +88,6 @@ impl Vault {
                 bounds,
             )?,
         };
-        let holder = slip.current_binding_key();
         let mut owed = Vec::new();
         for copy in copies {
             let key = delivery_key(person, &copy.receipt_id, holder);
@@ -117,7 +131,7 @@ impl Vault {
         // Only the archive's version is read: the ack answers no byte.
         let current = self
             .removal_export_in_txn(&txn, person, receipt, now)?
-            .map(|copy| copy.delivered_at);
+            .map(|stored| stored.copy.delivered_at);
         let acked = match current {
             Some(current) if version == current => {
                 let key = delivery_key(person, &receipt.to_hex(), slip.current_binding_key());
@@ -203,6 +217,6 @@ impl Vault {
         };
         Ok(self
             .removal_export_in_txn(txn, person, receipt, now)?
-            .map(|copy| copy.delivered_at))
+            .map(|stored| stored.copy.delivered_at))
     }
 }
