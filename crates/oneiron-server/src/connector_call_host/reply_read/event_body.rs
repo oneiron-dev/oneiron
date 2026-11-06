@@ -112,10 +112,13 @@ impl Data {
 
     pub(super) fn read(self) -> Result<Option<(Value, RawOutboundBody)>, ()> {
         match self {
-            Self::Memory(mut event) => Ok(serde_json::from_str(&event).ok().map(|message| {
-                let body = RawOutboundBody::from_bytes(std::mem::take(&mut *event).into_bytes());
-                (message, body)
-            })),
+            Self::Memory(mut event) => {
+                Ok(event_value::read_str(&event).ok().flatten().map(|message| {
+                    let body =
+                        RawOutboundBody::from_bytes(std::mem::take(&mut *event).into_bytes());
+                    (message, body)
+                }))
+            }
             Self::Spooled { file, .. } => {
                 let body = RawOutboundBody::from_spooled_file(file).map_err(|_| ())?;
                 match event_value::read(body.reader()) {
