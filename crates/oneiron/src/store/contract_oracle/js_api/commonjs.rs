@@ -53,9 +53,41 @@ pub(super) fn collect(
                     continue;
                 }
                 if binding.name == "exports" {
+                    if let Some(values) = current_final_sequence_values(
+                        value,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        commonjs = true;
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        alias = true;
+                        continue;
+                    }
                     alias = (native_module && whole_value(value, semantic, &mut accounted))
                         || (alias && wrapper(value, "exports", semantic, &mut accounted));
                 } else if binding.name == "module" {
+                    if let Some(values) = module_final_sequence_values(
+                        value,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        commonjs = true;
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        continue;
+                    }
                     native_module =
                         native_module && wrapper(value, "module", semantic, &mut accounted);
                 }
@@ -156,12 +188,7 @@ pub(super) fn collect(
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
                 if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
                     if assignment.operator.is_assign()
-                        && native_module
-                        && let Expression::SequenceExpression(sequence) =
-                            assignment.right.get_inner_expression()
-                        && let Some(last) = sequence.expressions.last()
-                        && whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new())
-                        && let Some(values) = whole_sequence_values(
+                        && let Some(values) = current_final_sequence_values(
                             &assignment.right,
                             semantic,
                             alias,
@@ -190,6 +217,26 @@ pub(super) fn collect(
                                 )));
                     accounted.insert((identifier.span.start, identifier.span.end));
                 } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
+                    if assignment.operator.is_assign()
+                        && let Some(values) = module_final_sequence_values(
+                            &assignment.right,
+                            semantic,
+                            alias,
+                            native_module,
+                            &mut accounted,
+                        )
+                    {
+                        commonjs = true;
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        accounted.insert((identifier.span.start, identifier.span.end));
+                        continue;
+                    }
                     native_module = assignment.operator.is_assign()
                         && native_module
                         && wrapper(&assignment.right, "module", semantic, &mut accounted);
@@ -284,6 +331,67 @@ pub(super) fn collect(
     }
 }
 
+fn current_final_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let last = sequence.expressions.last()?;
+    let assigned_final = matches!(
+        last.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    );
+    if !assigned_final && !whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new())
+    {
+        return None;
+    }
+    whole_sequence_values(value, semantic, alias, native_module, accounted)
+}
+
+fn module_final_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let (last, replacements) = sequence.expressions.split_last()?;
+    let mut sequence_accounted = BTreeSet::new();
+    if replacements.is_empty()
+        || !wrapper(
+            last.get_inner_expression(),
+            "module",
+            semantic,
+            &mut sequence_accounted,
+        )
+    {
+        return None;
+    }
+    let values = whole_prefix_values(
+        replacements,
+        semantic,
+        alias,
+        native_module,
+        &mut sequence_accounted,
+    )?;
+    accounted.extend(sequence_accounted);
+    Some(values)
+}
+
 fn whole_sequence_values<'ast, 'src>(
     value: &'ast Expression<'src>,
     semantic: &Semantic<'_>,
@@ -301,7 +409,46 @@ fn whole_sequence_values<'ast, 'src>(
     if replacements.is_empty() {
         return None;
     }
+    let assigned_final = matches!(
+        last.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    );
+    let replacements = if assigned_final {
+        &sequence.expressions[..]
+    } else {
+        replacements
+    };
     let mut sequence_accounted = BTreeSet::new();
+    let mut values = whole_prefix_values(
+        replacements,
+        semantic,
+        alias,
+        native_module,
+        &mut sequence_accounted,
+    )?;
+    if !assigned_final {
+        let last = last.get_inner_expression();
+        if fresh_value(last) {
+            values.push(last);
+        } else if !whole_value(last, semantic, &mut sequence_accounted)
+            && !(values.is_empty()
+                && alias
+                && wrapper(last, "exports", semantic, &mut sequence_accounted))
+        {
+            return None;
+        }
+    }
+    accounted.extend(sequence_accounted);
+    Some(values)
+}
+
+fn whole_prefix_values<'ast, 'src>(
+    replacements: &'ast [Expression<'src>],
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
     let mut values = Vec::new();
     for expression in replacements {
         let Expression::AssignmentExpression(assignment) = expression.get_inner_expression() else {
@@ -314,7 +461,7 @@ fn whole_sequence_values<'ast, 'src>(
                     semantic,
                     false,
                     native_module,
-                    &mut sequence_accounted,
+                    accounted,
                 ),
                 Some(Target::Whole)
             )
@@ -324,25 +471,12 @@ fn whole_sequence_values<'ast, 'src>(
         let value = assignment.right.get_inner_expression();
         if fresh_value(value) {
             values.push(value);
-        } else if !whole_value(value, semantic, &mut sequence_accounted)
-            && !(values.is_empty()
-                && alias
-                && wrapper(value, "exports", semantic, &mut sequence_accounted))
+        } else if !whole_value(value, semantic, accounted)
+            && !(values.is_empty() && alias && wrapper(value, "exports", semantic, accounted))
         {
             return None;
         }
     }
-    let last = last.get_inner_expression();
-    if fresh_value(last) {
-        values.push(last);
-    } else if !whole_value(last, semantic, &mut sequence_accounted)
-        && !(values.is_empty()
-            && alias
-            && wrapper(last, "exports", semantic, &mut sequence_accounted))
-    {
-        return None;
-    }
-    accounted.extend(sequence_accounted);
     Some(values)
 }
 
