@@ -13,6 +13,9 @@ pub struct CanonicalEntityDocument {
     /// None is a UTF-8 body; Some is the document's MessagePack body field.
     pub field: Option<String>,
     pub text: String,
+    /// Exact native SKILL witness at this value; None before its first
+    /// publication. These bytes alone are not admitted-source proof.
+    pub native_skill_state: Option<Vec<u8>>,
     /// Editable fields, each encoded as one MessagePack value.
     pub metadata: BTreeMap<String, Vec<u8>>,
     /// A scope summary's typed purpose and derivation, as its meta map holds
@@ -62,6 +65,8 @@ pub struct CanonicalDocumentVersion {
     /// Characters kept from its end.
     pub suffix: u32,
     pub middle: String,
+    /// This retained version's witness, never the current head's substitute.
+    pub native_skill_state: Option<Vec<u8>>,
     pub metadata: BTreeMap<String, Vec<u8>>,
     /// A scope summary's purpose and derivation at this version (FIX 756).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -132,6 +137,9 @@ pub struct CanonicalDocumentFork {
     /// The retained output text of a pending fork.
     pub output: Option<String>,
     pub output_metadata: Option<BTreeMap<String, Vec<u8>>>,
+    /// The actual pending output's witness. A pending output may genuinely
+    /// have none; a settled fork with no output carries none.
+    pub output_native_skill_state: Option<Vec<u8>>,
     /// Its place in its bundle, and the bundle's size: no count bounds a
     /// bundle (Rule 5, FIX 8822).
     pub proposal_index: u64,
@@ -160,12 +168,36 @@ pub struct CanonicalDocumentPurge {
 /// Resumable reconstruction of the same canonical history text vector.
 pub(crate) struct CanonicalDocumentTexts {
     texts: Vec<String>,
+    row: CanonicalTextSplice,
+}
+
+#[derive(Default)]
+struct CanonicalTextSplice {
+    stage: TextStage,
+    parent_byte: usize,
+    parent_chars: usize,
+    prefix_end: usize,
+    suffix_start: usize,
+    suffix_chars: usize,
+    next: usize,
+    text: String,
+}
+
+#[derive(Default)]
+enum TextStage {
+    #[default]
+    Parent,
+    SuffixBoundary,
+    Prefix,
+    Middle,
+    Suffix,
 }
 
 impl CanonicalDocumentTexts {
     pub(crate) fn new(history: &CanonicalEntityDocumentHistory) -> Self {
         Self {
             texts: Vec::with_capacity(history.versions.len()),
+            row: CanonicalTextSplice::default(),
         }
     }
 
@@ -174,33 +206,97 @@ impl CanonicalDocumentTexts {
         let Some(version) = history.versions.get(index) else {
             return Ok(true);
         };
-        let base: Vec<char> = match version.parents.first() {
-            None => Vec::new(),
+        let parent = match version.parents.first() {
+            None => "",
             Some(&parent) => {
                 let parent = parent as usize;
                 if parent >= index {
                     return Err(invalid("entity document version parent"));
                 }
-                self.texts[parent].chars().collect()
+                self.texts[parent].as_str()
             }
         };
-        let prefix = version.prefix as usize;
-        let suffix = version.suffix as usize;
-        if prefix
-            .checked_add(suffix)
-            .is_none_or(|kept| kept > base.len())
-        {
-            return Err(invalid("entity document version splice"));
+        if self.row.advance(parent, version)? {
+            self.texts.push(std::mem::take(&mut self.row).text);
         }
-        let mut text: String = base[..prefix].iter().collect();
-        text.push_str(&version.middle);
-        text.extend(&base[base.len() - suffix..]);
-        self.texts.push(text);
         Ok(false)
     }
 
     pub(crate) fn into_texts(self) -> Vec<String> {
         self.texts
+    }
+}
+
+impl CanonicalTextSplice {
+    fn advance(&mut self, parent: &str, version: &CanonicalDocumentVersion) -> Result<bool> {
+        match self.stage {
+            TextStage::Parent => {
+                for ch in parent[self.parent_byte..].chars().take(blake3::CHUNK_LEN) {
+                    self.parent_byte += ch.len_utf8();
+                    self.parent_chars += 1;
+                    if self.parent_chars == version.prefix as usize {
+                        self.prefix_end = self.parent_byte;
+                    }
+                }
+                if self.parent_byte < parent.len() {
+                    return Ok(false);
+                }
+                // Count the whole parent before the original splice-bounds error.
+                if (version.prefix as usize)
+                    .checked_add(version.suffix as usize)
+                    .is_none_or(|kept| kept > self.parent_chars)
+                {
+                    return Err(invalid("entity document version splice"));
+                }
+                self.suffix_start = parent.len();
+                self.stage = TextStage::SuffixBoundary;
+            }
+            TextStage::SuffixBoundary => {
+                let remaining = version.suffix as usize - self.suffix_chars;
+                for ch in parent[..self.suffix_start]
+                    .chars()
+                    .rev()
+                    .take(remaining.min(blake3::CHUNK_LEN))
+                {
+                    self.suffix_start -= ch.len_utf8();
+                    self.suffix_chars += 1;
+                }
+                if self.suffix_chars == version.suffix as usize {
+                    self.stage = TextStage::Prefix;
+                }
+            }
+            TextStage::Prefix => {
+                if self.append(&parent[..self.prefix_end]) {
+                    self.stage = TextStage::Middle;
+                }
+            }
+            TextStage::Middle => {
+                if self.append(&version.middle) {
+                    self.stage = TextStage::Suffix;
+                }
+            }
+            TextStage::Suffix => {
+                return Ok(self.append(&parent[self.suffix_start..]));
+            }
+        }
+        Ok(false)
+    }
+
+    fn append(&mut self, source: &str) -> bool {
+        let end = self.next
+            + source[self.next..]
+                .chars()
+                .take(blake3::CHUNK_LEN)
+                .map(char::len_utf8)
+                .sum::<usize>();
+        self.text.push_str(&source[self.next..end]);
+        if end == source.len() {
+            self.next = 0;
+            true
+        } else {
+            self.next = end;
+            false
+        }
     }
 }
 
@@ -229,6 +325,7 @@ impl CanonicalEntityDocumentHistory {
             prefix: u32::try_from(prefix).map_err(|_| invalid("entity document version size"))?,
             suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
             middle: new[prefix..new.len() - suffix].iter().collect(),
+            native_skill_state: None,
             metadata: BTreeMap::new(),
             summary_meta: BTreeMap::new(),
         })

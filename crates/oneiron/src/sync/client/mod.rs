@@ -48,6 +48,7 @@ mod documents;
 mod endpoint;
 mod federated;
 mod federation_replay;
+mod home_claim_copies;
 mod inbound;
 mod leaf_keys;
 mod lfs;
@@ -89,7 +90,8 @@ pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
     SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
-
+pub use self::window_pads::PreparedSyncFrame;
+pub(crate) use self::window_pads::WindowClaimCopyRelease;
 #[cfg(test)]
 mod tests;
 

@@ -224,8 +224,15 @@ pub(crate) fn mirror_ref(vault: &Vault, doc: &LoroDoc, id: &EntityId, raw: &[u8]
     }
     let manifest = match EntityMetadataHeader::parse(raw) {
         Some(header) if header.entity_type == ENTITY_TYPE_ASSET => {
-            let txn = vault.store.env.read_txn()?;
-            asset_file_in_txn(&vault.store, &txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if crate::receipt::is_receipt_archive_source(body) {
+                // The original local snapshot supplies canonical receipt bytes,
+                // including when its ASSET uses a file. Keep those bytes in Loro.
+                None
+            } else {
+                let txn = vault.store.env.read_txn()?;
+                asset_file_in_txn(&vault.store, &txn, id, body)?
+            }
         }
         _ => None,
     };

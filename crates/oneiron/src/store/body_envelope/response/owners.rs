@@ -101,3 +101,32 @@ fn bind_missing_instance_owners_in_txn<D: SideTableDbs>(
     }
     Ok(history)
 }
+
+/// Whether this historical obligation still names the original carrier,
+/// even after that carrier's current binding has advanced.
+pub(crate) fn response_instance_owner_in_txn<D: SideTableDbs>(
+    dbs: &D,
+    txn: &RoTxn<'_>,
+    owner: EntityId,
+    instance: [u8; 16],
+    carrier: &[u8],
+) -> Result<bool> {
+    Ok(RESPONSE_OWNERS
+        .get(dbs, txn, &(owner, instance))?
+        .is_some_and(|named| named.as_slice() == carrier))
+}
+
+/// The same original obligation among a checkpoint's sorted vault rows.
+/// This names only the selected retained copy, not every historical body.
+pub(crate) fn response_instance_owner_in_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    owner: EntityId,
+    instance: [u8; 16],
+    carrier: &[u8],
+) -> Result<bool> {
+    let key = RESPONSE_OWNERS.key_bytes(&(owner, instance));
+    let Ok(at) = rows.binary_search_by(|(row, _)| row.as_slice().cmp(&key)) else {
+        return Ok(false);
+    };
+    Ok(RESPONSE_OWNERS.decode_value(&rows[at].1)?.as_slice() == carrier)
+}

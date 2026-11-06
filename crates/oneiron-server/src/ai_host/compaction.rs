@@ -45,6 +45,7 @@ use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod chat;
+mod chat_flights;
 mod live_fork;
 mod self_writer;
 mod serve;
@@ -103,6 +104,9 @@ pub(super) struct LiveCompaction {
     passes: Arc<Admission<String>>,
     /// Where a pass waits for its turn: a task, never a thread of its own.
     runtime: tokio::runtime::Handle,
+    /// The conversations whose chat flight is held now (FIX 5030): one
+    /// flight per conversation of this vault, in memory only.
+    chat_flights: chat_flights::ChatFlightClaims,
 }
 
 impl CodeModeCompaction {
@@ -274,6 +278,7 @@ impl CodeModeCompaction {
                 wait,
             )),
             runtime: tokio::runtime::Handle::current(),
+            chat_flights: chat_flights::ChatFlightClaims::default(),
         }))
     }
 

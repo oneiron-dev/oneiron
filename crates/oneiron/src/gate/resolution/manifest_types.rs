@@ -276,6 +276,9 @@ impl AuthoredMin {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
+    /// Stored manifest bodies consulted by this fold, before any exclusions.
+    /// Data provenance only; these IDs confer no authority.
+    pub(crate) manifest_body_rows: std::collections::BTreeSet<crate::EntityId>,
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,

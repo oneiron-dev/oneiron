@@ -136,24 +136,27 @@ pub(super) fn audit_and_stage_body(
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(fixed.id))?;
     }
+    let physical = fixed.storage_body_and_metadata(data)?;
     let row_version = crate::ports::claim_order::for_put_in_txn(
         store.read(),
         wtxn,
         &fixed.id,
-        (fixed.entity_type, fixed.occurred, fixed.learned_at),
-        data,
-        fixed.row_version,
+        (fixed.entity_type, physical.0, physical.1),
+        physical.2,
+        physical.3,
     )?;
-    stage_entity_body_row(
+    super::super::put_staging::stage_entity_body_row_with_storage(
         store,
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        fixed.occurred,
-        fixed.learned_at,
+        (physical.0, physical.1, physical.2),
         row_version,
         data,
     )?;
+    // FIX 4817: the row's new revision withdraws, in this commit, each
+    // self-written summary that wore the row as a home part at another one.
+    crate::ports::withdraw_changed_home_dependents_in_txn(write, wtxn, &fixed.id)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
         crate::store::stage_asset_body_in_txn(
             store,

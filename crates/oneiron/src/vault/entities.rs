@@ -348,6 +348,7 @@ impl Vault {
         &self,
         id: &EntityId,
     ) -> Result<Option<(Vec<u8>, Option<crate::vault::RevisionRef>)>> {
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let Some(raw) = self
             .get_raw_in(&txn, id)?
@@ -355,6 +356,7 @@ impl Vault {
         else {
             return Ok(None);
         };
+        let raw = crate::receipt::receipt_archive_mirror_row_in_txn(self, &txn, id, raw)?;
         let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
             &self.store,
             &txn,
@@ -365,10 +367,12 @@ impl Vault {
     }
 
     pub(crate) fn get_raw_unsealed(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let _bodies = self.pin_all_result_bodies();
         let rtxn = self.store.env.read_txn()?;
-        Ok(self
-            .get_raw_in(&rtxn, id)?
-            .and_then(|raw| crate::world_keys::live_route_row(&self.store, raw)))
+        self.get_raw_in(&rtxn, id)?
+            .and_then(|raw| crate::world_keys::live_route_row(&self.store, raw))
+            .map(|raw| crate::receipt::receipt_archive_mirror_row_in_txn(self, &rtxn, id, raw))
+            .transpose()
     }
 
     pub(crate) fn get_raw_in(
@@ -728,7 +732,7 @@ impl Vault {
     }
 
     /// Transaction-composable body of [`Vault::get_entity_type`].
-    pub(crate) fn get_entity_type_in_txn(
+    pub fn get_entity_type_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

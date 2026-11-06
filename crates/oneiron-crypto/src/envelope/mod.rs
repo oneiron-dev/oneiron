@@ -168,6 +168,10 @@ pub enum Purpose {
     /// between the owner's machines (DEC-0005 fix 8). Its `key_id` is a fresh
     /// salt and a holder-only hint, never the world or the key.
     SealedWorldUpdate = 30,
+    /// A noncanonical default CLAIM source and its settled vector, sealed to one
+    /// own machine. The caller binds its sending machine, window and delivered
+    /// payload as extra associated data; source and model stay inside the seal.
+    HomeClaimVector = 32,
 }
 
 impl Purpose {
@@ -203,6 +207,7 @@ impl Purpose {
             28 => Self::CheckpointHostOrderHoldsKey,
             29 => Self::WorldSideRow,
             30 => Self::SealedWorldUpdate,
+            32 => Self::HomeClaimVector,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

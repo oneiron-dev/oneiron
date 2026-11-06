@@ -45,6 +45,30 @@ pub(in crate::batch) fn stage_entity_body_row(
     row_version: u64,
     data: &[u8],
 ) -> Result<()> {
+    stage_entity_body_row_with_storage(
+        store,
+        wtxn,
+        id,
+        entity_type,
+        (occurred, learned_at, data),
+        row_version,
+        data,
+    )
+}
+
+/// Keep logical history and indexes beside an explicitly selected physical
+/// row. Native headed SKILL state changes retain the original CORE body and
+/// timestamps.
+pub(super) fn stage_entity_body_row_with_storage(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    physical: (TimeRange, u64, &[u8]),
+    row_version: u64,
+    data: &[u8],
+) -> Result<()> {
+    let (occurred, learned_at, physical_body) = physical;
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
@@ -55,7 +79,9 @@ pub(in crate::batch) fn stage_entity_body_row(
         Some((entity_type, data)),
     )?;
     crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
-    let mut payload = RowEnvelope(Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len()));
+    let mut payload = RowEnvelope(Vec::with_capacity(
+        ENTITY_METADATA_HEADER_LEN + physical_body.len(),
+    ));
     payload.0.push(entity_type);
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
@@ -63,6 +89,10 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
+    if physical_body != data {
+        payload.0.truncate(ENTITY_METADATA_HEADER_LEN);
+        payload.0.extend_from_slice(physical_body);
+    }
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
@@ -243,6 +273,8 @@ pub(super) struct PutCarrierContext<'a> {
     replicated: bool,
     origin: super::BaseWriteOrigin<'a>,
     posture: crate::HostingPrivacyPosture,
+    #[cfg(feature = "sync")]
+    skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
 }
 
 impl<'a> PutCarrierContext<'a> {
@@ -253,6 +285,7 @@ impl<'a> PutCarrierContext<'a> {
         replicated: bool,
         origin: super::BaseWriteOrigin<'a>,
         posture: crate::HostingPrivacyPosture,
+        #[cfg(feature = "sync")] skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
     ) -> Self {
         Self {
             entity_type,
@@ -261,6 +294,8 @@ impl<'a> PutCarrierContext<'a> {
             replicated,
             origin,
             posture,
+            #[cfg(feature = "sync")]
+            skill_state_write,
         }
     }
 }
@@ -305,6 +340,39 @@ pub(super) fn validate_put_carriers(
     data: &[u8],
     context: PutCarrierContext<'_>,
 ) -> Result<()> {
+    validate_put_carriers_with_storage_body(store, txn, id, data, data, context)
+}
+
+/// Runs the same guards over a scratch record/document candidate: semantic
+/// guards read its logical body, while storage ownership reads its pointer.
+/// This validates data only; it does not admit or persist the native document.
+#[cfg(feature = "sync")]
+pub(super) fn validate_record_document_put_carriers(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+    context: PutCarrierContext<'_>,
+    candidate: &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+) -> Result<()> {
+    validate_put_carriers_with_storage_body(
+        store,
+        txn,
+        id,
+        data,
+        &candidate.physical_raw()[ENTITY_METADATA_HEADER_LEN..],
+        context,
+    )
+}
+
+fn validate_put_carriers_with_storage_body(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+    storage_data: &[u8],
+    context: PutCarrierContext<'_>,
+) -> Result<()> {
     validate_scope_carriers(store, txn, id, data, &context)?;
     super::connector_key_guard::validate_connector_manifest_put(
         store,
@@ -319,8 +387,10 @@ pub(super) fn validate_put_carriers(
         txn,
         &id,
         (context.entity_type, context.occurred, context.learned_at),
-        data,
+        storage_data,
         context.replicated,
+        #[cfg(feature = "sync")]
+        context.skill_state_write,
     )?;
     validate_domain_carriers(
         store,
@@ -339,13 +409,20 @@ pub(super) fn validate_source_carriers(
     store: &Store,
     txn: &RwTxn<'_>,
     row: (EntityId, u8, &[u8], TimeRange, u64),
+    asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> Result<()> {
     let (id, entity_type, data, occurred, learned_at) = row;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
     crate::skill_hub::validate_refinement_carrier_put(store, txn, &id, entity_type, data)?;
     crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
-    crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
+    crate::receipt::validate_put(
+        store,
+        txn,
+        (&id, entity_type, data),
+        (occurred, learned_at),
+        asset_file,
+    )
 }
 
 /// The last put-side embedding changes, after short-id and body indexes land.

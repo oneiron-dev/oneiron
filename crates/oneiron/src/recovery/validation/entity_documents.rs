@@ -1,8 +1,8 @@
 //! Generic EntityDoc validation with owned indexes over one canonical snapshot.
 
 use super::{
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, entity_history::HistoryValidation, id,
-    invalid, pointer, strict,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, entity_history::HistoryValidation,
+    entity_pointer::EntityPointer, id, invalid, strict,
 };
 use crate::error::Result;
 use crate::recovery::canonical::{
@@ -18,6 +18,9 @@ pub(in crate::recovery) struct EntityDocumentRows {
     history: HistoryValidation,
     history_complete: bool,
     fork_next: usize,
+    lineage_next: Option<usize>,
+    owner_next: usize,
+    entity_pointer: EntityPointer,
     previous: Option<[u8; 16]>,
     last_proposal: Option<[u8; 16]>,
     proposals: BTreeMap<[u8; 16], Proposal>,
@@ -126,20 +129,23 @@ impl EntityDocumentRows {
                         self.start(Stage::Owners);
                         continue;
                     };
-                    self.validate_entity(snapshot, entity)?;
+                    if !self.validate_entity(snapshot, entity)? {
+                        return Ok(false);
+                    }
                 }
                 Stage::Owners => {
                     let Some(row) = snapshot.entity_documents.get(self.next) else {
                         self.start(Stage::Complete);
                         continue;
                     };
-                    if !snapshot
-                        .entity_blobs
-                        .iter()
-                        .any(|entity| entity.id == row.entity_id)
-                    {
+                    let Some(entity) = snapshot.entity_blobs.get(self.owner_next) else {
                         return Err(invalid("entity document owner absent"));
+                    };
+                    self.owner_next += 1;
+                    if entity.id != row.entity_id {
+                        return Ok(false);
                     }
+                    self.owner_next = 0;
                 }
                 Stage::Complete => return Ok(true),
             }
@@ -175,6 +181,7 @@ impl EntityDocumentRows {
             if !self.history.advance_row(row)? {
                 return Ok(false);
             }
+            crate::entity_doc::validate_canonical_skill_state(row)?;
             self.history_complete = true;
             return Ok(false);
         }
@@ -190,7 +197,8 @@ impl EntityDocumentRows {
         };
         let first_row = self.next;
         let fork_index = self.fork_next;
-        if !self.forks.insert(fork.fork) {
+        let starting = self.lineage_next.is_none();
+        if starting && !self.forks.insert(fork.fork) {
             return Err(invalid("entity document fork duplicated"));
         }
         let proposal = self
@@ -202,23 +210,35 @@ impl EntityDocumentRows {
                 members: BTreeSet::new(),
             });
         let first = proposal.first(snapshot);
-        if (first.proposal_len, first.proposal_settled, first.actor)
-            != (fork.proposal_len, fork.proposal_settled, fork.actor)
-            || first.proposal_opener_lineage != fork.proposal_opener_lineage
-            || !proposal.members.insert(fork.proposal_index)
+        if starting
+            && ((first.proposal_len, first.proposal_settled, first.actor)
+                != (fork.proposal_len, fork.proposal_settled, fork.actor)
+                || first.proposal_opener_lineage.len() != fork.proposal_opener_lineage.len())
         {
             return Err(invalid("entity document proposal bundle"));
         }
+        let next = self.lineage_next.get_or_insert(0);
+        if let Some(lineage) = first.proposal_opener_lineage.get(*next) {
+            if lineage != &fork.proposal_opener_lineage[*next] {
+                return Err(invalid("entity document proposal bundle"));
+            }
+            *next += 1;
+            return Ok(false);
+        }
+        if !proposal.members.insert(fork.proposal_index) {
+            return Err(invalid("entity document proposal bundle"));
+        }
 
+        self.lineage_next = None;
         self.fork_next += 1;
         Ok(false)
     }
 
     fn validate_entity(
-        &self,
+        &mut self,
         snapshot: &CanonicalSnapshot,
         entity: &CanonicalEntity,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let rows = &self.rows;
         let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
@@ -227,15 +247,21 @@ impl EntityDocumentRows {
             if rows.contains_key(&entity.id) {
                 return Err(invalid("entity document owner cannot be NOTE or shell"));
             }
-            return Ok(());
+            return Ok(true);
         }
         let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
-        let ref_id = pointer(body)?;
         let row = rows
             .get(&entity.id)
             .map(|&at| &snapshot.entity_documents[at]);
+        if !self
+            .entity_pointer
+            .advance(body, row.and_then(|row| row.field.as_deref()))
+        {
+            return Ok(false);
+        }
+        let ref_id = self.entity_pointer.pointer(body)?;
         match (ref_id, row) {
-            (None, None) => return Ok(()),
+            (None, None) => {}
             (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
                 if let Some(actor) = row.birth_actor {
                     id(actor)?;
@@ -243,34 +269,20 @@ impl EntityDocumentRows {
                 if row.birth_at != header.occurred_start {
                     return Err(invalid("entity document birth timestamp"));
                 }
-                let mut reader = std::io::Cursor::new(body);
-                let value = rmpv::decode::read_value(&mut reader)
-                    .map_err(|_| invalid("entity document pointer row"))?;
-                let rmpv::Value::Map(fields) = value else {
-                    return Err(invalid("entity document pointer row"));
-                };
-                let others: Vec<_> = fields
-                    .iter()
-                    .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
-                    .collect();
-                if others
-                    .iter()
-                    .any(|(key, _)| key.as_str().is_some_and(crate::ports::is_metadata_field))
-                {
+                if self.entity_pointer.metadata {
                     return Err(invalid("editable metadata remains in the entity row"));
                 }
                 match &row.field {
-                    None if others.is_empty() => {}
+                    None if !self.entity_pointer.other_fields => {}
                     Some(field)
                         if crate::ports::is_text_field(field)
-                            && !others
-                                .iter()
-                                .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
+                            && !self.entity_pointer.body_field => {}
                     _ => return Err(invalid("entity document text field")),
                 }
             }
             _ => return Err(invalid("entity document coverage or pointer binding")),
         }
-        Ok(())
+        self.entity_pointer = EntityPointer::default();
+        Ok(true)
     }
 }

@@ -329,7 +329,11 @@ impl ConsolidationExecutor<'_> {
         let state = pack.state(anchor, partners, &mut labels);
         let mut scope = Scope {
             world: anchor.body.world,
-            relationship: anchor.body.rel.clone(),
+            relationship: anchor
+                .body
+                .rel
+                .as_ref()
+                .map(|ids| ids.iter().copied().collect()),
             project: Some(anchor.body.scope_project),
             ..Scope::default()
         };
@@ -428,6 +432,13 @@ impl ConsolidationExecutor<'_> {
                     if !*memoized {
                         charges.record_usage(usage);
                     }
+                }
+                if let Some(usage) = decided
+                    .as_ref()
+                    .err()
+                    .and_then(DurableStepError::spent_usage)
+                {
+                    charges.record_usage(usage);
                 }
                 return super::residency::spent_or_deferred(error, ctx, charges)
                     .map(ControlFlow::Break);

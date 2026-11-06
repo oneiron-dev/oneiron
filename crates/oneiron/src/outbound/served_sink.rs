@@ -709,6 +709,22 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }
+
+    /// Only an email send reads back (FIX 8814 follow-up): the host's mail
+    /// server keeps the draft its send key names. Every other channel
+    /// answers `Unknown`.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        match (
+            request.intent.channel.as_str(),
+            request.intent.verb.as_str(),
+        ) {
+            (EMAIL_CHANNEL, "send") => self.email_read_back(request),
+            _ => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+        }
+    }
 }
 
 /// The served sink a host keeps past one borrow of its vault: a connector
@@ -747,5 +763,22 @@ impl OutboundExecutionSink for OwnedServedChannelSink {
         .unwrap_or_else(|_| {
             OutboundExecutionOutcome::failed("served_send_panicked").with_possible_delivery()
         })
+    }
+
+    /// The served sink's read-back, on a thread of its own as a send runs.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        let vault = self.vault.as_ref();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink.read_back_delivery(request),
+                    Err(_) => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+                })
+                .join()
+        })
+        .unwrap_or(crate::outbound_intent_ledger::DeliveryReadBack::Unknown)
     }
 }

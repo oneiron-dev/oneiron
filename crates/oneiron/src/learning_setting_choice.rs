@@ -376,6 +376,28 @@ fn rows_in_order(
     Ok(out)
 }
 
+/// The first owner model pin in the spawn's actual scopes. A fixed value
+/// applies before model evidence is read; seeds remain model priors, never
+/// fixed overrides.
+///
+/// # Errors
+///
+/// Storage errors or a row that does not decode.
+pub(crate) fn owner_spawn_model_pin_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    scopes: &[SettingScope],
+) -> Result<Option<ModelId>> {
+    Ok(rows_in_order(store, txn, scopes, SpawnChoice::Model)?
+        .into_iter()
+        .find_map(|(row, _)| match row {
+            SpawnOverride::Pin {
+                value: ChoiceValue::Model(model),
+            } => Some(model),
+            _ => None,
+        }))
+}
+
 /// Lays the owner's choices under one spawn's need: each field takes the
 /// first row in [`rows_in_order`] it admits. A field the call pinned keeps
 /// the call's pin; a field the call seeded keeps its seed unless an owner

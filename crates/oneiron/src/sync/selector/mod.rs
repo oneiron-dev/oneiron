@@ -49,7 +49,7 @@ mod tombstones;
 // FIX 10162: the admission validators that read in the caller's txn.
 #[cfg(feature = "sync")]
 mod validators;
-pub(crate) use note_admission::admit_note_in_txn;
+pub(crate) use note_admission::{admit_note_in_txn, admit_note_in_txn_with_scope};
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
 #[cfg(test)]
 mod tests;
@@ -72,7 +72,9 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
-pub(in crate::sync) use self::authorize::authorize_sync_selector_in_txn;
+pub(in crate::sync) use self::authorize::{
+    authorize_sync_selector_in_txn, check_bootstrap_sources,
+};
 pub(crate) use self::born_with::{
     CarriedText, carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
 };
@@ -89,7 +91,8 @@ pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
-    filtered_window_doc_for_peer, guest_share_envelope, guest_share_envelope_body,
+    filtered_window_doc_for_peer, filtered_window_doc_for_peer_in_scope, guest_share_envelope,
+    guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;

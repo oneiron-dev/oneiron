@@ -65,7 +65,7 @@ pub(super) fn accept(
         .map_err(invalid)?
     {
         WindowPadArrival::Notice => Ok(Inbound::Frame),
-        WindowPadArrival::Streaming => Ok(Inbound::Done),
+        WindowPadArrival::Streaming | WindowPadArrival::Copies(_) => Ok(Inbound::Done),
         WindowPadArrival::Broken => {
             tracing::warn!(window = %key, "window pad envelope arrived incomplete");
             Ok(Inbound::Done)

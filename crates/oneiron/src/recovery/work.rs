@@ -11,13 +11,18 @@
 //! Artifact validation yields between ordered groups, rows and nested history
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
-//! retained-parent and workflow checks, encoding and its envelope checksum
-//! still run whole. The outer canonical digest yields between BLAKE3 chunks.
-//! Aborted-transaction preflight and the NOTE workflow plan also run whole;
-//! manifest construction yields between its original whole pack/hash chunks.
+//! retained-parent and workflow checks, and encoding still run whole. The
+//! envelope checksum and outer canonical digest yield between BLAKE3 chunks.
+//! NOTE scope and immutable plan lookups yield between source rows; store-bound
+//! workflow checks and the aborted-transaction preflight still run whole. Manifest construction
+//! yields between whole packs and within each chunk hash.
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
-//! completion turn; pure snapshot equality then resumes one row at a time.
+//! completion turn; pure snapshot equality resumes between rows, within native
+//! strings and byte payloads (including native SKILL witnesses), and between
+//! nested EntityDoc history items.
+//! EntityDoc metadata maps resume between owned entries and within their value
+//! bytes on the same work budget; each entry's native key lookup remains whole.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
@@ -32,8 +37,9 @@ use loro::LoroDoc;
 
 use super::canonical::{
     CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalSnapshot, CanonicalValidation,
-    RebuildAt, invalid, rebuild_page, rebuild_start,
+    RebuildAt, StoreCapturedCanonical, invalid, rebuild_page, rebuild_start,
 };
+use super::document::{NotePlanRows, NoteScopeRows};
 use super::ladder::{
     CanonicalComparison, ManifestChunks, PreparedRecovery, RecoveryBudget, RecoveryTier, limit,
     prepare_rebuilt_with_manifest, verify_page,
@@ -80,6 +86,41 @@ pub(crate) enum RecoveryProgress {
     Complete,
 }
 
+/// Both forms own one snapshot. Only the actual Store capture can provide
+/// the native restore source; an ordinary decoded snapshot remains raw.
+enum RecoverySource {
+    Raw(CanonicalSnapshot),
+    Captured(StoreCapturedCanonical),
+}
+
+impl std::ops::Deref for RecoverySource {
+    type Target = CanonicalSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Raw(snapshot) => snapshot,
+            Self::Captured(source) => source.snapshot(),
+        }
+    }
+}
+
+impl RecoverySource {
+    fn captured(&self) -> Option<&StoreCapturedCanonical> {
+        match self {
+            Self::Raw(_) => None,
+            Self::Captured(source) => Some(source),
+        }
+    }
+
+    fn erase_actors_here(&mut self, vault: &Vault) -> Result<()> {
+        match self {
+            Self::Raw(snapshot) => *snapshot = snapshot.with_actors_erased_here(vault)?,
+            Self::Captured(source) => source.erase_actors_here(vault)?,
+        }
+        Ok(())
+    }
+}
+
 /// One window's recovery from its canonical artifact, owning that artifact
 /// for its whole life: every page reads the same source.
 pub(crate) struct RecoveryWork {
@@ -88,12 +129,14 @@ pub(crate) struct RecoveryWork {
     /// Whose turns the pages take: the owner of an owner act, else the
     /// host's own work.
     principal: Option<EntityId>,
-    source: CanonicalSnapshot,
+    source: RecoverySource,
     digest: [u8; 32],
     phase: RecoveryPhase,
     validation: Option<CanonicalValidation>,
     encoded_digest: Option<EncodedDigest>,
     preflight_manifest: Option<ManifestChunks>,
+    preflight_note_scope: Option<NoteScopeRows>,
+    preflight_note_plan: Option<NotePlanRows>,
     doc: Option<LoroDoc>,
     rebuilt: RebuildAt,
     prepared: Option<PreparedRecovery>,
@@ -111,16 +154,46 @@ impl RecoveryWork {
         budget: RecoveryBudget,
         principal: Option<EntityId>,
     ) -> Self {
+        Self::from_source(
+            manifest_path,
+            RecoverySource::Raw(snapshot.clone()),
+            budget,
+            principal,
+        )
+    }
+
+    pub(crate) fn from_store_capture(
+        manifest_path: &Path,
+        source: StoreCapturedCanonical,
+        budget: RecoveryBudget,
+        principal: Option<EntityId>,
+    ) -> Self {
+        Self::from_source(
+            manifest_path,
+            RecoverySource::Captured(source),
+            budget,
+            principal,
+        )
+    }
+
+    fn from_source(
+        manifest_path: &Path,
+        source: RecoverySource,
+        budget: RecoveryBudget,
+        principal: Option<EntityId>,
+    ) -> Self {
         Self {
             path: manifest_path.to_owned(),
             budget,
             principal,
-            source: snapshot.clone(),
+            source,
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
             validation: None,
             encoded_digest: None,
             preflight_manifest: None,
+            preflight_note_scope: None,
+            preflight_note_plan: None,
             doc: None,
             rebuilt: RebuildAt::default(),
             prepared: None,
@@ -154,6 +227,8 @@ impl RecoveryWork {
             }
             if result.is_err() && self.phase == RecoveryPhase::Preflight {
                 self.preflight_manifest = None;
+                self.preflight_note_scope = None;
+                self.preflight_note_plan = None;
                 self.doc = None;
             }
             result?;
@@ -233,7 +308,7 @@ impl RecoveryWork {
                     // only that form. Full domain validation precedes quarantine
                     // and every durable write.
                     if self.validation.is_none() {
-                        self.source = self.source.with_actors_erased_here(vault)?;
+                        self.source.erase_actors_here(vault)?;
                     }
                     if !self
                         .validation
@@ -244,7 +319,7 @@ impl RecoveryWork {
                     }
                     let encoded = self
                         .source
-                        .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
+                        .encode_validated_payload_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
                     limit(encoded.len(), self.budget.max_bytes)?;
                     self.encoded_digest = Some(EncodedDigest::new(encoded));
                 }
@@ -283,12 +358,13 @@ impl RecoveryWork {
                 };
                 let key = WindowKey::new(&self.source.window);
                 if forward
-                    .recovery_page(
+                    .recovery_page_with_source(
                         vault,
                         &prepared.window,
                         materializer,
                         &key,
                         &self.source,
+                        self.source.captured(),
                         page,
                     )?
                     .is_some()
@@ -337,12 +413,31 @@ impl RecoveryWork {
                 .doc
                 .take()
                 .ok_or_else(|| invalid("recovery preflight"))?;
-            crate::sync::bridge::preflight_validated_canonical_recovery(
+            let rows = self
+                .preflight_note_scope
+                .get_or_insert_with(NoteScopeRows::default);
+            if !rows.advance(&self.source, self.budget.max_obligations) {
+                self.doc = Some(doc);
+                return Ok(());
+            }
+            let plan = self
+                .preflight_note_plan
+                .get_or_insert_with(NotePlanRows::default);
+            if !plan.advance(&self.source, rows.scope(), self.budget.max_obligations) {
+                self.doc = Some(doc);
+                return Ok(());
+            }
+            crate::sync::bridge::preflight_validated_canonical_recovery_with_source(
                 vault,
                 materializer,
                 &self.source,
                 &doc,
+                self.source.captured(),
+                rows.scope(),
+                plan,
             )?;
+            self.preflight_note_scope = None;
+            self.preflight_note_plan = None;
             self.doc = Some(doc);
             self.preflight_manifest = Some(ManifestChunks::default());
         }

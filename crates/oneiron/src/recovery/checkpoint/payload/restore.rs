@@ -50,7 +50,96 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
     call_rows: Vec<(RowLocator, Vec<u8>)>,
     /// Each split window's rows, joined from its carrier and the copies that
     /// opened, with the markers its join asks (FIX 10277).
-    window_rows: Vec<(RowLocator, Vec<u8>)>,
+    windows: PreparedWindowRestore,
+}
+
+/// The exact window carriers and compartments opened by this artifact's
+/// custody plan. Only `open_image_payload` constructs this source, after
+/// the original bundle authentication. It supplies checkpoint content, not
+/// native-operation admission or peer standing.
+pub(super) struct OpenedWindowRestoreSource<'opened> {
+    records: &'opened [super::WindowCarrierRecord],
+    windows: &'opened [OpenedOwnerRows],
+    unopened: &'opened BTreeSet<OwnerRef>,
+    #[cfg(feature = "sync")]
+    source_rows: &'opened [(Vec<u8>, Vec<u8>)],
+}
+
+impl<'opened> OpenedWindowRestoreSource<'opened> {
+    pub(super) fn parts(
+        self,
+    ) -> (
+        &'opened [super::WindowCarrierRecord],
+        &'opened [OpenedOwnerRows],
+        &'opened BTreeSet<OwnerRef>,
+    ) {
+        (self.records, self.windows, self.unopened)
+    }
+
+    #[cfg(feature = "sync")]
+    pub(super) fn source_rows(&self) -> &'opened [(Vec<u8>, Vec<u8>)] {
+        self.source_rows
+    }
+}
+
+/// Joined rows of the authenticated source. This private product stays
+/// owned through budgeting and is consumed by the original restore writer.
+struct PreparedWindowRestore {
+    rows: Vec<(RowLocator, Vec<u8>)>,
+    #[cfg(feature = "sync")]
+    rebindings: Vec<crate::store::window_record_sources::PreparedRecordDocumentRebinding>,
+}
+
+impl PreparedWindowRestore {
+    fn prepare(source: OpenedWindowRestoreSource<'_>) -> Result<Self> {
+        #[cfg(feature = "sync")]
+        {
+            let (rows, rebindings) = join_windows(source)?;
+            Ok(Self { rows, rebindings })
+        }
+        #[cfg(not(feature = "sync"))]
+        {
+            Ok(Self {
+                rows: join_windows(source)?,
+            })
+        }
+    }
+
+    fn row_lengths(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        let rows = self
+            .rows
+            .iter()
+            .map(|(at, value)| (at.key.len() as u64, value.len() as u64));
+        #[cfg(feature = "sync")]
+        let rows = rows.chain(self.rebindings.iter().map(|binding| binding.row_lengths()));
+        rows
+    }
+
+    fn restore_in_txn(self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
+        for (at, value) in self.rows {
+            restore_row_in_txn(store, txn, &at, &value)?;
+        }
+        #[cfg(feature = "sync")]
+        crate::store::window_record_sources::persist_opened_rebindings(
+            store,
+            txn,
+            self.rebindings,
+        )?;
+        Ok(())
+    }
+}
+
+/// Exact rows consumed from an independently authenticated artifact's payload.
+/// Only this module's opened-bundle dispatch can construct this source. It
+/// grants no peer standing, owner authority or grant admission.
+pub(crate) struct EntityDocRestoreSource {
+    rows: OpenedOwnerRows,
+}
+
+impl EntityDocRestoreSource {
+    pub(crate) fn into_rows(self) -> OpenedOwnerRows {
+        self.rows
+    }
 }
 
 /// Opens `sealed`, the payload an artifact carries apart from its image,
@@ -68,6 +157,7 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     sealed: Option<SealedPayload<'_>>,
     plan: &mut CustodyPlan,
     image: &mut CheckpointImage,
+    live_rows_merged: bool,
 ) -> std::result::Result<Option<OpenedPayload>, Rejected> {
     let Some(mut sealed) = sealed else {
         // A split window's rows ride only in a payload's compartments.
@@ -111,14 +201,29 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     let mut bundles = Vec::with_capacity(contents.len());
     let mut windows = Vec::new();
     for (role, plain) in contents {
-        let opened = opened_content(&plain, &actor_parts, unopened.clone())?;
+        let mut opened = opened_content(&plain, &actor_parts, unopened.clone())?;
+        if live_rows_merged && role == BundleRole::Content(Getter::EmbedMedia) {
+            crate::embed::checkpoint::preserve_current_refusals(&mut opened);
+        }
         if role == BundleRole::Window {
             windows.push(opened);
         } else {
             bundles.push((role, opened));
         }
     }
-    let window_rows = join_windows(&image.window_carriers, &windows, &unopened)?;
+    #[cfg(feature = "sync")]
+    open_actor_copies(&mut bundles, &vault, plan)?;
+    let windows = PreparedWindowRestore::prepare(OpenedWindowRestoreSource {
+        records: &image.window_carriers,
+        windows: &windows,
+        unopened: &unopened,
+        #[cfg(feature = "sync")]
+        source_rows: image
+            .databases
+            .get("sync_state")
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    })?;
     let pruned = structure::prune(&mut image.databases, &unopened);
     if pruned > 0 {
         tracing::info!(
@@ -132,8 +237,44 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
         bundles,
         unopened,
         call_rows: take_call_rows(image),
-        window_rows,
+        windows,
     }))
+}
+
+/// Qualifies each origin copy while this restore still owns its custody plan.
+/// A frozen generation can retire while its current owner remains live: only
+/// that copy's part goes, never the owner's canonical rows or pending job.
+#[cfg(feature = "sync")]
+fn open_actor_copies(
+    bundles: &mut [(BundleRole, OpenedOwnerRows)],
+    vault_id: &[u8; 32],
+    plan: &mut CustodyPlan,
+) -> std::result::Result<(), Rejected> {
+    for (role, opened) in bundles {
+        if *role != BundleRole::Carrier(super::Carrier::SyncQueue) {
+            continue;
+        }
+        let mut dropped = BTreeSet::new();
+        for part in &opened.rows {
+            let RowPart::Exact { at, value } = part else {
+                continue;
+            };
+            if at.db == RowDb::SyncQueue
+                && at.path.is_empty()
+                && !held_up(opened, at)
+                && !crate::sync::queue::open_home_claim_actor_copy_for_restore(
+                    &at.key, value, vault_id, plan,
+                )?
+            {
+                dropped.insert(at.clone());
+            }
+        }
+        opened.rows.retain(|part| !dropped.contains(part.at()));
+        opened
+            .dependencies
+            .retain(|dependency| !dropped.contains(&dependency.at));
+    }
+    Ok(())
 }
 
 /// Each split window's rows and markers, joined from its carrier in
@@ -143,24 +284,21 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
 /// history with them erased.
 #[cfg(feature = "sync")]
 fn join_windows(
-    records: &[super::WindowCarrierRecord],
-    windows: &[OpenedOwnerRows],
-    unopened: &BTreeSet<OwnerRef>,
-) -> Result<Vec<(RowLocator, Vec<u8>)>> {
-    if records.is_empty() {
-        return Ok(Vec::new());
+    source: OpenedWindowRestoreSource<'_>,
+) -> Result<(
+    Vec<(RowLocator, Vec<u8>)>,
+    Vec<crate::store::window_record_sources::PreparedRecordDocumentRebinding>,
+)> {
+    if source.records.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
     }
-    super::sync::restore_window_carriers(records, windows, unopened)
+    super::sync::restore_window_carriers(source)
 }
 
 /// A build without sync joins no window: a payload that split one refuses.
 #[cfg(not(feature = "sync"))]
-fn join_windows(
-    records: &[super::WindowCarrierRecord],
-    _windows: &[OpenedOwnerRows],
-    _unopened: &BTreeSet<OwnerRef>,
-) -> Result<Vec<(RowLocator, Vec<u8>)>> {
-    if records.is_empty() {
+fn join_windows(source: OpenedWindowRestoreSource<'_>) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+    if source.records.is_empty() {
         Ok(Vec::new())
     } else {
         Err(crate::store::checkpoint_payload::rows::bad_part())
@@ -306,9 +444,9 @@ impl OpenedPayload {
         rows.extend(
             self.call_rows
                 .iter()
-                .chain(&self.window_rows)
                 .map(|(at, value)| (len(&at.key), len(value))),
         );
+        rows.extend(self.windows.row_lengths());
         rows
     }
 }
@@ -358,6 +496,13 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
                     blob_artifacts.push(deferred);
                 }
             }
+            BundleRole::Content(Getter::EntityDoc) => {
+                crate::entity_doc::checkpoint::restore_authenticated_in_txn(
+                    store,
+                    txn,
+                    EntityDocRestoreSource { rows },
+                )?;
+            }
             BundleRole::Content(getter) => {
                 getter.restore_in_txn(store, txn, rows)?;
             }
@@ -378,9 +523,7 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     }
     // Each split window's rows and markers, joined before anything was made
     // (FIX 10277).
-    for (at, value) in &opened.window_rows {
-        restore_row_in_txn(store, txn, at, value)?;
-    }
+    opened.windows.restore_in_txn(store, txn)?;
     // After every bundle, so a call whose record came back keeps no
     // accounting row (FIX 12117).
     for (at, value) in &opened.call_rows {
