@@ -9,7 +9,8 @@
 //!   it twice, and its attachments open through the Gmail wire by their part
 //!   ids. A message with no Gmail id is refused.
 //! - An IMAP mailbox takes any mbox: a message's id is the hash of its
-//!   `Message-ID` (of its bytes when it has none).
+//!   `Message-ID` and its header block, as the IMAP wire names it on a
+//!   server that is not Gmail (of its bytes when it has no `Message-ID`).
 //!
 //! Trash, spam, drafts and chats never land; a "recent months" copy setting
 //! leaves older mail out; a search-only mailbox imports nothing. One call
@@ -24,6 +25,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::gmail::{address_list, reads_google_mail, rfc2822_seconds};
+use super::imap::content_id;
 use super::importer::{MONTH_SECONDS, copies};
 use super::landing::{LandOutcome, Landing};
 use super::mbox::{MboxMessage, MboxReader};
@@ -234,16 +236,15 @@ impl Intake<'_> {
                 .unwrap_or_default();
             (id, thread, labels)
         } else {
-            let named = rfc_message_id
-                .as_deref()
-                .map_or(message.raw.as_slice(), str::as_bytes);
-            let digest = blake3::hash(named).to_hex();
-            (format!("mbox{}", &digest[..32]), None, Vec::new())
+            // Named as the IMAP wire names a message (fix list row 19145).
+            let id = rfc_message_id.as_deref().map_or_else(
+                || format!("mbox{}", &blake3::hash(&message.raw).to_hex()[..32]),
+                |message_id| content_id(message_id, &message.raw),
+            );
+            (id, None, Vec::new())
         };
         let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
-        let received_at = separator_seconds(&message.separator)
-            .or(date)
-            .unwrap_or(0);
+        let received_at = separator_seconds(&message.separator).or(date).unwrap_or(0);
         let addresses = |name: &str| {
             parsed
                 .header(name)
@@ -267,7 +268,9 @@ impl Intake<'_> {
             date,
             received_at,
             sent_by_mailbox: labels.iter().any(|label| label == "SENT"),
-            trash_or_spam: labels.iter().any(|label| label == "TRASH" || label == "SPAM"),
+            trash_or_spam: labels
+                .iter()
+                .any(|label| label == "TRASH" || label == "SPAM"),
             draft: labels.iter().any(|label| label == "DRAFT"),
             labels,
         })
@@ -405,8 +408,11 @@ fn read_file(
         let mut reader = BufReader::with_capacity(READ_BUFFER_BYTES, entry);
         // A zipped mbox reads from its start: what an earlier call read is
         // passed over.
-        std::io::copy(&mut (&mut reader).take(progress.offset), &mut std::io::sink())
-            .map_err(|error| unreadable(&error))?;
+        std::io::copy(
+            &mut (&mut reader).take(progress.offset),
+            &mut std::io::sink(),
+        )
+        .map_err(|error| unreadable(&error))?;
         let ended = read_stream(
             MboxReader::new(reader, progress.offset),
             key,
