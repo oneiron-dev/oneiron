@@ -100,6 +100,7 @@ pub struct ScopedTouchSource {
     pub sensitivity: u8,
     pub scope_form: ScopedTouchScopeForm,
     pub rel: RelationshipScope,
+    pub session_tag: Option<String>,
     pub origin_digest: [u8; 32],
 }
 
@@ -113,6 +114,10 @@ pub(super) fn encode_source_position(source: Option<&ScopedTouchSource>) -> Valu
             Value::Binary(source.origin_digest.to_vec()),
             Value::from(source.scope_form as u8),
             encode_relationship_scope(source.rel.as_ref()),
+            source
+                .session_tag
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
         ])
     })
 }
@@ -124,7 +129,17 @@ pub(super) fn decode_source_position(value: &Value) -> CommResult<Option<ScopedT
     let Value::Array(fields) = value else {
         return Err(CommError::InvalidRecord);
     };
-    let [world, facet, project, sensitivity, digest, scope_form, rel] = fields.as_slice() else {
+    let [
+        world,
+        facet,
+        project,
+        sensitivity,
+        digest,
+        scope_form,
+        rel,
+        session_tag,
+    ] = fields.as_slice()
+    else {
         return Err(CommError::InvalidRecord);
     };
     let id = |value: &Value| {
@@ -147,6 +162,15 @@ pub(super) fn decode_source_position(value: &Value) -> CommResult<Option<ScopedT
     let scope_form = ScopedTouchScopeForm::from_wire(scope_form)?;
     let _ = scope_form.scope(sensitivity)?;
     let rel = decode_relationship_scope(rel).map_err(|_| CommError::InvalidRecord)?;
+    let session_tag = match session_tag {
+        Value::Nil => None,
+        value => {
+            let tag = value.as_str().ok_or(CommError::InvalidRecord)?;
+            super::super::claim_predicate::validate_session_tag(tag)
+                .map_err(|_| CommError::InvalidRecord)?;
+            Some(tag.to_owned())
+        }
+    };
     Ok(Some(ScopedTouchSource {
         world: id(world)?,
         facet: id(facet)?,
@@ -154,6 +178,7 @@ pub(super) fn decode_source_position(value: &Value) -> CommResult<Option<ScopedT
         sensitivity,
         scope_form,
         rel,
+        session_tag,
         origin_digest,
     }))
 }

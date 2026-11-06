@@ -337,6 +337,7 @@ fn take_batch_puts_in_txn(
                         scope_form,
                         sensitivity,
                         &body.rel,
+                        body.session_tag.as_deref(),
                     )
                     .map_err(source_event_error)?
                 } else {

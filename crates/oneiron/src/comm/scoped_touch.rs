@@ -140,8 +140,14 @@ pub(super) fn capture_scoped_touch_source(
     let scope_form = ScopedTouchScopeForm::from_scope(body.scope.as_ref()).ok_or(
         Error::InvalidClaimBody("unsupported scoped comm source context"),
     )?;
-    let canonical = touch_scope_body(&claim.value, scope_form, sensitivity, &body.rel)
-        .map_err(super::generic_put_routing::source_event_error)?;
+    let canonical = touch_scope_body(
+        &claim.value,
+        scope_form,
+        sensitivity,
+        &body.rel,
+        body.session_tag.as_deref(),
+    )
+    .map_err(super::generic_put_routing::source_event_error)?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
         || !same_touch_context_except_position(body, &canonical)
     {
@@ -163,6 +169,7 @@ pub(super) fn capture_scoped_touch_source(
         sensitivity,
         scope_form,
         rel: body.rel.clone(),
+        session_tag: body.session_tag.clone(),
         origin_digest: *digest.finalize().as_bytes(),
     })
 }
@@ -176,6 +183,8 @@ pub(super) fn scoped_touch_event_id(
 ) -> Result<EntityId> {
     let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
     let rel = relationship_scope_transcript(source.rel.as_ref());
+    let session_present = u8::from(source.session_tag.is_some());
+    let session = source.session_tag.as_deref().unwrap_or_default();
     EntityId::derive(
         COMM_BORN_TOUCH_EVENT,
         &[
@@ -187,6 +196,8 @@ pub(super) fn scoped_touch_event_id(
             &[source.sensitivity],
             &[source.scope_form as u8],
             &rel,
+            &[session_present],
+            session.as_bytes(),
             party_ref.as_bytes(),
             channel.as_bytes(),
             &occurred_at.to_le_bytes(),
@@ -228,10 +239,12 @@ pub(super) fn touch_scope_body(
     scope_form: ScopedTouchScopeForm,
     sensitivity: u8,
     rel: &RelationshipScope,
+    session_tag: Option<&str>,
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = value.claim_body_with_sensitivity(sensitivity)?;
     body.scope = scope_form.scope(sensitivity)?;
     body.rel = rel.clone();
+    body.session_tag = session_tag.map(str::to_owned);
     Ok(body)
 }
 
@@ -240,7 +253,13 @@ pub(super) fn touch_slot_body(
     source: Option<&ScopedTouchSource>,
 ) -> super::claims::CommResult<ClaimBody> {
     let mut body = if let Some(source) = source {
-        touch_scope_body(value, source.scope_form, source.sensitivity, &source.rel)?
+        touch_scope_body(
+            value,
+            source.scope_form,
+            source.sensitivity,
+            &source.rel,
+            source.session_tag.as_deref(),
+        )?
     } else {
         value.claim_body()?
     };

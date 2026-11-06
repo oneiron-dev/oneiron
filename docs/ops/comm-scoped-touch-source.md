@@ -1,8 +1,8 @@
 # Scoped, explicitly born touch sources
 
 The bound batch router can project an explicitly born LastTouch with a
-noncanonical world, facet, project, native sensitivity band from 0 through 3, or
-native relationship scope.
+noncanonical world, facet, project, native sensitivity band from 0 through 3,
+native relationship scope, or validated native CLAIM `sess` tag.
 The original Put, ClaimOf edge and native
 birth still land through their existing gates before its source is created in
 the same writer. The source freezes the actual admitted native position; it
@@ -12,23 +12,26 @@ supported forms are a single numeric sensitivity map, a single map using the
 native spelling `public`, `private`, `internal`, `sensitive` or `restricted`, an
 absent scope, or an empty map. Missing and empty scopes retain the existing
 unstamped band of 2. Each form stays distinct for exact-context matching;
-`private` and `internal` share band 1 but do not share a slot. Duplicate stamps,
-additional opaque keys, noncanonical session contexts and other unsupported
-births keep their full native raw path. No-birth inputs still
+`private` and `internal` share band 1 but do not share a slot. A `sess` tag keeps
+its exact parsed string and must pass the same native nonempty, non-whitespace
+validation as a CLAIM. It is comparison data, not a session grant or an overlay
+view id. Duplicate stamps, additional opaque keys and other unsupported births
+keep their full native raw path. No-birth inputs still
 require the canonical position before routing. The public claim constructor
 still uses numeric sensitivity 2; rebuilding a frozen source comparison body
 does not change the original row or its stamp.
 
 `COMM_RECORD` has a required `source_position` key. Ordinary events without an
 original head, gates and receipts encode `nil`. Every explicitly born
-`TouchAsserted`, canonical base-world touches included, carries the seven-element
+`TouchAsserted`, canonical base-world touches included, carries the eight-element
 tuple: world id, facet id, project id, native sensitivity band, a 32-byte
-admitted-origin digest, a scope-form code, and the frozen native relationship
-scope (`all`, an empty set, or a set of relationship ids). Codes 0 through 7 mean numeric,
+admitted-origin digest, a scope-form code, the frozen native relationship
+scope (`all`, an empty set, or a set of relationship ids), and the exact native
+session tag (`nil` when absent, otherwise its validated string). Codes 0 through 7 mean numeric,
 public, private, internal, sensitive, restricted, absent, and empty-map scope,
 respectively. The strict decoder checks the native band against that form.
-The scope form and the native relationship-scope transcript are also bound into
-the source id. `original_head` and
+The scope form, native relationship-scope transcript, and session-tag presence
+and bytes are also bound into the source id. `original_head` and
 `source_position` must be present together. There is no old-format reader or migration. All born source ids use
 `COMM_BORN_TOUCH_EVENT` with the same typed position and origin binding.
 
@@ -82,6 +85,8 @@ cannot close a head in another world, facet, project or sensitivity band. Its
 comparison body
 uses the frozen source position, not a mutable current-original position.
 The current original still supplies the conjunctive native read requirements.
+The frozen session tag reconstructs that same comparison context; it does not
+admit a session bundle, change standing, or replace either original read gate.
 Other communication rules
 keep their existing matching and admission. Canonical born sources meet the
 same original-CLAIM disclosure and audience requirements as world-bearing
