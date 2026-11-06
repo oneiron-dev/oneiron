@@ -19,6 +19,8 @@ pub(crate) use reply::generate_reply;
 mod run_self;
 pub(crate) use run_self::{BriefHostFacts, brief_pins_family, describe_self_for_run};
 mod layout;
+mod mcp_self;
+pub(crate) use mcp_self::describe_self_for_mcp;
 mod scratchpad;
 mod session;
 mod split;
@@ -924,7 +926,9 @@ fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::
 /// The brief is rendered whole, so a record-narrowed credential is refused.
 /// Beside the card come the rows it is derived from
 /// ([`oneiron::context_board::SelfBrief::sources`]), the PEOPLE roster it
-/// read among them, which every served door releases it by (DEC-0005).
+/// read among them, which every served door releases it by (DEC-0005). An
+/// MCP connection's describe(self) reads its own connection instead
+/// ([`describe_self_for_mcp`]).
 pub(crate) async fn describe_self_for_auth(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -994,8 +998,9 @@ pub(crate) async fn describe_self_for_auth(
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
                 run_ceiling: None,
+                // A Core call arrives on no registered MCP connector.
                 credential_ceiling: auth.verified_slip().map(|proof| {
-                    oneiron::context_board::brief_credential_ceiling(proof, read.actor_key())
+                    oneiron::context_board::brief_credential_ceiling(proof, read.actor_key(), None)
                 }),
                 communication_credential_ceiling: auth
                     .verified_slip()

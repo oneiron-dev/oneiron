@@ -41,9 +41,9 @@ use self::admission::{
     mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
     mcp_validated_call_args,
 };
-pub(crate) use self::board_observations::run_session_reads;
+pub(crate) use self::board_observations::{mcp_session_reads, run_session_reads};
 pub(crate) use self::board_setup::{
-    McpBoardOmissions, execute_mcp_setup, ride_run_carrier, run_brief_pins,
+    McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier, run_brief_pins,
 };
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,

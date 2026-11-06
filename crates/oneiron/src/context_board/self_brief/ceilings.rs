@@ -25,7 +25,7 @@ use crate::authority::VerifiedSlip;
 use crate::claim::ScopedReadActorKey;
 use crate::context_projection::ContextSpec;
 use crate::entity_id::EntityId;
-use crate::federation::Scope;
+use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::policy_manifest_doors::{PolicyCeiling, PolicyGrantValue};
 
 /// A run's branch-resource bound, as its admitted dispatch stored it.
@@ -106,8 +106,8 @@ pub fn brief_run_ceiling(
 }
 
 /// The credential ceiling: the bounds of the verified credential the caller
-/// presented. A registered connector's own bounds are a separate
-/// description, which no host produces yet.
+/// presented, and, labelled apart, the bounds of the registered connector
+/// the call arrived on. Neither replaces the other.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BriefCredentialCeiling {
     /// The verified slip's effective six-axis scope.
@@ -119,22 +119,45 @@ pub struct BriefCredentialCeiling {
     /// The scope the admitted read key reads under, a separate projection of
     /// `scope`; `null` when the read key carries no proof scope.
     pub read_scope: Option<Scope>,
+    /// The registered connector's own bounds; `null` for a call no
+    /// registered connector carries.
+    pub connector: Option<BriefConnectorCeiling>,
+}
+
+/// A registered MCP connector's bounds, as its registration holds them,
+/// beside its credential's. They are no part of the signed slip's scope.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BriefConnectorCeiling {
+    /// The world the connector is narrowed to; `null` when it was never
+    /// narrowed to one.
+    pub world_ref: Option<EntityId>,
+    /// The facet the connector's writes are born in; `null` when it names
+    /// none.
+    pub facet_ref: Option<EntityId>,
+    /// The facets the connector reads.
+    pub facets: ScopeAxis<ScopeId>,
+    /// The registered bound-verb ceiling; `null` when the registration
+    /// names none.
+    pub bound_verbs: Option<BTreeSet<String>>,
 }
 
 /// The credential ceiling of verified slip `proof`, beside the scope the
-/// read key `read_key` its host admitted for the caller reads under. It
-/// copies the slip's effective scope, record and channel bounds and the
-/// read key's proof scope; it reads nothing.
+/// read key `read_key` its host admitted for the caller reads under and the
+/// bounds of the registered connector the call arrived on, if one carries
+/// it. It copies the slip's effective scope, record and channel bounds and
+/// the read key's proof scope; it reads nothing.
 #[must_use]
 pub fn brief_credential_ceiling(
     proof: &VerifiedSlip,
     read_key: &ScopedReadActorKey,
+    connector: Option<BriefConnectorCeiling>,
 ) -> BriefCredentialCeiling {
     BriefCredentialCeiling {
         scope: proof.scope().clone(),
         records: proof.claims().records.clone(),
         channels: proof.claims().channels.clone(),
         read_scope: read_key.authority_scope().cloned(),
+        connector,
     }
 }
 
