@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 const ARTIFACT_BACKEND_MOUNT: &str = "/app";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactBackendConfig {
     pub runtime: PathBuf,
