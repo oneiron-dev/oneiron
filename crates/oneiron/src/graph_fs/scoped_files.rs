@@ -104,7 +104,7 @@ impl GraphFsResolver<'_, '_> {
                                     txn,
                                     [text],
                                 )?;
-                                if let Some(masked) = keys.masked(text) {
+                                if let Some(masked) = keys.masked_with_reader(text, reader)? {
                                     *body = masked.into_bytes();
                                 }
                             }
@@ -262,7 +262,10 @@ fn mask(
     checkpoint(reader)?;
     match value {
         rmpv::Value::String(text) => {
-            let Some(masked) = text.as_str().and_then(|text| keys.masked(text)) else {
+            let Some(value) = text.as_str() else {
+                return Ok(false);
+            };
+            let Some(masked) = keys.masked_with_reader(value, reader)? else {
                 return Ok(false);
             };
             *text = masked.into();
