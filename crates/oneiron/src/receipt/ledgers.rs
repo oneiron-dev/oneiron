@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use super::field_set::{
     FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
     append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
-    append_task_project_field, append_task_type_fields, append_team_receipt_fields,
+    append_task_project_field, append_task_type_fields, append_task_type_parent_fields,
+    append_team_receipt_fields,
 };
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
@@ -176,9 +177,12 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     // and unattributed runs alike (FIX 6038).
     if let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(record) {
         append_task_type_fields(&mut receipt, &type_ref)?;
-        let project = crate::agent_dispatch::record_dispatch_input(record)
-            .and_then(|input| input.project_ref);
-        append_task_project_field(&mut receipt, project);
+        if let Some(input) = crate::agent_dispatch::record_dispatch_input(record) {
+            if let Some(parents) = &input.type_parents {
+                append_task_type_parent_fields(&mut receipt, parents)?;
+            }
+            append_task_project_field(&mut receipt, input.project_ref);
+        }
     }
     if let Some(team) = &team {
         append_team_receipt_fields(&mut receipt.fields, team);

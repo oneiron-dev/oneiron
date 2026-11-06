@@ -90,6 +90,7 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) spec: Value,
     /// OF-543: the one placed type stamp; always settled before the write.
     pub(super) type_ref: crate::task_type::TaskTypeRef,
+    pub(super) type_parents: Option<Vec<crate::learning::TypeRef>>,
 }
 
 /// Refuses a blank TASK label: a present label must carry a non-whitespace
@@ -147,6 +148,10 @@ pub(super) fn validate_task_create_in(
     let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
     let type_ref =
         crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request, None);
+    let type_parents = Some(
+        crate::task_type::TypeTree::from(tree)
+            .ancestors(&crate::learning::TypeRef::from(&type_ref)),
+    );
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -183,6 +188,7 @@ pub(super) fn validate_task_create_in(
                 ttl: Some(*ttl),
                 spec: Value::Nil,
                 type_ref,
+                type_parents,
             })
         }
         (TaskKind::Standard, None, assignee, ttl) => {
@@ -208,6 +214,7 @@ pub(super) fn validate_task_create_in(
                 ttl: *ttl,
                 spec: spec.spec.clone(),
                 type_ref,
+                type_parents,
             })
         }
         _ => Err(MemoryError::bad_request("invalid typed task shape")),

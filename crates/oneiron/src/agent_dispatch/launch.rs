@@ -178,7 +178,7 @@ impl AgentDispatcher<'_> {
         {
             let (project, _) =
                 self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
-            let type_ref =
+            let (type_ref, _) =
                 self.spawn_type_in_txn(&txn, project, input.target.agent_definition_ref()?, spawn)?;
             crate::learning_setting_choice::owner_spawn_budget_in_txn(
                 self.vault,
