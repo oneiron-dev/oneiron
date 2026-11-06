@@ -516,14 +516,23 @@ pub(crate) fn watchable(secret: &[u8]) -> bool {
     secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
 }
 
-/// Whether a git credential's watched token is one the git reply's echo
-/// watch can hold back: the same length bounds as [`watchable`], any bytes.
-/// The git watch searches the token's literal forms (raw, `Bearer`,
-/// JSON-escaped, percent-encoded, base64), which every byte has, and never
-/// rewrites a reply, so a Basic password with a `%` or any other byte off
-/// the model strip's alphabet is watched as surely as one without.
+/// Whether a git credential's watched token is one the broker sends: any
+/// bytes, up to [`MAX_SECRET`]. The git reply's echo watch searches the
+/// token's literal forms and never rewrites a reply, which every byte
+/// supports, so a Basic password with a `%`, or one shorter than a model
+/// key, goes as it did before the broker ([`git_echo_form`] says which
+/// forms a short one is watched by).
 pub(crate) fn git_watchable(token: &[u8]) -> bool {
-    token.len() >= MIN_SECRET && token.len() <= MAX_SECRET
+    !token.is_empty() && token.len() <= MAX_SECRET
+}
+
+/// Whether the git echo watch searches a reply for `form`, one literal form
+/// of a git credential's token: one of at least a model key's least length.
+/// A shorter one would be found among a pack's bytes by chance and cut a
+/// clean reply, so a short token is watched by its longer forms alone (its
+/// `Bearer`, percent and base64 forms).
+pub(crate) fn git_echo_form(form: &[u8]) -> bool {
+    form.len() >= MIN_SECRET
 }
 
 /// The shape's key header value for `secret`, marked sensitive.
