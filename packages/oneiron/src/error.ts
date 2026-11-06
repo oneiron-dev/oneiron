@@ -84,6 +84,9 @@ export class OneironError extends Error {
   /** The legal-hold notice behind this refusal, when its producer supplied one. */
   readonly legalHold?: LegalHoldNotice
 
+  /** The original native `MemoryError` JSON text, when this came from a recognized native payload. */
+  readonly nativeErrorJson?: string
+
   constructor(
     code: string,
     message: string,
@@ -93,6 +96,7 @@ export class OneironError extends Error {
     timing?: RetryTiming,
     reasonCodes?: readonly string[],
     legalHold?: LegalHoldNotice,
+    nativeErrorJson?: string,
   ) {
     super(message)
     this.name = "OneironError"
@@ -104,6 +108,7 @@ export class OneironError extends Error {
     if (timing?.resetsAt !== undefined) this.resetsAt = Object.freeze([...timing.resetsAt])
     if (reasonCodes !== undefined) this.reasonCodes = Object.freeze([...reasonCodes])
     if (legalHold) this.legalHold = Object.freeze({...legalHold})
+    if (nativeErrorJson !== undefined) this.nativeErrorJson = nativeErrorJson
   }
 }
 
@@ -201,6 +206,7 @@ export function translateNativeError(error: unknown): OneironError {
       retryTiming(parsed),
       reasonCodes(parsed),
       legalHoldNotice(parsed.legal_hold),
+      raw,
     )
   }
 

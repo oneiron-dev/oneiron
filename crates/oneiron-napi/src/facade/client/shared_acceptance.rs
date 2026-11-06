@@ -117,6 +117,34 @@ impl NativeClient {
             .map_err(facade_error)?;
         Ok(NativeSharedAcceptance::from_accepted(accepted))
     }
+
+    /// Retries a pending HTTPS acceptance under its original invocation from
+    /// the refusal's JSON text: the same request with the same invocation
+    /// reuse, without a JavaScript value pass. `pending_json` is the
+    /// `PENDING_ASK` refusal as its original serialized `MemoryError` text,
+    /// so full integers parse in Rust. Only the native HTTPS call produces
+    /// the returned object.
+    #[napi]
+    pub fn retry_shared_invitation_https_json(
+        &self,
+        pending_json: String,
+        request: serde_json::Value,
+    ) -> napi::Result<NativeSharedAcceptance> {
+        let pending: oneiron::MemoryError =
+            serde_json::from_str::<oneiron::MemoryError>(&pending_json).map_err(|error| {
+                facade_error(oneiron::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                    format!("pending is not a serialized refusal: {error}"),
+                    &["Pass the PENDING_ASK error the call raised, with its hook."],
+                ))
+            })?;
+        let request = accept_request(request)?;
+        let accepted = self
+            .inner
+            .retry_shared_invitation_https(&pending, request)
+            .map_err(facade_error)?;
+        Ok(NativeSharedAcceptance::from_accepted(accepted))
+    }
 }
 
 #[napi]
