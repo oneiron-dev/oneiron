@@ -1,131 +1,137 @@
-//! A person's hard erase reaches the forward rows they hold (FIX 20468).
+//! A hard-erased person's relayed ask words leave with them (FIX 7494).
 //!
-//! A relayed intent names its holder and carries the holder's slip token and
-//! signature. Its result names the intent. Both are task authority facts, so
-//! no ordinary delete removes them. Only the accepted erase of the holder
-//! retires them, in the erase's own writer (`deletion::actor_fields`), which
-//! the live erase, the marker-only erase, the replayed erase and the
-//! checkpoint restore sweep all reach. It takes each intent the person holds
-//! and the result of each such intent, and nothing else: every other
-//! authority fact stays. The retired ids ride the erase's redaction receipt
-//! as erased with the person ([`ask_forward_rows_retired_with`]). An erase
-//! that finds none retires nothing, so a repeated erase is harmless.
+//! An intent keeps its holder, the whole act, and the holder's slip and
+//! signature. Its result answers that act. Both are immutable TASK authority
+//! facts, which no ordinary delete removes. The accepted erase of the holder
+//! retires them here, in the erase's own writer: each intent whose holder is
+//! the erased person, and the result of each, whose id derives from the
+//! intent before the intent goes. Every other authority fact stays.
+//!
+//! Each retired id takes the erase's `dt:` fence, so a replica's later copy
+//! is never materialized here again, and a tombstone that the window's next
+//! load publishes. Each id joins the scope of the erase's redaction receipt
+//! and historical sweep, and leaves the vault's arrivals. A held intent or
+//! result keeps both rows. A repeated erase finds none.
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
-
-use super::{AskForwardResult, INTENT, RESULT, read_intent, result_id, subkind};
+use super::*;
 use crate::deletion::ActorErasureWriter;
-use crate::error::Result;
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_TASK;
-use crate::task_verb::ask_record;
-use crate::{EntityId, Vault};
+use crate::scan_check::{EngineScan, ScanCount};
 
-thread_local! {
-    /// The forward rows this thread's erases retired with each erased
-    /// person, until the erase's receipt reads them in the same transaction.
-    static RETIRED: RefCell<BTreeMap<EntityId, BTreeSet<EntityId>>> =
-        const { RefCell::new(BTreeMap::new()) };
-}
-
-/// Retires, under the accepted erase `erase`, every relayed intent its
-/// erased person holds and the result of each (FIX 20468). Each row is torn
-/// as a cascade tears a row: its indexes and side rows go, its id gets the
-/// permanent local hard-delete marker, so a late copy does not land again,
-/// and its replicas get its tombstone. A row a legal hold keeps stays, as
-/// every tear keeps it. An id whose entity is no actor scans nothing.
+/// Retires, in `erase`'s writer, every relayed intent whose holder it
+/// erases, and the result of each (FIX 7494). Only this erase context
+/// reaches it; it grants no ordinary delete.
 ///
 /// # Errors
-///
-/// Storage errors, or a stored intent or result that does not decode.
+/// A storage error; the erase's writer then commits nothing.
 pub(crate) fn retire_holder_ask_forward_rows_in_txn(
     erase: &mut ActorErasureWriter<'_, '_>,
 ) -> Result<()> {
-    let (vault, wtxn, holder) = erase.parts();
-    if crate::deletion::names_no_actor(vault, wtxn, &holder)? {
-        return Ok(());
-    }
-    let mut retired = BTreeSet::new();
-    for row in holder_rows_in_txn(vault, wtxn, holder)? {
-        if retire_row_in_txn(vault, wtxn, &row)? {
-            retired.insert(row);
+    let retired = {
+        let (vault, wtxn, holder) = erase.parts();
+        if crate::deletion::names_no_actor(vault, wtxn, &holder)? {
+            return Ok(());
         }
-    }
-    if !retired.is_empty() {
-        RETIRED.with(|held| held.borrow_mut().entry(holder).or_default().extend(retired));
-    }
-    Ok(())
+        let mut retired = BTreeSet::new();
+        for (intent, intent_at) in holder_intents_in_txn(vault, wtxn, holder)? {
+            // The result's id derives from the intent, read before it goes.
+            let result = result_id(intent)?;
+            // A hold keeps the word and its result together.
+            if crate::store::legal_hold::held_in_txn(&vault.store, wtxn, intent.as_bytes())?
+                || crate::store::legal_hold::held_in_txn(&vault.store, wtxn, result.as_bytes())?
+            {
+                continue;
+            }
+            // A result not here yet is fenced in its intent's window.
+            let result_at = vault
+                .store
+                .port_entity_record(&*wtxn, &result)?
+                .map_or(intent_at, |row| row.learned_at);
+            retire_row_in_txn(vault, wtxn, intent, intent_at)?;
+            retire_row_in_txn(vault, wtxn, result, result_at)?;
+            retired.extend([intent, result]);
+        }
+        // An erased intent is never consumed.
+        with_arrivals(vault, |arrivals| {
+            arrivals.intents.retain(|intent| !retired.contains(intent));
+        });
+        retired
+    };
+    erase.stage_retired_rows(&retired)
 }
 
-/// The forward rows an erase of `holder` retired in this thread, for its
-/// redaction receipt to bind as erased with them (FIX 20468); each is handed
-/// over once.
-pub(crate) fn ask_forward_rows_retired_with(holder: &EntityId) -> Vec<EntityId> {
-    RETIRED.with(|held| {
-        held.borrow_mut()
-            .remove(holder)
-            .map(|rows| rows.into_iter().collect())
-            .unwrap_or_default()
-    })
-}
-
-/// Each stored intent `holder` holds, and before it the result stored for
-/// that intent, which names it. The result's id derives from the intent's,
-/// so it is read while the intent still stands.
-fn holder_rows_in_txn(
+/// The intents stored here whose holder is `holder`, each with its time: one
+/// read of the TASK rows. A row that does not decode names no holder.
+fn holder_intents_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     holder: EntityId,
-) -> Result<Vec<EntityId>> {
-    let mut rows = Vec::new();
-    for task in vault
+) -> Result<Vec<(EntityId, u64)>> {
+    let mut count = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::TypeIndexRows,
+        &[ENTITY_TYPE_TASK],
+    )?;
+    let mut ids = Vec::new();
+    for row in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_TASK, None)?
     {
-        let id = task?;
+        count.row();
+        ids.push(row?);
+    }
+    count.finish(vault);
+    let mut intents = Vec::new();
+    for id in ids {
         let Some(raw) = vault.get_raw_in(txn, &id)? else {
             continue;
         };
         if subkind(&raw) != Some(INTENT) {
             continue;
         }
-        let Some(intent) = read_intent(vault, txn, id)? else {
-            continue;
-        };
-        if intent.holder != holder {
-            continue;
-        }
-        let result = result_id(id)?;
-        if ask_record::read::<AskForwardResult>(vault, txn, result, RESULT)?
-            .is_some_and(|stored| stored.intent == id)
+        if let Ok(Some(intent)) = read_intent(vault, txn, id)
+            && intent.holder == holder
         {
-            rows.push(result);
+            intents.push((id, intent.at));
         }
-        rows.push(id);
     }
-    Ok(rows)
+    Ok(intents)
 }
 
-/// Tears the forward row `id` in the erase's transaction. `false` when a
-/// legal hold keeps it, or no row was stored under it.
-fn retire_row_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<bool> {
-    if crate::store::legal_hold::held_in_txn(&vault.store, wtxn, id.as_bytes())? {
-        return Ok(false);
+/// Retires one row: its stored copy and its indexes go when it is here, and
+/// its `dt:` fence and tombstone are staged in the window of `learned_at`,
+/// as an erase stages each engine row it hard-erases.
+fn retire_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    row: EntityId,
+    learned_at: u64,
+) -> Result<()> {
+    if vault.get_raw_in(wtxn, &row)?.is_some() {
+        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(
+            &crate::secret_custody::CustodyWrite::of(vault),
+            wtxn,
+            &row,
+        )?;
+        crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, &row, &neighbors)?;
+        if graph {
+            crate::store::graph_version::increment_graph_version(&vault.store, wtxn)?;
+        }
+        if vector {
+            crate::store::vector_index::increment_vector_version(&vault.store, wtxn)?;
+        }
     }
-    let write = crate::secret_custody::CustodyWrite::of(vault);
-    crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, true)?;
-    let (existed, vector, graph, neighbors) = crate::batch::deindex_entity(&write, wtxn, id)?;
-    if !existed {
-        return Ok(false);
-    }
-    crate::batch::stage_cascade_tombstone_in_txn(&vault.store, wtxn, id)?;
-    crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, id, &neighbors)?;
-    if graph {
-        crate::ppr::increment_graph_version(&vault.store, wtxn)?;
-    }
-    if vector {
-        crate::hnsw::increment_vector_version(&vault.store, wtxn)?;
-    }
-    Ok(true)
+    let erased_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(
+        &vault.store,
+        wtxn,
+        &row,
+        learned_at,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: erased_at,
+            request_id: *row.as_bytes(),
+        },
+    )
 }
