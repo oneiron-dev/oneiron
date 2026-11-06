@@ -17424,8 +17424,8 @@
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 5,
+      "crate-vis": 7,
+      "fn": 6,
       "re-export": 2,
       "struct": 1
      }
@@ -18041,7 +18041,17 @@
      "path": "src/code_run/storage/replay_capsule/admit.rs",
      "purpose": "A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/admit/refresh.rs",
+     "purpose": "A staged executor capsule's actual post-route request, in its own writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -18091,7 +18101,7 @@
      "path": "src/code_run/storage/replay_capsule/start_parts.rs",
      "purpose": "The step starts a checkpoint carries as parts (FIX 9180, coord-b slice d): each read by its capsule's typed…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -34551,7 +34561,7 @@
      "path": "src/embed/session_media.rs",
      "purpose": "The session-aware media door (OF-370): a media vector written while a room is off record stays in the room",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -38139,7 +38149,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 37
      }
     },
     {
@@ -39191,14 +39201,17 @@
       "PolicySource",
       "SensitivityBand",
       "SensitivityName",
+      "SheetAnswerLimit",
       "SourceTrust",
-      "SourceTrustRow"
+      "SourceTrustRow",
+      "TeacherProbeHolderFloor",
+      "TeacherProbePolicy"
      ],
      "path": "src/gate/policy_manifest_doors/types.rs",
      "purpose": "Typed DEC-0005 policy axes",
      "surface": {
       "enum": 7,
-      "struct": 15
+      "struct": 18
      }
     },
     {
@@ -39476,7 +39489,7 @@
      "path": "src/gate/resolution/manifest_memo.rs",
      "purpose": "Decodes a store keeps between policy resolutions: a byte-charged LRU (FIX 5987)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -60855,7 +60868,7 @@
      "path": "src/recovery/canonical/asset_body_refs.rs",
      "purpose": "The by-reference ASSET body references a window carries (FIX 5489), through canonical capture and rebuild",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -62153,7 +62166,17 @@
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/validation/documents.rs",
+     "purpose": "Ordered NOTE document row checks over one immutable canonical snapshot",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -90915,7 +90938,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91755,7 +91778,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92254,7 +92277,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6490,
+   "source_files": 6492,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110359,7 +110382,7 @@
      "path": "src/ai_host/browser_planner.rs",
      "purpose": "A code-mode run's browser planner (CUA E5, DESIGN-2 §4): the role each step's model call runs on while the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "struct": 1
      }
     },
@@ -136974,7 +136997,7 @@
      "path": "src/session_overlay/overlay/repo_projection.rs",
      "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -144508,6 +144531,7 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "SheetAnswerLimit",
       "ShownCustomerHold",
       "SieveEvidenceCursor",
       "SieveEvidenceRequest",
@@ -144898,6 +144922,8 @@
       "TasksOverflow",
       "TasksSection",
       "TeacherProbeApproval",
+      "TeacherProbeHolderFloor",
+      "TeacherProbePolicy",
       "TeamAxis",
       "TeamBindingView",
       "TeamPlan",
@@ -145260,7 +145286,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1135,
-      "struct": 3436
+      "struct": 3439
      }
     },
     {

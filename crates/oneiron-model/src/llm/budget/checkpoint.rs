@@ -89,15 +89,15 @@ impl BudgetGuard {
     /// Its original resolved table stays paired with its original tallies;
     /// a later live scope look may revise the line as before.
     /// This is meter state only, never proof of caller authority or funding.
+    /// Each row is addressed by its position, so a checkpoint of any length
+    /// restores whole (FIX 8781).
     ///
     /// # Errors
     ///
-    /// [`BudgetDenied::AdmissionDenied`] for a corrupt checkpoint whose
-    /// policy rows exceed the native meter's `u16` addressing range.
+    /// None today: every well-formed checkpoint restores. The `Result` keeps
+    /// the restore callers' refusal path for a check a later checkpoint
+    /// field needs.
     pub fn from_checkpoint(checkpoint: BudgetCheckpoint) -> Result<Self, BudgetDenied> {
-        if checkpoint.rows.len() > usize::from(u16::MAX) + 1 {
-            return Err(BudgetDenied::AdmissionDenied);
-        }
         let policy = BudgetPolicyTable::from_rows(
             checkpoint
                 .rows
