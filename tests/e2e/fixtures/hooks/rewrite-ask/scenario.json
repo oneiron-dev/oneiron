@@ -100,7 +100,8 @@
       "keepsOriginalArgs": true,
       "asks": 1,
       "effects": 1
-    }
+    },
+    "runnerProgress": "independent live saved calls after original invocation keys; not saved-refusal receipt discovery"
   },
   "packFiles": {
     "PACK.md": "hooks-rewrite-ask-PACK-md",
@@ -110,5 +111,21 @@
     "hooks/saved-question/HOOK.md": "hooks-rewrite-ask-ask-HOOK-md",
     "hooks/saved-question/body.js": "hooks-rewrite-ask-ask-body-js",
     "hooks/saved-question/intent.md": "hooks-rewrite-ask-ask-intent-md"
-  }
+  },
+  "progressControls": [
+    {
+      "phase": "live",
+      "mode": "allowed",
+      "id": "b3030000000000000000000000000031",
+      "invocation": "f3030000000000000000000000000001",
+      "predicate": "hooks.rewrite.http.live_progress"
+    },
+    {
+      "phase": "revoked",
+      "mode": "allowed",
+      "id": "b3030000000000000000000000000032",
+      "invocation": "f3030000000000000000000000000002",
+      "predicate": "hooks.rewrite.http.revoked_progress"
+    }
+  ]
 }

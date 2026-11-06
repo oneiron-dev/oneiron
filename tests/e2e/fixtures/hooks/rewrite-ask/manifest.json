@@ -10,7 +10,7 @@
         "revision": "hooks03-rewrite-ask-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "e7f3eebadcd2ed1a342cefa7e25c37e7531b64c6f029406730cd9fe2fe0a7d9d",
+      "sha256": "28c30f25f16cdb3436fb21c73fbcf1047ec91e1883a02c99c862c1a1e1cb244b",
       "expectedFacts": {
         "packPath": "PACK.md",
         "runtime": "engine-owned quickjs-hook.wasm; no external effects"
@@ -136,7 +136,7 @@
         "revision": "hooks03-rewrite-ask-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "4f048dd88d392994c15262ecb6fafc7a0a7a789564da1ab854121059e79608a6",
+      "sha256": "b2659faa13a6dcfd48ccaed01f14905ddb040c1f571bfe8e370ed9f1d612be15",
       "expectedFacts": {
         "carriers": [
           "HTTP",
@@ -159,7 +159,8 @@
           "keepsOriginalArgs": true,
           "asks": 1,
           "effects": 1
-        }
+        },
+        "runnerProgress": "independent live saved calls after original invocation keys; not saved-refusal receipt discovery"
       },
       "scenarios": [
         "HOOKS-03"
