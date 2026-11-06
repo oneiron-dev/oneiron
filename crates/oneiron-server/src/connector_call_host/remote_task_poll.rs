@@ -97,9 +97,15 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
                 status,
                 poll_after_ms,
             }) => vault.remote_task_polled(&task.intent, poll_after_ms, status, now_ms()),
-            Ok(Polled::Ended(end, live)) => {
+            Ok(Polled::Ended(end, mut live)) => {
                 vault.settle_polled_remote_task(&task.intent, end).map(|_| {
-                    // The ledger holds the end: the task's session ends.
+                    // The ledger holds the end: the task's session ends. Its
+                    // kept header goes out only while no issuer hold stands
+                    // over the call (FIX 12166); under one the session ends
+                    // without a word to the connector.
+                    if issuer_held(vault, &task) {
+                        live.forget_credential();
+                    }
                     live.end();
                 })
             }
@@ -125,6 +131,19 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
             tracing::warn!(%error, "a remote task session's end not recorded");
         }
     }
+}
+
+/// Whether an issuer hold stands over `task`'s keyed call, read again from
+/// its durable binding (FIX 12166), or the binding cannot be read. A keyless
+/// call meets none.
+fn issuer_held(vault: &Vault, task: &DueRemoteTask) -> bool {
+    let Ok(view) = FrozenToolCallView::read(&task.call) else {
+        return true;
+    };
+    let Some(key_ref) = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok()) else {
+        return false;
+    };
+    !matches!(vault.connector_issuer_hold(&key_ref, view.tool()), Ok(None))
 }
 
 impl ServedConnectorCallHost {
