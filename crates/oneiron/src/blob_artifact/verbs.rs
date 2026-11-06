@@ -984,10 +984,11 @@ impl Memory<'_> {
             run_ref: &input.run_ref,
         };
         let vault = self.vault();
-        if matches!(
+        let asks_sheet_answers = matches!(
             &input.units,
             ArtifactAskUnits::SheetRows { .. } | ArtifactAskUnits::FolderItems { .. }
-        ) {
+        );
+        if asks_sheet_answers {
             self.require_credential_reads(&vault.decided_sheet_answer_read_rows(
                 &artifact,
                 &input.run_ref,
@@ -1085,7 +1086,9 @@ impl Memory<'_> {
         // What the ask read beside its base and its evidence waits with its
         // proposal for that proposal's readers (FIX 9312).
         let read: Vec<EntityId> = run.read_rows.iter().chain(&evidence).copied().collect();
-        self.require_credential_reads(&read)?;
+        if asks_sheet_answers {
+            self.require_credential_reads(&read)?;
+        }
         let proposed = match &run.proposal {
             Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
                 &artifact,
