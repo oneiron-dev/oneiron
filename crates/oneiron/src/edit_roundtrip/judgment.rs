@@ -284,6 +284,7 @@ impl Vault {
         let mut row = if let Some(row) = self.decided_sheet_answers(artifact, &identity, false)? {
             row
         } else {
+            ask.check_deadline()?;
             // Capture the original read basis before any paid call. A retry
             // reads these inputs, not a new live head under the original pin.
             let live = self.live_head_cells(artifact, request.sheet)?;
@@ -298,23 +299,23 @@ impl Vault {
                     || (cell.col == answer_col && in_rows(cell.row))
             })?;
             let shown = live.as_ref().map_or(&cells, |(_, live)| live);
-            let columns: Vec<u32> = (rows.start.col..=rows.end.col)
-                .filter(|col| *col != answer_col)
-                .collect();
-            let headers: Map<String, Value> = header_row
-                .map(|row| {
-                    columns
-                        .iter()
-                        .filter_map(|col| {
-                            let text =
-                                shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
-                            Some((super::address::column_to_letters(*col), Value::String(text)))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let read_cells = |row| -> Result<Map<String, Value>> {
+                let mut read = Map::new();
+                for col in rows.start.col..=rows.end.col {
+                    ask.check_deadline()?;
+                    if col == answer_col {
+                        continue;
+                    }
+                    if let Some(text) = shown.get(&CellRef { col, row }).and_then(cell_text) {
+                        read.insert(super::address::column_to_letters(col), Value::String(text));
+                    }
+                }
+                Ok(read)
+            };
+            let headers = header_row.map(&read_cells).transpose()?.unwrap_or_default();
             let mut inputs = Vec::new();
             for row in rows.start.row..=rows.end.row {
+                ask.check_deadline()?;
                 if request.only_rows.is_some_and(|only| !only.contains(&row)) {
                     continue;
                 }
@@ -325,14 +326,7 @@ impl Vault {
                 inputs.push(DecidedSheetRow {
                     cell,
                     before: cells.get(&cell).cloned().unwrap_or(CellValue::Blank),
-                    read: columns
-                        .iter()
-                        .filter_map(|col| {
-                            let text =
-                                shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
-                            Some((super::address::column_to_letters(*col), Value::String(text)))
-                        })
-                        .collect(),
+                    read: read_cells(row)?,
                 });
             }
             self.retain_decided_sheet_answers(
@@ -381,6 +375,7 @@ impl Vault {
             )?
         };
         while let Some(progress) = &row.progress {
+            ask.check_deadline()?;
             let DecidedSheetInputs::SheetRows { headers, rows } = &progress.inputs else {
                 return Err(invalid("sheet ask has different stored inputs"));
             };
