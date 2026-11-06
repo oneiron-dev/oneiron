@@ -2,6 +2,9 @@
 //! inventory and applied in order: families for whole groups first, then
 //! cases and their fixed-code labels, then each cut with its audit, then
 //! retirements. A decision a door refuses is reported, never forced.
+mod scoped;
+pub use scoped::EvalCohortSetupRead;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -101,6 +104,17 @@ pub fn setup_eval_cohorts(
     setup: EvalCohortSetup,
     now: u64,
 ) -> Result<EvalAuthoringReport> {
+    let (plan, provenance, mut report) = prepare_setup(vault, owner, setup, now)?;
+    cut_cohorts(vault, &plan, &provenance, now, &mut report)?;
+    Ok(report)
+}
+
+fn prepare_setup(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    setup: EvalCohortSetup,
+    now: u64,
+) -> Result<(EvalAuthoringPlan, AuditProvenance, EvalAuthoringReport)> {
     let person = owner.revalidate_person(vault)?;
     if setup.inventory_at > now {
         return Err(invalid("a cohort setup cannot read a future inventory"));
@@ -121,8 +135,7 @@ pub fn setup_eval_cohorts(
         author: EvalCutAuthor::Owner { person },
         inventory_digest: inventory.inventory_digest,
     };
-    cut_cohorts(vault, &plan, &provenance, now, &mut report)?;
-    Ok(report)
+    Ok((plan, provenance, report))
 }
 
 impl Vault {
@@ -160,26 +173,7 @@ fn setup_listing(
     now: u64,
     rows: &mut Vec<EntityId>,
 ) -> Result<EvalAuthoringReport> {
-    let person = owner.revalidate_person(vault)?;
-    if setup.inventory_at > now {
-        return Err(invalid("a cohort setup cannot read a future inventory"));
-    }
-    let inventory = super::eval_authoring_inventory(vault, setup.inventory_at)?;
-    let plan = EvalAuthoringPlan {
-        inventory_digest: setup.inventory_digest,
-        families: setup.families,
-        cases: setup.cases,
-        cuts: setup.cuts,
-        cohorts: Vec::new(),
-    };
-    validate(&plan, &inventory)?;
-    let mut report = EvalAuthoringReport::default();
-    assign_families(vault, &plan, &inventory, now, &mut report)?;
-    record_cases(vault, &plan, &inventory, now, &mut report)?;
-    let provenance = AuditProvenance {
-        author: EvalCutAuthor::Owner { person },
-        inventory_digest: inventory.inventory_digest,
-    };
+    let (plan, provenance, mut report) = prepare_setup(vault, owner, setup, now)?;
     cut_cohorts_listing(vault, &plan, &provenance, now, &mut report, rows)?;
     Ok(report)
 }
@@ -199,36 +193,47 @@ fn cut_cohorts_listing(
     }
     let lineage = LineageReader::read(vault)?;
     for cut in &plan.cuts {
-        let item = format!("cut {}..{}", cut.from, cut.until);
-        let Some(audit) = prepare_cut_audit_listing(
+        let audit = prepare_cut_audit_listing(
             vault,
             &lineage,
             &cut.seat,
             (cut.from, cut.until),
             provenance.clone(),
             rows,
-        )?
-        else {
-            report.skip(item, "no whole sealed family falls in this window");
-            continue;
-        };
-        match vault.cut_eval_cohort(
-            &cut.seat,
-            cut.from,
-            cut.until,
-            cut.rubric_revision.trim(),
-            cut.reference,
-            &audit,
-            now,
-        ) {
-            Ok(cohort) => {
-                if !audit.complete() {
-                    report.cuts_with_coverage_gaps += 1;
-                }
-                report.cohorts_cut.push(cohort.id);
+        )?;
+        apply_cut(vault, cut, audit, now, report)?;
+    }
+    Ok(())
+}
+
+fn apply_cut(
+    vault: &Vault,
+    cut: &CutDecision,
+    audit: Option<super::super::EvalCutAuditDraft>,
+    now: u64,
+    report: &mut EvalAuthoringReport,
+) -> Result<()> {
+    let item = format!("cut {}..{}", cut.from, cut.until);
+    let Some(audit) = audit else {
+        report.skip(item, "no whole sealed family falls in this window");
+        return Ok(());
+    };
+    match vault.cut_eval_cohort(
+        &cut.seat,
+        cut.from,
+        cut.until,
+        cut.rubric_revision.trim(),
+        cut.reference,
+        &audit,
+        now,
+    ) {
+        Ok(cohort) => {
+            if !audit.complete() {
+                report.cuts_with_coverage_gaps += 1;
             }
-            Err(error) => report.skip(item, refusal(error)?),
+            report.cohorts_cut.push(cohort.id);
         }
+        Err(error) => report.skip(item, refusal(error)?),
     }
     Ok(())
 }
@@ -488,35 +493,14 @@ fn cut_cohorts(
     }
     let lineage = LineageReader::read(vault)?;
     for cut in &plan.cuts {
-        let item = format!("cut {}..{}", cut.from, cut.until);
-        let Some(audit) = prepare_cut_audit(
+        let audit = prepare_cut_audit(
             vault,
             &lineage,
             &cut.seat,
             (cut.from, cut.until),
             provenance.clone(),
-        )?
-        else {
-            report.skip(item, "no whole sealed family falls in this window");
-            continue;
-        };
-        match vault.cut_eval_cohort(
-            &cut.seat,
-            cut.from,
-            cut.until,
-            cut.rubric_revision.trim(),
-            cut.reference,
-            &audit,
-            now,
-        ) {
-            Ok(cohort) => {
-                if !audit.complete() {
-                    report.cuts_with_coverage_gaps += 1;
-                }
-                report.cohorts_cut.push(cohort.id);
-            }
-            Err(error) => report.skip(item, refusal(error)?),
-        }
+        )?;
+        apply_cut(vault, cut, audit, now, report)?;
     }
     Ok(())
 }

@@ -13,6 +13,9 @@
 //! cohort, so an audit counts no exposure. A case whose text could not be
 //! read is a coverage gap. The cut still stands, and its audit says plainly
 //! that it is incomplete; a gap is never read as clean.
+mod scoped;
+pub(super) use scoped::prepare_cut_audit_scoped_listing;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -237,21 +240,31 @@ fn audit_cases(
     until: u64,
 ) -> Result<Option<AuditSides>> {
     let txn = vault.store.env.read_txn()?;
-    let (families, members) = cut_members_in_txn(vault, &txn, seat, from, until)?;
+    audit_cases_in_txn(vault, &txn, seat, from, until)
+}
+
+fn audit_cases_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat: &EvalSeat,
+    from: u64,
+    until: u64,
+) -> Result<Option<AuditSides>> {
+    let (families, members) = cut_members_in_txn(vault, txn, seat, from, until)?;
     if families.is_empty() {
         return Ok(None);
     }
-    let retired = retired_families_in_txn(vault, &txn, seat)?;
+    let retired = retired_families_in_txn(vault, txn, seat)?;
     let mut purposes: BTreeMap<EntityId, FamilyPurpose> = BTreeMap::new();
     let mut compared = Vec::new();
-    for case in rows_in_txn::<EvalCase>(vault, &txn, CASE_PREFIX)? {
+    for case in rows_in_txn::<EvalCase>(vault, txn, CASE_PREFIX)? {
         if &case.seat != seat {
             continue;
         }
         let assigned = if let Some(purpose) = purposes.get(&case.family) {
             *purpose
         } else {
-            let purpose = family_in_txn(vault, &txn, &case.family)?
+            let purpose = family_in_txn(vault, txn, &case.family)?
                 .ok_or(Error::CorruptedIndex("eval case without its family"))?
                 .purpose;
             purposes.insert(case.family, purpose);
@@ -393,6 +406,32 @@ fn case_shingles(
     Ok(read)
 }
 
+fn near_copy_flags(
+    left: &[(EntityId, Shingles)],
+    right: &[(EntityId, Shingles)],
+) -> (u64, Vec<NearCopyFlag>) {
+    let mut comparisons = 0_u64;
+    let mut flags = Vec::new();
+    for (member, member_set) in left {
+        for (other, other_set) in right {
+            comparisons = comparisons.saturating_add(1);
+            let intersection = member_set.intersection(other_set).count();
+            let union = member_set.len() + other_set.len() - intersection;
+            let score = intersection as f64 / union as f64;
+            if score >= THRESHOLD {
+                flags.push(NearCopyFlag {
+                    member_case: *member,
+                    other_case: *other,
+                    score,
+                    intersection: u64::try_from(intersection).unwrap_or(u64::MAX),
+                    union: u64::try_from(union).unwrap_or(u64::MAX),
+                });
+            }
+        }
+    }
+    (comparisons, flags)
+}
+
 /// Runs the near-copy audit of a cut of `window` for `seat`, on the members
 /// it would take now; `None` when it would take none.
 pub(super) fn prepare_cut_audit(
@@ -409,25 +448,7 @@ pub(super) fn prepare_cut_audit(
     let mut gaps = Vec::new();
     let left = case_shingles(vault, lineage, &members, &mut gaps)?;
     let right = case_shingles(vault, lineage, &compared, &mut gaps)?;
-    let mut comparisons = 0_u64;
-    let mut flags = Vec::new();
-    for (member, member_set) in &left {
-        for (other, other_set) in &right {
-            comparisons = comparisons.saturating_add(1);
-            let intersection = member_set.intersection(other_set).count();
-            let union = member_set.len() + other_set.len() - intersection;
-            let score = intersection as f64 / union as f64;
-            if score >= THRESHOLD {
-                flags.push(NearCopyFlag {
-                    member_case: *member,
-                    other_case: *other,
-                    score,
-                    intersection: u64::try_from(intersection).unwrap_or(u64::MAX),
-                    union: u64::try_from(union).unwrap_or(u64::MAX),
-                });
-            }
-        }
-    }
+    let (comparisons, flags) = near_copy_flags(&left, &right);
     let member_ids: Vec<EntityId> = members.iter().map(|case| case.case).collect();
     Ok(Some(EvalCutAuditDraft {
         seat: seat.clone(),
@@ -542,25 +563,7 @@ pub(super) fn prepare_cut_audit_listing(
     let mut gaps = Vec::new();
     let left = case_shingles_listing(vault, lineage, &members, &mut gaps, rows)?;
     let right = case_shingles_listing(vault, lineage, &compared, &mut gaps, rows)?;
-    let mut comparisons = 0_u64;
-    let mut flags = Vec::new();
-    for (member, member_set) in &left {
-        for (other, other_set) in &right {
-            comparisons = comparisons.saturating_add(1);
-            let intersection = member_set.intersection(other_set).count();
-            let union = member_set.len() + other_set.len() - intersection;
-            let score = intersection as f64 / union as f64;
-            if score >= THRESHOLD {
-                flags.push(NearCopyFlag {
-                    member_case: *member,
-                    other_case: *other,
-                    score,
-                    intersection: u64::try_from(intersection).unwrap_or(u64::MAX),
-                    union: u64::try_from(union).unwrap_or(u64::MAX),
-                });
-            }
-        }
-    }
+    let (comparisons, flags) = near_copy_flags(&left, &right);
     let member_ids: Vec<EntityId> = members.iter().map(|case| case.case).collect();
     Ok(Some(EvalCutAuditDraft {
         seat: seat.clone(),

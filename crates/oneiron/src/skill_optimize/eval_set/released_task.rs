@@ -5,14 +5,13 @@
 use std::collections::BTreeSet;
 
 use super::cohort::{cohort_in_txn, exposure_row_in_txn};
-use super::repair_task::compile_repair_task;
+use super::repair_case::read_repair_task_in_txn;
 use super::replay_input::{hydrate, released_case_in_txn};
 use super::{
     DerivationKind, EvalExposureKind, EvalMeasurement, EvalRepairTask, EvalTaskInput,
     MeasurementUnavailable, family_in_txn,
 };
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadReceipt};
-use crate::ingest::{AgUiFileReadInput, project_ag_ui_file};
+use crate::claim::{ClaimReadStatus, ScopedReadReceipt};
 use crate::memory::{Memory, MemoryResult};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -152,28 +151,7 @@ impl Memory<'_> {
         {
             return Err(Error::CorruptedIndex("Repair case recipe binding").into());
         }
-        let source_pin = AgUiFileReadInput {
-            claim_ref: source.claim_ref.clone(),
-            source_hash: source.source_hash.clone(),
-        };
-        let read =
-            lane.read_projected_in_txn(&txn, &[PointRead::id(id)], None, |snapshot, rows| {
-                let view = project_ag_ui_file(vault, snapshot, id, &source_pin, rows)?;
-                let Some((view, _)) = view else {
-                    return Ok(None);
-                };
-                if vault.local_hard_delete_marker_exists_in_txn(snapshot, &id)? {
-                    return Ok(None);
-                }
-                let task = compile_repair_task(&view, source)?;
-                if task.source != recipe.source
-                    || task.task_hash != recipe.task_hash
-                    || task.source_rows.as_slice() != [id]
-                {
-                    return Err(Error::InvalidClaimBody("Repair task recipe changed"));
-                }
-                Ok(Some(task))
-            })?;
+        let read = read_repair_task_in_txn(vault, &txn, &lane, recipe)?;
         let task = match read.value {
             None => Err(MeasurementUnavailable::TaskGone),
             Some(task) => {
