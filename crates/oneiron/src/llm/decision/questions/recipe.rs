@@ -126,7 +126,9 @@ pub(crate) fn run_graph_question_with_current(
             } else {
                 Vec::new()
             };
-            match answerer.decide(question, &context, &images, &audio)? {
+            let decision = answerer.decide(question, &context, &images, &audio)?;
+            let criteria_override = answerer.saved_criteria_override();
+            match decision {
                 None => Ok(None),
                 Some(GraphDecision::Prediction(prediction)) => {
                     if prediction.answer == DecisionAnswer::Abstain {
@@ -134,8 +136,17 @@ pub(crate) fn run_graph_question_with_current(
                     }
                     super::graph_ask::validate_prediction(question, &prediction)?;
                     super::standing::backfill_graph_answer(
-                        vault, principal, reference, actor, context, frontier, prediction,
-                        proposals, now, current,
+                        vault,
+                        principal,
+                        reference,
+                        actor,
+                        context,
+                        frontier,
+                        prediction,
+                        proposals,
+                        now,
+                        current,
+                        criteria_override,
                     )
                     .map(Some)
                 }
@@ -145,8 +156,19 @@ pub(crate) fn run_graph_question_with_current(
                         return Ok(None);
                     }
                     super::standing::backfill_graph_decision(
-                        vault, principal, reference, actor, context, frontier, &images, &audio,
-                        *decision, proposals, now, current,
+                        vault,
+                        principal,
+                        reference,
+                        actor,
+                        context,
+                        frontier,
+                        &images,
+                        &audio,
+                        *decision,
+                        proposals,
+                        now,
+                        current,
+                        criteria_override,
                     )
                     .map(Some)
                 }

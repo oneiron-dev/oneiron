@@ -84,6 +84,12 @@ pub trait GraphAnswerer {
         Ok(())
     }
 
+    /// Explicit saved-question criteria, if this run overrides the definition.
+    /// Such answers have their own dedup identity, including for an empty triple.
+    fn saved_criteria_override(&self) -> Option<&QuestionCriteria> {
+        None
+    }
+
     fn answer(
         &mut self,
         question: &DecisionQuestion,

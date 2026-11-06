@@ -82,6 +82,10 @@ impl GraphAnswerer for SavedGraphAnswerer<'_> {
         Ok(())
     }
 
+    fn saved_criteria_override(&self) -> Option<&QuestionCriteria> {
+        self.criteria.as_ref()
+    }
+
     fn answer(
         &mut self,
         question: &DecisionQuestion,

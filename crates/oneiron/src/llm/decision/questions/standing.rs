@@ -24,6 +24,7 @@ pub(super) struct BackfillKey {
     pub(super) question: EntityId,
     version: u32,
     pub(super) unit: EntityId,
+    /// Source frontier, scoped by effective criteria for an explicit override.
     frontier: [u8; 32],
 }
 impl SideKey for BackfillKey {
@@ -353,6 +354,7 @@ pub fn backfill_standing_answer(
         &[],
         now,
         None,
+        None,
     )
 }
 
@@ -440,6 +442,7 @@ pub(super) fn backfill_graph_answer(
     proposals: &[AnswerRecord],
     now: u64,
     current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
     let versions = context
         .sources
@@ -479,6 +482,7 @@ pub(super) fn backfill_graph_answer(
         proposals,
         now,
         current,
+        criteria_override,
     )
 }
 
@@ -498,6 +502,7 @@ pub(super) fn backfill_graph_decision(
     proposals: &[AnswerRecord],
     now: u64,
     current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
     let decision = super::graph_ask::decided(&context, images, audio, decision);
     let input = StandingAnswer {
@@ -526,6 +531,7 @@ pub(super) fn backfill_graph_decision(
         proposals,
         now,
         current,
+        criteria_override,
     )
 }
 
@@ -550,7 +556,17 @@ fn backfill_answer(
     proposals: &[AnswerRecord],
     now: u64,
     current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
+    let dedup_frontier = match criteria_override {
+        None => input.source_frontier,
+        Some(criteria) => {
+            let mut hasher = blake3::Hasher::new_derive_key("oneiron.graph.criteria-override");
+            hasher.update(&input.source_frontier);
+            hasher.update(&encode(criteria)?);
+            *hasher.finalize().as_bytes()
+        }
+    };
     vault.store.authorization_now()?;
     vault.with_write_txn_grouped(|txn| {
         let (mut head, record) =
@@ -591,7 +607,7 @@ fn backfill_answer(
             question,
             version: expected_version,
             unit: input.unit,
-            frontier,
+            frontier: dedup_frontier,
         };
         if let Some(claim) = QUESTION_BACKFILL.get(&vault.store, txn, &dedup)? {
             let answer = QUESTION_ANSWER
