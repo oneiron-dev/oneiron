@@ -131,9 +131,12 @@ impl NativeLaunch {
             && epoch.is_none_or(|expected| actual_epoch == Some(expected))
             && hello.get("model").and_then(serde_json::Value::as_str)
                 == Some(self.wire_model.as_str())
-            && hello.get("launch_manifest").and_then(serde_json::Value::as_str)
+            && hello
+                .get("launch_manifest")
+                .and_then(serde_json::Value::as_str)
                 == Some(self.manifest_sha256.as_str())
-            && hello.pointer("/worker/kind")
+            && hello
+                .pointer("/worker/kind")
                 .and_then(|kind| serde_json::from_value::<WorkerKind>(kind.clone()).ok())
                 == Some(WorkerKind::Exl3)
     }

@@ -312,7 +312,9 @@ async fn native_answer(
         .get("model")
         .and_then(JsonValue::as_str)
         .ok_or(WorkerFailure::InvalidReply)?;
-    let launch = launch.native_launch(wire_model).ok_or(WorkerFailure::Unreachable)?;
+    let launch = launch
+        .native_launch(wire_model)
+        .ok_or(WorkerFailure::Unreachable)?;
     super::super::native_exl3::qualify(&launch, request).await
 }
 
