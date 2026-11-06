@@ -104,7 +104,7 @@ pub use oneiron_model::llm::{
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
 pub use oneiron_model::llm::{
-    LabelReadFailure, LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel,
+    LabelReadDistribution, LabelReadFailure, LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel,
     LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
