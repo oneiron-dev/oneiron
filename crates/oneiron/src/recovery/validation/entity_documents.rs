@@ -18,6 +18,7 @@ pub(in crate::recovery) struct EntityDocumentRows {
     history: HistoryValidation,
     history_complete: bool,
     fork_next: usize,
+    owner_next: usize,
     previous: Option<[u8; 16]>,
     last_proposal: Option<[u8; 16]>,
     proposals: BTreeMap<[u8; 16], Proposal>,
@@ -133,13 +134,14 @@ impl EntityDocumentRows {
                         self.start(Stage::Complete);
                         continue;
                     };
-                    if !snapshot
-                        .entity_blobs
-                        .iter()
-                        .any(|entity| entity.id == row.entity_id)
-                    {
+                    let Some(entity) = snapshot.entity_blobs.get(self.owner_next) else {
                         return Err(invalid("entity document owner absent"));
+                    };
+                    self.owner_next += 1;
+                    if entity.id != row.entity_id {
+                        return Ok(false);
                     }
+                    self.owner_next = 0;
                 }
                 Stage::Complete => return Ok(true),
             }
