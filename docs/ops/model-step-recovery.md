@@ -399,6 +399,27 @@ extra settlement, charge, NET payment, aggregate credit or fabricated terminal
 claim. Reads that never retain an input do not gain invented meter provenance.
 
 
+### Issuing-guard source for aggregate and late meter observations
+
+Each newly constructed budget guard issues an opaque accounting source id. Guard
+clones share it through the original state. A guard restored from a checkpoint
+issues a fresh id; the checkpoint carries no guard identity or outstanding lease.
+This id does not replace the existing in-memory lease provenance checks.
+
+The original accounting snapshot captures this id under the same lock as its
+meter and selected lease states. Each successful aggregate's raw observation
+retains that snapshot id. The first stored native meter interval separately
+retains the id from its actual held guard-and-lease snapshot, whether that first
+write came from the late callback or the existing GROSS inclusion writer. Later
+matching meter writes keep the first source. The old interval comparisons,
+invoice, inclusion, settlement and payment behavior are unchanged.
+
+These are guard-source facts, not a unique aggregate settlement id or proof that
+all prior expenses are covered. A matching id does not prove NET payment or
+exclusion, and a different id is not a refusal or a fraud decision. Unknown token
+states, historical step keys and missing paid facts keep their existing meaning.
+Automatic native invoice payment and aggregate subtraction remain off.
+
 ### Partition NET tally inclusion
 
 A prepared partition registers its own fresh tally on that attempt's context.

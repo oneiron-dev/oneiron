@@ -284,6 +284,7 @@ impl DecisionCallAdmission {
                 wtxn,
                 self.origin,
                 self.lease.id(),
+                snapshot.guard_id,
                 range,
             )
         }) {
