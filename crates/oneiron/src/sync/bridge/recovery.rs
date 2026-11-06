@@ -4,7 +4,7 @@ use super::Materializer;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{ArtifactError, Result};
-use crate::recovery::{CanonicalBaseEdge, CanonicalSnapshot};
+use crate::recovery::{CanonicalBaseEdge, CanonicalSnapshot, NotePlanRows};
 use crate::sync::ingest::{
     EntityStep, IngestCtx, authority_parent_order, ingest_entity_in_txn, is_authority_row,
 };
@@ -13,7 +13,7 @@ use crate::sync::selector::authority_beside::AuthorityBeside;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use loro::LoroDoc;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// All writes here are speculative LMDB pages. The transaction is ALWAYS
 /// aborted: a bad later entity/edge cannot publish an earlier valid record.
@@ -33,6 +33,8 @@ pub(crate) fn preflight_validated_canonical_recovery_with_source(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     source: Option<&crate::recovery::StoreCapturedCanonical>,
+    note_scope: &BTreeSet<[u8; 16]>,
+    note_plan: &NotePlanRows,
 ) -> Result<()> {
     let analyzer = vault
         .analyzer
@@ -48,7 +50,16 @@ pub(crate) fn preflight_validated_canonical_recovery_with_source(
     let mut parent = vault.store.env.write_txn()?;
     let refusals = vault.store.begin_refusal_attempt();
     let preflight = match vault.store.env.nested_write_txn(&mut parent) {
-        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn, source),
+        Ok(mut txn) => preflight_in_txn(
+            vault,
+            materializer,
+            snapshot,
+            doc,
+            &mut txn,
+            source,
+            note_scope,
+            note_plan,
+        ),
         Err(err) => Err(err.into()),
     };
     drop(guard);
@@ -64,9 +75,11 @@ fn preflight_in_txn(
     doc: &LoroDoc,
     txn: &mut RwTxn<'_>,
     source: Option<&crate::recovery::StoreCapturedCanonical>,
+    note_scope: &BTreeSet<[u8; 16]>,
+    note_plan: &NotePlanRows,
 ) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
-    snapshot.preflight_note_recovery(vault, txn)?;
+    snapshot.preflight_note_recovery_with_rows(vault, txn, note_scope, note_plan)?;
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     // Each AUTHORITY_LOG row is judged beside the snapshot's others, as a
     // carrier's are (FIX 11959).
