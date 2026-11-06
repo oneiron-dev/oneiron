@@ -119,7 +119,8 @@ pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
     ExposureKind, ExposureSlot, ReplayRoutePin, StepReplayCapsule, StoredSpan, TaskExposure,
-    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
+    WorkflowCaptureHandle, capture_workflow_step, finalize_step_captures, note_answering_route_pin,
+    note_answering_rung,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub use self::repo_calls::RepoRunCall;
@@ -263,8 +264,7 @@ pub use self::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
     SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind, SelfTaskRefusalResult,
-    SelfTaskRefuseCall, SelfWakePolicyWriteCall,
-    peer_result_wait,
+    SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
