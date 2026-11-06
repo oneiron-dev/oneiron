@@ -214,16 +214,16 @@ pub use self::judge_swap::{
 pub(crate) use self::judge_swap::{
     judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask, swap_case_retest_picked,
 };
+pub(crate) use self::labels::{
+    CanonicalJudgeLabel, canonical_judge_label_in_txn, judge_ask_room, recheck_judge_labels,
+    take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+};
 pub use self::labels::{
     JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelReadPosition,
     JudgeLabelRecheck, JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade,
     JudgeRegrade, JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
     judge_label_anchor, judge_rubric, record_judge_label_regrade, record_judge_pick,
     set_judge_digest_minutes,
-};
-pub(crate) use self::labels::{
-    CanonicalJudgeLabel, canonical_judge_label_in_txn, judge_ask_room, recheck_judge_labels,
-    take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
@@ -285,6 +285,11 @@ pub use gate::{
     supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
+    CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
+    canonical_skill_edit_verdict_in_txn, skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn,
+    verdict_rows_sourced_observed_in_txn,
+};
+pub(crate) use gate::{
     SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,
     ensure_current_judge_in_txn, optimizer_birth_marker_for_create_in_txn,
     project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
@@ -294,7 +299,6 @@ pub(crate) use gate::{
     with_optimized_skill_admission,
 };
 pub(crate) use gate::{project_axes, project_rules_for_record};
-pub(crate) use gate::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
