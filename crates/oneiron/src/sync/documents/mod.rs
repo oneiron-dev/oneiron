@@ -10,6 +10,7 @@
 mod destination;
 mod entity;
 mod held_copy;
+mod note_fork_upload;
 mod note_requests;
 pub(crate) mod note_state;
 pub use super::selector::secret_projection::RepoCopyEditReview;
@@ -295,6 +296,29 @@ impl DocumentRegistry {
         if let Ok(frame) = encode_document(id, document_sub_tags::UPDATE, &[]).into_result() {
             let _ = self.notices.send(frame);
         }
+    }
+
+    /// A fork change of the NOTE `id` (FIX 12789), as an invalidation: each
+    /// owner-lane recipient reads the NOTE's forks again before it sends.
+    pub(crate) fn notify_note_forks(&self, id: EntityId) {
+        if let Ok(frame) = encode_document(id, document_sub_tags::NOTE_FORK_SET, &[]).into_result()
+        {
+            let _ = self.notices.send(frame);
+        }
+    }
+
+    /// The owner lane's frames for the pending forks of the NOTE `id` (FIX
+    /// 12789): each fork's state, then their set, under the owner admission
+    /// the NOTE's text takes for the machine `withhold` names.
+    pub(crate) fn export_owner_note_forks(
+        &self,
+        id: EntityId,
+        withhold: super::window::Withhold<'_>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let txn = self.vault.store.env.read_txn()?;
+        owner_note_admission_for(&self.vault, &txn, id, withhold)?;
+        let withheld = withhold.worlds_in(&self.vault, &txn)?;
+        crate::note::authority_fork_frames_in_txn(&self.vault, &txn, id, &withheld)
     }
     pub fn resident_count(&self) -> usize {
         self.residents
