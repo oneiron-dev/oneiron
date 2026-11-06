@@ -185,6 +185,11 @@ pub enum StreamPart {
 }
 
 impl BrokerConnection {
+    /// The connection's socket and its reply timeout, for a git exchange.
+    pub(crate) fn into_parts(self) -> (UnixStream, Duration) {
+        (self.stream, self.reply_timeout)
+    }
+
     /// Sends one call with its key, and waits for the whole answer. The
     /// daemon's copy of the key is wiped once the frame is written. A reply
     /// for another call or digest counts as lost. A streamed body the broker
