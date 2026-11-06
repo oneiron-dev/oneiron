@@ -469,3 +469,27 @@ pub(crate) fn rewrite_mirrors_in_txn(
     }
     Ok(())
 }
+
+/// Whether `found` holds of any sealed mirror this vault keeps, read in
+/// `txn` (FIX 17210 follow-up): what an erase asks before it is complete. A
+/// mirror whose bytes do not rebuild proves nothing gone, so it counts.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn any_mirror_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    mut found: impl FnMut(&LoroDoc) -> bool,
+) -> Result<bool> {
+    for key in MIRROR.scan_keys(&vault.store, txn, b"")? {
+        let Some(snapshot) = MIRROR.get(&vault.store, txn, &key)? else {
+            continue;
+        };
+        let doc = LoroDoc::new();
+        if import_doc(&doc, &snapshot).is_err() || found(&doc) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
