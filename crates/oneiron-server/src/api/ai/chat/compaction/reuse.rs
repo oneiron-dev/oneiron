@@ -26,7 +26,9 @@ use oneiron::conversation::{
 use oneiron::memory::Memory;
 use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, Vault, WriteActor};
 
-use super::{AnswerBreakpoint, ChatEntry, SelfChat, digest_hex, hex, message_text, self_chat};
+use super::{
+    AnswerBreakpoint, BreakpointLog, ChatEntry, SelfChat, digest_hex, hex, message_text, self_chat,
+};
 use crate::ai_host::{AiHandle, CHAT_ROLE, ChatSelfMode};
 use crate::api::ai::chat::{CONTINUE_INSTRUCTION, TurnSources, text_message, turn_opener};
 use crate::models::RoleCall;
@@ -190,7 +192,7 @@ pub(crate) fn reuse_chat_breakpoint(
         },
         breakpoint: AnswerBreakpoint {
             mode,
-            log,
+            log: log.map(BreakpointLog::Compact),
             locality,
             reader: WriteActor::new(actor, class),
             instructions_digest: seed.instructions_digest.clone(),

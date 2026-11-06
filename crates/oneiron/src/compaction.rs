@@ -86,7 +86,8 @@ pub use folds::{
 pub use conversation::{
     ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
-    read_action_chat_log, read_chat_log, read_first_chat_log, seal_conversation_flight,
+    read_action_chat_log, read_action_pinned_log, read_chat_log, read_first_chat_log,
+    seal_conversation_flight,
 };
 pub(crate) use conversation::{
     FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
