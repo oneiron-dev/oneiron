@@ -20,7 +20,7 @@ mod scoped_files;
 mod snapshot;
 mod walk;
 
-pub(crate) use self::coreutils_text::{checkpoint, copy_text_parts};
+pub(crate) use self::coreutils_text::{checkpoint, copy_text_parts, copy_utf8_field};
 pub use self::readdir::GraphFsFileRead;
 pub use self::snapshot::GraphFsReference;
 
