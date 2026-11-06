@@ -1,0 +1,560 @@
+//! The CalDAV wire of the pack's calendar sources (fix list row 16307;
+//! MAIL-PROVIDERS = A): one calendar collection of an iCloud, Fastmail,
+//! Nextcloud or other CalDAV account (RFC 4791, RFC 6578), over
+//! `reqwest::blocking`.
+//!
+//! - **Credential.** The source's custody record, read at its door with
+//!   effector `connector:caldav_calendar`, is JSON: `url` (the account's
+//!   CalDAV server over HTTPS, for example `https://caldav.icloud.com/`),
+//!   `username`, `password` (an app password where the provider offers one),
+//!   and `calendar` (the collection's display name or href; when absent, the
+//!   first collection that holds events). The source's provider account is
+//!   `<username>@<host>`, the host the URL's: a credential for another
+//!   account never fills it.
+//! - **One origin.** Every request goes to the URL's origin over HTTPS, with
+//!   no redirects; an href the server answers with that leaves the origin is
+//!   refused.
+//! - **Listing.** Discovery (`current-user-principal`, `calendar-home-set`,
+//!   the collection), then the collection's sync token, then its members
+//!   read 200 a page in href order by `calendar-multiget`. Once the listing
+//!   ends, the changes after the token its first page took are read, so a
+//!   change made while it listed is read again.
+//! - **Changes.** `sync-collection` from the token: a removed member is a
+//!   delete, by the UID landed for it; a changed one is read again whole. A
+//!   token the server no longer honours lists the calendar again.
+//!
+//! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
+
+use std::collections::BTreeSet;
+use std::fmt::Write as _;
+use std::io::Read;
+use std::ops::Bound;
+
+use base64::Engine as _;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use reqwest::{Method, Url};
+use serde::{Deserialize, Serialize};
+
+use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire, landed_uid};
+use super::credential::WireReads;
+use super::dav_xml::{self, CAL, DAV, Node, status_code};
+use super::rest::{self, refused};
+use super::source::MailProvider;
+use super::wire::MailSyncSource;
+use crate::Vault;
+use crate::calendar::{RemoteCalendarChange, RemoteCalendarObject};
+use crate::error::{Error, Result};
+
+/// The custody effector a CalDAV calendar credential is bound to.
+pub const CALDAV_CALENDAR_CONNECTOR_EFFECTOR: &str = "connector:caldav_calendar";
+
+/// The largest DAV answer read.
+const MAX_DAV_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
+/// The members one listing page reads.
+const LIST_PAGE: usize = 200;
+/// The members one `calendar-multiget` reads.
+const MULTIGET_BATCH: usize = 100;
+/// The longest href taken from a server.
+const MAX_HREF_BYTES: usize = 2_048;
+
+/// The custody record of a CalDAV calendar source.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CalDavCredential {
+    url: String,
+    username: String,
+    password: String,
+    #[serde(default)]
+    calendar: Option<String>,
+}
+
+/// Where a CalDAV calendar source's pulls stand.
+#[derive(Debug, Serialize, Deserialize)]
+struct CalDavCursor {
+    /// The calendar collection's URL.
+    calendar: String,
+    /// The sync token changes are read from: the one the listing's first
+    /// page took, then the one each change read answered.
+    token: String,
+    /// While the listing runs, the last member it read (empty before its
+    /// first page); `None` once it ended.
+    #[serde(default)]
+    listed: Option<String>,
+}
+
+/// Host-side CalDAV calendar wire over `reqwest::blocking`.
+pub struct HttpCalDavCalendarWire<'v> {
+    vault: &'v Vault,
+    client: reqwest::blocking::Client,
+}
+
+impl<'v> HttpCalDavCalendarWire<'v> {
+    /// Builds the wire: HTTPS only, no redirects, a 60 s timeout.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the TLS client cannot be built.
+    pub fn new(vault: &'v Vault) -> Result<Self> {
+        Ok(Self {
+            vault,
+            client: rest::https_client()?,
+        })
+    }
+}
+
+/// What one `sync-collection` answered.
+struct Synced {
+    token: String,
+    changed: Vec<String>,
+    removed: Vec<String>,
+    /// Whether the server cut the answer short: more changes follow from
+    /// its token.
+    truncated: bool,
+}
+
+/// The account a credential opens: its server's origin and its Basic
+/// authorization.
+struct Account<'c> {
+    client: &'c reqwest::blocking::Client,
+    base: Url,
+    authorization: HeaderValue,
+}
+
+impl<'c> Account<'c> {
+    /// Opens the account the credential `secret` names for `source`, and
+    /// the collection it selects.
+    fn open(
+        client: &'c reqwest::blocking::Client,
+        secret: &[u8],
+        source: &MailSyncSource,
+    ) -> Result<(Self, Option<String>)> {
+        let stored: CalDavCredential = serde_json::from_slice(secret)
+            .map_err(|_| refused("caldav_calendar_credential_unreadable"))?;
+        let invalid = || refused("caldav_calendar_credential_url_invalid");
+        let base = Url::parse(stored.url.trim()).map_err(|_| invalid())?;
+        if base.scheme() != "https"
+            || !base.username().is_empty()
+            || base.password().is_some()
+            || base.query().is_some()
+            || base.fragment().is_some()
+        {
+            return Err(invalid());
+        }
+        let host = base.host_str().ok_or_else(invalid)?.to_ascii_lowercase();
+        // The credential reads the account the source names, and no other:
+        // its user exactly, as a server may tell case apart, and its host.
+        let reads_account =
+            source
+                .provider_account
+                .rsplit_once('@')
+                .is_some_and(|(user, named)| {
+                    user == stored.username && named.eq_ignore_ascii_case(&host)
+                });
+        if !reads_account {
+            return Err(refused("caldav_calendar_credential_reads_another_account"));
+        }
+        if stored.username.contains(':') {
+            return Err(refused("caldav_calendar_credential_username_unsupported"));
+        }
+        let basic = base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", stored.username, stored.password));
+        let mut authorization = HeaderValue::from_str(&format!("Basic {basic}"))
+            .map_err(|_| refused("caldav_calendar_credential_unreadable"))?;
+        authorization.set_sensitive(true);
+        Ok((
+            Self {
+                client,
+                base,
+                authorization,
+            },
+            stored.calendar,
+        ))
+    }
+
+    /// `href` resolved against the server, on its origin only.
+    fn url(&self, href: &str) -> Result<Url> {
+        if href.len() > MAX_HREF_BYTES {
+            return Err(refused("caldav_calendar_href_invalid"));
+        }
+        let url = self
+            .base
+            .join(href.trim())
+            .map_err(|_| refused("caldav_calendar_href_invalid"))?;
+        if url.origin() != self.base.origin()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(refused("caldav_calendar_href_leaves_the_server"));
+        }
+        Ok(url)
+    }
+
+    /// One DAV request: its status and its body, bounded.
+    fn dav(&self, method: &str, url: &Url, depth: &str, body: String) -> Result<(u16, Vec<u8>)> {
+        let method = Method::from_bytes(method.as_bytes())
+            .map_err(|_| refused("caldav_calendar_method_invalid"))?;
+        let response = self
+            .client
+            .request(method, url.clone())
+            .header(AUTHORIZATION, self.authorization.clone())
+            .header(CONTENT_TYPE, "application/xml; charset=utf-8")
+            .header("Depth", depth)
+            .body(body)
+            .send()
+            .map_err(|_| refused("caldav_calendar_transport_failed"))?;
+        let status = response.status().as_u16();
+        let mut bytes = Vec::new();
+        response
+            .take(MAX_DAV_RESPONSE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| refused("caldav_calendar_response_unreadable"))?;
+        if bytes.len() as u64 > MAX_DAV_RESPONSE_BYTES {
+            return Err(refused("caldav_calendar_response_too_large"));
+        }
+        Ok((status, bytes))
+    }
+
+    /// One DAV request answered by a `multistatus`.
+    fn multistatus(&self, method: &str, url: &Url, depth: &str, body: String) -> Result<Node> {
+        let (status, bytes) = self.dav(method, url, depth, body)?;
+        if status != 207 {
+            return Err(Error::InvalidConfig(format!(
+                "caldav_calendar_status_{status}"
+            )));
+        }
+        dav_xml::parse(&bytes).map_err(|_| refused("caldav_calendar_response_malformed"))
+    }
+
+    /// The href property `ns:name` of `url`.
+    fn href_property(&self, url: &Url, ns: &str, name: &str) -> Result<Url> {
+        let prefix = if ns == CAL { "c" } else { "d" };
+        let body = format!(
+            "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:prop><{prefix}:{name}/></d:prop></d:propfind>"
+        );
+        let document = self.multistatus("PROPFIND", url, "0", body)?;
+        let href = document
+            .children(DAV, "response")
+            .find_map(|response| response.property(ns, name)?.child(DAV, "href"))
+            .map(|href| href.text.trim().to_owned())
+            .ok_or_else(|| refused("caldav_calendar_discovery_failed"))?;
+        self.url(&href)
+    }
+
+    /// The calendar collection `wanted` names (its display name, href or
+    /// URL), else the first collection, in href order, that holds events.
+    fn discover(&self, wanted: Option<&str>) -> Result<Url> {
+        let principal = self.href_property(&self.base, DAV, "current-user-principal")?;
+        let home = self.href_property(&principal, CAL, "calendar-home-set")?;
+        let body = format!(
+            "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/></d:prop></d:propfind>"
+        );
+        let document = self.multistatus("PROPFIND", &home, "1", body)?;
+        let mut calendars = Vec::new();
+        for response in document.children(DAV, "response") {
+            let calendar = response
+                .property(DAV, "resourcetype")
+                .and_then(|kind| kind.child(CAL, "calendar"))
+                .is_some();
+            let Some(href) = response.child(DAV, "href").filter(|_| calendar) else {
+                continue;
+            };
+            let url = self.url(&href.text)?;
+            let name = response
+                .property(DAV, "displayname")
+                .map(|name| name.text.trim().to_owned());
+            // A collection that names its components holds events only
+            // when VEVENT is among them.
+            let events = response
+                .property(CAL, "supported-calendar-component-set")
+                .is_none_or(|set| {
+                    set.children(CAL, "comp").any(|comp| {
+                        comp.attribute("name")
+                            .is_some_and(|component| component.eq_ignore_ascii_case("VEVENT"))
+                    })
+                });
+            calendars.push((url, name, events));
+        }
+        calendars.sort();
+        let chosen = match wanted.map(str::trim) {
+            Some(wanted) => {
+                let named = self.url(wanted).ok();
+                calendars.into_iter().find(|(url, name, _)| {
+                    named.as_ref() == Some(url) || name.as_deref() == Some(wanted)
+                })
+            }
+            None => calendars.into_iter().find(|(_, _, events)| *events),
+        };
+        chosen
+            .map(|(url, _, _)| url)
+            .ok_or_else(|| refused("caldav_calendar_collection_not_found"))
+    }
+
+    /// The collection's current sync token (RFC 6578 `DAV:sync-token`).
+    fn sync_token(&self, calendar: &Url) -> Result<String> {
+        let body = "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:sync-token/></d:prop></d:propfind>";
+        let document = self.multistatus("PROPFIND", calendar, "0", body.to_owned())?;
+        document
+            .children(DAV, "response")
+            .find_map(|response| response.property(DAV, "sync-token"))
+            .map(|token| token.text.trim().to_owned())
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| refused("caldav_calendar_server_keeps_no_sync_token"))
+    }
+
+    /// The collection's members, in href order.
+    fn members(&self, calendar: &Url) -> Result<BTreeSet<String>> {
+        let body = "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/><d:getetag/></d:prop></d:propfind>";
+        let document = self.multistatus("PROPFIND", calendar, "1", body.to_owned())?;
+        let mut members = BTreeSet::new();
+        for response in document.children(DAV, "response") {
+            let Some(href) = response.child(DAV, "href") else {
+                continue;
+            };
+            let url = self.url(&href.text)?;
+            let collection = response
+                .property(DAV, "resourcetype")
+                .and_then(|kind| kind.child(DAV, "collection"))
+                .is_some();
+            if url != *calendar && !collection {
+                members.insert(url.to_string());
+            }
+        }
+        Ok(members)
+    }
+
+    /// The changes after `token` (`sync-collection`); `None` when the server
+    /// no longer honours it.
+    fn sync(&self, calendar: &Url, token: &str) -> Result<Option<Synced>> {
+        let body = format!(
+            "<d:sync-collection xmlns:d=\"DAV:\"><d:sync-token>{}</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>",
+            dav_xml::escape(token)
+        );
+        let (status, bytes) = self.dav("REPORT", calendar, "0", body)?;
+        if matches!(status, 403 | 409 | 410) {
+            return Ok(None);
+        }
+        if status != 207 {
+            return Err(Error::InvalidConfig(format!(
+                "caldav_calendar_status_{status}"
+            )));
+        }
+        let document =
+            dav_xml::parse(&bytes).map_err(|_| refused("caldav_calendar_response_malformed"))?;
+        let token = document
+            .child(DAV, "sync-token")
+            .map(|token| token.text.trim().to_owned())
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| refused("caldav_calendar_sync_token_absent"))?;
+        let mut synced = Synced {
+            token,
+            changed: Vec::new(),
+            removed: Vec::new(),
+            truncated: false,
+        };
+        for response in document.children(DAV, "response") {
+            let Some(href) = response.child(DAV, "href") else {
+                continue;
+            };
+            let url = self.url(&href.text)?;
+            let status = response
+                .child(DAV, "status")
+                .and_then(|status| status_code(&status.text));
+            if url == *calendar {
+                synced.truncated |= status == Some(507);
+                continue;
+            }
+            match status {
+                Some(404 | 410) => synced.removed.push(url.to_string()),
+                _ => synced.changed.push(url.to_string()),
+            }
+        }
+        Ok(Some(synced))
+    }
+
+    /// The events of the members `hrefs`, each whole (`calendar-multiget`).
+    /// A member gone meanwhile, one that holds no event (a task), or one
+    /// that does not read as a calendar lands nothing.
+    fn multiget(&self, calendar: &Url, hrefs: &[String]) -> Result<Vec<RemoteCalendarObject>> {
+        if hrefs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut body = format!(
+            "<c:calendar-multiget xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:prop><d:getetag/><c:calendar-data/></d:prop>"
+        );
+        for href in hrefs {
+            let url = self.url(href)?;
+            let _ = write!(body, "<d:href>{}</d:href>", dav_xml::escape(url.path()));
+        }
+        body.push_str("</c:calendar-multiget>");
+        let document = self.multistatus("REPORT", calendar, "1", body)?;
+        let mut objects = Vec::new();
+        for response in document.children(DAV, "response") {
+            let Some(href) = response.child(DAV, "href") else {
+                continue;
+            };
+            let href = self.url(&href.text)?.to_string();
+            let Some(data) = response.property(CAL, "calendar-data") else {
+                continue;
+            };
+            let ics = data.text.as_bytes().to_vec();
+            let Ok(feed) = crate::calendar::parse_ics_feed(&ics) else {
+                continue;
+            };
+            let Some(event) = feed.events.first() else {
+                continue;
+            };
+            objects.push(RemoteCalendarObject {
+                href,
+                etag: response
+                    .property(DAV, "getetag")
+                    .map(|etag| etag.text.trim().to_owned()),
+                uid: event.uid.clone(),
+                sequence: event.sequence,
+                content_hash: event.content_hash,
+                ics,
+            });
+        }
+        Ok(objects)
+    }
+}
+
+impl HttpCalDavCalendarWire<'_> {
+    /// One pull through the open `account`: the listing's next page, or the
+    /// changes after the cursor's token.
+    fn read(
+        &self,
+        account: &Account<'_>,
+        source: &MailSyncSource,
+        wanted: Option<&str>,
+        cursor: Option<CalDavCursor>,
+    ) -> Result<MailCalendarRead> {
+        let cursor = match cursor {
+            Some(cursor) => cursor,
+            None => {
+                let calendar = account.discover(wanted)?;
+                let token = account.sync_token(&calendar)?;
+                CalDavCursor {
+                    calendar: calendar.to_string(),
+                    token,
+                    listed: Some(String::new()),
+                }
+            }
+        };
+        let calendar = account.url(&cursor.calendar)?;
+        let (changes, next, complete) = match &cursor.listed {
+            Some(after) => list_page(account, &calendar, cursor.token, after)?,
+            None => match self.changes(account, source, &calendar, &cursor.token)? {
+                Some(read) => read,
+                None => return Ok(MailCalendarRead::Expired),
+            },
+        };
+        Ok(MailCalendarRead::Pull(MailCalendarPull {
+            changes,
+            next_cursor: Some(
+                serde_json::to_string(&next)
+                    .map_err(|_| refused("caldav_calendar_cursor_unencodable"))?,
+            ),
+            complete,
+            covers: None,
+        }))
+    }
+
+    /// The changes after `token`: each changed member read whole, then each
+    /// removed one as the delete of the UID landed for it, unless that UID
+    /// is read again under another member. `None` when the server no longer
+    /// honours the token.
+    fn changes(
+        &self,
+        account: &Account<'_>,
+        source: &MailSyncSource,
+        calendar: &Url,
+        token: &str,
+    ) -> Result<Option<(Vec<RemoteCalendarChange>, CalDavCursor, bool)>> {
+        let Some(synced) = account.sync(calendar, token)? else {
+            return Ok(None);
+        };
+        let mut changes = Vec::new();
+        let mut read_again = BTreeSet::new();
+        for batch in synced.changed.chunks(MULTIGET_BATCH) {
+            for object in account.multiget(calendar, batch)? {
+                read_again.insert(object.uid.clone());
+                changes.push(RemoteCalendarChange::Upsert(object));
+            }
+        }
+        for href in synced.removed {
+            if let Some(uid) = landed_uid(self.vault, source.source_ref, &href)?
+                && !read_again.contains(&uid)
+            {
+                changes.push(RemoteCalendarChange::Delete { href, uid });
+            }
+        }
+        let next = CalDavCursor {
+            calendar: calendar.to_string(),
+            token: synced.token,
+            listed: None,
+        };
+        Ok(Some((changes, next, !synced.truncated)))
+    }
+}
+
+/// The listing's next page after the member `after`: up to `LIST_PAGE`
+/// members read whole. The last page ends the listing, and the cursor then
+/// follows the changes after `token`.
+fn list_page(
+    account: &Account<'_>,
+    calendar: &Url,
+    token: String,
+    after: &str,
+) -> Result<(Vec<RemoteCalendarChange>, CalDavCursor, bool)> {
+    let members = account.members(calendar)?;
+    let mut page: Vec<String> = members
+        .range::<str, _>((Bound::Excluded(after), Bound::Unbounded))
+        .take(LIST_PAGE + 1)
+        .cloned()
+        .collect();
+    let more = page.len() > LIST_PAGE;
+    page.truncate(LIST_PAGE);
+    let mut changes = Vec::new();
+    for batch in page.chunks(MULTIGET_BATCH) {
+        changes.extend(
+            account
+                .multiget(calendar, batch)?
+                .into_iter()
+                .map(RemoteCalendarChange::Upsert),
+        );
+    }
+    let next = CalDavCursor {
+        calendar: calendar.to_string(),
+        token,
+        listed: if more { page.pop() } else { None },
+    };
+    Ok((changes, next, !more))
+}
+
+impl MailCalendarWire for HttpCalDavCalendarWire<'_> {
+    fn pull(&self, source: &MailSyncSource, cursor: Option<&str>) -> Result<MailCalendarRead> {
+        if source.provider != MailProvider::Caldav {
+            return Err(refused("caldav_calendar_wire_reads_caldav_sources_only"));
+        }
+        let mut cursor: Option<CalDavCursor> = cursor
+            .map(|cursor| {
+                serde_json::from_str(cursor)
+                    .map_err(|_| refused("caldav_calendar_cursor_unreadable"))
+            })
+            .transpose()?;
+        let mut read: Option<MailCalendarRead> = None;
+        let _receipt = self.vault.with_source_token_at_door(
+            source,
+            WireReads::Calendar,
+            CALDAV_CALENDAR_CONNECTOR_EFFECTOR,
+            &mut |secret: &[u8]| {
+                let (account, wanted) = Account::open(&self.client, secret, source)?;
+                read = Some(self.read(&account, source, wanted.as_deref(), cursor.take())?);
+                Ok(())
+            },
+        )?;
+        read.ok_or_else(|| refused("caldav_calendar_credential_door_refused"))
+    }
+}

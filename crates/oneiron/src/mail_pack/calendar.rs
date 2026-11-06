@@ -501,18 +501,25 @@ impl Vault {
     ) -> MemoryResult<Vec<String>> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         let mut omitted = std::collections::BTreeSet::new();
+        // A UID the listing saw under any resource is not omitted, though an
+        // older resource of it (one its provider moved) was not seen.
+        let mut seen = std::collections::BTreeSet::new();
         for row in CALENDAR_RESOURCES.iter_from(&self.store, &txn, source.as_bytes())? {
             let (_, resource) = row?;
+            if resource.listing >= listing {
+                seen.insert(resource.uid);
+                continue;
+            }
             let covered = covers.is_none_or(|covered| {
                 resource
                     .span
                     .is_some_and(|(start, end)| start <= covered.end && end >= covered.start)
             });
-            if resource.listing < listing && covered {
+            if covered {
                 omitted.insert(resource.uid);
             }
         }
-        Ok(omitted.into_iter().collect())
+        Ok(omitted.difference(&seen).cloned().collect())
     }
 
     /// Forgets the source's resources carrying the UIDs `uids`.
