@@ -65,6 +65,7 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
+pub(crate) use super::shared_replica_doors::*;
 // The shared-act policy doors (DOOR-129) too.
 pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.

@@ -1741,6 +1741,16 @@ export_facade! {
     let output = client.vault_members_invitations(&input)?;
     crate::codec::lift_record("vault.members.invitations", &output)
 };
+"vault.members.replica_manifest" => fn vault_members_replica_manifest(&self, input: SharedReplicaManifestRequest) -> SharedReplicaManifest = |client| {
+    let input: oneiron::task_verb::sdk::SharedReplicaManifestRequest = crate::codec::lower_record("vault.members.replica_manifest", input)?;
+    let output = client.vault_members_replica_manifest(&input)?;
+    crate::codec::lift_record("vault.members.replica_manifest", &output)
+};
+"vault.members.replica_window" => fn vault_members_replica_window(&self, input: SharedReplicaWindowRequest) -> SharedReplicaWindow = |client| {
+    let input: oneiron::task_verb::sdk::SharedReplicaWindowRequest = crate::codec::lower_record("vault.members.replica_window", input)?;
+    let output = client.vault_members_replica_window(&input)?;
+    crate::codec::lift_record("vault.members.replica_window", &output)
+};
 "vault.members.accept" => fn vault_members_accept(&self, input: SharedInvitationRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::lower_record("vault.members.accept", input)?;
     let output = client.vault_members_accept(&input)?;

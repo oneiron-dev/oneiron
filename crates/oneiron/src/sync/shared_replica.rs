@@ -3,6 +3,13 @@
 //! The caller retains the actual HTTPS source and selected target lifecycle.
 //! This door does not turn decoded input into transport provenance.
 
+pub(crate) mod source;
+mod wire;
+pub use source::{
+    SharedReplicaManifest, SharedReplicaManifestRequest, SharedReplicaWindow,
+    SharedReplicaWindowRequest,
+};
+
 use crate::authority::CapabilitySlip;
 use crate::authority::shared_replica_bootstrap::PreparedSharedReplicaAuthority;
 use crate::federation::FederationGrantScope;

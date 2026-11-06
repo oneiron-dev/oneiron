@@ -56,6 +56,7 @@ pub use membership_gate::SharedVaultWrite;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) use membership_gate::{
+    FIRST_PARTY_MEMBER_ROLES,
     OwnedSharedVaultWriteInputs, SharedVaultWriteInputs,
     authenticated_grant_membership_for_store_in_txn,
 };

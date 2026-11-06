@@ -1472,6 +1472,10 @@ export class Oneiron {
       leave: (input: Facade.SharedVaultRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersLeave(input) as Facade.SharedActExecutionReceipt),
       /** The caller's own pending invitations into a shared vault. */
       invitations: (input: Facade.SharedVaultRequest): Facade.SharedInvitation[] => this.#call(() => this.#client.vaultMembersInvitations(input) as Facade.SharedInvitation[]),
+      /** The accepted member fetches admitted original signed history and the native replica window keys. */
+      replica_manifest: (input: Facade.SharedReplicaManifestRequest): Facade.SharedReplicaManifest => this.#call(() => this.#client.vaultMembersReplicaManifest(input) as Facade.SharedReplicaManifest),
+      /** The accepted member fetches one native window under its current logical shared-vault grant. */
+      replica_window: (input: Facade.SharedReplicaWindowRequest): Facade.SharedReplicaWindow => this.#call(() => this.#client.vaultMembersReplicaWindow(input) as Facade.SharedReplicaWindow),
       /** The invitee accepts their own invitation and joins the shared vault at its role. */
       accept: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAccept(input) as Facade.SharedActExecutionReceipt),
       /** The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged. */

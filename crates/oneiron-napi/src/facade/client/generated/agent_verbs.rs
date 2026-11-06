@@ -2991,6 +2991,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_members_replica_manifest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.replica_manifest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_replica_window(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.replica_window", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_members_accept(
         &self,
         input: serde_json::Value,

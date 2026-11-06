@@ -1803,6 +1803,10 @@ class Oneiron:
             """A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."""
         def invitations(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedInvitation]:
             """The caller's own pending invitations into a shared vault."""
+        def replica_manifest(self, spec: Facade.SharedReplicaManifestRequest) -> Facade.SharedReplicaManifest:
+            """The accepted member fetches admitted original signed history and the native replica window keys."""
+        def replica_window(self, spec: Facade.SharedReplicaWindowRequest) -> Facade.SharedReplicaWindow:
+            """The accepted member fetches one native window under its current logical shared-vault grant."""
         def accept(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee accepts their own invitation and joins the shared vault at its role."""
         def accept_with_credential(self, spec: Facade.SharedInvitationAcceptWithCredentialRequest) -> Facade.SharedInvitationAcceptedWithCredential:
