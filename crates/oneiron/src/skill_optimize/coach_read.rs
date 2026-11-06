@@ -13,8 +13,7 @@ use super::gate::{
 /// to a later reader. It is deliberately absent from the id-only source union.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct NativeVerdictSources {
-    pub(crate) prefix: &'static [u8],
-    pub(crate) rows: Vec<CanonicalSkillEditVerdict>,
+    pub(crate) source: crate::store::attempt_sources::NativeReadSource,
     pub(crate) receipt: ScopedReadReceipt,
 }
 
@@ -74,8 +73,10 @@ impl CoachReadRequest {
             Ok((
                 verdicts,
                 Some(NativeVerdictSources {
-                    prefix,
-                    rows,
+                    source: crate::store::attempt_sources::NativeReadSource::SkillEditVerdictScan {
+                        prefix: prefix.to_vec(),
+                        rows: rows.iter().map(CanonicalSkillEditVerdict::source).collect(),
+                    },
                     receipt,
                 }),
             ))

@@ -41,6 +41,19 @@ impl CanonicalSkillEditVerdict {
     pub(crate) fn into_verdict(self) -> HeldOutVerdict {
         self.verdict
     }
+
+    pub(crate) fn source(&self) -> crate::store::attempt_sources::SkillEditVerdictSource {
+        crate::store::attempt_sources::SkillEditVerdictSource {
+            id: self.verdict.id,
+            key: self.key.clone(),
+            body_hash: *blake3::hash(&self.body).as_bytes(),
+            displacement_key: self.displacement_key.clone(),
+            displacement_hash: self
+                .displacement_body
+                .as_deref()
+                .map(|bytes| *blake3::hash(bytes).as_bytes()),
+        }
+    }
 }
 
 /// The actual native primary row and the marker its normal decoder consults.
