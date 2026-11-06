@@ -27,7 +27,10 @@ use crate::world_keys::WorldKeyId;
 
 #[cfg(feature = "sync")]
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
-pub(crate) use self::window::{WindowPadProjection, project_window_pad_refs};
+pub(crate) use self::window::{
+    WindowClaimSource, WindowClaimSourceSite, WindowPadProjection, project_window_pad_refs,
+    with_window_claim_sources,
+};
 
 /// What a caller does with a projection fault (CALLS: PAD_CAPTURE_FAULT,
 /// ruled by the Engine 10-22).
@@ -446,5 +449,149 @@ mod window {
                 Err(fault("a window blob of an outdated kind"))
             }
         }
+    }
+
+    /// The original position of a carried CLAIM value, not a read grant.
+    #[derive(Clone, Copy, Debug)]
+    pub(crate) enum WindowClaimSourceSite<'a> {
+        Operation(ID),
+        ShallowRoot(&'a loro::checkpoint::Winner),
+    }
+
+    /// A borrowed original CLAIM row at one carried position. Repeated uses
+    /// stay separate, even when they share a payload atom or an entity id.
+    pub(crate) struct WindowClaimSource<'a> {
+        pub(crate) entity_id: EntityId,
+        pub(crate) key: &'a str,
+        pub(crate) raw: &'a [u8],
+        pub(crate) site: WindowClaimSourceSite<'a>,
+    }
+
+    fn claim_source_at<'a>(
+        parts: &'a Parts,
+        root: u32,
+        key: &'a str,
+        value: Option<AtomId>,
+        site: WindowClaimSourceSite<'a>,
+    ) -> Result<Option<WindowClaimSource<'a>>> {
+        if parts.skeleton.roots.get(root as usize).map(String::as_str) != Some(ROWS) {
+            return Ok(None);
+        }
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        let atom = usize::try_from(value)
+            .ok()
+            .and_then(|index| parts.atoms.get(index))
+            .filter(|atom| atom.id == value)
+            .ok_or_else(|| fault("a carried row without its captured value"))?;
+        let Payload::Value(LoroValue::Binary(raw)) = &atom.payload else {
+            return Ok(None);
+        };
+        if !crate::batch::EntityMetadataHeader::parse(raw)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        {
+            return Ok(None);
+        }
+        let entity_id = EntityId::from_hex(key)
+            .map_err(|_| fault("a carried CLAIM row under a key that is no id"))?;
+        Ok(Some(WindowClaimSource {
+            entity_id,
+            key,
+            raw,
+            site,
+        }))
+    }
+
+    /// Visits the full original row bytes of every carried CLAIM insert:
+    /// retained operations and the actual shallow root for snapshots, only
+    /// the update's own operation spans for updates. Latest-state winners
+    /// and dependency-only values are never substituted for carried bytes.
+    ///
+    /// Capture, span checks and source-key validation finish before the first
+    /// visit. The callback borrows the capture; no source row is cloned here.
+    /// A callback error may follow earlier visits, so callers must discard
+    /// their partial optional-copy preparation, not refuse the raw carrier.
+    /// These bytes and positions are data, not source or destination authority.
+    /// Body, model, lifecycle and release checks remain at the native send door.
+    pub(crate) fn with_window_claim_sources(
+        encoded: &[u8],
+        context: Option<&LoroDoc>,
+        mut visit: impl FnMut(WindowClaimSource<'_>) -> Result<()>,
+    ) -> Result<()> {
+        let metadata = meta(encoded)?;
+        let (parts, update_spans) = match metadata.mode {
+            EncodedBlobMode::Snapshot | EncodedBlobMode::ShallowSnapshot => {
+                let doc = LoroDoc::from_snapshot(encoded)
+                    .map_err(|_| fault("a window snapshot that does not open"))?;
+                (parts_of(&doc)?, None)
+            }
+            EncodedBlobMode::Updates => {
+                let scratch = match context {
+                    Some(context) => isolated(context)?,
+                    None => LoroDoc::new(),
+                };
+                let status = scratch
+                    .import(encoded)
+                    .map_err(|_| fault("a window update that does not import"))?;
+                let held = scratch.oplog_vv();
+                let complete = metadata
+                    .partial_end_vv
+                    .iter()
+                    .all(|(peer, end)| held.get(peer).is_some_and(|held| held >= end));
+                if status.pending.is_some() || !complete {
+                    return Err(fault("a window update missing its dependency history"));
+                }
+                let own_spans = spans(&metadata);
+                let slice = scratch
+                    .export(ExportMode::updates_in_range(own_spans.clone()))
+                    .map_err(|_| fault("a window update whose slice does not export"))?;
+                if !same_span(&metadata, &meta(&slice)?, &EncodedBlobMode::Updates) {
+                    return Err(fault("a window update whose slice is another"));
+                }
+                (parts_of(&scratch)?, Some(own_spans))
+            }
+            EncodedBlobMode::OutdatedSnapshot | EncodedBlobMode::OutdatedRle => {
+                return Err(fault("a window blob of an outdated kind"));
+            }
+        };
+        let mut sources = Vec::new();
+        for change in &parts.skeleton.changes {
+            for (offset, op) in (0..).zip(&change.ops) {
+                let id = ID::new(change.peer, change.counter + offset);
+                if update_spans
+                    .as_ref()
+                    .is_some_and(|spans| !spans.iter().any(|span| span.contains(id)))
+                {
+                    continue;
+                }
+                if let Some(source) = claim_source_at(
+                    &parts,
+                    op.root,
+                    &op.key,
+                    op.value,
+                    WindowClaimSourceSite::Operation(id),
+                )? {
+                    sources.push(source);
+                }
+            }
+        }
+        if update_spans.is_none() {
+            for winner in parts.skeleton.shallow.iter().flat_map(|root| &root.winners) {
+                if let Some(source) = claim_source_at(
+                    &parts,
+                    winner.root,
+                    &winner.key,
+                    winner.value,
+                    WindowClaimSourceSite::ShallowRoot(winner),
+                )? {
+                    sources.push(source);
+                }
+            }
+        }
+        for source in sources {
+            visit(source)?;
+        }
+        Ok(())
     }
 }
