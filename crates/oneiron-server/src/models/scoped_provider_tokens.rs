@@ -5,8 +5,9 @@ use std::sync::Arc;
 use oneiron::agent_dispatch::{
     AgentDispatcher, ProviderLeaseTokenObservation, ProviderRunTokenObservation, SpendScopeId,
 };
+use oneiron::llm::ProviderTokenSnapshot;
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission, RunReceipt, RunReceiptSink};
-use oneiron::{AttemptId, BudgetGuard, Vault};
+use oneiron::{AttemptId, BudgetGuard, EntityId, Vault};
 
 use super::ModelRuntime;
 
@@ -44,6 +45,18 @@ impl RunReceiptSink for ScopedProviderTokens {
         }
     }
 
+    fn media_future_returned(&self, instance: EntityId, snapshot: &ProviderTokenSnapshot) {
+        self.inner.media_future_returned(instance, snapshot);
+        record_model_stage(
+            &self.vault,
+            &self.scope,
+            instance,
+            snapshot,
+            self.owner_attempt,
+            true,
+        );
+    }
+
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &oneiron::llm::BudgetDenied) {
         self.inner.budget_hit(seat, guard, denied);
     }
@@ -70,12 +83,20 @@ impl ModelRuntime {
             inner: Arc::clone(&self.receipts),
         });
         let run = super::raw::funded_run(run, meter, self.host.clone(), receipts.clone(), payer);
-        record_model_stage(&receipts.vault, &receipts.scope, &run, owner_attempt, false);
+        let snapshot = run.provider_token_snapshot();
+        record_model_stage(
+            &receipts.vault,
+            &receipts.scope,
+            run.instance(),
+            &snapshot,
+            owner_attempt,
+            false,
+        );
         run
     }
 }
 
-/// A scoped model ladder future returned. This is not a run seal or
+/// A scoped model future returned. This is not a run seal or
 /// a promise that no clone can admit more work or that all requests reported.
 pub(crate) fn record_scoped_model_return(
     vault: &Vault,
@@ -83,25 +104,26 @@ pub(crate) fn record_scoped_model_return(
     run: &RunAdmission,
     owner_attempt: Option<AttemptId>,
 ) {
-    record_model_stage(vault, scope, run, owner_attempt, true);
+    let snapshot = run.provider_token_snapshot();
+    record_model_stage(vault, scope, run.instance(), &snapshot, owner_attempt, true);
 }
 
 fn record_model_stage(
     vault: &Vault,
     scope: &SpendScopeId,
-    run: &RunAdmission,
+    instance: EntityId,
+    snapshot: &ProviderTokenSnapshot,
     owner_attempt: Option<AttemptId>,
     model_future_returned: bool,
 ) {
-    let snapshot = run.provider_token_snapshot();
     let observation = ProviderRunTokenObservation {
-        instance: run.instance(),
+        instance,
         owner_attempt,
         entry_recorded: !model_future_returned,
         model_future_returned,
     };
     if let Err(error) =
-        AgentDispatcher::new(vault).record_provider_run_tokens(scope, &snapshot, &observation)
+        AgentDispatcher::new(vault).record_provider_run_tokens(scope, snapshot, &observation)
     {
         tracing::warn!(
             kind = ?error.kind(),

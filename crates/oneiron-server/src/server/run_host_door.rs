@@ -183,22 +183,32 @@ impl RunHostDoor {
         self.server.config.git_door_base.clone()
     }
 
-    /// Binds the meter the run's next entry makes its model calls on, and
-    /// the payer they bill, so its `ai.speech` spends there too, as its other
-    /// model calls do (FIX 3194). `None` clears it once the entry ends.
-    pub(crate) fn bind_meter(&self, meter: Option<(BudgetGuard, Option<PayerPerson>)>) {
+    /// Binds the next entry's meter, payer and shared lease together, so its
+    /// `ai.speech` uses that entry's scope and observation owner too.
+    /// `None` clears the binding once the entry ends.
+    pub(crate) fn bind_meter(
+        &self,
+        meter: Option<(BudgetGuard, Option<PayerPerson>)>,
+        lease: Option<LeaseLine>,
+    ) {
+        let state = lease
+            .as_ref()
+            .map(|lease| lease.on(self.server.vault()).state());
         let line = meter.map(|(guard, payer)| {
-            self.server
-                .ai
-                .model_runtime()
-                .funded_run(self.run.clone(), guard, payer)
+            let runtime = self.server.ai.model_runtime();
+            match state.as_ref().and_then(|state| state.scope()) {
+                Some(scope) => runtime.funded_run_on_scope(
+                    self.run.clone(),
+                    guard,
+                    payer,
+                    Arc::clone(self.server.vault()),
+                    scope.clone(),
+                    state.as_ref().and_then(|state| state.owner_attempt()),
+                ),
+                None => runtime.funded_run(self.run.clone(), guard, payer),
+            }
         });
         *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
-    }
-
-    /// Binds the live lease the run's next entry books its scope's spend on
-    /// (FIX 11747). `None` clears it once the entry ends.
-    pub(crate) fn bind_lease(&self, lease: Option<LeaseLine>) {
         *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
     }
 

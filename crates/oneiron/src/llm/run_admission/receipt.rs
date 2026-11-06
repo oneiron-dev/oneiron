@@ -238,6 +238,17 @@ pub struct PermitFacts {
 pub trait RunReceiptSink: Send + Sync {
     fn record(&self, receipt: RunReceipt);
 
+    /// A checked media backend future actually returned, beside its run's
+    /// current meter snapshot. Not a sent call, run seal or coverage claim.
+    /// Sinks that keep no provider observations need no action.
+    fn media_future_returned(
+        &self,
+        instance: EntityId,
+        snapshot: &super::super::ProviderTokenSnapshot,
+    ) {
+        let _ = (instance, snapshot);
+    }
+
     /// A line the run draws on refused a reservation (`host.budget.hit`):
     /// `seat` is the model, connector or allocation it refused, and `guard`
     /// the line's meter. A sink with no vault runs no hooks.

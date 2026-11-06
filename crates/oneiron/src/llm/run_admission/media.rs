@@ -122,6 +122,7 @@ impl MediaGate {
         let answer = self.inner.run_progress(request, lease).await;
         let served = answer.as_ref().ok().and_then(served_model);
         opened.finish(served, answer.is_ok());
+        self.run.media_future_returned();
         answer
     }
 
@@ -149,6 +150,7 @@ impl MediaGate {
         }
         let served = answer.as_ref().ok().and_then(served_model);
         opened.finish(served, answer.is_ok());
+        self.run.media_future_returned();
         answer
     }
 
