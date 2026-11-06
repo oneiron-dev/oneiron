@@ -972,9 +972,7 @@ impl StepRunner {
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
                     .map(|(response, binding)| {
-                        if let Some(staged) = staged {
-                            staged.finalize(vault, binding.rung.clone(), binding.route.clone());
-                        }
+                        secret_use::finalize_capture(staged, vault, &binding);
                         StepConversation::Answered {
                             response,
                             binding,
