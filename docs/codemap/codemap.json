@@ -16316,7 +16316,7 @@
      "purpose": "Encoding and decoding of durable code-run replay records",
      "surface": {
       "const": 7,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -17617,7 +17617,7 @@
      "path": "src/code_run/storage/continuation.rs",
      "purpose": "A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -34184,6 +34184,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/continuation/seed.rs",
+     "purpose": "Child-owned frozen continuation state, kept as reply-bearing content",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "EngineNativeExecutor"
      ],
@@ -34323,7 +34333,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EnteredRun"
@@ -34331,7 +34341,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "fn": 2,
       "struct": 1
      }
@@ -89945,7 +89955,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90953,9 +90963,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 157,
+   "over_bar": 158,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6388,
+   "source_files": 6389,
    "test_files": 895
   },
   "oneiron-android": {

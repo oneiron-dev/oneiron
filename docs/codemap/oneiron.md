@@ -1369,7 +1369,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/agent_authoring.rs` | src | s | 2 crate-vis | — | Bounded guest definition request; actor, lease and approval stay host-owned |
 | `src/code_run/agent_authoring/tests.rs` | test | s | — | — | `vault.agents.put` from guest code through the SDK bridge into the leased host dispatcher: dispositions, no… |
 | `src/code_run/blocked.rs` | src | s | 2 struct · 1 enum · 4 fn · 6 crate-vis | BlockedCategory, BlockedReceipt, SelfReportBlockedCall | Witnessed, reference-addressed self-reports |
-| `src/code_run/codec.rs` | src | m | 2 fn · 7 const · 2 crate-vis | — | Encoding and decoding of durable code-run replay records |
+| `src/code_run/codec.rs` | src | m | 2 fn · 7 const · 3 crate-vis | — | Encoding and decoding of durable code-run replay records |
 | `src/code_run/compaction_fork.rs` | src | s | 3 struct · 1 enum · 14 fn · 2 const · 1 crate-vis | AdmittedLiveFork, CacheBoundary, LiveCompactionFork, LiveForkRung | The live fork (FIX 4465 C): a run's live request, captured at the breakpoint that seals a self-written… |
 | `src/code_run/compaction_home.rs` | src | m | 4 struct · 8 fn | CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome | The agent's home as its own compaction wears it (FIX 4465; the home is the self-model, voice, diary and… |
 | `src/code_run/consent.rs` | src | m | 6 struct · 2 enum · 9 fn · 3 const · 1 re-export · 1 crate-vis | BlastRadiusWalk, CodeConsentRequest, CodeEmissionAdmission, CodeEmissionContext, CodeSourceTrust, ConsentLane, ReviewContext, ReviewContextInput | Code-run trust lanes, review context and blast-radius evidence |
@@ -1469,7 +1469,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/spawn_replay.rs` | src | m | 18 crate-vis | — | The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for… |
 | `src/code_run/storage/compaction.rs` | src | m | 18 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
-| `src/code_run/storage/continuation.rs` | src | s | 5 crate-vis | — | A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the… |
+| `src/code_run/storage/continuation.rs` | src | s | 7 crate-vis | — | A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the… |
 | `src/code_run/storage/folds.rs` | src | s | 3 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
 | `src/code_run/storage/lift.rs` | src | s | 2 crate-vis | — | The S7 backfill (OF-067, Engine ruling D = a) |
 | `src/code_run/storage/mod.rs` | src | s | 6 re-export · 36 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
@@ -2786,6 +2786,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/compaction_host/pending.rs` | src | s | 1 crate-vis | — | Sealing one compaction window and returning its typed hook Pending |
 | `src/engine_executor/compaction_host/self_steps.rs` | src | s | 2 crate-vis | — | A flight's self-written passes, filed before any of them lands (FIX 4465 B): every paid call, a try the gate… |
 | `src/engine_executor/continuation.rs` | src | m | 3 struct · 1 enum · 7 fn · 3 crate-vis | ContinuationRefusal, ExecutorCheckpointRef, PreparedExecutorContinuation, RunContinuation | Prompt continuations of failed agent runs (FIX 3694, OF-568) |
+| `src/engine_executor/continuation/seed.rs` | src | m | 3 crate-vis | — | Child-owned frozen continuation state, kept as reply-bearing content |
 | `src/engine_executor/driver.rs` | src | m | 1 struct · 10 fn · 5 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
 | `src/engine_executor/history.rs` | src | s | 3 struct · 2 fn | FoldHistory, FoldHistoryEpoch, FoldHistoryStep | Durable steps and landed compaction boundaries of an attached run |
 | `src/engine_executor/host.rs` | src | m | 12 crate-vis | — | The recording JS host, its state and its runtime adapter |
@@ -2799,7 +2800,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/mod.rs` | src | s | 3 mod · 8 re-export · 6 crate-vis | — | Engine-native JS code-mode executor |
 | `src/engine_executor/program_entry.rs` | src | m | 5 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
 | `src/engine_executor/program_entry/injection.rs` | src | s | 5 crate-vis | — | The calls a resumed pinned entry answers instead of issuing them (DOOR-141 PR3b): each one an earlier entry… |
-| `src/engine_executor/record.rs` | src | m | 1 struct · 2 fn · 28 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/record.rs` | src | L | 1 struct · 2 fn · 30 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
 | `src/engine_executor/repl.rs` | src | m | 1 fn | — | The durable code-mode REPL orchestrator |
 | `src/engine_executor/repl/persistence.rs` | src | m | 4 crate-vis | — | Durable REPL record loading, failed-step appends and wait resumption |
 | `src/engine_executor/repl/request.rs` | src | m | 1 fn · 9 crate-vis | — | The model request of the REPL and its stored-output context projection |
