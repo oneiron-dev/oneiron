@@ -13,12 +13,13 @@
 //! The erased form is a typed map no live request spells: `{state: erased,
 //! cause: response_erased, identity: <32 bytes>}`. A spawn whose ask is a
 //! typed marker, an erased target's or a barrier's, keeps that marker as
-//! its `ask`, and its identity leaves the ask out, as its match does. An
-//! erased request meets a call by its identity alone: a hit answers with
-//! the call's own recorded outcome, and every other call drifts. It is
-//! never a wildcard and never a spawn's miss, so no fresh effect runs in
-//! its place. A live request keeps its full value and its `admitted_from`
-//! matching.
+//! its `ask`, and its identity leaves the ask out, as its match does. A
+//! verb call keeps its catalog verb's name as its `verb`, a text-free call
+//! fact a write's count and receipt read. An erased request meets a call
+//! by its identity alone: a hit answers with the call's own recorded
+//! outcome, and every other call drifts. It is never a wildcard and never
+//! a spawn's miss, so no fresh effect runs in its place. A live request
+//! keeps its full value and its `admitted_from` matching.
 
 use rmpv::Value;
 
@@ -31,22 +32,29 @@ use super::CodeRunBridgeCall;
 use crate::Result;
 use crate::batch::secret_scan::admission_form;
 use crate::code_run::RESPONSE_ERASED;
+use crate::task_verb::sdk::AgentVerb;
 
 /// The domain of a bridge request's identity digest.
 const REQUEST_IDENTITY_DOMAIN: &[u8] = b"oneiron:code-run:bridge-request-identity:v1";
 
-/// The keys of an erased request, in order. `ask` is a spawn's alone.
-const ERASED_REQUEST_KEYS: [&str; 4] = ["state", "cause", "identity", "ask"];
+/// The keys of an erased request, in order. `ask` is a spawn's alone and
+/// `verb` a verb call's.
+const ERASED_REQUEST_KEYS: [&str; 5] = ["state", "cause", "identity", "ask", VERB_KEY];
 
 /// The `state` an erased request names.
 const ERASED_STATE: &str = "erased";
 
-/// One erased request as a row stores it: the identity it keeps, and the
-/// typed ask of a spawn whose ask was one.
+/// The request key of a verb call's verb, and of its JSON input.
+const VERB_KEY: &str = "verb";
+const INPUT_KEY: &str = "input";
+
+/// One erased request as a row stores it: the identity it keeps, the typed
+/// ask of a spawn whose ask was one, and a verb call's catalog verb.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::code_run) struct ErasedRequest<'a> {
     identity: [u8; 32],
     ask: Option<&'a Value>,
+    verb: Option<&'a str>,
 }
 
 impl<'a> ErasedRequest<'a> {
@@ -56,9 +64,9 @@ impl<'a> ErasedRequest<'a> {
         let Value::Map(fields) = request else {
             return None;
         };
-        let (state, cause, identity, ask) = match fields.as_slice() {
+        let (state, cause, identity, kept) = match fields.as_slice() {
             [state, cause, identity] => (state, cause, identity, None),
-            [state, cause, identity, ask] => (state, cause, identity, Some(ask)),
+            [state, cause, identity, kept] => (state, cause, identity, Some(kept)),
             _ => return None,
         };
         if keyed(state, ERASED_REQUEST_KEYS[0])?.as_str() != Some(ERASED_STATE)
@@ -69,13 +77,21 @@ impl<'a> ErasedRequest<'a> {
         let Value::Binary(identity) = keyed(identity, ERASED_REQUEST_KEYS[2])? else {
             return None;
         };
-        let ask = match ask {
-            None => None,
-            Some(entry) => Some(keyed(entry, ERASED_REQUEST_KEYS[3]).filter(|ask| typed(ask))?),
+        let (ask, verb) = match kept.map(|entry| {
+            (
+                keyed(entry, ERASED_REQUEST_KEYS[3]),
+                keyed(entry, ERASED_REQUEST_KEYS[4]),
+            )
+        }) {
+            None => (None, None),
+            Some((Some(ask), _)) if typed(ask) => (Some(ask), None),
+            Some((_, Some(verb))) => (None, Some(catalog_verb_of(verb)?)),
+            Some(_) => return None,
         };
         Some(Self {
             identity: <[u8; 32]>::try_from(identity.as_slice()).ok()?,
             ask,
+            verb,
         })
     }
 
@@ -140,6 +156,40 @@ impl CodeRunBridgeCall {
         }
     }
 
+    /// The catalog verb a verb call named, a text-free call fact (FIX 6534):
+    /// read off its live request beside its input, or kept beside its
+    /// erased form's identity. `None` for another effect.
+    #[must_use]
+    pub(crate) fn recorded_verb(&self) -> Option<&str> {
+        if self.effect != SelfEffect::AgentVerb {
+            return None;
+        }
+        if let Some(erased) = ErasedRequest::of(&self.request) {
+            return erased.verb;
+        }
+        let Value::Map(fields) = &self.request else {
+            return None;
+        };
+        let field = |name: &str| fields.iter().find_map(|entry| keyed(entry, name)?.as_str());
+        field(INPUT_KEY).and(field(VERB_KEY))
+    }
+
+    /// Whether the guest's request this call recorded is `offered` by its
+    /// identity alone (FIX 6534): how a row an erase took the words of
+    /// meets the call made again, and a live row by the identity it has.
+    ///
+    /// # Errors
+    ///
+    /// A request the side-row wall cannot read, or one that does not encode.
+    pub(crate) fn request_identity_is(&self, offered: &Value) -> Result<bool> {
+        Ok(match ErasedRequest::of(&self.request) {
+            Some(erased) => erased.meets(offered)?.is_hit(),
+            None => {
+                live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)?
+            }
+        })
+    }
+
     /// Whether this call dispatched `offered`, a kept or an erased row read
     /// one way (FIX 6534): the very value while its words are kept, and its
     /// identity once an erase took them.
@@ -191,6 +241,24 @@ fn typed(ask: &Value) -> bool {
     is_erased_ask(ask) || is_barrier_ask(ask)
 }
 
+/// The catalog name of the verb `value` spells, when it spells one.
+fn catalog_verb_of(value: &Value) -> Option<&'static str> {
+    AgentVerb::from_name(value.as_str()?).map(AgentVerb::as_str)
+}
+
+/// The catalog verb the live `request` of a verb call names beside its
+/// input, when it names one: the text-free call fact its erased form keeps.
+fn catalog_verb(effect: SelfEffect, request: &Value) -> Option<&'static str> {
+    let Value::Map(fields) = request else {
+        return None;
+    };
+    let field = |name: &str| fields.iter().find_map(|entry| keyed(entry, name));
+    if effect != SelfEffect::AgentVerb || !field(INPUT_KEY).is_some_and(Value::is_str) {
+        return None;
+    }
+    catalog_verb_of(field(VERB_KEY)?)
+}
+
 /// The typed marker the ask of `request`, a spawn's, holds, when it holds
 /// one.
 fn typed_ask(effect: SelfEffect, request: &Value) -> Option<&Value> {
@@ -211,7 +279,8 @@ fn live_identity(effect: SelfEffect, request: &Value) -> Result<[u8; 32]> {
 }
 
 /// The erased form of the live `request` a call of `effect` made: its
-/// identity, and a spawn's typed ask beside it.
+/// identity, and a spawn's typed ask or a verb call's catalog verb beside
+/// it.
 fn erased_value(effect: SelfEffect, request: &Value) -> Result<Value> {
     let mut fields = vec![
         (ERASED_REQUEST_KEYS[0], Value::from(ERASED_STATE)),
@@ -222,6 +291,9 @@ fn erased_value(effect: SelfEffect, request: &Value) -> Result<Value> {
         ),
     ];
     fields.extend(typed_ask(effect, request).map(|ask| (ERASED_REQUEST_KEYS[3], ask.clone())));
+    fields.extend(
+        catalog_verb(effect, request).map(|verb| (ERASED_REQUEST_KEYS[4], Value::from(verb))),
+    );
     Ok(request_map(fields))
 }
 
