@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use loro::LoroDoc;
 
 use super::SyncClient;
+use crate::Vault;
+use crate::authority::PeerMachine;
 use crate::embed::home_vectors::{HomeClaimDelivery, PreparedHomeClaimSend};
 use crate::sync::transport::{TransportError, WindowPadBinding, WindowPadKind};
 use crate::sync::window::PreparedWindowPads;
@@ -18,17 +20,14 @@ struct WindowClaimCopies {
 }
 
 impl WindowClaimCopies {
-    fn current(&self, client: &SyncClient) -> bool {
+    fn current(&self, vault: &Vault, peer: PeerMachine) -> bool {
         let delivery = HomeClaimDelivery {
             window: &self.window,
             payload: &self.payload,
         };
-        self.sends.iter().all(|send| {
-            matches!(
-                send.copy_for(&client.vault, client.home_peer, &delivery),
-                Ok(Some(_))
-            )
-        })
+        self.sends
+            .iter()
+            .all(|send| matches!(send.copy_for(vault, peer, &delivery), Ok(Some(_))))
     }
 
     fn encode(&self, client: &SyncClient) -> Option<Vec<u8>> {
@@ -74,8 +73,8 @@ impl WindowClaimCopyRelease {
         self.suffix = frame.split_off(self.required_prefix);
     }
 
-    pub(crate) fn recheck(&self, client: &SyncClient) {
-        if !self.copies.current(client) {
+    pub(crate) fn recheck(&self, vault: &Vault, peer: PeerMachine) {
+        if !self.copies.current(vault, peer) {
             self.abandon();
         }
     }
