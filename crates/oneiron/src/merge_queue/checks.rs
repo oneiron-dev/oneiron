@@ -54,6 +54,9 @@ impl MergeQueue<'_> {
             &snapshot,
             report.tests_passed,
         )?;
+        // A removed public name routes to a person review before the slot
+        // settles (FIX 4365). The verdict stays red.
+        self.route_contract_review(&batch, mask, phase, &path.tree, &verdict)?;
         let _guard = lock_repository(self.repo.common_dir())?;
         let queue = self.queue()?;
         let mut current = self.batch(id)?;
