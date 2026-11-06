@@ -1,8 +1,8 @@
 //! A kept removal archive's bytes as a file (FIX 3679, 3857): one complete
-//! body in the vault's `bodies/`, sealed under its own instance where the
-//! vault seals its bodies, owned by its archive row's owner
-//! ([`removal_archive_owner`]: the removed member and the receipt) under an
-//! occurrence of its own. The
+//! body in the vault's `bodies/` under an instance of its own, sealed under
+//! it where the vault seals its bodies and bound to it plain where it does
+//! not, owned by its archive row's owner ([`removal_archive_owner`]: the
+//! removed member and the receipt) under an occurrence of its own. The
 //! archive's row keeps the occurrence and the body it names; no LMDB value
 //! holds the archive.
 //!
@@ -48,7 +48,7 @@ impl ArchiveFile {
 pub(super) struct StagedArchive {
     body: BodyRef,
     #[cfg(unix)]
-    key: Option<crate::store::StagedBodyKey>,
+    key: crate::store::StagedBodyKey,
     #[cfg(unix)]
     _pin: crate::store::result_body_pins::ResultBodyPin,
 }
@@ -88,9 +88,13 @@ fn measure(source: &mut (impl Read + Seek)) -> Result<([u8; 32], u64)> {
 #[cfg(unix)]
 impl Vault {
     /// Writes the archive `source` holds, from its start, as a published
-    /// body file: measured first, then streamed into the vault's `bodies/`,
-    /// sealed under an instance minted here when the directory seals. Call
-    /// it before the writer that names it opens.
+    /// body file: measured first, then streamed into the vault's `bodies/`
+    /// under an instance minted here, sealed under it when the directory
+    /// seals. A plain vault's file takes its instance now too, as every
+    /// vault body file does: an image that later seals the file seals it
+    /// under this instance, which an erase of the archive then owes, never
+    /// one minted after the erase. Call it before the writer that names it
+    /// opens.
     ///
     /// # Errors
     ///
@@ -109,13 +113,8 @@ impl Vault {
         // the writer that names it is done.
         let pin = self.pin_result_body(digest);
         let dir = self.store.body_dir()?;
-        let key = if dir.sealed.is_some() {
-            let instance = self.store.body_mint()?.mint()?;
-            Some(dir.import_sealing(&digest, len, source, false, instance)?)
-        } else {
-            dir.import(&digest, len, source)?;
-            None
-        };
+        let instance = self.store.body_mint()?.mint()?;
+        let key = dir.import_sealing(&digest, len, source, false, instance)?;
         Ok(StagedArchive {
             body: BodyRef {
                 blake3: digest,
@@ -141,9 +140,12 @@ impl Vault {
         staged: &StagedArchive,
     ) -> Result<ArchiveFile> {
         use crate::provenance::body::{BodyState, OwnedBody, publish_body_in_txn};
-        if let Some(key) = &staged.key {
-            crate::store::bind_body_key_in_txn(&self.store, wtxn, &self.store.body_dir()?, key)?;
-        }
+        crate::store::bind_body_key_in_txn(
+            &self.store,
+            wtxn,
+            &self.store.body_dir()?,
+            &staged.key,
+        )?;
         let occurrence = self.store.clock.entity_id()?;
         publish_body_in_txn(
             &self.store,
