@@ -40,7 +40,7 @@ use super::super::schema::{ASSET_BODY_REFS_MAP, create_window_doc};
 use super::super::types::WindowKey;
 use super::super::window_rows::{
     WINDOW_FULL_RESYNC_MARKER, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
-    WINDOW_UPDATE,
+    WINDOW_UPDATE, WINDOW_UPDATE_SEQ,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -615,6 +615,44 @@ pub(crate) fn mark_projection_owed_in_txn(
     BASE_WINDOW_DISCARD.put(store, txn, &key, &record)
 }
 
+/// Marks every persisted BASE window as waiting for its projection, in the
+/// write that took rows: a row's values ride off its own month too (a review
+/// bundle carries the rows of each member NOTE beside every NOTE it holds a
+/// member of), so each window is projected once and the pass lets go of the
+/// ones that hold nothing the marks own (`forget_unprojected_in_txn`).
+pub(crate) fn mark_base_windows_owed_in_txn(store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
+    let mut windows: BTreeSet<String> = WINDOW_SNAPSHOT
+        .scan_keys(store, txn, &[])?
+        .into_iter()
+        .collect();
+    windows.extend(WINDOW_UPDATE_SEQ.scan_keys(store, txn, &[])?);
+    for window in windows {
+        if WindowKey::try_new(&window).is_some_and(|key| key.world().is_none()) {
+            mark_projection_owed_in_txn(store, txn, &window)?;
+        }
+    }
+    Ok(())
+}
+
+/// Settles BASE window `window`'s owed projection, found to hold nothing the
+/// marks own: one no projection ever rewrote is no longer watched, and one
+/// with a floor keeps it.
+pub(crate) fn forget_unprojected_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    window: &str,
+) -> Result<()> {
+    let key = window.to_owned();
+    match BASE_WINDOW_DISCARD.get(store, txn, &key)? {
+        Some(record) if record.len() <= 1 => {
+            BASE_WINDOW_DISCARD.delete(store, txn, &key)?;
+            Ok(())
+        }
+        Some(_) => settle_projection_in_txn(store, txn, window),
+        None => Ok(()),
+    }
+}
+
 /// Files `floor` as BASE window `window`'s, its projection installed.
 fn file_floor_in_txn(store: &Store, txn: &mut RwTxn<'_>, window: &str, floor: &[u8]) -> Result<()> {
     let mut record = Vec::with_capacity(1 + floor.len());
@@ -660,11 +698,7 @@ pub(crate) fn resync_projected_windows_in_txn(store: &Store, txn: &mut RwTxn<'_>
 
 /// Settles BASE window `window`'s owed projection with nothing to install:
 /// its floor, if any, stays.
-pub(crate) fn settle_projection_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    window: &str,
-) -> Result<()> {
+fn settle_projection_in_txn(store: &Store, txn: &mut RwTxn<'_>, window: &str) -> Result<()> {
     let key = window.to_owned();
     if let Some(mut record) = BASE_WINDOW_DISCARD.get(store, txn, &key)?
         && record.first() == Some(&1)

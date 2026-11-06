@@ -62,10 +62,10 @@ pub(in crate::sync) use self::discard_ingress::persist_window_arrival;
 pub(crate) use self::discard_ingress::{project_unsent_update, update_holds_discarded};
 pub(in crate::sync) use self::discard_projection::{
     DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
-    projection_floor_in, settle_projection_in_txn,
+    projection_floor_in,
 };
 pub(crate) use self::discard_projection::{
-    mark_projection_owed_in_txn, resync_projected_windows_in_txn,
+    forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;

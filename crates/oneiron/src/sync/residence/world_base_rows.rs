@@ -146,11 +146,10 @@ fn discard_window_rows(
                 // projection is owed, and a Pending staged import that holds
                 // them goes, to be staged again (part E, E4 = A).
                 if !step.removed.is_empty() {
-                    crate::sync::window::mark_projection_owed_in_txn(
-                        &vault.store,
-                        txn,
-                        window.as_str(),
-                    )?;
+                    // Every BASE window, not this one alone: their values
+                    // ride off their month too (a review bundle's member
+                    // rows beside each NOTE it holds).
+                    crate::sync::window::mark_base_windows_owed_in_txn(&vault.store, txn)?;
                     let removed: BTreeSet<EntityId> = step.removed.iter().copied().collect();
                     crate::batch::export::cancel_staged_imports_holding_in_txn(
                         &vault.store,

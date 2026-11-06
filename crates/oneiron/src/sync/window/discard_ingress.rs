@@ -33,14 +33,16 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-/// The rows that the owner's discard marks, when `key` is a BASE window it
-/// took rows from and some are marked.
+/// The rows that the owner's discard marks, when `key` is a BASE window and
+/// some are marked; with `watched`, only when the discard touched the window
+/// (an arrival's cost stays on the windows that held the rows' values).
 fn discarded_for_in_txn(
     store: &Store,
     txn: &RwTxn<'_>,
     key: &WindowKey,
+    watched: bool,
 ) -> Result<Option<BTreeSet<EntityId>>> {
-    if key.world().is_some() || !discard_touched_in(store, txn, key.as_str())? {
+    if key.world().is_some() || (watched && !discard_touched_in(store, txn, key.as_str())?) {
         return Ok(None);
     }
     let discarded = crate::sync::residence::discarded_rows_in(store, txn)?;
@@ -61,7 +63,10 @@ fn home_held_in_txn(store: &Store, txn: &RwTxn<'_>, key: &WindowKey) -> Result<V
 }
 
 /// `snapshot`, the state of window `key` that persists in `txn`, projected
-/// for the rows that the owner's discard marks there.
+/// for the rows that the owner's discard marks there. Every BASE window's
+/// snapshot is, touched or not: a carrier of the rows that arrived since in
+/// a window that held none of them leaves at its next snapshot, and the
+/// window is watched from then on.
 ///
 /// # Errors
 ///
@@ -73,7 +78,7 @@ pub(super) fn project_snapshot_in_txn<'a>(
     snapshot: &'a [u8],
 ) -> Result<Cow<'a, [u8]>> {
     let store = &vault.store;
-    let Some(discarded) = discarded_for_in_txn(store, txn, key)? else {
+    let Some(discarded) = discarded_for_in_txn(store, txn, key, false)? else {
         return Ok(Cow::Borrowed(snapshot));
     };
     let doc = doc_from_snapshot(snapshot)?;
@@ -120,7 +125,7 @@ pub(crate) fn persist_window_arrival(
     // A BASE window holds no pad row: its bytes persist as they are.
     vault.with_write_txn_grouped(|txn| {
         let store = &vault.store;
-        let projected = match (&copy, discarded_for_in_txn(store, txn, key)?) {
+        let projected = match (&copy, discarded_for_in_txn(store, txn, key, true)?) {
             (Some(copy), Some(discarded)) => {
                 let mut held = home_held_in_txn(store, txn, key)?;
                 if from_home {
