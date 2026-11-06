@@ -126,7 +126,7 @@ async fn serve(
     }
     let encoded_path = route.encoded_path();
     let prefix = uri.path().strip_suffix(encoded_path).ok_or_else(missing)?;
-    let policy = backend_policy(&uri, &parts.headers, prefix)?;
+    let (policy, authority) = backend_policy(&uri, &parts.headers, prefix)?;
     let target = if app_query.is_empty() {
         format!("/{encoded_path}")
     } else {
@@ -136,7 +136,7 @@ async fn serve(
     // No owner/read credential, link capability, forwarding attestation or
     // host cookie crosses the guest boundary. The original Body is moved.
     strip_hop_headers(&mut parts.headers);
-    let cookies = cookies::AppCookies::new(prefix);
+    let cookies = cookies::AppCookies::new(&authority, prefix);
     let app_cookies = cookies.request_header(&parts.headers);
     let private_headers: Vec<_> = parts
         .headers
@@ -355,7 +355,7 @@ fn backend_policy(
     uri: &Uri,
     headers: &HeaderMap,
     prefix: &str,
-) -> Result<HeaderValue, EnvelopedApiError> {
+) -> Result<(HeaderValue, String), EnvelopedApiError> {
     let authority = uri
         .authority()
         .map(|authority| authority.as_str())
@@ -382,9 +382,10 @@ fn backend_policy(
         })
         .collect();
     let endpoint = format!("http://{parsed}{csp_path}");
-    HeaderValue::from_str(&format!(
+    let policy = HeaderValue::from_str(&format!(
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src {endpoint}; object-src 'none'; base-uri 'none'; form-action {endpoint}; frame-ancestors 'none'; frame-src 'none'; worker-src 'none'; sandbox allow-scripts allow-same-origin"
-    )).map_err(|_| missing())
+    )).map_err(|_| missing())?;
+    Ok((policy, parsed.as_str().to_ascii_lowercase()))
 }
 
 fn missing() -> EnvelopedApiError {

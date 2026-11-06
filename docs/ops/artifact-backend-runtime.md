@@ -118,8 +118,10 @@ No owner/read Authorization, binding proof, engine headers, forwarding
 attestation, incoming host cookie or link capability is passed to the guest.
 Server-set application cookies can round-trip across per-request guests. The
 host stores each cookie under `oneiron_app_<hash>_<guest-name>`, where the full
-BLAKE3 hash is domain-separated over the admitted canonical app root (including
-its selector and any link-token path). Only names in that exact namespace are
+BLAKE3 hash is domain-separated over the validated serving authority (host and
+port, ASCII-lowercased) and admitted canonical app root (including its selector
+and any link-token path). Including the port keeps local listeners separate even
+though browser cookie domains do not distinguish ports. Only names in that exact namespace are
 unwrapped into the guest request. All incoming host cookies are still removed;
 app cookie values are ordinary client input, never engine credentials or grants.
 
