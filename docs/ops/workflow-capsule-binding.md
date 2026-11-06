@@ -21,6 +21,12 @@ After the first successful answer, the exact returned binding finalizes the
 owned handle before that existing cursor is saved as completed. Checkpoint,
 hook-wait and retry records otherwise keep their current behavior.
 
+The capsule also keeps the role whose admission sent the call (FIX 6359). A
+workflow passes its call's chat role to its handle. An executor step's host
+notes the role that actually admitted the call: the browser role when its
+admission took the call, else the chat role. A capture with no noted role is
+never finalized.
+
 The capsule writer keeps the answering rung's route prompt as a masked body
 the run owns, admitted through the side-row wall (FIX 6255). The capsule names
 that body by ref, with the digest of the prompt as sent. A prompt the wall
@@ -28,6 +34,7 @@ refuses is withheld: no copy is kept.
 
 Contribution forks, strict shadow calls and code-fix exact replays use one
 replay path. Each admits the captured model through the current native route
+of the role that admitted the captured call (FIX 6359), and of no other role,
 and selects the rung that answered the capsule: the one picked rung of that
 model, served at the captured locality (`for_replay_binding`). A ladder with no
 such rung is no replay (`no_exact_rung` for a shadow call). The selected rung's
