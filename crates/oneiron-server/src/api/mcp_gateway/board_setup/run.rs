@@ -357,9 +357,13 @@ pub(super) fn run_board_sections(
     {
         let mut memories_storage =
             crate::api::context_pack::output_memory::RetainedMemoriesOutput::new(&server.memory);
-        if let Some(memories) =
-            crate::api::context_board::lane_pins_projection(read, pins, &mut memories_storage)
-                .map_err(super::mcp_api_error)?
+        if let Some(memories) = crate::api::context_board::lane_pins_projection(
+            read,
+            pins,
+            &mut memories_storage,
+            &server.memory,
+        )
+        .map_err(super::mcp_api_error)?
         {
             hooks.memories = memories.section.hook_shares(pins);
             served.extend_from_slice(memories.receipt.delivered());

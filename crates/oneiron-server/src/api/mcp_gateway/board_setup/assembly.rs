@@ -141,6 +141,7 @@ pub(super) fn mcp_pinned_memories(
         room,
         &pins,
         memories_storage,
+        &server.memory,
     )
     .map_err(super::mcp_api_error)
 }
