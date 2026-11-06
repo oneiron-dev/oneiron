@@ -175,18 +175,30 @@ impl VaultAllocationLedger {
             {
                 return Err(AllocationStoreError::HoldExists);
             }
+            let refused = row.refused;
+            if row.current.is_none()
+                && let Some(reason) = refused
+            {
+                return Err(AllocationStoreError::AllocationRefused { reason });
+            }
             let current = current_mut(row)?;
             if !current.accepting {
                 return Err(AllocationStoreError::Closed);
             }
             let units = convert(native_units, native, &current.allocation.unit, rates).map_err(
                 |error| match error {
-                    Unpriced::NoRate => AllocationStoreError::UnitMismatch,
+                    Unpriced::NoRate => AllocationStoreError::UnitMismatch {
+                        from: native.clone(),
+                        to: current.allocation.unit.clone(),
+                    },
                     Unpriced::TooLarge => AllocationStoreError::Overflow,
                 },
             )?;
             if units > current.remaining_units {
-                return Err(AllocationStoreError::Exhausted);
+                return Err(match refused {
+                    Some(reason) => AllocationStoreError::AllocationRefused { reason },
+                    None => AllocationStoreError::Exhausted,
+                });
             }
             let (share, committed, overdraft) = match resident {
                 Some(resident) => {
