@@ -362,11 +362,11 @@ fn retained_key(bytes: &[u8]) -> Option<([u8; 16], u64, [u8; 32])> {
 /// what it names are erased, and a missing one only re-asks. A row that does
 /// not decode is passed over: nothing reads it back as a live request, and
 /// the damage report owns it, as in the ledger scrub.
-fn drop_retained_in_txn(
+pub(crate) fn drop_enrollment_asks_of_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<Vec<u64>> {
     let mut changed = Vec::new();
     for row in RETAINED.iter_raw_from(&vault.store, wtxn, &[])? {
         let (key, value) = row?;
@@ -401,8 +401,13 @@ fn drop_retained_in_txn(
             changed.push((key, value, drop_original));
         }
     }
+    let mut withdrawn = Vec::new();
     for (key, mut request, drop_original) in changed {
-        let _ = super::held::withdraw_owner_ask_in_txn(vault, wtxn, request.held.as_ref());
+        if let Some(seq) =
+            super::held::withdraw_owner_ask_in_txn(vault, wtxn, request.held.as_ref())
+        {
+            withdrawn.push(seq);
+        }
         if drop_original {
             RETAINED.delete(&vault.store, wtxn, &key)?;
         } else {
@@ -410,7 +415,7 @@ fn drop_retained_in_txn(
             RETAINED.put(&vault.store, wtxn, &key, &request)?;
         }
     }
-    Ok(())
+    Ok(withdrawn)
 }
 
 /// FIX 6835: this table's actor scrub (FIX 3520): an erase of `actor` drops
@@ -425,7 +430,7 @@ pub(crate) fn erase_enrollment_ask_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> crate::error::Result<()> {
-    drop_retained_in_txn(vault, wtxn, actor)
+    drop_enrollment_asks_of_actor_in_txn(vault, wtxn, actor).map(|_| ())
 }
 
 /// FIX 6835: drops every retained request of one consequence's call, in the

@@ -14,6 +14,8 @@ mod delete;
 pub(crate) use oneiron_store::deletion::delete_bearing_update;
 mod derived_rows;
 mod erase;
+mod erasure_effects;
+pub(crate) use erasure_effects::ErasureEffects;
 mod exhaust_erase;
 pub(crate) use exhaust_erase::{
     erase_owned_byoa_exhausts_in_txn, erase_restored_byoa_exhausts_in_txn,
@@ -39,7 +41,6 @@ pub(crate) use oneiron_store::deletion::window_document_format;
 // withdrawal stages it on this device (FIX 11804), and a carried cutoff on
 // another machine of the vault.
 mod withdrawn;
-
 #[cfg(test)]
 mod tests;
 
