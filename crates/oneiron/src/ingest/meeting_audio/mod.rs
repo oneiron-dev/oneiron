@@ -7,6 +7,7 @@
 
 mod alignment;
 mod artifact;
+mod caller_import;
 mod cleanup;
 mod command;
 mod error;
@@ -25,6 +26,10 @@ mod types;
 
 pub use alignment::align_words_to_speakers;
 pub use artifact::{AuthorizedMeetingImport, ProducedMeetingTranscript};
+pub use caller_import::{
+    MeetingTranscriptCallerImportError, MeetingTranscriptCallerImportOutcome,
+    MeetingTranscriptImportAttempt,
+};
 pub use cleanup::validate_cleanup;
 pub use command::{
     CommandAudioConfig, CommandMeetingAudioHost, MeetingAudioSeats, NativeAudioCapabilities,

@@ -223,3 +223,42 @@ The SESSION and new NOTE commit together, or the native write error rolls back
 both. A busy SESSION outcome can still accompany a landed or retained NOTE.
 These are library doors; no served route, physical ASR execution, end-to-end
 runtime result or global-erasure guarantee is claimed here.
+
+## Caller-bound prepared SESSION import
+
+`Memory::prepare_meeting_transcript_import_as_owner` borrows the actual caller
+and its separate `AuthenticatedOwner` proof. The handle must be that owner's
+Human caller, as on the other native owner facade doors. Both selected native
+versions are read through this handle before the existing bulk authorizer sees
+the artifact. Owner proof alone does not substitute for its reader. The direct
+`Vault::import_meeting_transcript_as_owner` API and ordinary FileDrop paths are
+unchanged.
+
+The returned `MeetingTranscriptImportAttempt` is an opaque in-memory object,
+not a serialized credential or durable queue. The host retains it and calls
+`resume`. One fresh exact-byte bulk consent covers that attempt and its hook
+continuations. The native preparation writer selects its arrival time once;
+its SESSION id, capture hints and arrival time remain stable across hook waits.
+The original owner-only import still selects arrival in its landing writer.
+
+A pending session-open hook returns `HookPending` with the actual ask and
+prepared SESSION id, without landing a SESSION or NOTE. Resume the same object
+after answering it. An unavailable saved invocation returns an error; it does
+not start a fresh hook chain. Dropping the object abandons this in-memory
+continuation. A new preparation needs fresh bulk consent. This API installs
+no background retry, durable scheduling or served route.
+
+Both pre-hook readers come from the borrowed `Memory`. The committing audited
+writer revalidates its actor and reader, the live owner proof, both selected
+pins and sighted bytes, the source-audio relationship and the exact authorized
+JSON. It calls the existing shared prepared mint/turn/close/wake path with the
+meeting provenance and lands the native Imported NOTE in that same transaction.
+An empty transcript can land its NOTE without hooks or a synthetic SESSION.
+A busy SESSION result can still accompany a landed or retained NOTE.
+
+Storage or map-full failures rearm consumed hook answers. A committed busy
+result rearms both pre-hooks. Posts run only after commit with the actual native
+`EndedSession`; no post runs for a rolled-back landing. Once committed, the
+attempt is complete, including a busy SESSION result, and cannot be resumed to
+mint another SESSION. This source API does not prove ASR execution, caller-route
+activation, hook runtime behavior, privacy or global erasure.
