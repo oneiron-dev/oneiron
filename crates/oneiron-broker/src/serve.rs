@@ -286,6 +286,7 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
                 checked,
                 call.body,
                 call.whole,
+                call.released,
                 &call.secret,
                 &mut stream,
                 deadline,
@@ -313,6 +314,5 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
     };
     let _ = within(deadline, write_reply(&mut stream, &reply, &body)).await;
 }
-
 #[cfg(all(test, feature = "test-support"))]
 mod tests;

@@ -16,7 +16,7 @@ use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, LOCATION, TRANSFER_ENCODING,
 };
 use reqwest::{Certificate, Client, Method, Url};
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, AsyncWrite};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
@@ -153,27 +153,31 @@ impl Sender {
     /// [`CallHeader::check`]. The send ends by `deadline`'s send limit, and
     /// each write within its frame allowance and the deadline; a daemon that
     /// takes longer is gone, and the reply is dropped.
-    pub(crate) async fn stream<W: AsyncWrite + Unpin>(
+    pub(crate) async fn stream<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
         whole: Option<Zeroizing<Vec<u8>>>,
+        released: bool,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
     ) {
         let _ = self
-            .stream_to(call, checked, body, whole, secret, writer, deadline)
+            .stream_to(
+                call, checked, body, whole, released, secret, writer, deadline,
+            )
             .await;
     }
 
-    async fn stream_to<W: AsyncWrite + Unpin>(
+    async fn stream_to<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         checked: Result<Url, Refusal>,
         body: Zeroizing<Vec<u8>>,
         whole: Option<Zeroizing<Vec<u8>>>,
+        released: bool,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
@@ -185,6 +189,7 @@ impl Sender {
                 checked,
                 body,
                 whole,
+                released,
                 secret,
                 writer,
                 deadline,

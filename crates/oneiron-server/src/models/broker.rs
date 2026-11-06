@@ -545,6 +545,48 @@ pub(super) async fn open_with_whole(
         .map_err(broker_error)
 }
 
+/// Opens a released Responses call without moving the caller's authority into
+/// the broker. The same lease checks each physical create, including a whole retry.
+pub(super) async fn open_with_whole_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+    lease: &BudgetLease,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    lease.check_dispatch_release()?;
+    let release = || {
+        lease.check_dispatch_release()?;
+        lease.begin_physical_attempt();
+        Ok::<(), LlmError>(())
+    };
+    connection
+        .open_with_whole_released(header, body, whole, key, &release)
+        .await
+        .map_err(|error| match error {
+            oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+            oneiron_broker::DispatchError::Release(error) => error,
+        })
+}
+
 /// The provider's status and headers when it answered, or the error a call
 /// with no answer is.
 pub(super) fn answered(outcome: Outcome) -> LlmResult<(u16, Vec<(String, String)>)> {
