@@ -132,9 +132,12 @@ pub(crate) fn pair(
     if !status.is_success() {
         return Err(read_error_envelope(response, status));
     }
-    let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES)
-        .map_err(|_| transport_error("the server's pairing reply was truncated or oversized"))?;
-    let paired = serde_json::from_slice::<Paired>(&bytes)
+    let decoded =
+        super::response::read_capped_json::<Paired, _>(response, MAX_REMOTE_RESPONSE_BYTES)
+            .map_err(|_| {
+                transport_error("the server's pairing reply was truncated or oversized")
+            })?;
+    let paired = decoded
         .map_err(|_| transport_error(format!("the server answered {status} with no slip")))?;
     let slip = paired
         .token

@@ -108,24 +108,6 @@ pub(super) enum ReadFailure {
     Io(String),
 }
 
-/// Reads at most `limit` bytes, and reports overrun rather than truncating.
-///
-/// `take(limit + 1)` is the whole trick: reading one byte past the ceiling
-/// distinguishes "exactly at the limit" from "over it" without ever buffering
-/// the excess, so the refusal happens BEFORE any JSON or base64 decode
-/// allocates against an attacker-chosen length.
-pub(super) fn read_capped<B: Read>(body: B, limit: usize) -> Result<Vec<u8>, ReadFailure> {
-    let mut buffer = Vec::new();
-    let mut reader = body.take(limit as u64 + 1);
-    reader
-        .read_to_end(&mut buffer)
-        .map_err(|error| ReadFailure::Io(error.to_string()))?;
-    if buffer.len() > limit {
-        return Err(ReadFailure::TooLarge);
-    }
-    Ok(buffer)
-}
-
 /// Separates bounded arrival failures from JSON decoding without a raw-body copy.
 pub(super) fn read_capped_json<R: DeserializeOwned, B: Read>(
     body: B,
