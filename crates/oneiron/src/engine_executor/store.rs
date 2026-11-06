@@ -1,7 +1,9 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod reply_evidence;
 mod script_context;
 pub(super) use script_context::load_script_context;
+pub(crate) use script_context::mask_known_text;
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
@@ -82,18 +84,24 @@ pub(super) fn bind_published_output(
     digest_bindings.push((name, output.handle.clone()));
 }
 
-/// A step's model reply as the provider gave it, kept apart from the program
-/// healed out of it: untrusted evidence, never executed. It streams into its
-/// body as it is encoded.
+/// A step's model reply, kept apart from the program healed out of it:
+/// untrusted evidence, never executed. PERSON and custody matches share the
+/// original encoding, so neither substitution changes the other's context.
 pub(super) fn record_reply_evidence(
     storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     seq: u64,
     reply: &crate::LlmMessage,
 ) -> EngineExecutorResult<()> {
-    let mut sink = storage.code_run_output_sink()?;
-    write_json(&mut sink, reply)?;
-    publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    if let Some(bytes) = reply_evidence::for_run_bytes(storage, record.run_id, reply)? {
+        let mut sink = storage.code_run_script_sink()?;
+        sink.write(bytes.as_slice())?;
+        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    } else {
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    }
 }
 
 /// Encodes `value` as JSON straight into a body sink, never whole first.
@@ -535,6 +543,38 @@ pub(super) fn load_observation_window(
         crate::entity_id::bytes_to_hex_lower(&output.raw_blake3),
         output.raw_len,
     ))
+}
+
+/// Bytes two windows of [`scan_output_windows`] share, so a read path or an
+/// id that straddles a window's end is whole in the next one.
+const OUTPUT_SCAN_OVERLAP_BYTES: usize = 1024;
+
+/// Hands `each` the whole of one clean output, window by window, each read
+/// by range and at most [`COMPACTION_OBSERVATION_WINDOW_BYTES`] long, the
+/// windows overlapping by [`OUTPUT_SCAN_OVERLAP_BYTES`]. A body that is not
+/// clean hands nothing: its refs never reach the model.
+pub(super) fn scan_output_windows(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    output: &CodeRunRawOutput,
+    mut each: impl FnMut(&str),
+) -> Result<()> {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
+        return Ok(());
+    }
+    let step = (COMPACTION_OBSERVATION_WINDOW_BYTES - OUTPUT_SCAN_OVERLAP_BYTES) as u64;
+    let mut offset = 0_u64;
+    loop {
+        let window = storage
+            .read_code_run_raw_output_range(output, offset, COMPACTION_OBSERVATION_WINDOW_BYTES)?
+            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        each(&String::from_utf8_lossy(&window));
+        let end = offset.saturating_add(window.len() as u64);
+        if window.is_empty() || end >= output.raw_len {
+            return Ok(());
+        }
+        offset = offset.saturating_add(step);
+    }
 }
 
 /// Bytes of a finish answer a run's implicit bubble says (FIX 365). Past

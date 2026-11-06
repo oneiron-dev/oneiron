@@ -1,10 +1,11 @@
-//! The inputs of the exact publish verbs (FIX 6866), and the one answer
-//! that is not a request: a review page.
+//! Core half of `origin::publish::inputs`: its store-layer items live in `oneiron_store::origin::publish::inputs` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde::{Deserialize, Serialize};
+pub use oneiron_store::origin::publish::inputs::*;
 
 use super::types::{OriginPublishForce, OriginPublishReviewItem};
 use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// Asks to publish one exact commit to one branch of a repo's mirror.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -23,37 +24,6 @@ pub struct OriginPublishRequestInput {
     pub expires_at: Option<u64>,
     /// A Grant holder's repo handle: the CODE anchor its Grant's repo
     /// bounds name. The owner names none.
-    pub code_repo: Option<EntityId>,
-}
-
-/// Names one request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OriginPublishIdRequest {
-    pub repo: String,
-    pub request_id: EntityId,
-    pub code_repo: Option<EntityId>,
-}
-
-/// Approves one request's reviewed tuple.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OriginPublishApproveRequest {
-    pub repo: String,
-    pub request_id: EntityId,
-    /// The review digest the approver read; another refuses.
-    pub review_digest: String,
-    pub code_repo: Option<EntityId>,
-}
-
-/// Reads one page of a request's review.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OriginPublishReviewRequest {
-    pub repo: String,
-    pub request_id: EntityId,
-    /// From 0.
-    pub page: u64,
     pub code_repo: Option<EntityId>,
 }
 

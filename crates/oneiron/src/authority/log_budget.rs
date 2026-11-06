@@ -230,6 +230,7 @@ pub(super) fn is_slip_op(op: &AuthorityOp) -> bool {
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::SlipGrantRevoke { .. }
+            | AuthorityOp::RemovalArchiveConsume { .. }
     )
 }
 
@@ -498,7 +499,8 @@ pub(crate) fn authority_door(
 /// with after they revalidate the owner or an agent's Grant, and carrying
 /// that will (an owner or delegated act, or owner work's request, result or
 /// cancel), or the frontier join such an act rides on (FIX 7908), or a
-/// custody request's permit piece (FIX 11866). Such a row leaves the lifetime signer bound, which still raises
+/// custody request's permit piece (FIX 11866), or a membership execution
+/// record it signed for a change no host issuer signed (FIX 12335). Such a row leaves the lifetime signer bound, which still raises
 /// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
@@ -528,9 +530,12 @@ fn carries_own_will(
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::OriginCut(_)
+        | AuthorityOp::DeviceSuccession(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
