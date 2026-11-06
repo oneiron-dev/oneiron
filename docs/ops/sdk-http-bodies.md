@@ -171,3 +171,14 @@ Native report parsing and its null fallback, validation, read filtering,
 retention, authority, inputs, hooks and the separate UniFFI conversion are
 unchanged. This selected output conversion is not an end-to-end depth or memory
 bound.
+
+
+### Core secret-use result output
+
+The core `self.use` result adapter moves the native answer's already-cleared
+result around the original whole-result codec, then restores it at the same
+field. A present null keeps its field; an absent result remains omitted.
+Status, failure text and the use receipt retain their original encoding.
+Native provider parsing, custody and send-time secret clearing, admission,
+inputs, hooks and the separate UniFFI conversion are unchanged. This selected
+output conversion is not an end-to-end depth or memory bound.

@@ -78,6 +78,7 @@ mod secret;
 mod secret_custody;
 mod secret_grant;
 mod secret_use;
+mod secret_use_output;
 mod self_actor;
 mod self_verbs;
 mod share;

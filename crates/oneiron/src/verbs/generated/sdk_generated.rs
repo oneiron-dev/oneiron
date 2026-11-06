@@ -34522,7 +34522,7 @@ fn invoke_self_use(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(self_use(memory, decode(value)?)?)
+    secret_use_output::answer(self_use(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_self_secrets_materialize(
