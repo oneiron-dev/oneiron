@@ -98,6 +98,32 @@ impl Backing {
         Ok(())
     }
 
+    pub(super) fn reserve_string(&mut self, value: &mut String, additional: usize) -> Result<()> {
+        let required = value
+            .len()
+            .checked_add(additional)
+            .ok_or(ContentTemplateError::Overflow)?;
+        if required <= value.capacity() {
+            return Ok(());
+        }
+        let capacity = required.max(value.capacity().saturating_mul(2));
+        let mut replacement = ScratchVec::<u8>::new(&self.budget);
+        replacement.backing.resize(capacity)?;
+        replacement
+            .values
+            .try_reserve_exact(capacity)
+            .map_err(|_| ContentTemplateError::Overflow)?;
+        replacement.backing.resize(replacement.values.capacity())?;
+        replacement.values.extend_from_slice(value.as_bytes());
+        let text = String::from_utf8(replacement.values)
+            .map_err(|_| ContentTemplateError::Overflow)?;
+        // The source bytes are valid UTF-8; conversion keeps the allocation.
+        let old = std::mem::replace(value, text);
+        drop(old);
+        std::mem::swap(self, &mut replacement.backing);
+        Ok(())
+    }
+
     // Both guards belong to flows created with the same caller budget.
     pub(super) fn absorb(&mut self, source: &mut Self) -> Result<()> {
         let bytes = self

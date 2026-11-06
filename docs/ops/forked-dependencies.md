@@ -141,6 +141,11 @@ and every local source change.
   Retained tokenizer/lookahead payloads remain separate allocations. An optional
   pre-input open-element reservation admits the actual private Vec before growth;
   its guard releases after the stack frees at parser completion, not after rendering.
+  An optional temporary-buffer reservation replaces only that checked parser's
+  spec buffer with a UTF-8 String. The caller admits full replacement capacity
+  before growth and settles its actual capacity; bytes free before the owned
+  callback releases admission. Emission copies to a native tendril and clears
+  the retained scratch. That output tendril and DOM payload remain unadmitted.
   Other private parser vectors and transitive payloads remain unadmitted.
 
 - `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):

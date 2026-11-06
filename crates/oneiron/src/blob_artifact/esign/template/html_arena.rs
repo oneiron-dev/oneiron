@@ -68,12 +68,19 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let budget = budget.clone();
         let current = Arc::clone(&backing);
         let open_elements = Mutex::new(Backing::new(budget.clone()));
+        let temporary_buffer = Mutex::new(Backing::new(budget.clone()));
         parser
             .with_open_elements_reservation(move |elements, additional| {
                 open_elements
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .reserve_vec(elements, additional)
+            })
+            .with_temporary_buffer_reservation(move |text, additional| {
+                temporary_buffer
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .reserve_string(text, additional)
             })
             .with_tree_sink_checkpoint(move |document, operation| {
                 budget.checkpoint()?;
