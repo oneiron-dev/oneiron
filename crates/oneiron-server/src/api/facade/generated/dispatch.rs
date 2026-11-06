@@ -10743,6 +10743,40 @@ async fn vault_members_invitation_slip(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_members_invitation_code(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitation_code")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitation_code", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.members.invitation_code", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_members_invitation_code(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_members_change(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40670,6 +40704,9 @@ async fn call_verb_row(
         "vault.members.add" => Box::pin(vault_members_add(server, call, input)).await,
         "vault.members.invitation_slip" => {
             Box::pin(vault_members_invitation_slip(server, call, input)).await
+        }
+        "vault.members.invitation_code" => {
+            Box::pin(vault_members_invitation_code(server, call, input)).await
         }
         "vault.members.change" => Box::pin(vault_members_change(server, call, input)).await,
         "vault.members.remove" => Box::pin(vault_members_remove(server, call, input)).await,

@@ -466,7 +466,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/share_doors.rs` | src | s | 3 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/shared_admin_doors.rs` | src | s | 3 crate-vis | — | Typed named Admin policy/powers and the one-hop scoped Delegate mint |
-| `src/api/facade/shared_member_doors.rs` | src | m | 16 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
+| `src/api/facade/shared_member_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/shared_policy_doors.rs` | src | s | 5 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
 | `src/api/facade/sieve_doors.rs` | src | s | 9 crate-vis | — | The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and… |
 | `src/api/facade/sieve_observation_doors.rs` | src | s | 5 crate-vis | — | The owner's evidence replay and recorded shared-scheduler observations |
@@ -1050,11 +1050,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_admission_host.rs` | src | m | 14 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_admission_host/issuer_rerun.rs` | src | s | 1 crate-vis | — | FIX 9304: the re-run an accepted issuer revision starts |
 | `src/connector_admission_host/reply_read.rs` | src | s | 1 crate-vis | — | Reading one admission reply body, JSON or an event stream, until the response that answers a request |
-| `src/connector_call_host.rs` | src | L | 1 struct · 1 fn · 16 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
+| `src/connector_call_host.rs` | src | L | 1 struct · 1 fn · 17 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
 | `src/connector_call_host/json_wire.rs` | src | s | 6 crate-vis | — | The JSON a call writes and keeps: one POST of a JSON body, and a foreign value kept serialized until it goes… |
-| `src/connector_call_host/live_exchange.rs` | src | m | 18 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned |
-| `src/connector_call_host/presenting.rs` | src | m | 15 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
+| `src/connector_call_host/live_exchange.rs` | src | L | 18 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned |
+| `src/connector_call_host/presenting.rs` | src | m | 17 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
 | `src/connector_call_host/remote_task.rs` | src | s | 1 crate-vis | — | A connector's answer that takes a `tools/call` as a remote task (FIX 7960): the MCP task envelope… |
+| `src/connector_call_host/remote_task_poll.rs` | src | s | 1 crate-vis | — | The served poll of remote MCP tasks (FIX 11023; MCP 2025-11-25 tasks): one `tasks/get` per Deferred row its… |
 | `src/connector_call_host/reply_read.rs` | src | m | 13 crate-vis | — | The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream… |
 | `src/connector_call_host/resume.rs` | src | m | 5 crate-vis | — | A live exchange taken up again after a restart (FIX 9157, ruled by the Engine 07:49) |
 | `src/connector_call_host/sent.rs` | src | s | 8 crate-vis | — | What one send of the call host came to, before the ledger scrubs its raw fields |
@@ -1281,6 +1282,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/container_dirs.rs` | src | s | 1 crate-vis | — | The host directories the supervisor binds for the guests' container CLI (`--container-home` and… |
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
 | `src/managed/host.rs` | src | s | 9 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
+| `src/managed/host_legal.rs` | src | s | 5 crate-vis | — | The manager's inherited legal-copy channel and its joined blocking workers |
 | `src/managed/isolation.rs` | src | m | 14 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
 | `src/managed/key_sync.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 const · 1 re-export | KeyInvalidation, KeyInvalidationKind | Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner… |
 | `src/managed/ledger.rs` | src | m | 3 struct · 11 fn · 1 const · 11 crate-vis | FrozenReport, LedgerSnapshot, WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
@@ -1315,13 +1317,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/restore/result.rs` | src | s | 5 crate-vis | — | The restore's result pipe (`--restore-result-fd`): one frame per line, each written whole |
 | `src/managed/settings.rs` | src | m | 6 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
-| `src/managed/state_serve.rs` | src | m | 3 struct · 15 fn · 1 type · 1 const · 2 re-export · 20 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve.rs` | src | m | 3 struct · 15 fn · 1 type · 1 const · 2 re-export · 21 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/state_serve/admission.rs` | src | m | 30 crate-vis | — | The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until… |
 | `src/managed/state_serve/boot_keys.rs` | src | s | 6 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
 | `src/managed/state_serve/carrier_watch.rs` | src | m | 3 crate-vis | — | A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684) |
 | `src/managed/state_serve/carrier_watch/diverged_ask.rs` | src | s | 2 crate-vis | — | The owner's ask for each copy the outbox carrier keeps unagreed (FIX 11074): one inbox Ask per live owner… |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn · 4 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
-| `src/managed/state_serve/coordinator.rs` | src | L | 1 fn | — | Supervised vault startup, serving, and shutdown |
+| `src/managed/state_serve/coordinator.rs` | src | m | 1 fn | — | Supervised vault startup, serving, and shutdown |
+| `src/managed/state_serve/coordinator/ledger_report.rs` | src | s | 1 crate-vis | — | Wake-ledger changes reported while the managed vault is serving |
+| `src/managed/state_serve/coordinator/teardown.rs` | src | s | 2 crate-vis | — | One retained set of managed workers, drained on startup errors and normal stop |
 | `src/managed/state_serve/deletion.rs` | src | s | 2 crate-vis | — | The vault's deletion as `Ping` reports it (FIX 11710): the marker itself lives beside the host's write gate… |
 | `src/managed/state_serve/idle_backup.rs` | src | m | 4 crate-vis | — | The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC) |
 | `src/managed/state_serve/ingress.rs` | src | m | 1 fn · 5 crate-vis | — | Managed HTTP ingress and the reap freeze gate |
@@ -1409,7 +1413,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_artifacts/manifest.rs` | src | s | 10 crate-vis | — | The pinned-artifact manifest: one model, one commit, every file by size and SHA-256, with its licence… |
 | `src/model_artifacts/mod.rs` | src | s | 5 crate-vis | — | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
 | `src/models/anthropic.rs` | src | m | 3 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
-| `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 19 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
+| `src/models/broker.rs` | src | m | 1 struct · 1 trait · 1 fn · 1 const · 20 crate-vis | KeyDoor, VaultKeyDoor | A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker… |
 | `src/models/broker_context.rs` | src | m | 14 crate-vis | — | One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys… |
 | `src/models/broker_context/git.rs` | src | s | 1 crate-vis | — | The vault's broker for git exchanges (ARCH-0069 OSH-3): the same site the vault-secret keys send through… |
 | `src/models/broker_context/secret_use.rs` | src | s | 1 crate-vis | — | A secret-free installed adapter for `self.use`'s broker model listing |
@@ -1443,7 +1447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/http.rs` | src | m | 18 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/http/client.rs` | src | m | 20 crate-vis | — | Shared provider HTTP client execution |
 | `src/models/http/never_sent.rs` | src | s | 2 crate-vis | — | A request that never reached its upstream goes once more, on a fresh connection (FIX 7113) |
-| `src/models/http/reply_line.rs` | src | s | 6 crate-vis | — | The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image… |
+| `src/models/http/reply_line.rs` | src | s | 7 crate-vis | — | The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 13 fn · 1 re-export · 34 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
@@ -1709,7 +1713,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/message_stream.rs` | src | s | 2 crate-vis | — | Host-owned stream timer and local presence relay |
 | `src/server/message_stream/scoped.rs` | src | s | 5 crate-vis | — | The trusted scope of each message partial in the presence hub (FIX 9537), kept apart from what clients write… |
 | `src/server/mirror_pushes.rs` | src | s | 1 crate-vis | — | The host's half of the origin mirror pushes (ARCH-0068 RA8; FIX 6866) |
-| `src/server/mod.rs` | src | s | 5 re-export · 24 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 5 re-export · 25 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/model_setup.rs` | src | s | 8 crate-vis | — | Live first-run model slots and the workers a setup attaches after startup |
 | `src/server/note_editors.rs` | src | s | 6 crate-vis | — | Explicit NOTE editor handles, owned by the principal that opened them |
 | `src/server/organs.rs` | src | s | 5 crate-vis | — | The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of… |

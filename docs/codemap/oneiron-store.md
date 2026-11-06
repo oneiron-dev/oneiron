@@ -413,7 +413,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/receipt_identity.rs` | src | s | 1 fn · 2 const | — | The identity marker carried after receipt attribution is erased |
 | `src/receipt_row.rs` | src | m | 1 enum · 6 fn · 83 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
-| `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
+| `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/record_links/blocks.rs` | src | m | 1 struct · 1 enum · 2 fn | Blocks, Line | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
 | `src/record_links/mod.rs` | src | m | 2 struct · 2 fn · 4 const · 1 mod | ProseLink, ProseLinks | Pure parsing of record links in Markdown text |
 | `src/record_ref.rs` | src | s | 4 fn · 4 const | — | Typed record references and bounded record display labels |
@@ -425,7 +425,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/refinement_carrier.rs` | src | s | 1 fn · 1 const | — | Raw refinement carrier framing used by value scans |
 | `src/replay_only_commits.rs` | src | s | 1 struct · 2 fn | ReplayOnlyCommits | The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the… |
 | `src/replica_edge_key.rs` | src | s | 1 fn | — | The CRDT map key of an edge in a window document |
-| `src/repo_environment.rs` | src | s | 1 struct · 1 enum · 6 fn · 1 const | RepoEnvEntry, RepoEnvFileKind | The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: ".env: values -> secret store… |
+| `src/repo_environment.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | RepoEnvEntry, RepoEnvFileKind | The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: ".env: values -> secret store… |
 | `src/repo_fork.rs` | src | s | 1 type | — | Repository recovery-fork identity |
 | `src/repo_import_predicate.rs` | src | s | 1 const | — | Predicate of a frozen external repository import source |
 | `src/repo_mutation_record.rs` | src | s | 6 struct · 2 enum · 4 fn · 2 const · 1 re-export | RepoBundleFile, RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationStatus | Repository mutation operations, journal outcomes and conflict records |
@@ -510,13 +510,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `src/session_overlay/overlay/held.rs` | src | s | 8 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 7 fn · 9 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
-| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 2 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
+| `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/publication.rs` | src | s | 1 fn | — | Visibility of a segment whose base writer has already committed |
 | `src/session_overlay/overlay/repo_projection.rs` | src | s | 2 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
 | `src/session_overlay/overlay/retained.rs` | src | s | 8 crate-vis | — | The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX… |
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
-| `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 fn | — | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
+| `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 struct · 1 fn | RecordMetaRows | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
 | `src/session_overlay/overlay/rows.rs` | src | m | 13 fn · 1 crate-vis | — | Row staging, preflight, budget checks, read probes |
 | `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
 | `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 6 fn | RouteTarget, SessionWriteRoute | Session write routing: which store a session write lands in per mode |
