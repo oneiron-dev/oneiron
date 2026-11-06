@@ -3,14 +3,14 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use oneiron::llm::run_admission::{
-    AllocationStoreError, BudgetLine, LeaseUnit, Payer, PayerPerson, PersistentAllocation,
-    RunAdmission, RunAttribution, RunDeclaration, RunEvent, RunReceipt, RunReceiptSink,
-    VaultAllocationLedger,
+    AllocationCallKey, AllocationStoreError, BudgetLine, DurableAllocationHold, LeaseUnit, Payer,
+    PayerPerson, PersistentAllocation, RunAdmission, RunAttribution, RunDeclaration, RunEvent,
+    RunReceipt, RunReceiptSink, VaultAllocationLedger,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId};
 
 use super::ServerReceipts;
-use crate::runtime::{NativeUsageProducer, VaultUsage};
+use crate::runtime::{NativeUsageContinuation, NativeUsageProducer, VaultUsage};
 
 #[derive(Clone)]
 pub(crate) struct NativeRunAllocation {
@@ -118,7 +118,34 @@ pub(crate) struct NativeUsage {
     receipts: Arc<NativeReceipts>,
 }
 
+/// One original hold and its producer material from the same transaction.
+/// A terminal hold no longer owns an admitted producer row.
+pub(crate) struct NativeAllocationContinuation {
+    pub hold: DurableAllocationHold,
+    pub admitted: Option<NativeUsageContinuation>,
+}
+
 impl NativeUsage {
+    /// Observes the original key without reserving or reconstructing a permit.
+    /// Terminal custody remains readable after its producer was consumed.
+    pub(crate) fn continuation_in_write_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        key: &AllocationCallKey,
+    ) -> Result<Option<NativeAllocationContinuation>, AllocationStoreError> {
+        let Some(hold) = self.ledger.hold_in_write_txn(txn, key)? else {
+            return Ok(None);
+        };
+        let admitted = if hold.terminal.is_some() {
+            None
+        } else {
+            self.producer
+                .continuation_in_write_txn(txn, key)
+                .map_err(|error| AllocationStoreError::Producer(Box::new(error)))?
+        };
+        Ok(Some(NativeAllocationContinuation { hold, admitted }))
+    }
+
     pub(crate) fn runs(&self) -> NativeRunAllocation {
         NativeRunAllocation::new(Arc::clone(&self.backend), self.receipts.clone())
     }

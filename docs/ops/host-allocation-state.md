@@ -115,6 +115,15 @@ owners or wallets. This is only a material read port: it restores no guard or
 lease, changes no kept-job terminal behavior, and enables no server recovery
 caller. Genuine original-line restoration and media continuation remain open.
 
+`NativeUsage::continuation_in_write_txn` reads that selected backend's original
+hold and producer material under one supplied writer. It uses
+`VaultAllocationLedger::hold_in_write_txn`, which observes pending writes too
+and opens no transaction. A terminal hold remains readable after settlement
+consumed its admitted producer; it returns no admitted material. A missing
+hold returns no snapshot, not permission to mint a replacement. These reads
+change no balances, reservations, selection, dispatch or terminal state. They
+restore no guard and do not enable a server media recovery caller.
+
 A caller can attach an `AllocationCallIntent` to one cloned admission handle
 with `RunAdmission::with_allocation_intent`. For a native host-paid call, its
 callback runs in the same reserve writer as the original admitted producer.
