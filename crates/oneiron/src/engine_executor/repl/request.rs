@@ -93,6 +93,7 @@ impl EngineNativeExecutor<'_> {
         continuation: Option<&ContinuationNote>,
     ) -> EngineExecutorResult<LlmRequest> {
         let completed_steps = completed_step_count(record)?;
+        self.request_fold_words.clear();
         let mut messages = Vec::new();
         messages.push(LlmMessage {
             role: LlmMessageRole::System,
@@ -183,6 +184,10 @@ impl EngineNativeExecutor<'_> {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
                 Some(Some(frame)) => {
+                    // FIX 18924: a fold's stub copies its accepted summary.
+                    if let Some(word) = shown_fold_words(&epochs, record.run_id, seq) {
+                        crate::code_run::push_fold_word(&mut self.request_fold_words, word);
+                    }
                     messages.push(frame);
                     swapped = true;
                     continue;
@@ -550,4 +555,29 @@ pub(super) fn result_memory_note(
         ));
     }
     (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// The fold whose stub [`super::compaction::epoch_frame`] shows at step
+/// `seq` of run `run_id`, when that stub copies the fold's accepted summary
+/// (FIX 18924): none where an epoch covers the step, for a fold by kind and
+/// for a fold whose words are withdrawn.
+fn shown_fold_words(
+    frames: &super::compaction::RunFrames,
+    run_id: EntityId,
+    seq: usize,
+) -> Option<crate::code_run::FoldWordRef> {
+    let step = seq as u64;
+    if frames
+        .epochs
+        .iter()
+        .any(|(row, _)| row.covers(run_id, step))
+    {
+        return None;
+    }
+    let fold = frames.folds.covering(step)?;
+    (fold.kind.is_none() && fold.summary.is_some()).then(|| crate::code_run::FoldWordRef {
+        source_run: run_id,
+        fold: fold.fold,
+        sources: fold.sources.clone(),
+    })
 }

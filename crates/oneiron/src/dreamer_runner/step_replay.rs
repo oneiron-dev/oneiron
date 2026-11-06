@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::code_run::FoldWordRef;
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
 use crate::side_table::ErasedForm;
@@ -285,6 +286,24 @@ pub struct StepReplayCapsule {
     /// it, and for good for a step that ran tool rounds and for an engine
     /// step.
     pub answer: Option<OutputRef>,
+    /// The folds whose accepted summaries its bodies copy (FIX 18924). Every
+    /// capsule keeps it. It is apart from `source_rows` and claims no list
+    /// of inputs is complete.
+    pub(crate) fold_words: CapsuleFoldWords,
+}
+
+/// The folds whose accepted summaries a capsule's bodies copy (FIX 18924),
+/// one list for each body, each fold once. A list names what was put in its
+/// body, never folds read from an id. A withdrawal of one fold's words
+/// retires each body whose list names that fold.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CapsuleFoldWords {
+    /// The stubs the request shows and the answers its consoles may print.
+    pub(crate) request: Vec<FoldWordRef>,
+    /// The answers the start's prefix row records.
+    pub(crate) start: Vec<FoldWordRef>,
+    /// The answers a hook view in the replay context shows.
+    pub(crate) context: Vec<FoldWordRef>,
 }
 
 impl StepReplayCapsule {

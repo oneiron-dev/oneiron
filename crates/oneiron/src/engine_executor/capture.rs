@@ -9,8 +9,9 @@ use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
-    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, StepCapture, StepContextCapture,
-    StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
+    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, FoldWordRef, StepCapture,
+    StepContextCapture, StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
+    push_fold_word, recorded_fold_words,
 };
 use crate::{EntityId, Error, LlmRequest};
 
@@ -51,13 +52,34 @@ impl EngineNativeExecutor<'_> {
         });
         // Browser planner handoff evidence has no row witness yet (FIX 6999).
         let browser_rows: Option<Vec<EntityId>> = None;
+        // The records each fold summary the request copies was written from
+        // (FIX 18924).
+        let fold_rows = Some(
+            self.step_fold_words(record)
+                .into_iter()
+                .flat_map(|word| word.sources)
+                .collect::<Vec<_>>(),
+        );
         crate::skill_optimize::union_source_rows([
             host_task_rows,
             exposure_rows,
             bridge_rows,
             epoch_rows,
             browser_rows,
+            fold_rows,
         ])
+    }
+
+    /// The folds whose accepted summaries this step's request copies (FIX
+    /// 18924): each stub the request shows with its summary, and each fold
+    /// answer `record` records, which a step's console may print. Known
+    /// dependencies only: unknown inputs stay with `step_source_rows`.
+    fn step_fold_words(&self, record: &CodeRunReplayRecord) -> Vec<FoldWordRef> {
+        let mut words = self.request_fold_words.clone();
+        for word in recorded_fold_words(&record.bridge_calls) {
+            push_fold_word(&mut words, word);
+        }
+        words
     }
 
     /// Captures `request` before it is sent, with `record`, the run's row as
@@ -93,6 +115,7 @@ impl EngineNativeExecutor<'_> {
             return;
         }
         let source_rows = self.step_source_rows(config, record);
+        let fold_words = self.step_fold_words(record);
         capture_step(
             vault,
             &StepCapture {
@@ -106,6 +129,7 @@ impl EngineNativeExecutor<'_> {
                 task: &config.task,
                 exposures,
                 source_rows,
+                fold_words,
                 start: Some(StepStartCapture {
                     record,
                     model: &config.model,
@@ -144,6 +168,10 @@ impl EngineNativeExecutor<'_> {
             .flatten()
             .filter(|(attempt, _, _)| attempt.as_bytes() == config.run_id.as_bytes())
             .map(|(_, lease_generation, _)| (config.run_id, lease_generation));
+        // FIX 18924: the fold answers a hook view the guest read shows.
+        let fold_words = capture
+            .guest_responses
+            .viewed_fold_words(&record.bridge_calls);
         let context = StepReplayContext {
             run: config.run_id,
             step: completed_step_count(record)?,
@@ -152,7 +180,7 @@ impl EngineNativeExecutor<'_> {
             guest_responses: capture.guest_responses,
             reader_reads: capture.reader_reads,
         };
-        let commit = StepContextCommit::new(capsule, context)?;
+        let commit = StepContextCommit::new(capsule, context, fold_words)?;
         let end = StepEnd {
             bridge_end,
             context: commit.digest(),

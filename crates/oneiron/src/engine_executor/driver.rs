@@ -1,7 +1,7 @@
 //! Executor driver: struct, constructors, and the witness-turn doors.
 
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
-use crate::code_run::{ExecutorStorage, GatedActorWrite};
+use crate::code_run::{ExecutorStorage, FoldWordRef, GatedActorWrite};
 use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
 use crate::entity_id::EntityId;
 use crate::llm::seat::ModelSeat;
@@ -28,6 +28,10 @@ pub struct EngineNativeExecutor<'a> {
     /// What the context this run built last holds of its share: the bodies
     /// its Full views carry, given back when the next context is built.
     pub(super) context_holds: Vec<ResultHold>,
+    /// The folds whose stubs the request this run built last shows, with
+    /// their accepted summaries (FIX 18924): what its capsule's request
+    /// copies beside the answers its consoles may print.
+    pub(super) request_fold_words: Vec<FoldWordRef>,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
     /// Feedback mode: each program is type-checked beside its run, and its
@@ -59,6 +63,7 @@ impl<'a> EngineNativeExecutor<'a> {
         Self {
             result_share: vault.result_share(),
             context_holds: Vec::new(),
+            request_fold_words: Vec::new(),
             storage: ExecutorStorage::Canonical(vault),
             backend,
             seat: None,
@@ -105,6 +110,7 @@ impl<'a> EngineNativeExecutor<'a> {
         Ok(Self {
             result_share: storage.result_share(),
             context_holds: Vec::new(),
+            request_fold_words: Vec::new(),
             storage,
             backend,
             seat: None,

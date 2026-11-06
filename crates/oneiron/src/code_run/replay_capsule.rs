@@ -61,6 +61,7 @@ use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
+use super::FoldWordRef;
 use super::replay::CodeRunReplayRecord;
 use super::storage::{
     StartCompaction, bind_capsule_answer, finalize_capsule, put_staged_capsule,
@@ -119,6 +120,10 @@ pub(crate) struct StepCapture<'a> {
     pub(crate) exposures: &'a [TaskExposure],
     /// Every row the request was read from, or `None` when any is unknown.
     pub(crate) source_rows: Option<Vec<EntityId>>,
+    /// The folds whose accepted summaries the request copies (FIX 18924):
+    /// the stubs it shows and the answers its consoles may print. Apart
+    /// from `source_rows`, and never a claim that they are complete.
+    pub(crate) fold_words: Vec<FoldWordRef>,
     /// An executor step's run state and config; `None` for a workflow step.
     pub(crate) start: Option<StepStartCapture<'a>>,
 }
@@ -447,6 +452,7 @@ pub fn capture_workflow_step(
         task: "",
         exposures: &[],
         source_rows,
+        fold_words: Vec::new(),
         start: None,
     };
     finalize_step_captures(vault);

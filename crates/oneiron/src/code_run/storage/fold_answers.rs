@@ -35,11 +35,26 @@ use crate::code_run::payload::{
     answer_fold_words, keep_erased_fold_words, keep_row_receipt, row_receipt,
     self_dispatch_outcome_value,
 };
-use crate::code_run::{FoldWordRef, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
+use crate::code_run::{FoldAnswer, FoldWordRef, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::engine_executor::bridge_result_output_path;
 use crate::side_table::{Erased, SideKey};
 use crate::store::{ManifestDbs, Store};
-use crate::{EntityId, Result};
+use crate::{EntityId, Result, Vault};
+
+/// Whether a withdrawal took the words of a fold `answer` copies, as the
+/// vault reads now (FIX 18924): a cached action's replay fails such an
+/// answer with `response_erased` rather than return it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn fold_answer_withdrawn(vault: &Vault, answer: &FoldAnswer) -> Result<bool> {
+    if answer.words.is_empty() {
+        return Ok(false);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    words_withdrawn(&vault.store, &rtxn, &answer.words)
+}
 
 /// One recorded fold answer whose words are withdrawn: its call's place in
 /// the record, and the folds it named.
@@ -49,8 +64,13 @@ pub(crate) struct WithdrawnFoldAnswer {
 }
 
 /// Whether the words of any fold `words` names are withdrawn as read
-/// through `dbs`, by the ledger fence's own test.
-fn words_withdrawn(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, words: &[FoldWordRef]) -> Result<bool> {
+/// through `dbs`, by the ledger fence's own test. A capsule's bodies take
+/// the same test (FIX 18924).
+pub(super) fn words_withdrawn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    words: &[FoldWordRef],
+) -> Result<bool> {
     for word in words {
         if crate::compaction::fold_words_withdrawn_in(
             dbs,
