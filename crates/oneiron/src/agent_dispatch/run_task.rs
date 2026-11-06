@@ -16,8 +16,8 @@
 //!
 //! On one machine the lease is always its own, so nothing new refuses: a
 //! run with no run TASK (dispatched before this change) runs as before.
-//! The handover itself, the reaper, and the re-creation of the queue row on
-//! another machine are slice 6.
+//! The handover to another machine, the reaper and the re-creation of the
+//! queue row there, is `super::run_handover` (slice 6).
 //! Entry: `mint_agent_run_task_in_txn`, `take_agent_run_lease_in_txn`.
 
 use std::collections::HashMap;
@@ -56,10 +56,11 @@ pub(crate) const AGENT_RUN_LEASE_FIRST_GENERATION: u64 = 1;
 pub(crate) const AGENT_RUN_LEASE_HOLD_SECS: u64 = 15 * 60;
 
 /// How many `retry_of` links a claim or a settlement follows back to find
-/// the run TASK a retry, a landing successor or an owner's continuation
-/// shares with the try its dispatch minted. Engine call (CALLS, FIX 4747):
-/// past it, or past a try a compaction deleted, the row has no run TASK and
-/// runs as before.
+/// the run TASK a retry, a landing successor, an owner's continuation or a
+/// try a handover queued here shares with the try its dispatch minted.
+/// Engine call (CALLS, FIX 4747): past it, or past a try this queue does not
+/// hold whose own id names no run TASK, the row has no run TASK and runs as
+/// before.
 const AGENT_RUN_RETRY_CHAIN_WALK: usize = 64;
 
 /// The typed cause a local try ends with when its run TASK names another
@@ -82,8 +83,8 @@ pub(crate) const AGENT_RUN_STOOD_DOWN: &str = "agent_run_stood_down";
 /// only the machine `node_id` names runs it, and only while the run TASK
 /// still holds this holder at this `generation`. The holder renews
 /// `held_until` while the run is its; a lease no pass renewed, or one its
-/// holder released as it closed, is expired from `held_until` on, and slice
-/// 6's reaper may hand it over at the next generation.
+/// holder released as it closed, is expired from `held_until` on, and the
+/// reaper (`super::run_handover`) may hand it over at the next generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AgentRunExecutorLease {
     /// The holder's stable sync node id (`m:client_id`).
@@ -185,37 +186,37 @@ enum FenceStanding {
 /// so a concurrent write from two machines resolves by whole-row LWW; a
 /// raised generation is always a read-modify-write of the lease it replaces.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-struct AgentRunTaskBody {
+pub(super) struct AgentRunTaskBody {
     role: u8,
     schema_version: u8,
     subkind: String,
     /// The run's original attempt id, hex: the try its dispatch enqueued.
-    attempt_ref: String,
+    pub(super) attempt_ref: String,
     /// The try that last took the lease, hex: the original, or a retry or
-    /// successor of it. Slice 6 re-creates the queue row under this id, so
-    /// the memo keys of its finished steps match.
-    live_attempt_ref: String,
-    run_id: Option<String>,
+    /// successor of it. A handover re-creates the queue row under this id
+    /// (`super::run_handover`), so the memo keys of its finished steps match.
+    pub(super) live_attempt_ref: String,
+    pub(super) run_id: Option<String>,
     parent_attempt_ref: Option<String>,
     /// The TASK the dispatch realizes, when it realizes one.
-    realized_task_ref: Option<String>,
+    pub(super) realized_task_ref: Option<String>,
     agent_definition_ref: String,
     /// The caller whose request queued the run; `None` for the host's own
     /// work.
     requester_ref: Option<String>,
     /// The queue dedupe key the row was enqueued under.
-    dedupe_key: Option<String>,
+    pub(super) dedupe_key: Option<String>,
     /// The exact dreamer payload bytes the queue row stores: what another
     /// machine re-creates the row and its model request from.
     #[serde(with = "queue_payload_bytes")]
-    queue_payload: Vec<u8>,
+    pub(super) queue_payload: Vec<u8>,
     /// The world the dispatch's scope names, as its TASK's birth stamp
     /// places it; `None` for base reality.
-    world_ref: Option<String>,
+    pub(super) world_ref: Option<String>,
     project_ref: Option<String>,
-    executor: AgentRunExecutorLease,
-    outcome: Option<AgentRunOutcome>,
-    created_at: u64,
+    pub(super) executor: AgentRunExecutorLease,
+    pub(super) outcome: Option<AgentRunOutcome>,
+    pub(super) created_at: u64,
 }
 
 /// The frozen queue payload as one MessagePack bin, not an array of
@@ -251,7 +252,7 @@ pub(crate) fn agent_run_task_id(attempt: AttemptId) -> Result<EntityId> {
 }
 
 /// The `held_until` a lease taken or renewed at `now` holds to.
-fn agent_run_lease_held_until(now: u64) -> u64 {
+pub(super) fn agent_run_lease_held_until(now: u64) -> u64 {
     now.saturating_add(AGENT_RUN_LEASE_HOLD_SECS)
 }
 
@@ -259,7 +260,7 @@ fn agent_run_lease_held_until(now: u64) -> u64 {
 /// `held_until`, or `None` while the lease covers the pass. Engine call
 /// (CALLS, FIX 4747): it renews once less than half a hold is left, so a run
 /// writes its TASK at most once a half hold.
-fn agent_run_lease_renewal(held_until: u64, now: u64) -> Option<u64> {
+pub(super) fn agent_run_lease_renewal(held_until: u64, now: u64) -> Option<u64> {
     let renew_below = now.saturating_add(AGENT_RUN_LEASE_HOLD_SECS / 2);
     (held_until < renew_below).then(|| agent_run_lease_held_until(now))
 }
@@ -287,8 +288,8 @@ fn own_expired_agent_run_lease_retaken(
 /// here; a run this machine settled whose later try is queued here (a
 /// retry, a landing successor, or the owner's continuation of a failed try)
 /// is this machine's own and reopens, as it ran before the lease; any run
-/// another machine holds, expired or not, is that machine's until slice 6's
-/// reaper hands it over.
+/// another machine holds, expired or not, is that machine's until the
+/// reaper (`super::run_handover`) hands it over.
 fn claim_standing(body: &AgentRunTaskBody, node_id: u64) -> ClaimStanding {
     match (body.executor.node_id == node_id, body.outcome) {
         (true, _) => ClaimStanding::Own,
@@ -298,7 +299,7 @@ fn claim_standing(body: &AgentRunTaskBody, node_id: u64) -> ClaimStanding {
 }
 
 /// Whether this process released its executor leases as it closes.
-fn closing(vault: &Vault) -> bool {
+pub(super) fn closing(vault: &Vault) -> bool {
     vault
         .executor_leases_released
         .load(std::sync::atomic::Ordering::SeqCst)
@@ -517,8 +518,11 @@ pub(crate) fn agent_run_unrun_cause_in(
 
 /// The run TASK `row` shares, read in `txn`: the one its own dispatch
 /// minted, else the one of the try it retries, followed back through
-/// `retry_of` ([`AGENT_RUN_RETRY_CHAIN_WALK`]). `None` for a row with none.
-fn agent_run_task_ref_in(
+/// `retry_of` ([`AGENT_RUN_RETRY_CHAIN_WALK`]). A try this queue does not
+/// hold ends the walk at the run TASK its own id names: a try a handover
+/// queued here links the run's original try, which another machine ran
+/// (FIX 4747 slice 6). `None` for a row with none.
+pub(super) fn agent_run_task_ref_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
@@ -533,10 +537,11 @@ fn agent_run_task_ref_in(
         let Some(parent) = retry_of else {
             return Ok(None);
         };
-        let Some(parent) = queue.get_in_txn(txn, parent)? else {
-            return Ok(None);
+        let Some(parent_row) = queue.get_in_txn(txn, parent)? else {
+            let task_ref = agent_run_task_id(parent)?;
+            return Ok(is_agent_run_task_in(vault, txn, task_ref)?.then_some(task_ref));
         };
-        (id, retry_of) = (parent.id, parent.retry_of);
+        (id, retry_of) = (parent_row.id, parent_row.retry_of);
     }
     Ok(None)
 }
@@ -591,7 +596,7 @@ fn decode_agent_run_task_body(entity_type: u8, body: &[u8]) -> Result<AgentRunTa
 }
 
 /// The stored run TASK body, read in `txn`; `None` while none stands.
-fn agent_run_task_body_in(
+pub(super) fn agent_run_task_body_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
@@ -625,7 +630,7 @@ fn readable_body_in(
 /// Read-modify-write of one run TASK body in the caller's write; a no-op
 /// update writes nothing, so a renewal not yet due leaves the row
 /// byte-identical.
-fn update_agent_run_task_body_in_txn(
+pub(super) fn update_agent_run_task_body_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
@@ -910,7 +915,20 @@ fn open_agent_run_leases_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(EntityId, AgentRunExecutorLease)>> {
-    let mut leases = Vec::new();
+    Ok(open_agent_runs_in(vault, txn)?
+        .into_iter()
+        .map(|(task_ref, body)| (task_ref, body.executor))
+        .collect())
+}
+
+/// Every live agent-run TASK and its body, read in `txn` (FIX 4747): what
+/// the release and the reaper judge. A body this version does not read is
+/// passed over.
+pub(super) fn open_agent_runs_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, AgentRunTaskBody)>> {
+    let mut runs = Vec::new();
     for task_ref in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_TASK, None)?
@@ -926,20 +944,20 @@ fn open_agent_run_leases_in(
             continue;
         };
         if body.outcome.is_none() {
-            leases.push((task_ref, body.executor));
+            runs.push((task_ref, body));
         }
     }
-    Ok(leases)
+    Ok(runs)
 }
 
 impl Vault {
     /// Releases every live agent-run lease this machine holds (FIX 4747
     /// slice 5), in one writer: each keeps its holder and generation and is
-    /// held until now, so slice 6's reaper on another machine may take it at
-    /// once. The host calls it beside
-    /// [`Vault::release_send_executor_leases`], as it shuts down gracefully
-    /// and before its device-sync link stops. From then on this process
-    /// takes, renews and settles no run lease until
+    /// held until now, so the reaper on another machine
+    /// ([`Vault::reap_agent_run_leases`]) may take it at once. The host calls
+    /// it beside [`Vault::release_send_executor_leases`], as it shuts down
+    /// gracefully and before its device-sync link stops. From then on this
+    /// process takes, renews and settles no run lease until
     /// [`Vault::resume_executor_leases`]; a run in flight here still passes
     /// its fence until another machine takes its lease. Returns how many it
     /// released.
