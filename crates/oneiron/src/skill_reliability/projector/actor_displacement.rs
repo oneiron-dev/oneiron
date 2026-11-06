@@ -76,7 +76,7 @@ pub(crate) fn reconcile_displaced_actor_credit_in_txn(
             let (Some(person_cell), Some(row)) = (person_cell, person_row) else {
                 continue;
             };
-            if let Some(observation) = recomputed_person_observation(
+            let observation = match recomputed_person_observation(
                 vault,
                 txn,
                 &credit,
@@ -84,6 +84,11 @@ pub(crate) fn reconcile_displaced_actor_credit_in_txn(
                 *actor,
                 Some(actor),
             )? {
+                StandingCreditObservation::Credited(success, weight) => Some((success, weight)),
+                StandingCreditObservation::Uncredited => None,
+                StandingCreditObservation::Unknown => continue,
+            };
+            if let Some(observation) = observation {
                 let mut evidence = LearningEvidence::anchored(
                     held.receipt.clone(),
                     row.at,

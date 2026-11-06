@@ -84,7 +84,7 @@ pub(super) fn search_pages(
     // until it holds the request or every match.
     let mut window = input.limit.max(oneiron::memory::caps::MAX_SEARCH_LIMIT);
     let hits = loop {
-        let (candidates, ranked) = home_search_page_candidates(
+        let (candidates, exhausted) = home_search_page_candidates(
             &server.vault,
             actor.clone(),
             &input.query,
@@ -113,7 +113,7 @@ pub(super) fn search_pages(
                 }
             }
         }
-        if hits.len() == input.limit || ranked < window {
+        if hits.len() == input.limit || exhausted {
             break hits;
         }
         window = window.saturating_mul(2);
