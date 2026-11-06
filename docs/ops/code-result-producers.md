@@ -115,3 +115,17 @@ source rows, binding, checkpoint, replay commit and error ordering are unchanged
 The observation's completed-step ordinal is not used as its producer coordinate.
 Generic and failed-step text outputs and resumed wait replies keep `None`.
 No effect, media declaration, grant or fence is inferred.
+
+## Checkpointed implicit-speech intents
+
+A completed REPL step's stored `ImplicitSpeechIntent` also carries the same
+`bridge_start` supplied to that step's `RecordingJsHost`. This is the producer
+coordinate of the checkpointed text or result intent, not the rendered
+MESSAGE's witness identity or the later emit order. The original sweeping sink,
+encoded and hashed bytes, preparation and suppression rules are unchanged.
+The intent still publishes before the terminal marker and checkpoint; the
+bubble still emits only after the replay commit, with its delivery marker
+written after the bubble. Terminal recovery reads and decodes the existing
+intent without republishing or relabelling its producer metadata.
+Terminal and fallback-speech control markers keep `None`; no effect, media
+declaration, grant or fence is inferred for the intent.
