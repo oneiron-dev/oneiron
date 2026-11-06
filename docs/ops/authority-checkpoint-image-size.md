@@ -12,17 +12,34 @@ rules. Those remain separate authority behavior.
 
 ## The 64 MiB optional-compaction trigger
 
-`AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES` keeps the existing 64 MiB value and
-the existing optional replay/residence compaction behavior:
+`AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES` keeps the existing 64 MiB value.
+Replay selection now measures the named MessagePack replay value alone, not
+chain parents, archive manifests, unresolved rows, or other image fields:
 
-1. Above the trigger, the builder drops replay evidence for
-   `AUTHORITY_REPLAY_OVERFLOW` and checks the encoded size again.
-2. If it is still above the trigger, it drops residence directive and result
-   bodies and sets `AUTHORITY_RESIDENCE_BODY_OVERFLOW`.
+1. Complete replay that fits keeps its original field deltas. Their anchors
+   follow the signed first parent only, with the existing 32-row stride.
+2. Replay above the trigger keeps the largest fitting suffix in parents-first
+   order, with hash-order ties. This is topological order, not wall time. Each
+   retained point is a whole state or an explicit rejection. No retained delta
+   needs a dropped base. The first non-fitting or missing older point ends the
+   suffix; omitted states remain unknown and request history when needed.
+3. A successor of a partial image carries its actual known states through the
+   same serialization normalization, then selects the suffix from all covered
+   row parents. Dropped older points cannot re-enter the fitting suffix as an
+   admitted tail adds points. The root still checks its own exact-byte rebuild.
 
-An image at or below the trigger keeps both. An image still above it after both
-fallbacks is encoded with all remaining bodies intact. The trigger itself does
-not cause a refusal. In particular, neither fallback drops `AgentGrantAct` bodies.
+Residence eligibility is unchanged: measure the image with replay replaced by
+`AUTHORITY_REPLAY_OVERFLOW`, then drop residence directive and result bodies
+and set `AUTHORITY_RESIDENCE_BODY_OVERFLOW` only if that baseline exceeds the
+trigger. Retaining more replay does not newly drop working residence bodies.
+The residence baseline's existing sensitivity to install-local image metadata
+is separate from the replay selection rule.
+
+An image at or below the trigger keeps both. An image still above it after
+compaction is encoded with all remaining bodies intact. The trigger itself
+does not cause a refusal. Neither compaction drops `AgentGrantAct` bodies.
+Checkpoint fold schema 23 describes this replay representation. There is no
+schema-22 reader or migration.
 
 ## Transport slicing and stage charge
 
@@ -56,8 +73,8 @@ same-vault parent merge and signed-sequence bound as the original world refold.
 Both judgments must still equal the image's kept state.
 
 Missing replay states, missing carried bodies, side-row parents, and failed
-reconstruction still request the whole history. This does not add image bodies,
-change the checkpoint schema or compaction trigger, or relax row validation.
+reconstruction still request the whole history. The cold-context reconstruction
+does not add image bodies, change the compaction trigger, or relax row validation.
 
 ## Rollout
 
