@@ -186,6 +186,11 @@ pub struct RoomSection {
     /// participants (ARCH-0067 §8). `None` when no session was read, so the
     /// section renders no host line rather than guessing who is present.
     pub host: Option<crate::workspace_roster::RoomHosting>,
+    /// Who holds the next turn (FIX 15646): each open speaking claim on the
+    /// room's newest turns, and each unclaimed turn that names the reader,
+    /// read fresh from the claim receipts. Like the host, it rides every
+    /// page; a rendered holder lets no one speak.
+    pub speaking: Vec<crate::workspace_roster::RoomSpeakingClaim>,
     /// The PERSONs the reader may bring into the room, the only ones
     /// `invite?:` suggests: for an ordinary room, the owner-only
     /// `rooms.invite` set (`workspace_roster::invites_into_room_in_txn`).
@@ -193,7 +198,8 @@ pub struct RoomSection {
 }
 
 impl RoomSection {
-    /// Roster, stretches, invitees, scope, posture, host, rules and open offers.
+    /// Roster, stretches, invitees, scope, posture, host, who holds the next
+    /// turn, rules and open offers.
     /// Invitees are the reader's people it may invite ([`Self::invitable`]).
     /// Values are escaped again by the board frame; flattening here only
     /// prevents row/control-character tricks. An undecided host renders as
@@ -338,6 +344,14 @@ impl RoomSection {
                 ),
             });
         }
+        rows.extend(self.speaking.iter().map(|claim| match claim.holder {
+            Some(holder) => format!(
+                "next: {} holder={}",
+                claim.turn.to_hex(),
+                people.label(holder)
+            ),
+            None => format!("next: {} holder=none addressed=you", claim.turn.to_hex()),
+        }));
         rows.extend(self.claims.iter().map(|claim| {
             format!(
                 "{}: {} {}",
