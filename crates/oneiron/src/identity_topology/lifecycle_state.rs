@@ -16,9 +16,7 @@ use super::ledger_fold::{
     fold_identity_topology_log,
 };
 use super::op_vocabulary::IdentityTopologyOp;
-use super::store_entity_helpers::{
-    identity_topology_event_for_store_in_txn, identity_topology_events_for_store_in_txn,
-};
+use super::store_entity_helpers::identity_topology_events_for_store_in_txn;
 use super::stored_event::StoredIdentityOpAction;
 
 pub use oneiron_contracts::identity_topology::EntityLifecycleState;
@@ -99,8 +97,12 @@ pub(crate) fn zero_head_split_shells_for_store_in_txn(
         if fold.states.get(entity) != Some(&EntityLifecycleState::Split) {
             continue;
         }
-        let record = identity_topology_event_for_store_in_txn(store, rtxn, event_id)?
-            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        // Read whole (FIX 10188): a zero-head split with a large map or
+        // evidence is stored as a manifest.
+        let record = super::operation_parts::identity_topology_decision_for_store_in_txn(
+            store, rtxn, event_id,
+        )?
+        .ok_or(Error::CorruptedIndex("identity topology event index"))?;
         if matches!(&record.action, StoredIdentityOpAction::Split { heads, .. } if heads.is_empty())
         {
             shells.insert(*entity);
