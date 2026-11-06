@@ -34,7 +34,7 @@ use crate::dreamer_runner::{DreamerTurnRole, decode_dreamer_attempt_payload, dre
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_USER};
+use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_USER};
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
@@ -187,6 +187,8 @@ impl RenderedWorkflowStepContext {
     /// Own-text TURNs keep their existing projection. A witnessed container
     /// instead projects each readable, visible, same-speaker MESSAGE. One
     /// unreadable child never withholds its independently readable siblings.
+    /// A `counterparty` TURN keeps its own bucket and its `counterparty`
+    /// label, never the owner's.
     fn render_turn(
         &mut self,
         vault: &Vault,
@@ -209,6 +211,7 @@ impl RenderedWorkflowStepContext {
         let bucket = match dreamer_turn_role(Some(speaker), &vault.config.assistant_display_names) {
             DreamerTurnRole::User => WITNESS_AUTHOR_USER,
             DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+            DreamerTurnRole::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
             _ => return Ok(false),
         };
         let ids = vault.filtered_edge_peers(

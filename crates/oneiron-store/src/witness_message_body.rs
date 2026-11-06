@@ -9,8 +9,12 @@ use oneiron_base::error::{Error, RecordError, Result};
 pub const WITNESS_AUTHOR_USER: &str = "user";
 /// The companion persona's words.
 pub const WITNESS_AUTHOR_COMPANION: &str = "companion";
+/// Imported speech from somebody other than the conversation's first-party
+/// human or companion (received mail). Foreign speaker data: never the
+/// importer's words, never the engine's voice.
+pub const WITNESS_AUTHOR_COUNTERPARTY: &str = "counterparty";
 /// Tooling/engine rows. These carry NO `AuthoredBy` edge, which is exactly why
-/// the bucket needs authority the other two do not: an unattributed row reads
+/// the bucket needs authority the others do not: an unattributed row reads
 /// downstream as the engine's own voice.
 pub const WITNESS_AUTHOR_SYSTEM: &str = "system";
 
@@ -92,7 +96,8 @@ pub enum StoredMessagePart {
 /// authorizes what will be written.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WitnessMessageEnvelope<'a> {
-    /// `user` | `companion` | `system`; anything else fails closed.
+    /// `user` | `companion` | `system` | `counterparty`; anything else fails
+    /// closed.
     pub author: &'a str,
     /// App-closed type token.
     pub message_type: &'a str,
@@ -157,7 +162,10 @@ pub fn witness_message_envelope_denial(
 
     if !matches!(
         envelope.author,
-        WITNESS_AUTHOR_USER | WITNESS_AUTHOR_COMPANION | WITNESS_AUTHOR_SYSTEM
+        WITNESS_AUTHOR_USER
+            | WITNESS_AUTHOR_COMPANION
+            | WITNESS_AUTHOR_SYSTEM
+            | WITNESS_AUTHOR_COUNTERPARTY
     ) {
         return malformed;
     }
@@ -197,6 +205,7 @@ pub enum WitnessMessageBodyAuthor {
     User,
     Companion,
     System,
+    Counterparty,
 }
 
 /// Proves MESSAGE bytes are the canonical envelope this module encodes, and
@@ -309,6 +318,7 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
     Ok(match envelope.author {
         WITNESS_AUTHOR_USER => WitnessMessageBodyAuthor::User,
         WITNESS_AUTHOR_COMPANION => WitnessMessageBodyAuthor::Companion,
+        WITNESS_AUTHOR_COUNTERPARTY => WitnessMessageBodyAuthor::Counterparty,
         // The floor above already refused every other value.
         _ => WitnessMessageBodyAuthor::System,
     })
@@ -464,6 +474,8 @@ fn encoded_metadata_len(metadata: &Value) -> Option<usize> {
 ///   a store-verified actor entity by an `AuthoredBy` edge the writing door
 ///   mints in the same transaction. Replicated, there is no actor to bind and
 ///   nothing downstream could tell an honest row from a forged one.
+/// * `counterparty` — imported foreign speech, written locally only by an
+///   import a local actor runs. Replicated, there is no such actor either.
 ///
 /// This narrows exactly ONE entity kind's remote door. Every other kind
 /// converges unchanged, and a local MESSAGE row already in LMDB is skipped by
@@ -492,7 +504,9 @@ pub fn validate_replicated_witness_message_body(body: &[u8]) -> Result<()> {
         WitnessMessageBodyAuthor::System => Error::Record(RecordError::InvalidWitnessMessageBody(
             "a replicated MESSAGE may not claim the unattributed system author",
         )),
-        WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion => {
+        WitnessMessageBodyAuthor::User
+        | WitnessMessageBodyAuthor::Companion
+        | WitnessMessageBodyAuthor::Counterparty => {
             Error::Record(RecordError::InvalidWitnessMessageBody(
                 "a replicated MESSAGE carries no local actor binding for its author",
             ))

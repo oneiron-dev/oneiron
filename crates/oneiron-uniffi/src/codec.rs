@@ -436,6 +436,7 @@ impl Lower<engine::WitnessMessage> for WitnessMessage {
                 WitnessAuthor::User => engine::WitnessAuthor::User,
                 WitnessAuthor::Companion => engine::WitnessAuthor::Companion,
                 WitnessAuthor::System => engine::WitnessAuthor::System,
+                WitnessAuthor::Counterparty => engine::WitnessAuthor::Counterparty,
             },
             message_type: self.message_type,
             content: self.content,

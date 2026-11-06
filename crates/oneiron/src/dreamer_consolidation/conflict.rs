@@ -315,8 +315,9 @@ pub fn evidence_trust_meet<'a>(
 /// native User → `UserStated`; native Assistant → `Generated` (never
 /// Observed — two assistant turns must not corroborate each other above
 /// the Proposed-forcing floor); imported-transcript turns → `Imported`
-/// regardless of role; every other role is never classified (GATE-10
-/// excludes it). The reachable working-set meet space is therefore
+/// regardless of role; a Counterparty turn → `Imported` even unstamped,
+/// never `UserStated` or `Generated`; every other role is never classified
+/// (GATE-10 excludes it). The reachable working-set meet space is therefore
 /// {UserStated, Generated, Imported}.
 #[must_use]
 pub const fn turn_trust_class(
@@ -332,6 +333,7 @@ pub const fn turn_trust_class(
     match role {
         DreamerTurnRole::User => Some(ClaimSource::UserStated),
         DreamerTurnRole::Assistant => Some(ClaimSource::Generated),
+        DreamerTurnRole::Counterparty => Some(ClaimSource::Imported),
         _ => None,
     }
 }

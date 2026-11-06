@@ -276,11 +276,14 @@ pub(super) fn entity_mentions(tokens: &[&str], known_names: &BTreeSet<String>) -
 }
 
 /// The speaker-role axis. The role gate has already refused everything but
-/// User and Assistant; between those two the owner's own words are the
-/// stronger first-party claim source, so they carry the higher weight.
+/// User, Assistant and Counterparty; the owner's own words are the stronger
+/// first-party claim source, so they carry the higher weight. A
+/// Counterparty turn (received mail) screens with the same human-speech
+/// weight; the weight is screening, not first-party trust, which stays
+/// Imported.
 const fn role_weight(role: DreamerTurnRole) -> f32 {
     match role {
-        DreamerTurnRole::User => 1.0,
+        DreamerTurnRole::User | DreamerTurnRole::Counterparty => 1.0,
         DreamerTurnRole::Assistant => 0.6,
         _ => 0.0,
     }

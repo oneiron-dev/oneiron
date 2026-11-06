@@ -49,7 +49,8 @@ use super::resolution::PolicyManifestResolution;
 
 use crate::store::witness_message_body::witness_message_envelope_denial;
 pub(crate) use crate::store::witness_message_body::{
-    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
 };
 
 /// One authorized MESSAGE write.
@@ -85,6 +86,7 @@ impl<'a> WitnessMessageAuthorization<'a> {
 /// actor binding are all read from the same snapshot the write commits under.
 /// A refusal is an `Err`, which aborts the caller's transaction: no MESSAGE
 /// row, edge, text posting, TURN re-put or session-activity bump survives it.
+/// A `counterparty` row meets this ordinary local ceiling, not the System floor.
 ///
 /// # Errors
 ///

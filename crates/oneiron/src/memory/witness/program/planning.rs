@@ -206,8 +206,7 @@ impl Memory<'_> {
         }
         let mut message_exists = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            let attributed =
-                plan.imported.is_none() && planned.message.author != WitnessAuthor::System;
+            let attributed = plan.imported.is_none() && planned.message.author.names_writer();
             message_exists.push(validate_existing_witness_message(
                 dbs,
                 wtxn,

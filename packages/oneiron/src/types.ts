@@ -174,7 +174,7 @@ export type CheckpointPin = {
 }
 
 /** Who authored one witnessed message. */
-export type WitnessAuthor = "user" | "companion" | "system"
+export type WitnessAuthor = "user" | "companion" | "system" | "counterparty"
 
 /** One message inside a witnessed turn. */
 export type WitnessMessage = {

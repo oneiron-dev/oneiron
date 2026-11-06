@@ -304,7 +304,8 @@ fn engage_in_txn(
 /// [`engage_in_txn`] for a witnessed turn, in the witness's own write, before
 /// its room admits it: the cards its new visible messages name and, in a
 /// project room, those the turn it answers names. A retried message, a hidden
-/// one or a system line engages nothing.
+/// one, a system line or a counterparty's (somebody else's words, never the
+/// writer's own offer activity) engages nothing.
 pub(super) fn witness_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -324,8 +325,10 @@ pub(super) fn witness_in_txn(
         let reply = metadata
             .get("room_reply_to")
             .and_then(serde_json::Value::as_str);
-        if message.author == WitnessAuthor::System
-            || !message.is_visible
+        if matches!(
+            message.author,
+            WitnessAuthor::System | WitnessAuthor::Counterparty
+        ) || !message.is_visible
             || (refs.is_none() && reply.is_none())
             || vault.get_entity_type_in_txn(txn, id)?.is_some()
         {

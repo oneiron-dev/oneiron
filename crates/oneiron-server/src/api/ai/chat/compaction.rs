@@ -118,7 +118,9 @@ impl SelfChat {
 
     /// The log as the model reads it: each landed summary as the agent's
     /// own record of the turns it covers, then each retained message by its
-    /// author.
+    /// author. A `counterparty` message, somebody else's imported words,
+    /// rides as labelled foreign data, never as the user's own turn or the
+    /// agent's reply.
     pub(super) fn push_log(&self, messages: &mut Vec<LlmMessage>) {
         for line in &self.log.lines {
             messages.push(match line {
@@ -127,14 +129,20 @@ impl SelfChat {
                     serde_json::json!({"compacted_turns": {"epoch": epoch, "summary": text}})
                         .to_string(),
                 ),
-                ChatLogLine::Message { author, text } => text_message(
-                    if *author == WitnessAuthor::User {
-                        LlmMessageRole::User
-                    } else {
-                        LlmMessageRole::Assistant
-                    },
-                    text.clone(),
-                ),
+                ChatLogLine::Message { author, text } => match author {
+                    WitnessAuthor::User => text_message(LlmMessageRole::User, text.clone()),
+                    WitnessAuthor::Counterparty => text_message(
+                        LlmMessageRole::User,
+                        serde_json::json!({
+                            "author": WitnessAuthor::Counterparty.as_str(),
+                            "content": text,
+                        })
+                        .to_string(),
+                    ),
+                    WitnessAuthor::Companion | WitnessAuthor::System => {
+                        text_message(LlmMessageRole::Assistant, text.clone())
+                    }
+                },
             });
         }
     }
