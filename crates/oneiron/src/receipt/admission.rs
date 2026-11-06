@@ -107,7 +107,16 @@ pub struct AdmissionTracker {
 impl AdmissionTracker {
     /// Keeps the intent before the host starts its typed call. Actor binding,
     /// retry identity and the active/terminal fence are checked in the same
-    /// write transaction as the receipt. Only an answered hook ask may resume.
+    /// write transaction as the receipt. Only a held call may resume: one an
+    /// answered hook ask or a paced turn runs again. `resumed` is a call the
+    /// drain runs again on the args its hold saved (FIX 8753), which carry
+    /// ids the hold fixed and a hook's rewrite, so its held intent is
+    /// reopened whatever its request's fingerprint; the drain's leave comes
+    /// from the engine alone, never from a request.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's identity, as its door read it"
+    )]
     pub fn start(
         vault: Arc<Vault>,
         actor: EntityId,
@@ -116,12 +125,16 @@ impl AdmissionTracker {
         verb: &str,
         request_digest: String,
         fingerprint: String,
+        resumed: bool,
     ) -> MemoryResult<Self> {
         let key = key(actor, class, invocation);
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
             verify_actor_binding_in_txn(&vault, txn, actor, class)?;
             if let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? {
-                if stored.fingerprint != fingerprint {
+                let reopens = resumed
+                    && !stored.active
+                    && matches!(stored.receipt.state, AdmissionStatus::Held { .. });
+                if stored.fingerprint != fingerprint && !reopens {
                     return Err(MemoryError::new(
                         oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
                         "admission intent names a different call",
@@ -181,18 +194,21 @@ impl AdmissionTracker {
         })
     }
 
-    /// Settles once after the original typed door answers; a pending ask
-    /// remains held and can resume under its original invocation.
+    /// Settles once after the original typed door answers; a pending ask or
+    /// a paced hold remains held and can resume under its original
+    /// invocation.
     pub fn finish(&self, result: Result<&serde_json::Value, (&str, &str)>) -> MemoryResult<()> {
         let state = match result {
             Ok(value) => AdmissionStatus::Completed {
                 result_digest: super::call_json_digest(value),
             },
-            Err((oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK, reason)) => {
-                AdmissionStatus::Held {
-                    reason: Some(reason.to_owned()),
-                }
-            }
+            Err((
+                oneiron_contracts::memory::MEMORY_CODE_PENDING_ASK
+                | oneiron_contracts::memory::MEMORY_CODE_PACED_HOLD,
+                reason,
+            )) => AdmissionStatus::Held {
+                reason: Some(reason.to_owned()),
+            },
             Err((code, reason)) => AdmissionStatus::Refused {
                 code: code.to_owned(),
                 reason: reason.to_owned(),
