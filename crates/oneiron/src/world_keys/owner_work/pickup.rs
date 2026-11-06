@@ -234,7 +234,15 @@ impl Vault {
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, machine, outcome.clone())?;
+        let (result, signing) =
+            self.append_owner_work_result_with_key_in_txn(txn, hash, machine, outcome.clone())?;
+        // An export copy's numbered parts are signed by the key that signed
+        // its result, in this commit (FIX 12373).
+        if let (OwnerWorkBody::ExportSecret(_), OwnerWorkOutcome::Sealed { output }) =
+            (&request.work, &outcome)
+        {
+            self.sign_export_output_parts_in_txn(txn, &fold, hash, result, output, &signing)?;
+        }
         Ok(Ran::Answered(outcome))
     }
 
