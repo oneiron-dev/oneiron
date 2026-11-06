@@ -12,11 +12,10 @@ pub mod merge;
 #[cfg(test)]
 mod tests;
 
-pub use self::accessors::{OverlayDb, OverlayStrDb};
+pub use self::accessors::{EntityRowSource, OverlayDb, OverlayStrDb};
 
-// Only OverlayDb/OverlayStrDb are named outside this module
-// (`oneiron::overlay_db::OverlayDb` in store/vault/pipeline callers); the merge
-// engine and iterator enums are constructed and matched inside it. Their
+// Accessors and their stored-row source are named outside this module. The
+// merge engine and iterator enums are constructed and matched inside it. Their
 // modules are public because the accessors' public signatures name them.
 
 // The flat overlay_db.rs module used to provide these names to the sibling test

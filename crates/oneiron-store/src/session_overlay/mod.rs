@@ -25,7 +25,7 @@ pub use self::keyspace::OverlayKeyspace;
 pub use self::overlay::{SessionOverlay, TxnSegmentGuard, txn_segment_installed};
 pub use self::route::{RouteTarget, SessionWriteRoute};
 pub use self::snapshot::{
-    OverlaySnapshot, SnapshotLookup, SnapshotMergePlan, SnapshotMergeRow, StagedRows,
+    OverlaySnapshot, SnapshotLookup, SnapshotLookupRef, SnapshotMergePlan, SnapshotMergeRow, StagedRows,
 };
 
 // The flat session_overlay.rs module used to provide these names to the test

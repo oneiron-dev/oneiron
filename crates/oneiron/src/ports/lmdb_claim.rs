@@ -150,15 +150,15 @@ impl Vault {
 }
 
 /// Stored CLAIM bytes from the same reader position, not a history projection.
-/// Base bytes borrow the transaction; an overlay's owned row stays owned.
+/// Base bytes borrow the transaction; staged bytes retain their immutable source.
 /// Grammar and history validation still run through the canonical decoder.
 pub(crate) struct StoredClaimBody<'txn> {
-    raw: std::borrow::Cow<'txn, [u8]>,
+    raw: crate::overlay_db::EntityRowSource<'txn>,
 }
 
 impl StoredClaimBody<'_> {
     pub(crate) fn body(&self) -> &[u8] {
-        &self.raw[ENTITY_METADATA_HEADER_LEN..]
+        &self.raw.as_bytes()[ENTITY_METADATA_HEADER_LEN..]
     }
 }
 
@@ -203,16 +203,16 @@ impl Vault {
         rtxn: &'txn RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<StoredClaimBody<'txn>>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = self.store.entities.get_entity_source(rtxn, id)? else {
             return Ok(None);
         };
         // History keeps every lifecycle status, never words a deletion withdrew
         // or a source that no longer stands.
-        if !super::safe_read::raw_readable_in_txn(&self.store, rtxn, id, &raw)? {
+        if !super::safe_read::raw_readable_in_txn(&self.store, rtxn, id, raw.as_bytes())? {
             return Ok(None);
         }
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let header = EntityMetadataHeader::parse(raw.as_bytes())
+            .ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
