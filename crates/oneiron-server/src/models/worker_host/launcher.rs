@@ -4,7 +4,11 @@
 //! provider's loopback address.
 //!
 //! An EXL3 worker runs the bundled `exl3_server.py` on the locked
-//! environment's interpreter with `--launch-manifest`. A llama.cpp worker
+//! environment's interpreter with `--launch-manifest`. Its `--draft-dir` is
+//! the stock draft's install, or a vault's own load set the drafter serving
+//! seam materialised in the vault's private directory (FIX 14976), checked
+//! file by file at install and against the target's pins at launch; the
+//! manifest names the draft's identity, which every answer echoes. A llama.cpp worker
 //! runs the pinned `llama-server` under the alias the bundled
 //! `llama_identity.py prepare` gives it, and its identity manifest is
 //! checked against the pins before the launch. Either way the launch's
@@ -33,8 +37,9 @@ use super::launch_manifest::{
     self, BuildSection, LaunchManifest, LaunchRecord, LaunchSlot, launch_nonce,
 };
 use super::media_worker::StatsRoute;
-use crate::config::models::{ManagedLaunch, WorkerConfig};
+use crate::config::models::{ArtifactSource, ManagedLaunch, WorkerArtifact, WorkerConfig};
 use crate::model_artifacts::install::{ArtifactStore, artifacts_root};
+use crate::models::drafter_serving::{VaultLoadSet, stock_draft_identity, verify_vault_load_set};
 
 /// The variables a worker keeps from this process's environment: what an
 /// interpreter, CUDA and its caches need, never a credential.
@@ -75,6 +80,9 @@ pub(super) struct Installation {
     pub(super) runtime_root: PathBuf,
     pub(super) weights: InstalledWeights,
     draft: Option<InstalledWeights>,
+    /// A vault's own draft in place of the stock one (FIX 14976): its
+    /// private load set, verified file by file at this install.
+    vault_draft: Option<Arc<VaultLoadSet>>,
     pub(super) bundle_dir: PathBuf,
     /// Kind-scoped code digest, not the whole installed directory's digest.
     pub(super) bundle_sha256: String,
@@ -131,9 +139,18 @@ impl ProcessLauncher {
         let token = self.launch.hub_token_env.as_deref();
         let weights =
             install::weights(Arc::clone(&store), &self.launch.weights, kind, false, token).await?;
-        let draft = match &self.launch.draft {
-            Some(draft) => Some(install::weights(store, draft, kind, true, token).await?),
-            None => None,
+        // A vault's own draft is checked in its private directory; it never
+        // goes through the shared artifact store (FIX 14976).
+        let (draft, vault_draft) = match &self.launch.draft {
+            Some(WorkerArtifact {
+                source: ArtifactSource::VaultLoadSet(set),
+                ..
+            }) => (None, Some(verify_vault_load_set(set, kind).await?)),
+            Some(draft) => (
+                Some(install::weights(store, draft, kind, true, token).await?),
+                None,
+            ),
+            None => (None, None),
         };
         let (bundle_dir, _) = install::bundle(&runtime_root).await?;
         let bundle_sha256 = bundle_sha256_for(kind);
@@ -172,6 +189,7 @@ impl ProcessLauncher {
             runtime_root,
             weights,
             draft,
+            vault_draft,
             bundle_dir,
             bundle_sha256,
             env,
@@ -315,6 +333,28 @@ impl ProcessLauncher {
             python_version: Some(env.python_version.as_str()),
         };
         let runtime = build.digest();
+        // A vault's own draft loads only on the target and tokenizer it was
+        // trained for (FIX 14976); the stock draft's identity is its install
+        // record's digest.
+        let vault_draft = installation.vault_draft.as_deref();
+        if let Some(set) = vault_draft
+            && !set.fits(exl3.model.as_str(), exl3.tokenizer.as_deref())
+        {
+            return Err(permanent(
+                WorkerFailure::ModelMismatch,
+                "the vault's drafter was trained for another target model or tokenizer".to_owned(),
+            ));
+        }
+        let draft_dir = match (vault_draft, &installation.draft) {
+            (Some(set), _) => Some(set.dir.clone()),
+            (None, Some(draft)) => Some(draft.dir.clone()),
+            (None, None) => None,
+        };
+        let draft_identity = match (vault_draft, &installation.draft) {
+            (Some(set), _) => Some(set.identity()),
+            (None, Some(draft)) => Some(stock_draft_identity(&draft.record_sha256)),
+            (None, None) => None,
+        };
         let nonce = launch_nonce();
         let socket = native_socket(&installation.runtime_root, &self.row.id, &nonce);
         let manifest = LaunchManifest {
@@ -324,6 +364,7 @@ impl ProcessLauncher {
                 .draft
                 .as_ref()
                 .map(|draft| draft.record_sha256.as_str()),
+            draft_weights_digest: draft_identity.as_deref(),
             env_freeze_sha256: Some(env.freeze_sha256.as_str()),
             env_lock_sha256: Some(env.lock_sha256.as_str()),
             kind: WorkerKind::Exl3,
@@ -342,6 +383,7 @@ impl ProcessLauncher {
         };
         let pins = CacheIdentity {
             model: digest(Some(exl3.model.as_str())),
+            draft_weights_digest: draft_identity.clone(),
             tokenizer: digest(exl3.tokenizer.as_deref()),
             runtime: digest(Some(runtime.as_str())),
             template: digest(exl3.template.as_deref()),
@@ -359,8 +401,8 @@ impl ProcessLauncher {
             "--weights-manifest".to_owned(),
             exl3.weights_manifest.display().to_string(),
         ];
-        if let Some(draft) = &installation.draft {
-            args.extend(["--draft-dir".to_owned(), draft.dir.display().to_string()]);
+        if let Some(dir) = &draft_dir {
+            args.extend(["--draft-dir".to_owned(), dir.display().to_string()]);
         }
         args.extend([
             "--model-id".to_owned(),
@@ -474,6 +516,7 @@ impl ProcessLauncher {
                 .draft
                 .as_ref()
                 .map(|draft| draft.record_sha256.as_str()),
+            draft_weights_digest: None,
             env_freeze_sha256: None,
             env_lock_sha256: None,
             kind: WorkerKind::LlamaCpp,
