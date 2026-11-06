@@ -69,3 +69,23 @@ manifests. Current persisted custody continues to read inline rows. A real file-
 file-admission facts, file-aware custody and retirement readers, checked file
 lifetimes and the real importer's pre-writer reservation. Neither a manifest's
 bytes nor an unminted temporary body supplies those facts.
+
+## Native file custody source seam
+
+The original put's `options.storage.asset_file` now reaches receipt admission
+and custody projection. A staged file is opened only from those original facts,
+matched against its manifest, and checked through the native ASSET reader before
+canonical decoding. Positional decoding and identity use that same open file,
+not a reopened path or a re-encoded body. Stored-row comparisons, source reads
+and retirement resolve the SAME-snapshot native ASSET descriptor first. A
+manifest-shaped inline body remains inline.
+
+The existing holder, canonical id, dedupe slot, source retirement and claim-body
+checks still apply to the logical archive. Native file checks do not mint an
+instance or confer receipt authority. Callers must keep the staging pin, or
+pin the stored files before opening the snapshot, until their read or write
+ends. The ordinary archive producer and file classifier are unchanged and
+continue to stage inline archives. Connecting every caller's pin lifetime,
+real pre-writer instance reservation, owning export adapter and sync readers
+is still required before persistent receipt files are produced. This source
+seam does not claim that activation, bounded total memory or runtime proof.

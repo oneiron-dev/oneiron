@@ -1,6 +1,7 @@
 //! Archive receipt I/O through ordinary ASSET admission, not terminal ledgers.
 use super::{
-    codec::{ReceiptArchive, decode, invalid, is_inert_holder},
+    body::decode_stored,
+    codec::{ReceiptArchive, invalid, is_inert_holder},
     custody::{read_source, receipt_archives_for_holder},
     prepared::ReceiptArchivePreparation,
     reader::{decode_reader, id_of_reader},
@@ -136,7 +137,14 @@ impl Vault {
                     return Err(invalid());
                 }
                 let expected = decode_reader(bytes.reader(encoded))?.ok_or_else(invalid)?;
-                if decode(&raw[ENTITY_METADATA_HEADER_LEN..])? != Some(expected) {
+                let existing = decode_stored(
+                    &self.store,
+                    txn,
+                    &actual,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
+                .ok_or_else(invalid)?;
+                if existing.id != actual || existing.row != expected {
                     return Err(invalid());
                 }
             } else {

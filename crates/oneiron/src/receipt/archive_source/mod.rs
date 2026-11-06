@@ -1,5 +1,6 @@
 //! Imported receipt source artifacts and their physical, non-authoritative custody.
 mod access;
+mod body;
 mod codec;
 mod custody;
 mod prepared;

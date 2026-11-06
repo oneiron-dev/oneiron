@@ -586,6 +586,13 @@ impl CheckedAssetBody {
         Ok(())
     }
 
+    /// Checks the whole body and keeps its original open file for positional
+    /// reads. The caller retains the pin that protects the body's snapshot.
+    pub(crate) fn into_verified_file(mut self) -> Result<BodyFile> {
+        io::copy(&mut self, &mut io::sink())?;
+        Ok(self.file)
+    }
+
     /// The whole body, checked.
     ///
     /// # Errors

@@ -1,7 +1,7 @@
 //! Canonical receipt preparation in one native, unlinked temporary body.
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, Write};
 
-use super::codec::ReceiptArchive;
+use super::{codec::ReceiptArchive, reader::BodyRangeReader};
 use crate::{
     error::{Error, Result},
     store::{AssetBodyFacts, BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES},
@@ -109,11 +109,7 @@ impl PreparedReceiptBytes {
         &'a self,
         archive: &'a PreparedReceiptArchive,
     ) -> impl Read + Seek + 'a {
-        ArchiveReader {
-            file: &self.file,
-            archive,
-            at: 0,
-        }
+        BodyRangeReader::new(&self.file, archive.offset, archive.len)
     }
 }
 
@@ -143,43 +139,5 @@ impl Write for ArchiveWriter<'_> {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
-    }
-}
-
-struct ArchiveReader<'a> {
-    file: &'a BodyFile,
-    archive: &'a PreparedReceiptArchive,
-    at: u64,
-}
-
-impl Read for ArchiveReader<'_> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        let take = usize::try_from(self.archive.len - self.at)
-            .unwrap_or(usize::MAX)
-            .min(out.len());
-        if take == 0 {
-            return Ok(0);
-        }
-        let bytes = self
-            .file
-            .read_range(self.archive.offset + self.at, take)
-            .map_err(io::Error::other)?;
-        out[..take].copy_from_slice(&bytes);
-        self.at += take as u64;
-        Ok(take)
-    }
-}
-
-impl Seek for ArchiveReader<'_> {
-    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
-        let at = match from {
-            SeekFrom::Start(at) => Some(at),
-            SeekFrom::Current(delta) => self.at.checked_add_signed(delta),
-            SeekFrom::End(delta) => self.archive.len.checked_add_signed(delta),
-        }
-        .filter(|at| *at <= self.archive.len)
-        .ok_or(io::ErrorKind::InvalidInput)?;
-        self.at = at;
-        Ok(at)
     }
 }
