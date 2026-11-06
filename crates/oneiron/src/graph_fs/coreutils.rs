@@ -31,6 +31,23 @@ impl GraphFsResolver<'_, '_> {
         recursive: bool,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.grep_with_reader(
+            pattern,
+            path,
+            recursive,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn grep_with_reader(
+        &self,
+        pattern: &str,
+        path: &str,
+        recursive: bool,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
@@ -39,7 +56,7 @@ impl GraphFsResolver<'_, '_> {
             && self.snapshot.is_none()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
-            let page = self.grep_claims_pushdown(literal, &normalized, cursor)?;
+            let page = self.grep_claims_pushdown(literal, &normalized, cursor, reader)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Grep,
                 started,
@@ -54,7 +71,7 @@ impl GraphFsResolver<'_, '_> {
             );
         }
 
-        let walk = self.grep_walk(pattern, &normalized, recursive, cursor)?;
+        let walk = self.grep_walk(pattern, &normalized, recursive, cursor, reader)?;
         self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Grep,
             started,

@@ -5,7 +5,7 @@ use std::ops::Bound;
 
 use crate::batch::EntityMetadataHeader;
 use crate::claim::ScopedRead;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
 use crate::ports::ScopedReadResult;
@@ -15,8 +15,8 @@ use crate::store::sandbox_import::SandboxLinkedImport;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::model::{
-    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_SCAN_ROWS, GRAPH_FS_PROJECTION_VERSION, GraphFsEntry,
-    GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
+    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntry, GraphFsFile, GraphFsMount,
+    GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
@@ -171,7 +171,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         }
         match components.as_slice() {
             ["claims", claim] | ["claims", "by-id", claim] => Ok(self
-                .read_claim_file(&normalized, &parse_entity_id(claim)?)?
+                .read_claim_file(&normalized, &parse_entity_id(claim)?, reader)?
                 .into()),
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
@@ -256,45 +256,6 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(Some(header.entity_type))
-    }
-
-    pub(super) fn read_claim_file(
-        &self,
-        path: &str,
-        claim_id: &EntityId,
-    ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
-        let ScopedReadResult { value, receipt } = self.file_row(*claim_id)?;
-        let Some(ReadRow {
-            entity_type: ENTITY_TYPE_CLAIM,
-            learned_at,
-            body: Some(body),
-            ..
-        }) = value
-        else {
-            return Ok(ScopedReadResult {
-                value: None,
-                receipt,
-            });
-        };
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(GRAPH_FS_PROJECTION_VERSION.as_bytes());
-        bytes.extend_from_slice(b"\nkind\tclaim\nmount\t");
-        bytes.extend_from_slice(self.options.mount.stable_label().as_bytes());
-        bytes.extend_from_slice(b"\nid\t");
-        bytes.extend_from_slice(claim_id.to_hex().as_bytes());
-        bytes.extend_from_slice(b"\nlearned_at\t");
-        bytes.extend_from_slice(learned_at.to_string().as_bytes());
-        bytes.extend_from_slice(b"\nbody_msgpack_hex\t");
-        bytes.extend_from_slice(bytes_to_hex_lower(&body).as_bytes());
-        bytes.push(b'\n');
-        Ok(ScopedReadResult {
-            value: Some(GraphFsFile {
-                path: path.to_owned(),
-                mount: self.options.mount,
-                bytes,
-            }),
-            receipt,
-        })
     }
 
     /// One live point read, folded into a listing's receipt.

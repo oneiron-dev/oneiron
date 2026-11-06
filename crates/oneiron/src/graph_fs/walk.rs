@@ -149,7 +149,14 @@ struct Walk {
 
 impl GraphFsResolver<'_, '_> {
     pub(super) fn find_walk(&self, path: &str, cursor: Option<&str>) -> Result<WalkOutput> {
-        self.walk(path, true, WalkVerb::Find, &format!("find {path}"), cursor)
+        self.walk(
+            path,
+            true,
+            WalkVerb::Find,
+            &format!("find {path}"),
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
     }
 
     pub(super) fn grep_walk(
@@ -158,6 +165,7 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         recursive: bool,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
         let flag = if recursive { " -r" } else { "" };
         let listing = format!("grep{flag} {}:{pattern} {path}", pattern.len());
@@ -167,6 +175,7 @@ impl GraphFsResolver<'_, '_> {
             WalkVerb::Grep { pattern },
             &listing,
             cursor,
+            reader,
         )
     }
 
@@ -181,6 +190,7 @@ impl GraphFsResolver<'_, '_> {
         verb: WalkVerb<'_>,
         listing: &str,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
         let scope = self.cursor_scope(listing);
         let mut at: WalkPosition = scope.open(cursor)?.unwrap_or_default();
@@ -189,7 +199,7 @@ impl GraphFsResolver<'_, '_> {
             total: 0,
             receipt: None,
         };
-        let cut = self.walk_from(root, recursive, verb, &mut at, &mut walk)?;
+        let cut = self.walk_from(root, recursive, verb, &mut at, &mut walk, reader)?;
         Ok(WalkOutput {
             bytes: walk.out.into_bytes(),
             next_cursor: cut.then(|| scope.seal(&at)),
@@ -207,13 +217,16 @@ impl GraphFsResolver<'_, '_> {
         verb: WalkVerb<'_>,
         at: &mut WalkPosition,
         walk: &mut Walk,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<bool> {
         let mut steps = 0;
         if !at.root_done {
             if !self.coreutils_path_visible(root)? {
                 return Ok(false);
             }
-            if let Visited::Cut(lines) = self.visit(verb, root, false, at.lines.take(), walk)? {
+            if let Visited::Cut(lines) =
+                self.visit(verb, root, false, at.lines.take(), walk, reader)?
+            {
                 at.lines = lines;
                 return Ok(true);
             }
@@ -279,7 +292,9 @@ impl GraphFsResolver<'_, '_> {
             let child = join_graph_path(&dirs[depth], entry.name());
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
             if self.coreutils_path_visible(&child)? {
-                if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, lines, walk)? {
+                if let Visited::Cut(lines) =
+                    self.visit(verb, &child, is_dir, lines, walk, reader)?
+                {
                     at.lines = lines;
                     return Ok(true);
                 }
@@ -307,6 +322,7 @@ impl GraphFsResolver<'_, '_> {
         is_dir: bool,
         lines: Option<LinePosition>,
         walk: &mut Walk,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Visited> {
         match verb {
             WalkVerb::Find => {
@@ -323,7 +339,7 @@ impl GraphFsResolver<'_, '_> {
             }
             WalkVerb::Grep { .. } if is_dir => Ok(Visited::Done),
             WalkVerb::Grep { pattern } => {
-                let read = self.read_file(path)?;
+                let read = self.read_file_with_reader(path, reader)?;
                 if let Some(receipt) = read.receipt {
                     fold_receipt(&mut walk.receipt, receipt);
                 }
