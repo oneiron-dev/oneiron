@@ -5,6 +5,7 @@
 //! use the same durable step layer as consolidation.
 
 mod audit;
+mod typing_batch;
 
 use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;

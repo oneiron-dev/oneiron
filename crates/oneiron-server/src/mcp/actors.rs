@@ -121,7 +121,8 @@ impl McpConnectorScope {
     ///
     /// A vault-wide credential may reach every category. A NARROWED credential
     /// gets the ARCH-0067 default lane only — my tasks, my children, consults
-    /// to me, and reviews of reads of my own diary (FIX 2879) — so
+    /// to me, reviews of reads of my own diary (FIX 2879), and room turns that
+    /// address me (FIX 15647) — so
     /// `SubscriptionScope::ALL` can never be attached to a connector
     /// that was never granted the whole vault. The engine's own
     /// `BoardStreamRegistry::subscribe` refuses anything outside this set, so
@@ -134,6 +135,7 @@ impl McpConnectorScope {
                 SubscriptionScope::MyChildren,
                 SubscriptionScope::ConsultsToMe,
                 SubscriptionScope::DiaryReviews,
+                SubscriptionScope::RoomTurns,
             ]
             .into_iter()
             .collect()

@@ -200,6 +200,10 @@ impl SyncClient {
                         self.vault
                             .store
                             .sync_state
+                            .delete(txn, &format!("ri:c:{id}"))?;
+                        self.vault
+                            .store
+                            .sync_state
                             .delete(txn, &format!("rt:e:{id}"))?;
                     }
                 }
