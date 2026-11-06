@@ -59,6 +59,7 @@ pub struct BatchBuilder<'a> {
     /// unbound host's.
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
     prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
+    prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
     /// (FIX 9034), set by that door alone.
@@ -126,6 +127,7 @@ impl<'a> BatchBuilder<'a> {
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
             prepared_person_substrate: None,
+            prepared_agent_birth: None,
             marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
@@ -161,6 +163,14 @@ impl<'a> BatchBuilder<'a> {
     /// caller's (FIX 8118), in this batch's preflight and in its apply.
     pub(crate) fn caller_envelope(mut self, id: &EntityId, envelope: crate::WriteEnvelope) -> Self {
         self.caller_envelopes.insert(*id, envelope);
+        self
+    }
+
+    pub(crate) fn with_prepared_agent_birth(
+        mut self,
+        birth: crate::agent_def::PreparedAgentDefinitionBirth,
+    ) -> Self {
+        self.prepared_agent_birth = Some(birth);
         self
     }
 

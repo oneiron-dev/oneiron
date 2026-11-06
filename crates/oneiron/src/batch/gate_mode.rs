@@ -73,6 +73,7 @@ pub(crate) struct ApplyOpsGateMode {
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     pub(super) prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
+    pub(super) prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
 }
 
 impl ApplyOpsGateMode {
@@ -99,6 +100,7 @@ impl ApplyOpsGateMode {
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
             prepared_person_substrate: None,
+            prepared_agent_birth: None,
         }
     }
 
@@ -148,6 +150,14 @@ impl ApplyOpsGateMode {
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {
         self.caller_envelopes = envelopes;
+        self
+    }
+
+    pub(super) fn with_prepared_agent_birth(
+        mut self,
+        birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
+    ) -> Self {
+        self.prepared_agent_birth = birth;
         self
     }
 

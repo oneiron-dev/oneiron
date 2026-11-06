@@ -149,6 +149,16 @@ impl PreparedAgentBirth {
         put_binding(store, txn, id, &self.source, self.hash)?;
         Ok(self.asset)
     }
+
+    fn apply_binding_for_put(
+        &self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(EntityId, Vec<u8>)> {
+        put_binding(store, txn, id, &self.source, self.hash)?;
+        Ok((self.asset.0, self.asset.1.clone()))
+    }
 }
 
 /// Composes the same native birth bytes without writing their binding. Setup
@@ -170,6 +180,55 @@ pub(crate) fn prepare_agent_birth_in_txn(
         hash,
         asset,
     }))
+}
+
+/// The genuine create arm consumes this one native setup's birth decision.
+/// The outer value distinguishes a prepared native skip from no setup plan.
+pub(crate) struct PreparedAgentDefinitionBirth {
+    id: EntityId,
+    birth: Option<PreparedAgentBirth>,
+}
+
+impl std::fmt::Debug for PreparedAgentDefinitionBirth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedAgentDefinitionBirth")
+            .field("id", &self.id)
+            .field("has_birth", &self.birth.is_some())
+            .finish()
+    }
+}
+
+impl PreparedAgentDefinitionBirth {
+    pub(crate) fn id(&self) -> EntityId {
+        self.id
+    }
+
+    pub(super) fn entity_put(&self) -> Option<(EntityId, &[u8])> {
+        self.birth.as_ref().map(PreparedAgentBirth::entity_put)
+    }
+
+    pub(crate) fn bind_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<Option<(EntityId, Vec<u8>)>> {
+        self.birth
+            .as_ref()
+            .map(|birth| birth.apply_binding_for_put(store, txn, &self.id))
+            .transpose()
+    }
+}
+
+pub(crate) fn prepare_agent_definition_birth_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    created: &AgentDefinition,
+) -> Result<PreparedAgentDefinitionBirth> {
+    Ok(PreparedAgentDefinitionBirth {
+        id: *id,
+        birth: prepare_agent_birth_in_txn(store, txn, id, created)?,
+    })
 }
 
 fn agent_birth_snapshot_in_txn(

@@ -155,6 +155,16 @@ pub(super) fn apply_put_arm(
     } else {
         None
     };
+    let prepared_agent_birth = if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+        && gate_mode
+            .prepared_agent_birth
+            .as_ref()
+            .is_some_and(|birth| birth.id() == id)
+    {
+        gate_mode.prepared_agent_birth.take()
+    } else {
+        None
+    };
     let applied = apply_put_beside(
         &crate::secret_custody::CustodyWrite {
             store,
@@ -187,6 +197,7 @@ pub(super) fn apply_put_arm(
                 owner_authored: None,
                 pending_prompt: pending_prompt.as_deref(),
                 prepared_person_substrate: prepared_person_substrate.as_ref(),
+                prepared_agent_birth: prepared_agent_birth.as_ref(),
             },
         },
         authority_beside,
