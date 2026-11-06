@@ -561,8 +561,9 @@ side_tables! {
     /// A file-plane ASSET body this machine received from its home (FIX 14534): the home
     /// machine (16 bytes), the carrier's BLAKE3 (32), the body's BLAKE3 (32) and its length
     /// (u64be), written in the own-device client's landing commit. The owner's discard of a
-    /// world copy releases the ASSET's file only while its manifest names that body. Key:
-    /// hex32 (ASSET id).
+    /// world copy releases the ASSET's file only while its manifest names that body and the
+    /// row stands at the revision (16 bytes, last) the landing wrote. Runtime: never imaged,
+    /// a restore drops it. Key: hex32 (ASSET id).
     SYNC_ASSET_BODY_FROM_HOME: SyncState b"ab:h:" Raw;
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the

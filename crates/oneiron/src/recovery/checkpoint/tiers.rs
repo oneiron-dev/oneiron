@@ -170,6 +170,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // erasable map (FIX 9870): no image may keep who stands
                 // behind a signed handle.
                 b"it:proposer-scope:",
+                // A body this install received from its home is this
+                // install's own evidence (FIX 14534): a restored install
+                // received nothing, so no image keeps it.
+                b"ab:h:",
             ]
             .iter()
             .any(|p| key.starts_with(p))
