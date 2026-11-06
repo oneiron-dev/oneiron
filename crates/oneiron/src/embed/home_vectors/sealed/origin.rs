@@ -60,6 +60,7 @@ impl PreparedHomeClaimSend {
         {
             return Ok(None);
         }
+        let _acceptance = vault.device_only_acceptance();
         let txn = vault.store.env.read_txn()?;
         if vault.authority_view_readonly_in_txn(&txn)?.vault_id != Some(self.vault_id) {
             return Ok(None);
