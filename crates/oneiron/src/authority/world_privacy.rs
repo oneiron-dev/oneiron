@@ -624,6 +624,7 @@ pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<Auth
             machine,
         ))
         .chain(fold.origin_cuts.live_choices_by(machine))
+        .chain(fold.device_successions.live_choices_by(machine))
         .chain(fold.conversation_training.live_choices_by(machine))
         .chain(fold.conversation_training_vault.live_choices_by(machine))
         .chain(fold.policy_settings.live_choices_by(machine))
