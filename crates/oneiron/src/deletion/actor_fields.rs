@@ -69,6 +69,13 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
     pub(crate) fn parts(&mut self) -> (&Vault, &mut heed::RwTxn<'env>, EntityId) {
         (self.vault, &mut *self.wtxn, self.actor)
     }
+
+    /// Stages `rows`, rows this erase retired with its target, for the
+    /// redaction receipt and sweep its writer queues, whose scope then names
+    /// each (FIX 7494). An erase that writes no receipt keeps them staged.
+    pub(crate) fn stage_retired_rows(&mut self, rows: &BTreeSet<EntityId>) -> Result<()> {
+        super::erase::stage_retired_rows_in_txn(self.vault, &mut *self.wtxn, &self.actor, rows)
+    }
 }
 
 /// Identity ops are an entity family, not a side table: their decisions stay
@@ -178,9 +185,9 @@ fn scrub_actor_fields_in_txn(
     // restored receipt never brings back a hard-erased actor.
     crate::context_board::scrub_section_fit_receipt_actors_in_txn(erase)?;
     crate::inbox::scrub_finding_notification_subjects_in_txn(erase)?;
-    // The relayed ask intents the person holds, and their results, are task
-    // authority facts no ordinary delete removes: the erase retires exactly
-    // those here (FIX 20468).
+    // A person's relayed ask intents and their results are task authority
+    // facts no ordinary delete removes: their holder's erase retires them
+    // here, and a restore's sweep retires a restored copy again (FIX 7494).
     crate::task_verb::retire_holder_ask_forward_rows_in_txn(erase)?;
     let (vault, wtxn, actor) = erase.parts();
     for scrub in crate::side_table::actor_scrubs() {

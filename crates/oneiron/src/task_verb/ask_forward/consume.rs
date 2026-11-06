@@ -247,9 +247,8 @@ fn authenticate(vault: &Vault, holder: EntityId, slip: VerifiedSlip) -> Result<H
 
 /// The one writer: the intent's act, its effect and its signed result, or
 /// nothing. `Ok(false)` when it made no effect: another writer saved its
-/// result first, the holder's erase retired the intent (FIX 20468), or
-/// `slip` does not carry the word's write, and that refusal is the result
-/// (FIX 7494).
+/// result first, or `slip` does not carry the word's write, and that
+/// refusal is the result (FIX 7494).
 fn act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -258,7 +257,7 @@ fn act_in_txn(
     slip: &VerifiedSlip,
     authority: &HolderAuthority,
 ) -> Result<bool> {
-    if !result_owed_in_txn(vault, txn, id)? {
+    if vault.get_raw_in(txn, &result_id(id)?)?.is_some() {
         return Ok(false);
     }
     let group =
@@ -382,7 +381,7 @@ fn carries_core_write(slip: &VerifiedSlip) -> bool {
 /// made no effect.
 fn refuse(vault: &Vault, id: EntityId, intent: &AskForwardIntent, code: &str) -> Result<Standing> {
     vault.with_write_txn_grouped(|txn| {
-        if !result_owed_in_txn(vault, txn, id)? {
+        if vault.get_raw_in(txn, &result_id(id)?)?.is_some() {
             return Ok(());
         }
         let group =
@@ -394,13 +393,6 @@ fn refuse(vault: &Vault, id: EntityId, intent: &AskForwardIntent, code: &str) ->
         put_result_in_txn(vault, txn, id, intent, &group, outcome, now)
     })?;
     Ok(Standing::Settled)
-}
-
-/// Whether the intent `id` still owes its result in `txn`: it is stored, and
-/// no result is. An intent its holder's erase retired owes none, so no
-/// result names it after that erase (FIX 20468).
-fn result_owed_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
-    Ok(read_intent(vault, txn, id)?.is_some() && vault.get_raw_in(txn, &result_id(id)?)?.is_none())
 }
 
 /// Puts the intent `id`'s result, signed with its group's issuer key, which

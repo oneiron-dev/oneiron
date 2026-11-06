@@ -451,8 +451,15 @@ impl Vault {
         let mut ids = std::collections::BTreeSet::new();
         for hex in &input.scope.entity_ids {
             let holder = EntityId::from_hex(hex)?;
+            // The rows this erase retired with the holder join its scope:
+            // a relayed ask word and its result among them (FIX 7494).
             if input.sweep_queued_at.is_some() {
-                take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
+                ids.extend(take_staged_sweep_refs_in_txn(
+                    self,
+                    wtxn,
+                    &holder,
+                    &mut sweep_extras,
+                )?);
             }
             ids.insert(holder);
             ids.extend(
@@ -478,9 +485,6 @@ impl Vault {
             ids.extend(crate::secret_custody::cloud_registration_erased_with(
                 &holder,
             ));
-            // The relayed ask intents and results a person's erase retired
-            // (FIX 20468).
-            ids.extend(crate::task_verb::ask_forward_rows_retired_with(&holder));
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         // A classified corrupt CLAIM this erase took the audited exception for
