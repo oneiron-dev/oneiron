@@ -59,7 +59,9 @@ pub(crate) const ORIGIN_ACTOR_ERASE_PROOF: OriginProofErase = OriginProofErase::
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OriginPendingErase {
     /// No new ref effect starts for it. An effect that already happened is
-    /// still observed and finalized, and its journal and evidence stay.
+    /// still observed and finalized, and its journal and evidence stay while
+    /// the effect is live; a receive-pack intent nothing can resume any more
+    /// is observed and then pruned (FIX 5022).
     RefuseNewEffectsKeepObservedFacts,
 }
 

@@ -289,3 +289,14 @@ impl Store {
 fn is_turn_record(record: &[u8]) -> bool {
     record.len() > ENTITY_BODY_OFFSET && record[0] == ENTITY_TYPE_TURN
 }
+
+impl Store {
+    /// Raw presence: even a stale marker leaves a prior vector unsettled.
+    pub(crate) fn pending_embedding_marker_present(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(MARKERS.get(self, txn, &HexId(*id))?.is_some())
+    }
+}

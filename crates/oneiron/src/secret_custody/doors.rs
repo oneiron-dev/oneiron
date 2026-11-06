@@ -639,3 +639,65 @@ pub(crate) fn revoke_side_row_custody_in_txn(
     }
     Ok(())
 }
+
+/// Revokes custody lifted from a side row by a native local erase. The
+/// caller supplies the actual write context and owns the erase transaction;
+/// this does not record or carry an owner act to another machine.
+pub(crate) fn revoke_side_row_custody_with_context_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: &EntityId,
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(write.store, wtxn)?;
+    for id in super::found_keys::found_key_custody_in_txn(write.store, wtxn, origin)? {
+        let minted = crate::batch::secret_scan::mask_origin_in_txn(write.store, wtxn, &id)?
+            .is_some_and(|mask| mask.record == *origin);
+        if !minted {
+            continue;
+        }
+        let Some(record) = super::read_secret_custody_meta_in_txn(write.store, wtxn, &id)? else {
+            continue;
+        };
+        let cause = crate::secret_rotation::RevokeCause::Revoked;
+        if record.status == SecretCustodyStatus::Revoked {
+            crate::secret_rotation::revoke_custody_with_context_in_txn(
+                write, wtxn, &id, cause, at,
+            )?;
+        } else {
+            crate::secret_rotation::revoke_secret_with_context_in_txn(
+                write,
+                wtxn,
+                &record.name,
+                cause,
+                at,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Revokes lifted custody for every row the caller's prefix delete takes,
+/// including keys that no longer decode. The caller performs the delete.
+pub(crate) fn revoke_side_row_prefix_custody_in_txn<K, V, C>(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    table: &crate::side_table::SideTable<K, V, C>,
+    key_prefix: &[u8],
+) -> Result<()>
+where
+    K: crate::side_table::SideKey,
+    C: crate::side_table::SideCodec<V>,
+{
+    let keys = table
+        .iter_raw_from(write.store, wtxn, key_prefix)?
+        .map(|row| row.map(|(key, _)| key))
+        .collect::<Result<Vec<_>>>()?;
+    let place = format!("side:{}", table.decl().name);
+    for raw in keys {
+        let mut key = table.decl().prefix.to_vec();
+        key.extend_from_slice(&raw);
+        let origin = crate::batch::secret_scan::side_row_origin(&place, &key)?;
+        revoke_side_row_custody_with_context_in_txn(write, wtxn, &origin)?;
+    }
+    Ok(())
+}

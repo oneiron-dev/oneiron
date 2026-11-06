@@ -110,13 +110,15 @@ pub use owner_rows::{
     PolicyNotificationMode, PolicyNotificationRule, PolicyNotificationTarget, PolicyProposalStatus,
     PolicyRowProposal, PolicyRowReceipt, PolicyRowSubmission, SecretScanReceipt,
     WORLD_PRIVACY_ROW_REF, WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome,
-    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt, WorldPrivacyRequest,
-    WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
-    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, policy_row_grant_target,
+    WorldMachinePlacement, WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt,
+    WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
+    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, machine_placement_settings,
+    policy_row_grant_target,
 };
 pub(crate) use owner_rows::{
     holds_vault_policy_power_in_txn, is_live_vault_owner_for_store_in_txn,
-    is_live_vault_owner_in_txn, owners_for_store_in_txn, owners_in_txn, sole_recorded_owner_in_txn,
+    is_live_vault_owner_in_txn, is_live_writing_member_for_store_in_txn, owners_for_store_in_txn,
+    owners_in_txn, sole_recorded_owner_in_txn,
 };
 mod notes;
 mod notice;

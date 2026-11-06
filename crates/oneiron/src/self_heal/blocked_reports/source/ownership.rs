@@ -1,26 +1,26 @@
-//! One durable step capture's owner witnesses (FIX 6734): the owners an erase takes the
-//! capture for, keyed apart from the capture's bytes, so a capture whose row no longer
-//! decodes is still taken when its full step key is valid. Prospective only: a capture kept
-//! before this table existed has no witness, and none is rebuilt from its body.
+//! One durable capture's owner witnesses (FIX 6734), keyed apart from the capture's
+//! bytes so an erase still takes a row whose value no longer decodes. Step captures
+//! witness their actor, subject and terminal claim; receipt captures their reporter.
+//! Prospective only: no witness is rebuilt from a capture kept before this inventory.
 //!
-//! One row per (owner, role, capture): the key is the witness, the value empty. The capture
-//! writer puts the actor and subject rows with the capture; the terminal bind replaces only
-//! the claim row; every remover drops all of a deleted capture's rows, every role, in the
-//! same writer. No own actor scrub: the capture eraser cleans these rows.
+//! One row per (owner, role, capture): the key is the witness, the value empty. The
+//! capture writer keeps its witnesses in the same transaction. A replacement drops the
+//! exact capture's previous witnesses; an erase drops them even if its row is gone.
 
-use super::{STEP_KEY_LEN, StepSourceKey};
+use super::StepSourceKey;
 use crate::attempt_queue::AttemptId;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result};
 
-/// What the witness's owner was to the step: the actor whose call it was, the subject the
-/// step was about, or the terminal claim that logged it.
+/// The owner stamped by the capture: a step's actor, subject or terminal claim,
+/// or a receipt's reporter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OwnerRole {
     Actor,
     Subject,
     Claim,
+    Reporter,
 }
 
 impl OwnerRole {
@@ -30,6 +30,7 @@ impl OwnerRole {
             Self::Actor => b'a',
             Self::Subject => b's',
             Self::Claim => b'c',
+            Self::Reporter => b'r',
         }
     }
 
@@ -38,39 +39,51 @@ impl OwnerRole {
             b'a' => Some(Self::Actor),
             b's' => Some(Self::Subject),
             b'c' => Some(Self::Claim),
+            b'r' => Some(Self::Reporter),
             _ => None,
         }
     }
 }
 
-/// One owner witness's key: the owner, its role, and the capture's full step key.
+/// The exact capture named by a witness, never just a step or receipt prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureKey {
+    Step(StepSourceKey),
+    Receipt(EntityId),
+}
+
+/// One owner witness's key: the owner, its role, and the capture's full key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OwnerKey {
     owner: EntityId,
     role: OwnerRole,
-    step: StepSourceKey,
+    capture: CaptureKey,
 }
-
-/// A witness key's length after the table prefix: the owner, the role byte, and the step key.
-const OWNER_KEY_LEN: usize = 16 + 1 + STEP_KEY_LEN;
 
 impl SideKey for OwnerKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.owner.as_bytes());
         out.push(self.role.byte());
-        self.step.encode_into(out);
+        match self.capture {
+            CaptureKey::Step(step) => step.encode_into(out),
+            CaptureKey::Receipt(receipt) => receipt.encode_into(out),
+        }
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != OWNER_KEY_LEN {
-            return None;
-        }
         let (owner, rest) = bytes.split_at_checked(16)?;
-        let (&role, step) = rest.split_first()?;
+        let (&role, capture) = rest.split_first()?;
+        let role = OwnerRole::from_byte(role)?;
+        let capture = match role {
+            OwnerRole::Reporter => CaptureKey::Receipt(EntityId::decode_key(capture)?),
+            OwnerRole::Actor | OwnerRole::Subject | OwnerRole::Claim => {
+                CaptureKey::Step(StepSourceKey::decode_key(capture)?)
+            }
+        };
         Some(Self {
             owner: EntityId::from_bytes(owner.try_into().ok()?).ok()?,
-            role: OwnerRole::from_byte(role)?,
-            step: StepSourceKey::decode_key(step)?,
+            role,
+            capture,
         })
     }
 }
@@ -80,7 +93,8 @@ const OWNERS: SideTable<OwnerKey, (), Raw> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE_OWNER);
 
 /// The actual owner named by a canonical witness's full stored key. Invalid roles or
-/// partial step keys prove no owner.
+/// partial capture keys prove no owner. Reporter roles name only receipts; the other
+/// roles name only full step keys.
 pub(crate) fn blocked_capture_witness_owner(key: &[u8]) -> Option<EntityId> {
     let key = key.strip_prefix(OWNERS.decl().prefix)?;
     OwnerKey::decode_key(key).map(|witness| witness.owner)
@@ -101,7 +115,7 @@ pub(super) fn put_capture_owners_in_txn(
         &OwnerKey {
             owner: actor,
             role: OwnerRole::Actor,
-            step: *step,
+            capture: CaptureKey::Step(*step),
         },
         &(),
     )?;
@@ -112,7 +126,7 @@ pub(super) fn put_capture_owners_in_txn(
             &OwnerKey {
                 owner: subject,
                 role: OwnerRole::Subject,
-                step: *step,
+                capture: CaptureKey::Step(*step),
             },
             &(),
         )?;
@@ -137,7 +151,7 @@ pub(super) fn replace_claim_in_txn(
         &OwnerKey {
             owner: claim,
             role: OwnerRole::Claim,
-            step: *step,
+            capture: CaptureKey::Step(*step),
         },
         &(),
     )
@@ -167,8 +181,9 @@ pub(super) fn remove_step_owners_in_txn(
     for row in OWNERS.iter_raw_from(store, &*wtxn, &[])? {
         let (key, _) = row?;
         if let Some(witness) = OwnerKey::decode_key(&key)
-            && witness.step.attempt == attempt
-            && witness.step.step == *step
+            && let CaptureKey::Step(capture) = witness.capture
+            && capture.attempt == attempt
+            && capture.step == *step
         {
             keys.push(witness);
         }
@@ -189,8 +204,10 @@ pub(super) fn steps_of_owner_in(
     let mut steps = Vec::new();
     for row in OWNERS.iter_raw_from(store, txn, owner.as_bytes())? {
         let (key, _) = row?;
-        if let Some(witness) = OwnerKey::decode_key(&key) {
-            steps.push(witness.step);
+        if let Some(witness) = OwnerKey::decode_key(&key)
+            && let CaptureKey::Step(step) = witness.capture
+        {
+            steps.push(step);
         }
     }
     Ok(steps)
@@ -206,7 +223,7 @@ pub(super) fn owners_of_capture_in(
     for row in OWNERS.iter_raw_from(store, txn, &[])? {
         let (key, _) = row?;
         if let Some(witness) = OwnerKey::decode_key(&key)
-            && witness.step == *step
+            && witness.capture == CaptureKey::Step(*step)
         {
             owners.push(witness.owner);
         }
@@ -222,7 +239,7 @@ fn keys_of_in(store: &Store, txn: &heed::RoTxn<'_>, step: &StepSourceKey) -> Res
     for row in OWNERS.iter_raw_from(store, txn, &[])? {
         let (key, _) = row?;
         if let Some(witness) = OwnerKey::decode_key(&key)
-            && witness.step == *step
+            && witness.capture == CaptureKey::Step(*step)
         {
             keys.push(witness);
         }
@@ -241,7 +258,90 @@ fn claim_keys_of_in(
         let (key, _) = row?;
         if let Some(witness) = OwnerKey::decode_key(&key)
             && witness.role == OwnerRole::Claim
-            && witness.step == *step
+            && witness.capture == CaptureKey::Step(*step)
+        {
+            keys.push(witness);
+        }
+    }
+    Ok(keys)
+}
+
+/// Replaces the exact receipt's witnesses with its final stored reporter, in the row's
+/// own writer. Clearing even an absent row's witnesses prevents orphan inheritance.
+pub(super) fn replace_receipt_reporter_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: &EntityId,
+    reporter: EntityId,
+) -> Result<()> {
+    remove_receipt_owners_in_txn(store, wtxn, receipt)?;
+    OWNERS.put(
+        store,
+        wtxn,
+        &OwnerKey {
+            owner: reporter,
+            role: OwnerRole::Reporter,
+            capture: CaptureKey::Receipt(*receipt),
+        },
+        &(),
+    )
+}
+
+/// Drops all witnesses of this exact receipt, including a row already gone.
+pub(super) fn remove_receipt_owners_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: &EntityId,
+) -> Result<()> {
+    for key in receipt_keys_in(store, &*wtxn, receipt)? {
+        OWNERS.delete(store, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// Every receipt whose reporter `owner` witnesses, even if its value no longer decodes.
+pub(super) fn receipts_of_owner_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut receipts = Vec::new();
+    for row in OWNERS.iter_raw_from(store, txn, owner.as_bytes())? {
+        let (key, _) = row?;
+        if let Some(witness) = OwnerKey::decode_key(&key)
+            && let CaptureKey::Receipt(receipt) = witness.capture
+        {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
+}
+
+/// The reporters witnessed for this exact receipt, sorted and deduped.
+pub(super) fn owners_of_receipt_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    receipt: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut owners: Vec<_> = receipt_keys_in(store, txn, receipt)?
+        .into_iter()
+        .map(|key| key.owner)
+        .collect();
+    owners.sort_unstable();
+    owners.dedup();
+    Ok(owners)
+}
+
+fn receipt_keys_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    receipt: &EntityId,
+) -> Result<Vec<OwnerKey>> {
+    let mut keys = Vec::new();
+    for row in OWNERS.iter_raw_from(store, txn, &[])? {
+        let (key, _) = row?;
+        if let Some(witness) = OwnerKey::decode_key(&key)
+            && witness.capture == CaptureKey::Receipt(*receipt)
         {
             keys.push(witness);
         }

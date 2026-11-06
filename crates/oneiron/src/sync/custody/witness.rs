@@ -197,6 +197,63 @@ pub(super) fn mirror_witness_parts(
     Ok(wrote)
 }
 
+/// Witness rows prepared against the caller's current authority snapshot.
+pub(in crate::sync) struct WitnessBatch {
+    machine: EntityId,
+    due: Vec<WitnessPart>,
+}
+
+impl WitnessBatch {
+    pub(in crate::sync) fn prepare_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        rows: &[(String, Vec<u8>)],
+    ) -> Result<Option<Self>> {
+        let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
+            return Ok(None);
+        };
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let mut due = Vec::new();
+        for (map_key, bytes) in rows {
+            let Some(part) = WitnessPart::decode(bytes) else {
+                continue;
+            };
+            let key = part.row_key();
+            if *map_key == witness_row(&key)
+                && part_awaits(&fold, machine, &part)
+                && part_genuine(vault, txn, &part)?
+                && part_slot_open(vault, txn, &key)?
+            {
+                due.push(part);
+            }
+        }
+        if due.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self { machine, due }))
+    }
+
+    pub(in crate::sync) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let machine = self.machine;
+        let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+        let mut kept = 0;
+        for part in &self.due {
+            if part_awaits(&fold, machine, part)
+                && part_genuine(vault, wtxn, part)?
+                && part_slot_open(vault, wtxn, &part.row_key())?
+            {
+                keep_witness_in_txn(vault, wtxn, part)?;
+                kept += 1;
+            }
+        }
+        Ok(kept)
+    }
+}
+
 /// Keeps each relayed witness part a counted, unanswered request naming
 /// this install as its holder names, signed by that request's own signer,
 /// so its pickup can join it, in place of a kept part that is not; the
@@ -207,45 +264,14 @@ pub(super) fn keep_relayed_witnesses(vault: &Vault, window: &str, rows: Vec<(Str
         return;
     }
     let outcome = (|| -> Result<usize> {
-        let (machine, due) = {
+        let batch = {
             let rtxn = vault.store.env.read_txn()?;
-            let Some(machine) = crate::identity::read_machine_id_in_txn(vault, &rtxn)? else {
-                return Ok(0);
-            };
-            let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut due = Vec::new();
-            for (map_key, bytes) in &rows {
-                let Some(part) = WitnessPart::decode(bytes) else {
-                    continue;
-                };
-                let key = part.row_key();
-                if *map_key == witness_row(&key)
-                    && part_awaits(&fold, machine, &part)
-                    && part_genuine(vault, &rtxn, &part)?
-                    && part_slot_open(vault, &rtxn, &key)?
-                {
-                    due.push(part);
-                }
-            }
-            (machine, due)
+            WitnessBatch::prepare_in_txn(vault, &rtxn, &rows)?
         };
-        if due.is_empty() {
+        let Some(batch) = batch else {
             return Ok(0);
-        }
-        vault.with_write_txn_grouped(|wtxn| {
-            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-            let mut kept = 0;
-            for part in &due {
-                if part_awaits(&fold, machine, part)
-                    && part_genuine(vault, wtxn, part)?
-                    && part_slot_open(vault, wtxn, &part.row_key())?
-                {
-                    keep_witness_in_txn(vault, wtxn, part)?;
-                    kept += 1;
-                }
-            }
-            Ok(kept)
-        })
+        };
+        vault.with_write_txn_grouped(|wtxn| batch.stage_in_txn(vault, wtxn))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {

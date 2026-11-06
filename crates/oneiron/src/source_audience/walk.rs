@@ -62,14 +62,16 @@ fn body_string<'b>(body: &'b [u8], key: &str) -> Option<&'b str> {
     let Ok(rmpv::ValueRef::Map(entries)) = rmpv::decode::read_value_ref(&mut cursor) else {
         return None;
     };
-    entries.into_iter().find_map(|(name, value)| match (name, value) {
-        (rmpv::ValueRef::String(name), rmpv::ValueRef::String(value))
-            if name.as_str() == Some(key) =>
-        {
-            value.into_str()
-        }
-        _ => None,
-    })
+    entries
+        .into_iter()
+        .find_map(|(name, value)| match (name, value) {
+            (rmpv::ValueRef::String(name), rmpv::ValueRef::String(value))
+                if name.as_str() == Some(key) =>
+            {
+                value.into_str()
+            }
+            _ => None,
+        })
 }
 
 /// Whether a TURN or CONVERSATION row `raw` is a source's import.
@@ -77,7 +79,10 @@ fn container_marked(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return false;
     };
-    if !matches!(header.entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION) {
+    if !matches!(
+        header.entity_type,
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+    ) {
         return false;
     }
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
@@ -164,13 +169,8 @@ fn word_sources(
         {
             every.push(subject);
         }
-        supports = crate::conversation_dag::counted_edge_ids(
-            dbs,
-            txn,
-            &id,
-            EdgeKind::Supports,
-            true,
-        )?;
+        supports =
+            crate::conversation_dag::counted_edge_ids(dbs, txn, &id, EdgeKind::Supports, true)?;
     }
     Ok((every, supports))
 }

@@ -41,6 +41,11 @@ impl MessageResultAttachment {
     /// door's rules find a secret in it now (OF-067).
     #[must_use]
     pub(crate) fn as_shown(self, withhold: bool) -> Self {
+        if self.erased {
+            let mut shown = self;
+            shown.retire_content();
+            return shown;
+        }
         if !withhold
             && crate::batch::secret_scan::write_payload_hit(self.preview.as_bytes()).is_none()
         {
@@ -60,8 +65,9 @@ impl Memory<'_> {
     /// (a null input is an empty one). `input.ref`, a range ref of this
     /// result, narrows the read to that range; a ref to anything else names
     /// no result of it. The reply is the run's own: `{"output": ...}` or a
-    /// `denied` refusal, `result_withheld` while the rows the run's answers
-    /// were served from stay where the actor is not.
+    /// `denied` refusal, `response_erased` when an erase retired its content,
+    /// or `result_withheld` while the rows the run's answers were served from
+    /// stay where the actor is not.
     ///
     /// A MESSAGE that is no canonical one the actor may read is read as an
     /// overlay MESSAGE of the off-record room session this surface binds,
@@ -72,8 +78,9 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// `NOT_FOUND` when the actor may not read the MESSAGE, it is no visible
-    /// MESSAGE, or it carries no result a hold of its own backs; in the
-    /// room, when they are not on its roster, their membership did not show
+    /// MESSAGE, or it carries neither a held result nor its erased
+    /// disposition. In the room, when they are not on its roster, their
+    /// membership did not show
     /// the MESSAGE when it was said, or no run of the room holds its body.
     pub fn read_message_result(
         &self,
@@ -100,6 +107,9 @@ impl Memory<'_> {
             return Err(MemoryError::not_found("message not found").with_read_receipt(receipt));
         };
         let held = match MessageResultAttachment::from_metadata(body.get("metadata")) {
+            Ok(Some(attachment)) if attachment.erased => {
+                return Ok(result_refusal(crate::code_run::RESPONSE_ERASED));
+            }
             Ok(Some(attachment)) => self.held_result(*message, &attachment)?,
             Ok(None) | Err(_) => None,
         };
@@ -198,7 +208,8 @@ impl Memory<'_> {
     }
 
     /// `attachment` as MESSAGE `message`'s transcript shows it to this
-    /// reader now: `None` when no hold of the MESSAGE's own backs it, its
+    /// reader now: its erased disposition when its content was retired;
+    /// otherwise `None` when no hold of the MESSAGE's own backs it, its
     /// preview withheld while the rows the run's answers were served from
     /// stay where the reader is not or the held body is not clean. A preview
     /// stored when the MESSAGE was said never outlives a later withholding.
@@ -208,6 +219,9 @@ impl Memory<'_> {
         message: EntityId,
         attachment: MessageResultAttachment,
     ) -> MemoryResult<Option<MessageResultAttachment>> {
+        if attachment.erased {
+            return Ok(Some(attachment.as_shown(false)));
+        }
         let Some((output, withheld)) = self.held_result(message, &attachment)? else {
             return Ok(None);
         };
