@@ -523,6 +523,7 @@ impl HostSelfDispatcher<'_> {
                     effect: SelfEffect::TasksWait,
                     reason: SelfDurableWaitReason::PeerResult,
                     prompt: Some(format!("{TASK_WAIT_SET_PROMPT}{}", wait.to_hex())),
+                    hook_notice: None,
                 }),
                 WaitSetOutcome::Changed => failed("task_wait_changed"),
             },

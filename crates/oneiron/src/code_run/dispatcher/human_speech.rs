@@ -54,6 +54,7 @@ impl HostSelfDispatcher<'_> {
                 effect: SelfEffect::Ask,
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: Some(call.prompt),
+                hook_notice: None,
             }));
         }
 
@@ -208,6 +209,7 @@ impl HostSelfDispatcher<'_> {
             effect,
             reason,
             prompt,
+            hook_notice: None,
         })
     }
 }

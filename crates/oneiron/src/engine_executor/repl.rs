@@ -692,5 +692,6 @@ fn turn_hook_wait(stop: &VerbHookStop) -> Option<SelfDurableWait> {
         effect: SelfEffect::TasksWait,
         reason: SelfDurableWaitReason::PeerResult,
         prompt: Some(format!("verb_hook:{invocation}")),
+        hook_notice: None,
     })
 }

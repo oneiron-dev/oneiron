@@ -61,18 +61,24 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("edge_kind", Value::from(result.kind as u8)),
             ("tgt", entity_id_value(result.tgt)),
         ]),
-        SelfDispatchOutcome::DurableWait(wait) => request_map(vec![
-            ("kind", Value::from("durable_wait")),
-            ("wait_id", entity_id_value(wait.wait_id)),
-            ("effect", Value::from(wait.effect.as_str())),
-            ("reason", Value::from(durable_wait_reason_str(wait.reason))),
-            (
-                "prompt",
-                wait.prompt
-                    .as_ref()
-                    .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
-            ),
-        ]),
+        SelfDispatchOutcome::DurableWait(wait) => {
+            let mut entries = vec![
+                ("kind", Value::from("durable_wait")),
+                ("wait_id", entity_id_value(wait.wait_id)),
+                ("effect", Value::from(wait.effect.as_str())),
+                ("reason", Value::from(durable_wait_reason_str(wait.reason))),
+                (
+                    "prompt",
+                    wait.prompt
+                        .as_ref()
+                        .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
+                ),
+            ];
+            if let Some(notice) = &wait.hook_notice {
+                entries.push(("hook_notice", Value::from(notice.to_string())));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::Denied(result) => {
             let mut entries = vec![
                 ("kind", Value::from("denied")),
@@ -321,6 +327,14 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
                 reason: durable_wait_reason_from_str(str_value(map_get(entries, "reason")?)?)?,
                 prompt,
+                hook_notice: map_get(entries, "hook_notice")
+                    .ok()
+                    .map(|notice| {
+                        serde_json::from_str(str_value(notice)?).map_err(|_| {
+                            invalid_code_run_replay("invalid durable wait hook notice")
+                        })
+                    })
+                    .transpose()?,
             }))
         }
         "denied" => Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {

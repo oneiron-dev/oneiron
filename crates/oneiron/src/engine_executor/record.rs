@@ -86,6 +86,8 @@ pub(super) struct StoredDurableWait {
     pub(super) reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook_notice: Option<serde_json::Value>,
 }
 
 impl StoredDurableWait {
@@ -95,6 +97,7 @@ impl StoredDurableWait {
             effect: wait.effect.as_str().to_owned(),
             reason: durable_wait_reason_str(wait.reason).to_owned(),
             prompt: wait.prompt.clone(),
+            hook_notice: wait.hook_notice.clone(),
         }
     }
 
@@ -104,6 +107,7 @@ impl StoredDurableWait {
             effect: self_effect_from_str(&self.effect)?,
             reason: durable_wait_reason_from_str(&self.reason)?,
             prompt: self.prompt,
+            hook_notice: self.hook_notice,
         })
     }
 }
