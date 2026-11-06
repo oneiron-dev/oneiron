@@ -465,6 +465,7 @@ fn advance_head_bytes(actual: &[u8], expected: &[u8], next: &mut usize) -> Resul
 #[derive(Default)]
 struct MetadataRows {
     after: Option<String>,
+    pending_key: Option<String>,
 }
 
 impl MetadataRows {
@@ -478,8 +479,10 @@ impl MetadataRows {
             self.after = None;
             return Ok(true);
         };
-        validate(field, bytes)?;
-        self.after = Some(field.clone());
+        if self.pending_key.is_none() {
+            validate(field, bytes)?;
+        }
+        self.advance_key(field);
         Ok(false)
     }
 
@@ -497,15 +500,32 @@ impl MetadataRows {
             self.after = None;
             return Ok(true);
         };
-        let expected = expected
-            .get(field)
-            .ok_or(invalid("entity document head version"))?;
-        if !advance_head_bytes(bytes, expected, next)? {
-            return Ok(false);
+        if self.pending_key.is_none() {
+            let expected = expected
+                .get(field)
+                .ok_or(invalid("entity document head version"))?;
+            if !advance_head_bytes(bytes, expected, next)? {
+                return Ok(false);
+            }
+            *next = 0;
         }
-        *next = 0;
-        self.after = Some(field.clone());
+        self.advance_key(field);
         Ok(false)
+    }
+
+    fn advance_key(&mut self, field: &str) {
+        let key = self
+            .pending_key
+            .get_or_insert_with(|| String::with_capacity(field.len()));
+        let start = key.len();
+        let mut end = start.saturating_add(blake3::CHUNK_LEN).min(field.len());
+        while !field.is_char_boundary(end) {
+            end -= 1;
+        }
+        key.push_str(&field[start..end]);
+        if end == field.len() {
+            self.after = self.pending_key.take();
+        }
     }
 }
 
