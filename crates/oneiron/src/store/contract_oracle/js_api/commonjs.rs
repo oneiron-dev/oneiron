@@ -4,7 +4,7 @@ use oxc_ast::{
     AstKind,
     ast::{
         AssignmentExpression, AssignmentTarget, BindingPattern, Expression, IdentifierReference,
-        MemberExpression, Program, Statement,
+        MemberExpression, ObjectExpression, Program, Statement,
     },
 };
 use oxc_semantic::Semantic;
@@ -101,6 +101,15 @@ pub(super) fn collect(
                 }
                 continue;
             }
+            if let Some(object) =
+                replacement_chain(assignment, semantic, alias, native_module, &mut accounted)
+            {
+                commonjs = true;
+                alias = true;
+                module.bindings.clear();
+                object_bindings(object, module);
+                continue;
+            }
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
                 if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
                     alias = assignment.operator.is_assign()
@@ -163,31 +172,7 @@ pub(super) fn collect(
                     alias = false;
                     module.bindings.clear();
                     if let Expression::ObjectExpression(object) = value {
-                        for property in &object.properties {
-                            let Some(property) = property.as_property() else {
-                                module
-                                    .unresolved
-                                    .insert("commonjs:object-spread".to_owned());
-                                continue;
-                            };
-                            if let Some(name) = property.key.static_name() {
-                                // A non-computed colon __proto__ sets the prototype,
-                                // rather than declaring an own exported property.
-                                if name == "__proto__"
-                                    && !property.computed
-                                    && !property.shorthand
-                                    && !property.method
-                                    && !property.kind.is_accessor()
-                                {
-                                    continue;
-                                }
-                                module
-                                    .bindings
-                                    .insert(name.to_string(), Binding::Local(name.into_owned()));
-                            } else {
-                                module.unresolved.insert("commonjs:computed-key".to_owned());
-                            }
-                        }
+                        object_bindings(object, module);
                     } else if !matches!(
                         value,
                         Expression::FunctionExpression(_)
@@ -260,6 +245,79 @@ fn property_chain(
     }
     accounted.extend(chain_accounted);
     Some(names)
+}
+
+fn replacement_chain<'ast, 'src>(
+    assignment: &'ast AssignmentExpression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<&'ast ObjectExpression<'src>> {
+    let mut assignment = assignment;
+    let mut chain_accounted = BTreeSet::new();
+    let mut assigns_exports = false;
+    let mut assigns_whole = false;
+    loop {
+        if !assignment.operator.is_assign() {
+            return None;
+        }
+        if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+            if identifier.name != "exports" || !wrapper_reference(identifier, semantic) {
+                return None;
+            }
+            assigns_exports = true;
+            chain_accounted.insert((identifier.span.start, identifier.span.end));
+        } else {
+            let member = assignment.left.as_member_expression()?;
+            if !matches!(
+                target(member, semantic, alias, native_module, &mut chain_accounted),
+                Some(Target::Whole)
+            ) {
+                return None;
+            }
+            assigns_whole = true;
+        }
+        match assignment.right.get_inner_expression() {
+            Expression::AssignmentExpression(next) => assignment = next,
+            Expression::ObjectExpression(object) if assigns_exports && assigns_whole => {
+                // These references are stable: no link rebinds `module` or
+                // targets a property of the replaceable exports value. Every
+                // store receives this same literal, so both slots re-alias.
+                accounted.extend(chain_accounted);
+                return Some(object);
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn object_bindings(object: &ObjectExpression<'_>, module: &mut Module) {
+    for property in &object.properties {
+        let Some(property) = property.as_property() else {
+            module
+                .unresolved
+                .insert("commonjs:object-spread".to_owned());
+            continue;
+        };
+        if let Some(name) = property.key.static_name() {
+            // A non-computed colon __proto__ sets the prototype,
+            // rather than declaring an own exported property.
+            if name == "__proto__"
+                && !property.computed
+                && !property.shorthand
+                && !property.method
+                && !property.kind.is_accessor()
+            {
+                continue;
+            }
+            module
+                .bindings
+                .insert(name.to_string(), Binding::Local(name.into_owned()));
+        } else {
+            module.unresolved.insert("commonjs:computed-key".to_owned());
+        }
+    }
 }
 
 fn target(
