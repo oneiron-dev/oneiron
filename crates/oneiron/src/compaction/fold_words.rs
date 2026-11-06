@@ -68,8 +68,9 @@ impl RawValue for FoldOwner {
 }
 
 /// The id run `run`'s fold `fold` depends on its sources under: stable per
-/// (run, fold), and no row's.
-fn fold_words_id(run: EntityId, fold: u64) -> EntityId {
+/// (run, fold), and no row's. A checkpoint image of a copy of the fold's
+/// words names it among its owners (FIX 18924).
+pub(crate) fn fold_words_id(run: EntityId, fold: u64) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron:code-run-fold-words:v1");
     hasher.update(run.as_bytes());
@@ -218,7 +219,8 @@ pub(crate) fn land_folds_in_overlay(
 /// them through (FIX 1494): with them go those of every other fold of the
 /// run a withdrawn record reached. The recorded answers that copied the
 /// words of the run's withdrawn folds go in the same transaction (FIX
-/// 18924), whether or not the ledger still held them. Every withdrawal of a
+/// 18924), whether or not the ledger still held them, and so does every
+/// checkpoint image whose owners name `id`. Every withdrawal of a
 /// row calls this, the rows of a source chain included; any other id, or a
 /// ledger with no words to drop, is left as it is.
 pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
@@ -229,6 +231,9 @@ pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     let Some(owner) = OWNERS.get(store, txn, id)? else {
         return Ok(());
     };
+    // FIX 18924: every checkpoint image whose owners name these words, a
+    // historical one too, retires or is owed.
+    crate::store::erase_response_owner_in_txn(store, txn, id)?;
     if let Some(mut ledger) = FOLD_LEDGERS.get(store, txn, &owner.run)?
         && fence_withdrawn_folds_in(store, txn, owner.run, &mut ledger)?
     {
