@@ -592,6 +592,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_sweep" => a.spec.clone().ok_or_else(invalid),
         "vault.outbound_calls.request.erase" => a.spec.clone().ok_or_else(invalid),
+        "vault.outbound.uncertain_send.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive.install" => a.spec.clone().ok_or_else(invalid),
@@ -2926,6 +2927,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.outbound_calls.request.erase" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.outbound.uncertain_send.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.create_child" => {
@@ -13354,6 +13358,26 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_outbound_calls_request_erase(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.outbound.uncertain_send.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.outbound.uncertain_send.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::UncertainSendAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_outbound_uncertain_send_answer(
                     server, auth, input,
                 ),
             )
