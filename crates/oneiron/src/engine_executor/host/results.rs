@@ -141,6 +141,7 @@ impl RecordingJsHost<'_, '_> {
         name: Option<String>,
         sources: &[String],
         receipt: Option<&StoreReceiptInput>,
+        declared_media_type: Option<String>,
     ) -> Result<serde_json::Value> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
@@ -178,7 +179,16 @@ impl RecordingJsHost<'_, '_> {
             },
             None => None,
         };
-        let (output, mut card) = self.bind_stored_with(storage, sink, name, &inherit)?;
+        let input_rows = self.result_rows();
+        let (output, mut card) = self.bind_stored_produced(
+            storage,
+            sink,
+            name,
+            &inherit,
+            input_rows,
+            None,
+            declared_media_type,
+        )?;
         if let Some(mut receipt) = receipt.take() {
             receipt.folded = OccurrenceRef::new(self.run_id, &output.path, &output.handle)?;
             card["receipt"] = receipt.card();
@@ -246,7 +256,7 @@ impl RecordingJsHost<'_, '_> {
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
-        self.bind_stored_produced(storage, sink, name, inherit, input_rows, None)
+        self.bind_stored_produced(storage, sink, name, inherit, input_rows, None, None)
     }
 
     /// The ordinary binding path with the native call's effect, when known.
@@ -258,6 +268,7 @@ impl RecordingJsHost<'_, '_> {
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
         effect: Option<SelfEffect>,
+        declared_media_type: Option<String>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -285,6 +296,11 @@ impl RecordingJsHost<'_, '_> {
                 || effect.map(|effect| effect.as_str().to_owned()),
                 |held| held.producing_effect.clone(),
             );
+        let declared_media_type = self
+            .results
+            .iter()
+            .find(|held| held.path == path)
+            .map_or(declared_media_type, |held| held.declared_media_type.clone());
         let output = storage.publish_code_run_output_produced(
             path,
             sink,
@@ -293,6 +309,7 @@ impl RecordingJsHost<'_, '_> {
             input_rows,
             producing_step_start,
             producing_effect,
+            declared_media_type,
         )?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;

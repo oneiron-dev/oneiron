@@ -55,7 +55,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "hook_view_served",
     "rewritten_request",
 ];
-pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 12] = [
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 13] = [
     "handle",
     "path",
     "raw_blake3",
@@ -68,6 +68,7 @@ pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 12] = [
     "producing_step_start",
     "producing_effect",
     "text_encoding",
+    "declared_media_type",
 ];
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
@@ -121,6 +122,7 @@ const KEY_INPUT_ROWS: &str = CODE_RUN_RAW_OUTPUT_KEYS[8];
 const KEY_PRODUCING_STEP_START: &str = CODE_RUN_RAW_OUTPUT_KEYS[9];
 const KEY_PRODUCING_EFFECT: &str = CODE_RUN_RAW_OUTPUT_KEYS[10];
 const KEY_TEXT_ENCODING: &str = CODE_RUN_RAW_OUTPUT_KEYS[11];
+const KEY_DECLARED_MEDIA_TYPE: &str = CODE_RUN_RAW_OUTPUT_KEYS[12];
 
 const KEY_CODEC: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[0];
 const KEY_TEXT: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[1];
@@ -424,6 +426,13 @@ fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
                 .as_deref()
                 .map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(KEY_DECLARED_MEDIA_TYPE),
+            output
+                .declared_media_type
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
     ])
 }
 
@@ -453,6 +462,10 @@ fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
             value => Some(str_value(value)?.to_owned()),
         },
         text_encoding: match required(fields[11], "missing output text_encoding")? {
+            Value::Nil => None,
+            value => Some(str_value(value)?.to_owned()),
+        },
+        declared_media_type: match required(fields[12], "missing output declared_media_type")? {
             Value::Nil => None,
             value => Some(str_value(value)?.to_owned()),
         },

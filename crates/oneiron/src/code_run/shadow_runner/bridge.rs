@@ -286,7 +286,8 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
                 name,
                 sources,
                 receipt,
-            } => self.store_result(name, &sources, receipt.is_some()),
+                declared_media_type,
+            } => self.store_result(name, &sources, receipt.is_some(), declared_media_type),
             JsResultCall::Describe(target) => self.describe_result(&target),
             JsResultCall::CanRead { target, child } => self.can_read_result(&target, child),
             JsResultCall::Read {

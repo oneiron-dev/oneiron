@@ -141,6 +141,7 @@ impl MessageResultAttachment {
             producing_step_start: None,
             producing_effect: None,
             text_encoding: None,
+            declared_media_type: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: self.preview.clone(),

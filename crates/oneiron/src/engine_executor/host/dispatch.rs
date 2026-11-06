@@ -125,7 +125,7 @@ impl RecordingJsHost<'_, '_> {
             self.result_rows()
         };
         let card = self
-            .bind_stored_produced(storage, sink, None, &[], input_rows, Some(effect))?
+            .bind_stored_produced(storage, sink, None, &[], input_rows, Some(effect), None)?
             .1;
         Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
             kind,

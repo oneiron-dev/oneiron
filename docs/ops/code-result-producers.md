@@ -66,3 +66,26 @@ not replace that measured fact or certify a producer's identity.
 MIME type remains unknown here. A JSON encoder's output can pass through a raw
 custody sweep before publication, so the encoder alone does not prove that the
 final body is still JSON. No new parser, read, setting or refusal is added.
+
+## Caller-declared media type
+
+`store(value, name, {declared_media_type: "text/plain"})` can attach the
+caller's explicit media-type declaration to that stored occurrence. The host
+carries the string verbatim through the canonical or room route, before the
+occurrence is written. Its card includes `declared_media_type` only when known.
+A replay retains the original occurrence's exact declaration, including an
+unknown value; changing a replayed request cannot relabel that occurrence.
+The shadow arm carries the same declaration without publishing a vault row.
+
+This is a caller declaration, not a validated MIME type of the final bytes.
+It does not select a parser, prove JSON syntax or a charset, affect body
+identity, or grant a read. Custody transforms may change the stored bytes.
+Omitting the option leaves the declaration unknown; other producers and
+context-only projections do not infer it from serialization, path, kind,
+effect or measured `text_encoding`. Byte-validation paths carry only this
+supplied declaration into the comparison and retain every measured-byte check.
+The current codec requires its nullable field; there is no old-format reader.
+
+The QuickJS bootstrap change is source-only until its controlled component
+build replaces the artifacts and manifest together. Do not claim the shipped
+component accepts this new option before that rebuild.

@@ -879,7 +879,9 @@ impl<'a> ExecutorStorage<'a> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None, None)
+        self.publish_code_run_output_produced(
+            path, sink, complete, owner, input_rows, None, None, None,
+        )
     }
 
     /// Carries the producer's native step coordinate and effect along the
@@ -893,6 +895,7 @@ impl<'a> ExecutorStorage<'a> {
         input_rows: Option<Vec<EntityId>>,
         producing_step_start: Option<u64>,
         producing_effect: Option<String>,
+        declared_media_type: Option<String>,
     ) -> Result<CodeRunRawOutput> {
         match self {
             Self::Canonical(vault) => vault.publish_code_run_output_produced(
@@ -903,6 +906,7 @@ impl<'a> ExecutorStorage<'a> {
                 input_rows,
                 producing_step_start,
                 producing_effect,
+                declared_media_type,
             ),
             Self::Session(binding) => binding.publish_output_produced(
                 path,
@@ -912,6 +916,7 @@ impl<'a> ExecutorStorage<'a> {
                 input_rows,
                 producing_step_start,
                 producing_effect,
+                declared_media_type,
             ),
         }
     }

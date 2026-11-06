@@ -76,7 +76,16 @@ impl ExecutorStorage<'_> {
                 })
             }
             Self::Session(binding) => binding
-                .publish_output_produced(path, spool, true, owner, None, None, producing_effect)
+                .publish_output_produced(
+                    path,
+                    spool,
+                    true,
+                    owner,
+                    None,
+                    None,
+                    producing_effect,
+                    None,
+                )
                 .map(Ok),
         }
     }
@@ -142,7 +151,7 @@ impl SessionBinding<'_> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        self.publish_output_produced(path, sink, complete, owner, input_rows, None, None)
+        self.publish_output_produced(path, sink, complete, owner, input_rows, None, None, None)
     }
 
     pub(super) fn publish_output_produced(
@@ -154,6 +163,7 @@ impl SessionBinding<'_> {
         input_rows: Option<Vec<EntityId>>,
         producing_step_start: Option<u64>,
         producing_effect: Option<String>,
+        declared_media_type: Option<String>,
     ) -> Result<CodeRunRawOutput> {
         let mut finished = finish_output_sourced(
             path,
@@ -165,6 +175,7 @@ impl SessionBinding<'_> {
         )?;
         finished.output.producing_step_start = producing_step_start;
         finished.output.producing_effect = producing_effect;
+        finished.output.declared_media_type = declared_media_type;
         self.mark_secret(&finished.output, owner, finished.secret)?;
         self.put_output_row(&finished, &finished.output, owner)?;
         Ok(finished.output)
@@ -212,6 +223,7 @@ impl SessionBinding<'_> {
         )?;
         finished.output.producing_step_start = output.producing_step_start;
         finished.output.producing_effect = output.producing_effect.clone();
+        finished.output.declared_media_type = output.declared_media_type.clone();
         if output.text_encoding.is_none() {
             finished.output.text_encoding = None;
         }
