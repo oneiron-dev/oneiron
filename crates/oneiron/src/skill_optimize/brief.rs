@@ -108,6 +108,8 @@ pub struct SkillOptimizeBrief {
     pub(crate) native_verdict_sources: Option<super::coach_read::NativeFamilySources>,
     /// Partial original discovery scan; not a complete model source declaration.
     pub(crate) native_discovery_sources: Option<super::coach_read::NativeFamilySources>,
+    /// Partial original judgment scan; includes rows the later filters discard.
+    pub(crate) native_judgment_sources: Option<super::coach_read::NativeFamilySources>,
 }
 
 /// The failure a heal's skill repair is aimed at: its class as its source
@@ -258,7 +260,11 @@ pub(super) fn optimize_brief_with_read_at(
     let dev: HashSet<String> = dev_receipts(vault, &candidate.skill)?.into_iter().collect();
     let mut defect_receipts = Vec::new();
     let mut defect_judgments = Vec::new();
-    for judgment in attribution_judgments(vault)? {
+    let (judgment_rows, native_judgment_sources) = match source_read {
+        Some(read) => read.attribution_judgments(vault)?,
+        None => (attribution_judgments(vault)?, None),
+    };
+    for judgment in judgment_rows {
         if judgment.verdict != AttributionVerdict::SkillDefect
             || judgment.subject != Some(candidate.skill)
         {
@@ -453,6 +459,7 @@ pub(super) fn optimize_brief_with_read_at(
         },
         native_verdict_sources,
         native_discovery_sources,
+        native_judgment_sources,
     })
 }
 

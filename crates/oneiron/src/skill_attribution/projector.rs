@@ -13,8 +13,8 @@ use super::decision_receipts::keep_decision_receipts_in_txn;
 use super::judge::{AttributionDecisions, verdict_subject};
 use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
 use super::types::{
-    AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
-    SkillEditProposal, SkillEditProposalReadPosition,
+    AttributionJudgment, AttributionJudgmentReadPosition, AttributionLane, AttributionVerdict,
+    JudgeRequest, OutcomeEvidence, SkillEditProposal, SkillEditProposalReadPosition,
 };
 use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
 
@@ -105,6 +105,18 @@ pub fn run_attribution_projector_with_position(
     decisions: Option<&AttributionDecisions<'_>>,
     read_position: Option<&SkillEditProposalReadPosition>,
 ) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_with_positions(vault, since_cursor, decisions, None, read_position)
+}
+
+/// Runs the original pass with independently requested placement for NEW
+/// judgments and discovery proposals. Held rows retain their original placement.
+pub fn run_attribution_projector_with_positions(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    judgment_position: Option<&AttributionJudgmentReadPosition>,
+    proposal_position: Option<&SkillEditProposalReadPosition>,
+) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
     let mut judgments = Vec::new();
     // Each judgment's judge revision and decision receipts, in step.
@@ -187,6 +199,7 @@ pub fn run_attribution_projector_with_position(
             subject: Some(subject),
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
+            read_position: judgment_position.cloned(),
         });
         stamps.push((revision, trace.receipts));
     }
@@ -213,6 +226,7 @@ pub fn run_attribution_projector_with_position(
             if let Some(existing) = JUDGMENT.get(&vault.store, wtxn, &judgment.sequence)? {
                 // A re-route names the stored row: the id is the row's, not the pass's.
                 judgment.row_id = existing.row_id;
+                judgment.read_position = existing.read_position.clone();
                 if existing != *judgment {
                     return Err(crate::error::Error::InvalidClaimBody(
                         "an attribution judgment cannot be rescored",
@@ -242,7 +256,7 @@ pub fn run_attribution_projector_with_position(
                 AttributionLane::Attempt,
                 &judgment.sequence.to_string(),
             )?;
-            mint_edit_proposal_with_position_in_txn(vault, wtxn, judgment, read_position)?;
+            mint_edit_proposal_with_position_in_txn(vault, wtxn, judgment, proposal_position)?;
         }
         for sequence in &settled_environment {
             delete_unclear_in_txn(vault, wtxn, AttributionLane::Attempt, &sequence.to_string())?;

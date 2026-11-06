@@ -43,6 +43,15 @@ pub struct SkillEditVerdictSource {
     pub displacement_hash: Option<[u8; 32]>,
 }
 
+/// A native attribution judgment at its actual u64 primary key.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AttributionJudgmentSource {
+    pub sequence: u64,
+    pub id: EntityId,
+    pub key: Vec<u8>,
+    pub body_hash: [u8; 32],
+}
+
 /// A native discovery proposal at its actual u64 primary key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SkillEditProposalSource {
@@ -56,6 +65,14 @@ pub struct SkillEditProposalSource {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "snake_case")]
 pub enum NativeReadSource {
+    AttributionJudgment {
+        row: AttributionJudgmentSource,
+    },
+    /// The original eager judgment scan, before subject and DEV filtering.
+    AttributionJudgmentScan {
+        prefix: Vec<u8>,
+        rows: Vec<AttributionJudgmentSource>,
+    },
     SkillEditProposal {
         row: SkillEditProposalSource,
     },

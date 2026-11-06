@@ -2,6 +2,7 @@
 
 use oneiron_contracts::entity_id::EntityId;
 
+pub use crate::read_position::AttributionJudgmentReadPosition;
 pub use crate::read_position::SkillEditProposalReadPosition;
 
 /// Schema version for every row this module persists.
@@ -478,6 +479,8 @@ pub struct AttributionJudgment {
     /// RS1 receipt ids this verdict rests on (trace-or-derivation).
     pub evidence_receipts: Vec<String>,
     pub at: u64,
+    /// The original producer's position. Missing placement never grants a read.
+    pub read_position: Option<AttributionJudgmentReadPosition>,
 }
 
 /// One minted skill EDIT PROPOSAL: the durable consequence of a DISCOVERY

@@ -34,6 +34,63 @@ impl CoachReadRequest {
         }
     }
 
+    /// The original eager judgment scan, before its brief filters. Every
+    /// decoded row, including a later rejected candidate, is witnessed.
+    pub(super) fn attribution_judgments(
+        &self,
+        vault: &Vault,
+    ) -> Result<(
+        Vec<crate::skill_attribution::AttributionJudgment>,
+        Option<NativeFamilySources>,
+    )> {
+        use crate::skill_attribution::{
+            CanonicalAttributionJudgment, attribution_judgments,
+            canonical_attribution_judgments_in_txn,
+        };
+        let unknown = || attribution_judgments(vault).map(|rows| (rows, None));
+        let Some(key) = &self.key else {
+            return unknown();
+        };
+        let lane = vault
+            .scoped_read(key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded);
+        if lane.persist_grant_clock().is_err() {
+            return unknown();
+        }
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+        let Ok(_custody) = vault.store.gate_custody_read_guard() else {
+            return unknown();
+        };
+        let txn = vault.store.env.read_txn()?;
+        let (rows, prefix) = canonical_attribution_judgments_in_txn(vault, &txn)?;
+        let captured = rows.iter().all(|row| {
+            matches!(
+                lane.native_attribution_judgment_admitted_in_txn(&txn, row),
+                Ok(true)
+            )
+        });
+        let receipt = captured
+            .then(|| lane.read_projected_in_txn(&txn, &[], None, |_, _| Ok(())))
+            .and_then(std::result::Result::ok)
+            .map(|read| read.receipt);
+        let sources = receipt.map(|receipt| NativeFamilySources {
+            source: crate::store::attempt_sources::NativeReadSource::AttributionJudgmentScan {
+                prefix: prefix.to_vec(),
+                rows: rows
+                    .iter()
+                    .map(CanonicalAttributionJudgment::source)
+                    .collect(),
+            },
+            receipt,
+        });
+        Ok((
+            rows.into_iter()
+                .map(CanonicalAttributionJudgment::into_judgment)
+                .collect(),
+            sources,
+        ))
+    }
+
     /// The original eager discovery scan, before its brief filters. Every
     /// decoded row, including a later rejected candidate, is witnessed.
     pub(super) fn discovery_proposals(
