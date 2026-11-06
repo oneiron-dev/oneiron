@@ -231,6 +231,24 @@ pub(super) fn send_executor_lease_renewal(held_until: u64, next_pass_at: u64) ->
     (held_until < renew_below).then(|| send_executor_lease_held_until(next_pass_at))
 }
 
+/// This machine's own lease as it comes back to it at `now` (FIX 4747): an
+/// expired one is taken again at the next generation, never renewed, since
+/// another machine may have taken the send and sent it while this one was
+/// away and sync may not show that yet; the new generation makes this
+/// machine's send look itself up at its provider first (slices 2+3), so a
+/// woken old executor never sends blind. `None` for a lease still held, which
+/// the caller renews as before. Engine call (CALLS, FIX 4747).
+fn own_expired_send_executor_lease_retaken(
+    lease: SendExecutorLease,
+    now: u64,
+) -> Option<SendExecutorLease> {
+    lease.expired_at(now).then(|| SendExecutorLease {
+        node_id: lease.node_id,
+        generation: lease.generation.saturating_add(1),
+        held_until: send_executor_lease_held_until(now),
+    })
+}
+
 /// The receipt field a send the fence stood down carries, valued
 /// [`SEND_EXECUTOR_STOOD_DOWN`] (FIX 4747).
 pub(super) const SEND_EXECUTOR_FENCE_FIELD: &str = "send_executor_fence";
@@ -744,6 +762,13 @@ pub(super) fn take_send_executor_lease(
     now: u64,
 ) -> Result<SendExecutorLeaseTake, Error> {
     let mut take = SendExecutorLeaseTake::Closed;
+    // A closing process released its leases: it takes none again.
+    if vault
+        .send_executor_leases_released
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Ok(take);
+    }
     update_connector_send_task_body(vault, task_ref, now, |body| {
         if !connector_send_task_permits_send(body) {
             return Ok(());
@@ -760,11 +785,13 @@ pub(super) fn take_send_executor_lease(
                 lease
             }
             Some(lease) if lease.node_id == node_id => {
-                let lease = SendExecutorLease {
-                    held_until: send_executor_lease_renewal(lease.held_until, now)
-                        .unwrap_or(lease.held_until),
-                    ..lease
-                };
+                let lease = own_expired_send_executor_lease_retaken(lease, now).unwrap_or(
+                    SendExecutorLease {
+                        held_until: send_executor_lease_renewal(lease.held_until, now)
+                            .unwrap_or(lease.held_until),
+                        ..lease
+                    },
+                );
                 body.send_executor_lease = Some(lease);
                 lease
             }
@@ -959,7 +986,8 @@ pub(super) fn log_send_executor_stand_down(
 /// (CALLS, FIX 4747): a handover to the machine that already holds the
 /// lease keeps its holder and generation, renewed for one hold from `now`
 /// (FIX 4747 slice 4), so that machine's own attempt in flight still passes
-/// its fence.
+/// its fence; once expired it is taken again at the next generation
+/// (`own_expired_send_executor_lease_retaken`).
 fn send_executor_lease_after_handover(
     held: Option<SendExecutorLease>,
     to_node: u64,
@@ -967,10 +995,13 @@ fn send_executor_lease_after_handover(
 ) -> Result<SendExecutorLease, Error> {
     let held_until = send_executor_lease_held_until(now);
     match held {
-        Some(lease) if lease.node_id == to_node => Ok(SendExecutorLease {
+        Some(lease) if lease.node_id == to_node => Ok(own_expired_send_executor_lease_retaken(
+            lease, now,
+        )
+        .unwrap_or(SendExecutorLease {
             held_until: lease.held_until.max(held_until),
             ..lease
-        }),
+        })),
         Some(lease) => Ok(SendExecutorLease {
             node_id: to_node,
             generation: lease
@@ -1035,6 +1066,12 @@ pub(super) fn renew_send_executor_lease_in_txn(
     next_pass_at: u64,
     now: u64,
 ) -> Result<(), Error> {
+    if vault
+        .send_executor_leases_released
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Ok(());
+    }
     let Some(node_id) = crate::identity::read_client_id_in_txn(vault, &*wtxn)? else {
         return Ok(());
     };
@@ -1047,14 +1084,21 @@ pub(super) fn renew_send_executor_lease_in_txn(
     let renewal = body
         .send_executor_lease
         .filter(|lease| lease.node_id == node_id && connector_send_task_permits_send(&body))
-        .and_then(|lease| send_executor_lease_renewal(lease.held_until, next_pass_at));
-    let Some(held_until) = renewal else {
+        .and_then(|lease| {
+            own_expired_send_executor_lease_retaken(lease, now).or_else(|| {
+                send_executor_lease_renewal(lease.held_until, next_pass_at).map(|held_until| {
+                    SendExecutorLease {
+                        held_until,
+                        ..lease
+                    }
+                })
+            })
+        });
+    let Some(renewed) = renewal else {
         return Ok(());
     };
     update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
-        if let Some(lease) = body.send_executor_lease.as_mut() {
-            lease.held_until = held_until;
-        }
+        body.send_executor_lease = Some(renewed);
         Ok(())
     })
 }
