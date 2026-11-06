@@ -222,10 +222,19 @@ pub(in crate::batch::secret_scan) fn owner_kept_in_txn(
         }))
 }
 
-/// Whether a closed proposal opens again for the current filing. An old
-/// found-key answer cannot suppress a different known-value residue; the
-/// owner's explicit close still stands.
-pub(super) fn reopens(
+/// Whether a closed proposal opens again when its row holds a hit again: one
+/// that closed because the row read clean or was gone. The owner's close and
+/// a found-key answer stand.
+pub(super) fn reopens(held: &SecretLiftHistoryProposal) -> bool {
+    matches!(
+        held.close_reason,
+        Some(LiftCloseReason::ReadClean | LiftCloseReason::Deleted)
+    )
+}
+
+/// The writer's current filing may reopen an old found-key answer only
+/// when the same actual ASSET still has unresolved known-value residue.
+pub(super) fn reopens_in_txn(
     vault: &Vault,
     txn: &RwTxn<'_>,
     row_key: &[u8],
@@ -233,10 +242,7 @@ pub(super) fn reopens(
     cause: LiftCause,
     reason: &str,
 ) -> Result<bool> {
-    if matches!(
-        held.close_reason,
-        Some(LiftCloseReason::ReadClean | LiftCloseReason::Deleted)
-    ) {
+    if reopens(held) {
         return Ok(true);
     }
     Ok(held.close_reason == Some(LiftCloseReason::Answered)
