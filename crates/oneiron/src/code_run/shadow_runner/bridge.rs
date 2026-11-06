@@ -21,7 +21,9 @@
 //! result of the arm, bound in the arm alone, and its reads (`describe`,
 //! `can`, the facets, a chunk) answer from the arm's store and the run's
 //! results and observations before the step, frozen with their taint before
-//! the arm started.
+//! the arm started. A read of another run's result (a reader child's
+//! source, a child's finding) answers as the step's live read did, from the
+//! step's read context (FIX 6352).
 
 use serde_json::Value;
 

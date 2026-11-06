@@ -10,16 +10,20 @@
 //! a body that is gone, is unavailable, never assumed. The run's results and
 //! observations before the step are frozen with the taint they read under,
 //! so the arm reads no live state, and so is the step's replay context, the
-//! responses its live guest read (FIX 6351, `context`). A reader admitted to
-//! the step's capture (FIX 8704, `admitted`) has its admission read again
-//! before each raw read of it: the request, the start, the record of its end
-//! and its replay context, and each body frozen.
+//! responses its live guest read (FIX 6351, `context`) and what its result
+//! reads saw of reader state, with the bodies of other runs those reads
+//! named (FIX 6352, `reads`). A reader admitted to the step's capture (FIX
+//! 8704, `admitted`) has its admission read again before each raw read of
+//! it: the request, the start, the record of its end and its replay
+//! context, each record a read context names, and each body frozen.
 
 mod admitted;
 mod context;
+mod reads;
 
 pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
 use self::context::ArmContext;
+use self::reads::ForeignBody;
 use super::types::{
     ShadowBodyRef, ShadowDeterminism, ShadowRequestDigest, ShadowStepIdentity, ShadowUnavailable,
     ShadowUnavailableReason as Reason,
@@ -84,10 +88,12 @@ pub struct PreparedShadowStep {
     pub(crate) window: CodeRunReplayRecord,
     pub(crate) bridge_start: u64,
     pub(crate) bridge_end: u64,
-    /// The responses the step's live guest read, read and checked once
-    /// (FIX 6351).
+    /// The responses the step's live guest read and what its result reads
+    /// saw of reader state, read and checked once (FIX 6351, FIX 6352).
     pub(crate) context: ArmContext,
     pub(crate) frozen: Vec<FrozenBody>,
+    /// The bodies of other runs the step's read context names (FIX 6352).
+    pub(crate) foreign: Vec<ForeignBody>,
     pub(crate) replies: Vec<FrozenReply>,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     pub(crate) scan_bytes: u64,
@@ -268,6 +274,10 @@ fn prepare_step_source(
         Ok(replies) => replies,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
+    let foreign = match reads::freeze_reader_bodies(vault, &context, admits)? {
+        Ok(foreign) => foreign,
+        Err(unavailable) => return Ok(Err(unavailable)),
+    };
     let bridge_end = window.bridge_calls.len() as u64;
     Ok(Ok(PreparedShadowStep {
         step: ShadowStepIdentity::of(capsule),
@@ -285,6 +295,7 @@ fn prepare_step_source(
         prefix,
         window,
         frozen,
+        foreign,
         replies,
         scan_bytes: vault.limit_watch().bound(EngineLimit::CodeResultScanBytes),
     }))

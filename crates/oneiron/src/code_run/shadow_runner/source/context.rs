@@ -30,8 +30,9 @@ pub(crate) enum ArmContext {
 /// checked against the step's capsule, its `start` and its `window`, the
 /// row cut to the end its checkpoint records: `Missing` with no body, and
 /// `SourceDigestMismatch` for a body that is no context, names another run
-/// or step, another start or end, or keeps a response at a position twice
-/// or past the step's end.
+/// or step, another start or end, keeps a response at a position twice or
+/// past the step's end, or keeps a read of reader state (FIX 6352) for
+/// another run or outside the step's window.
 pub(super) fn freeze_context(
     bytes: Option<Vec<u8>>,
     capsule: &StepReplayCapsule,
@@ -49,6 +50,9 @@ pub(super) fn freeze_context(
         || context.bridge_start != start.bridge_start
         || context.bridge_end != bridge_end
         || !context.guest_responses.placed_before(bridge_end)
+        || !context
+            .reader_reads
+            .held_within(capsule.run, start.bridge_start, bridge_end)
     {
         return Err(mismatch());
     }
@@ -59,8 +63,9 @@ pub(super) fn freeze_context(
 }
 
 impl PreparedShadowStep {
-    /// The BLAKE3 of the step's replay context as stored (FIX 6351), when
-    /// one is read: what a fork's execution pin binds.
+    /// The BLAKE3 of the step's replay context as stored (FIX 6351), its
+    /// read context with it (FIX 6352), when one is read: what a fork's
+    /// execution pin binds.
     #[must_use]
     pub fn context_digest(&self) -> Option<[u8; 32]> {
         match &self.context {

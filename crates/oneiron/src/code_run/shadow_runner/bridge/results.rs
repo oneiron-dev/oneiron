@@ -2,6 +2,14 @@
 //! one resolves and is checked, what `store`, `describe`, `can`, a facet
 //! and a chunk answer, all from the arm's store and the run's results before
 //! the step, frozen with their taint before the arm started.
+//!
+//! A read that names none of the arm's results resolves as the step's live
+//! read did (FIX 6352): a reader child's delegated input, inside its range
+//! and while its job was live, else a settled finding of the run's
+//! children, each from the step's read context and for its owner, with the
+//! taint it was frozen with. A whole result's card carries the fold receipt
+//! its live card carried. What the read context cannot establish stops the
+//! arm; it is never answered as `unknown_handle`.
 
 use serde_json::{Value, json};
 
@@ -16,6 +24,10 @@ use crate::engine_executor::{JsResultTarget, parse_result_read_path, store_resul
 use crate::secret_rotation::ArtifactTaintState;
 use crate::store::BodySink;
 use crate::{Error, Result};
+
+/// How the path of a value `store` wrote ends: the only results a fold's
+/// receipt is ever on.
+const STORED_VALUE_SUFFIX: &str = ".result";
 
 impl ShadowBridgeHost<'_> {
     /// The results the arm stored, each by its ref; a tainted one leaves withheld.
@@ -77,24 +89,75 @@ impl ShadowBridgeHost<'_> {
         Ok(())
     }
 
-    /// The arm's result `target` names, read as a run's read is, with the
-    /// taint it reads under, or the refusal the guest gets.
+    /// The result `target` names, read as a run's read is, with the taint it
+    /// reads under, or the refusal the guest gets: one of the arm's own, else
+    /// one of another run the step's read context names (FIX 6352). A read
+    /// the context cannot answer stops the arm.
     fn checked(
-        &self,
+        &mut self,
         target: &JsResultTarget,
     ) -> Result<std::result::Result<(ResultRead, Taint), Value>> {
         self.admit_read()?;
         let live = self.live_bindings();
         let outputs = self.results.iter().map(|result| &result.output);
-        let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
-        else {
-            return Ok(Err(unknown_handle(&live)));
+        if let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
+        {
+            let taint = self.taint_of(&output);
+            let read = ResultRead::in_arm(
+                self.run_id,
+                output,
+                name,
+                target.range,
+                taint.clone(),
+                false,
+            );
+            return Ok(read.map(|read| (read, taint)));
+        }
+        let unknown = unknown_handle(&live);
+        let step = self.step;
+        let found = match step.foreign_read(&target.reference, self.next_seq) {
+            Ok(Some(found)) => found,
+            Ok(None) => return Ok(Err(unknown)),
+            Err(missing) => return Err(self.stop(missing)),
         };
-        let taint = self.taint_of(&output);
-        Ok(
-            ResultRead::in_arm(self.run_id, output, name, target.range, taint.clone())
-                .map(|read| (read, taint)),
-        )
+        if let (Some((start, end)), Some((from, to))) = (found.within, target.range)
+            && (from < start || to > end)
+        {
+            return Ok(Err(result_refusal("outside_delegated_range")));
+        }
+        if found.child_source {
+            match step.reader_job_live(self.next_seq) {
+                Ok(true) => {}
+                Ok(false) => return Ok(Err(result_refusal("reader_task_settled"))),
+                Err(missing) => return Err(self.stop(missing)),
+            }
+        }
+        let output = found.body.output.clone();
+        let whole = found
+            .within
+            .is_some_and(|range| range == (0, output.raw_len));
+        let range = target.range.or(found.within.filter(|_| !whole));
+        let taint = (found.body.state, found.body.secret.clone());
+        let foreign = found.owner != self.run_id;
+        let read = ResultRead::in_arm(
+            found.owner,
+            output,
+            found.name,
+            range,
+            taint.clone(),
+            foreign,
+        );
+        Ok(read.map(|read| (read, taint)))
+    }
+
+    /// Whether `read` reads a result the arm itself stored, which is never a
+    /// fold's: the arm folds nothing.
+    fn reads_own_store(&self, read: &ResultRead) -> bool {
+        let output = read.output();
+        read.owner() == self.run_id
+            && self.results.iter().any(|held| {
+                held.own && held.output.path == output.path && held.output.handle == output.handle
+            })
     }
 
     /// The taint the arm holds `output` under.
@@ -148,7 +211,8 @@ impl ShadowBridgeHost<'_> {
         };
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone(), output.path.clone());
-        let card = match ResultRead::in_arm(self.run_id, output.clone(), Some(name), None, taint) {
+        let read = ResultRead::in_arm(self.run_id, output.clone(), Some(name), None, taint, false);
+        let card = match read {
             Ok(read) => read.arm_card(self.store)?,
             Err(_) => return Err(Error::InvariantViolation("a whole result has no range")),
         };
@@ -196,12 +260,29 @@ impl ShadowBridgeHost<'_> {
         Ok(json!({ "output": card }))
     }
 
-    /// `describe(r)`: the card of one of the arm's results.
-    pub(super) fn describe_result(&self, target: &JsResultTarget) -> Result<Value> {
-        Ok(match self.checked(target)? {
-            Ok((read, _)) => json!({ "output": read.arm_card(self.store)? }),
-            Err(refused) => refused,
-        })
+    /// `describe(r)`: the card of one of the arm's results, or of a range of
+    /// one. A whole result's card carries the fold receipt the step's live
+    /// card of it carried (FIX 6352). A result the arm stored, and one at a
+    /// path no `store` writes, is no fold's.
+    pub(super) fn describe_result(&mut self, target: &JsResultTarget) -> Result<Value> {
+        let read = match self.checked(target)? {
+            Ok((read, _)) => read,
+            Err(refused) => return Ok(refused),
+        };
+        let mut card = read.arm_card(self.store)?;
+        let output = read.output();
+        if read.range().is_none()
+            && output.path.ends_with(STORED_VALUE_SUFFIX)
+            && !self.reads_own_store(&read)
+        {
+            let step = self.step;
+            match step.fold_receipt(read.owner(), output) {
+                Ok(Some(receipt)) => card["receipt"] = receipt.card(),
+                Ok(None) => {}
+                Err(missing) => return Err(self.stop(missing)),
+            }
+        }
+        Ok(json!({ "output": card }))
     }
 
     /// `can({read: r})`: the verdict a read's checks give. With `child`, a

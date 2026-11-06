@@ -37,7 +37,7 @@ use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    GuestResponseCapture, ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
     WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
@@ -325,7 +325,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
-                            host.guest_responses,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
@@ -371,7 +371,7 @@ impl EngineNativeExecutor<'_> {
                     captured,
                     bound,
                     receipts,
-                    host.guest_responses,
+                    host.context_capture,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -415,7 +415,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
-                            host.guest_responses,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!(
@@ -544,7 +544,7 @@ impl EngineNativeExecutor<'_> {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
             let (end, context) =
-                self.step_context(config, &record, bridge_start, host.guest_responses)?;
+                self.step_context(config, &record, bridge_start, host.context_capture)?;
             let checkpoint = CodeRunStepCheckpoint::new(
                 completed_steps,
                 checkpoint_label(completed_steps),

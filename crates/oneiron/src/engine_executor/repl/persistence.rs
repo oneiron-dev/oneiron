@@ -113,7 +113,7 @@ impl EngineNativeExecutor<'_> {
         captured: Vec<CodeRunRawOutput>,
         bound: Vec<CodeRunResultBinding>,
         receipts: Vec<ReaderFoldReceipt>,
-        guest_responses: GuestResponseCapture,
+        context_capture: StepContextCapture,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -178,9 +178,9 @@ impl EngineNativeExecutor<'_> {
         }
         let mut digests = StepResultDigests::of(&observation, false);
         digests.bindings = bindings;
-        // Where the failed step's calls end, and the responses its guest
-        // read before it failed (FIX 6354, FIX 6351).
-        let (end, context) = self.step_context(config, record, bridge_start, guest_responses)?;
+        // Where the failed step's calls end, and what its guest read before
+        // it failed (FIX 6354, FIX 6351, FIX 6352).
+        let (end, context) = self.step_context(config, record, bridge_start, context_capture)?;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),

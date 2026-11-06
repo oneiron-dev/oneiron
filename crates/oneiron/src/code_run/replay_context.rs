@@ -14,11 +14,18 @@
 //! secret's value in its view (OF-560), so no context keeps it: its position
 //! stays not captured, and no arm replays the call.
 //!
-//! The context is a typed body with named members, so later members (the
-//! read context of FIX 6352) join it beside these.
+//! The context is a typed body with named members. Beside the responses, it
+//! holds what the step's result reads saw of reader state (FIX 6352,
+//! `reads`): a reader child's binding, whether its job was live, a parent's
+//! settled findings and the fold receipt each whole result's card carried.
+
+mod reads;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use self::reads::{
+    CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture, SelectedFinding,
+};
 use super::types::SelfCall;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::task_verb::sdk::AgentVerb;
@@ -111,6 +118,8 @@ pub(crate) struct StepReplayContext {
     pub(crate) bridge_start: u64,
     pub(crate) bridge_end: u64,
     pub(crate) guest_responses: GuestResponseCapture,
+    /// What the step's result reads saw of reader state (FIX 6352).
+    pub(crate) reader_reads: ReaderReadCapture,
 }
 
 impl StepReplayContext {
@@ -123,6 +132,24 @@ impl StepReplayContext {
     /// The context a body holds, when it reads as one.
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         serde_json::from_slice(bytes).ok()
+    }
+}
+
+/// What one step's host keeps for the step's replay context while the step
+/// runs: each guest response it hands out (FIX 6351) and what its result
+/// reads see of reader state (FIX 6352).
+pub(crate) struct StepContextCapture {
+    pub(crate) guest_responses: GuestResponseCapture,
+    pub(crate) reader_reads: ReaderReadCapture,
+}
+
+impl StepContextCapture {
+    /// A capture of nothing yet, for a run that reads under `child`.
+    pub(crate) const fn new(child: Option<CapturedReaderChild>) -> Self {
+        Self {
+            guest_responses: GuestResponseCapture::new(),
+            reader_reads: ReaderReadCapture::new(child),
+        }
     }
 }
 
