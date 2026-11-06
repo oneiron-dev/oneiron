@@ -54,7 +54,8 @@ mod label_read;
 mod logprobs;
 pub mod media;
 pub use label_read::{
-    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
+    LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
 };
 pub use logprobs::{TokenScore, first_token_alternatives};
 mod model_id;

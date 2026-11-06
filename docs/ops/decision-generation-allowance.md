@@ -17,7 +17,9 @@ An unsupported `None` returns before that provider reads or sends; it never perm
 retry through the ordinary interface. A supported read keeps its original provider
 error and every native settlement in its paid prefix. `NotStarted` is not an abstention,
 a negative answer, or a zero person probability. In a sequential pack, it retains its
-question ordinal and leaves later questions unstarted.
+question ordinal and leaves later questions unstarted. `Stopped` means the native
+read began but the allowance stopped it before a complete result; its settlements
+remain available without presenting it as an unstarted read or a terminal answer.
 
 Captured offline, standing host, attribution, and placement rule reads use their original
 single and pack methods. They start no model generation and consume no generation allowance;
@@ -78,22 +80,29 @@ abstention starts no generation. A denied generation leaves its ordinal and late
 questions unstarted; a later provider error still keeps the settled prefix. A
 granted start slot is not proof that the subsequent native admission or send succeeds.
 
-The house reader supports native settlement capture when no generation admission is
-requested. Its existing packed label request, paired and person readouts, clocks,
-reader and single gate settlement stay unchanged. The backend can retry a missing
-label with another full-vocabulary generation, so one packed request or settlement
-is not a generation count. Requests carrying generation admission stay unsupported
-until that actual native boundary and its partial-prefix result are implemented.
-Caller-run handles bind to the capture inside its scope; funded handles are created
-inside that scope. Capture never settles the permit again.
+The house reader supports native settlement capture. A request carrying a generation
+admission requires the reader's native generation port; a reader without that port
+returns unsupported before capture or a paid gate. The first allowance follows the
+existing question and shape checks, before the gate admits or dispatches a permit.
+The native reader checks each missing-label full-vocabulary generation separately;
+a packed request or settlement is not a generation count. Tokenization, worker waits
+and transport retries do not take another generation slot.
+A denied first allowance starts no read or permit. A denied later allowance returns
+a stopped paid prefix, not `NotStarted` or a complete decision pack. That prefix keeps
+usage from every initial batch reply and each completed retry, including questions
+not yet processed when the allowance stopped. The same gate settles it once against
+the same borrowed lease. It creates no terminal decision, memo or checkpoint step hash.
+The original ordinary packed request, paired and person readouts, clocks and error
+settlements remain unchanged. Caller-run handles bind to the capture inside its scope;
+funded handles are created inside that scope. Capture never settles the permit again.
 
 A nonlocal extraction needs its actual request's native extraction admission too.
 System One and the nonlocal house reader do not yet supply that request through
 the captured interface, so those contexts return unsupported before any capture,
 read or send. The existing admitted-purpose normalization also treats both autonomy
-purposes as extraction. The on-device house reader can still capture without a
-generation admission. A run's credential check is not the host's extraction
-predicate. These are unfinished request adapters, not new egress policies or
+purposes as extraction. The on-device house reader can capture with its native
+generation port or without a generation admission. A run's credential check is not
+the host's extraction predicate. These are unfinished request adapters, not new egress policies or
 ordinary-call refusals. Neither provider's capture support enables the excluded
 stronger Arc path. Local vision remains unsupported through the captured interface.
 

@@ -5,9 +5,10 @@
 //! and that answer's own paired reading. The person question ("ask a person?") is the ladder's
 //! own typed question, the pack's last; the host binds it here, and it is read separately.
 
+use super::ladder::DecisionReadOutcome as CapturedReadOutcome;
 use super::ladder::{
-    DecisionCall, DecisionPack, DecisionProvider, PairedAnswer, ProviderCapability,
-    ProviderDecision, level_score, score_levels_in, validate_pin,
+    DecisionCall, DecisionGenerationAdmission, DecisionPack, DecisionProvider, PairedAnswer,
+    ProviderCapability, ProviderDecision, level_score, score_levels_in, validate_pin,
 };
 use super::questions::QuestionCriteria;
 use super::types::invalid;
@@ -15,8 +16,9 @@ use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, Prov
 use crate::Result;
 use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
-    BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
-    LabelSet, LlmError, LlmResult, LlmUsage, joint_marginals,
+    BudgetGuard, BudgetLease, LabelReadGenerationOutcome, LabelReadGenerationReader,
+    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError,
+    LlmResult, LlmUsage, joint_marginals,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use std::time::Instant;
@@ -28,6 +30,10 @@ const DISTRIBUTION_TOLERANCE: f64 = 1e-6;
 pub enum GatedRead {
     /// Admission waited past the work time, so the read never started.
     NotStarted,
+    /// The first generation answered; a later allowance stopped the incomplete pack.
+    StoppedPaidPrefix {
+        usage: LlmUsage,
+    },
     Read(LlmResult<LabelReadResponse>),
     /// The gate's own run, carried only after its settlement attempt. The
     /// provider borrows it for terminal evidence and drops it in this frame.
@@ -69,6 +75,7 @@ impl DecisionReadGate for BudgetGuard {
         let gated = read(&lease);
         match &gated {
             GatedRead::NotStarted => self.settle_per_call(&lease, &LlmUsage::zero()),
+            GatedRead::StoppedPaidPrefix { usage } => self.settle_per_call(&lease, usage),
             GatedRead::Read(Ok(read)) | GatedRead::ReadOnRun { read: Ok(read), .. } => {
                 self.settle_per_call(&lease, &read.usage)
             }
@@ -203,6 +210,39 @@ impl DecisionProvider for DecisionReadProvider<'_> {
     /// One read of the pack's questions in order: each jointly with the paired question, the
     /// person question alone. Each answer carries its own paired P(yes).
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
+        Ok(self
+            .decide_pack_read(pack, None)?
+            .into_iter()
+            .map(|outcome| match outcome {
+                CapturedReadOutcome::Answered(answer) => answer,
+                CapturedReadOutcome::NotStarted | CapturedReadOutcome::Stopped => {
+                    unreachable!("an ordinary decision has no generation gate")
+                }
+            })
+            .collect())
+    }
+}
+
+impl DecisionReadProvider<'_> {
+    /// Reads through this model's native generation port. The first allowance
+    /// follows the existing shape checks and precedes the paid gate.
+    pub fn decide_pack_with_generation(
+        &self,
+        pack: &DecisionPack<'_>,
+        native: &dyn LabelReadGenerationReader,
+        generation: &dyn DecisionGenerationAdmission,
+    ) -> Result<Vec<CapturedReadOutcome<ProviderDecision>>> {
+        self.decide_pack_read(pack, Some((native, generation)))
+    }
+
+    fn decide_pack_read(
+        &self,
+        pack: &DecisionPack<'_>,
+        native: Option<(
+            &dyn LabelReadGenerationReader,
+            &dyn DecisionGenerationAdmission,
+        )>,
+    ) -> Result<Vec<CapturedReadOutcome<ProviderDecision>>> {
         let DecisionPack {
             questions: asked,
             state,
@@ -266,7 +306,29 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             served: None,
         };
         if questions.is_empty() {
-            return Ok(slots.iter().map(|_| abstained()).collect());
+            return Ok(slots
+                .iter()
+                .map(|_| CapturedReadOutcome::Answered(abstained()))
+                .collect());
+        }
+        let interrupted = |stopped| {
+            slots
+                .iter()
+                .map(|slot| {
+                    if slot.is_none() {
+                        CapturedReadOutcome::Answered(abstained())
+                    } else if stopped {
+                        CapturedReadOutcome::Stopped
+                    } else {
+                        CapturedReadOutcome::NotStarted
+                    }
+                })
+                .collect()
+        };
+        if let Some((_, generation)) = native
+            && !generation.admit()
+        {
+            return Ok(interrupted(false));
         }
         let mut sent_request = None;
         let gated = self.gate.read(deadline, &mut |lease| {
@@ -281,6 +343,21 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 work_until: Some(Instant::now() + deadline.decision_time_left()),
             };
             sent_request = Some(request);
+            if let Some((reader, generation)) = native {
+                let admit_next = || generation.admit();
+                return match reader.read_admitted(
+                    &request,
+                    lease,
+                    self.gate.send_guard(),
+                    &admit_next,
+                ) {
+                    Ok(LabelReadGenerationOutcome::Complete(read)) => GatedRead::Read(Ok(read)),
+                    Ok(LabelReadGenerationOutcome::StoppedPaidPrefix { usage }) => {
+                        GatedRead::StoppedPaidPrefix { usage }
+                    }
+                    Err(error) => GatedRead::Read(Err(error)),
+                };
+            }
             GatedRead::Read(match self.gate.send_guard() {
                 Some(guard) => self.reader.read_while(&request, lease, guard),
                 None => self.reader.read(&request, lease),
@@ -288,8 +365,12 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         })?;
         let (read, gate_run) = match gated {
             GatedRead::NotStarted => {
+                if native.is_some() {
+                    return Ok(interrupted(false));
+                }
                 return Err(invalid("decision read admitted after the work time"));
             }
+            GatedRead::StoppedPaidPrefix { .. } => return Ok(interrupted(true)),
             GatedRead::Read(read) => (read, None),
             GatedRead::ReadOnRun { read, run } => (read, Some(run)),
         };
@@ -376,7 +457,11 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             .collect();
         Ok(slots
             .into_iter()
-            .map(|slot| slot.map_or_else(abstained, |index| decisions[index].clone()))
+            .map(|slot| {
+                CapturedReadOutcome::Answered(
+                    slot.map_or_else(abstained, |index| decisions[index].clone()),
+                )
+            })
             .collect())
     }
 }
