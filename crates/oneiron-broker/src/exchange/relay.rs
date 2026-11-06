@@ -1,5 +1,7 @@
 //! A spooled exchange's reply, from its header on: relayed byte for byte in
-//! chunks, under the echo watch, then its end, clean or cut.
+//! chunks, under the echo watch, then its end, clean or cut. An LFS batch
+//! reply is read whole first, within its reply limit, and its whole bytes
+//! are watched before any goes.
 
 use std::io;
 use std::time::Duration;
@@ -43,6 +45,53 @@ pub(crate) async fn relay(
             return Ok(None);
         }
     }
+}
+
+/// Reads the reply's body whole, each chunk within `idle`, into a buffer
+/// wiped as it drops: at most `limit` bytes. Returns the body, or the
+/// failure that ends it: one past `limit` ([`Failure::ReplyTooLarge`]), a
+/// stall, or a broken read.
+pub(crate) async fn read_whole(
+    response: &mut reqwest::Response,
+    limit: u64,
+    idle: Duration,
+) -> io::Result<Result<Zeroizing<Vec<u8>>, Failure>> {
+    let mut body = Zeroizing::new(Vec::new());
+    loop {
+        match tokio::time::timeout(idle, response.chunk()).await {
+            Err(_) => return Ok(Err(Failure::Timeout)),
+            Ok(Err(error)) => return Ok(Err(failure(&error))),
+            Ok(Ok(None)) => return Ok(Ok(body)),
+            Ok(Ok(Some(chunk))) => {
+                if (body.len() as u64).saturating_add(chunk.len() as u64) > limit {
+                    return Ok(Err(Failure::ReplyTooLarge));
+                }
+                push_wiped(&mut body, &chunk)?;
+            }
+        }
+    }
+}
+
+/// Relays a body read whole, in chunks of at most [`STREAM_CHUNK`], when it
+/// holds none of `forms`, the literal forms of the credential; one that
+/// holds a form is cut before any byte of it goes. Returns how the body
+/// ended: clean, or cut.
+pub(crate) async fn relay_whole(
+    stream: &mut UnixStream,
+    body: &[u8],
+    forms: &[Zeroizing<Vec<u8>>],
+    idle: Duration,
+) -> io::Result<Option<Failure>> {
+    if forms
+        .iter()
+        .any(|form| memchr::memmem::find(body, form).is_some())
+    {
+        return Ok(Some(Failure::ReplyHoldsKey));
+    }
+    for piece in body.chunks(STREAM_CHUNK) {
+        idle_bound(idle, write_chunk(stream, piece)).await?;
+    }
+    Ok(None)
 }
 
 /// A reply's credential watch: the credential's literal forms (raw,

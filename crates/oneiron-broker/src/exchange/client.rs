@@ -5,6 +5,7 @@
 use std::future::Future;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use zeroize::Zeroizing;
@@ -148,6 +149,19 @@ pub(crate) struct ReplyBody {
 }
 
 impl ReplyBody {
+    /// Reads the one JSON frame an adapter writes between its reply's
+    /// header and its body (an LFS batch reply's rewrite count), within the
+    /// idle bound: the broker writes it with the header.
+    ///
+    /// # Errors
+    ///
+    /// [`BrokerError::Lost`] when the connection breaks or the frame is not
+    /// `T`.
+    pub(crate) async fn read_frame<T: DeserializeOwned>(&mut self) -> Result<T, BrokerError> {
+        let frame = step(self.idle, read_segment(&mut self.stream, MAX_HEADER)).await?;
+        serde_json::from_slice(&frame).map_err(|_| BrokerError::Lost)
+    }
+
     /// The body's next step, waited for as long as the broker relays: the
     /// broker times the far end by the exchange's idle bound and may hold
     /// bytes back while it watches them for the credential, so a slow
