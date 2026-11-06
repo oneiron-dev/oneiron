@@ -373,13 +373,18 @@ fn primary_target(action: &StoredIdentityOpAction) -> Option<EntityId> {
 
 /// Keeps one eligible decision's review candidate and queues the Coach's
 /// deduplicated job, in the decision's own writer. A replayed writer finds
-/// the candidate it kept and the job it queued.
+/// the candidate it kept and the job it queued. A node that froze its home
+/// state for a move declares nothing: its audit rows are history.
 pub(super) fn declare_topology_audit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     declaration: &AuditDeclaration<'_>,
     now: u64,
 ) -> Result<()> {
+    #[cfg(feature = "sync")]
+    if !keeps_audit_rows_in_txn(vault, &*txn)? {
+        return Ok(());
+    }
     let core_digest = super::core_digest(declaration.stored)?;
     let audit_id = audit_id(&declaration.event, &core_digest);
     if INTENTS.contains(&vault.store, &*txn, &audit_id)? {
@@ -428,6 +433,20 @@ pub(super) fn declare_topology_audit_in_txn(
 fn enqueue_drain_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, now: u64) -> Result<()> {
     DreamerRunnerStore::new(vault).enqueue_coach_topology_audit_in_txn(txn, now)?;
     Ok(())
+}
+
+/// Whether this node still keeps the Coach's audit rows (FIX 5661, C1): not
+/// once it froze its home state for a move and adopted none since. Its rows
+/// are then history, the move carried them and the new home reviews them,
+/// so this node writes no candidate, selection or result more; a move that
+/// chains back here replaces them whole.
+#[cfg(feature = "sync")]
+fn keeps_audit_rows_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    crate::sync::home_handoff::takes_home_write_in_txn(
+        vault,
+        txn,
+        crate::sync::home_handoff::HomeWrite::Settle,
+    )
 }
 
 /// Drops every candidate that names the erased `id`, as its decision, as

@@ -323,6 +323,12 @@ impl Vault {
         job: Job,
         report: &mut TopologyAuditReport,
     ) -> Result<Step> {
+        // A home that froze its rows for a move reviews nothing more: the new
+        // home drains what the move carried.
+        #[cfg(feature = "sync")]
+        if !super::keeps_audit_rows_in_txn(self, &self.store.env.read_txn()?)? {
+            return Ok(Step::Deferred);
+        }
         let selection = match self.topology_audit_selection(&intent.audit_id)? {
             Some(selection) => selection,
             None => {
@@ -434,7 +440,9 @@ impl Vault {
     /// Asks the recipe whether to review `intent` and keeps its first
     /// answer; `None` when the recipe cannot be asked now. A decision that
     /// already moved is skipped with no question. A selection another job
-    /// kept first stands.
+    /// kept first stands. The writer re-reads what the question ran under:
+    /// on a node that froze its rows for a move since, or for a candidate an
+    /// erase took or changed, it keeps nothing.
     fn select_topology_audit(
         &self,
         intent: &TopologyAuditIntent,
@@ -488,7 +496,11 @@ impl Vault {
             selected_at: job.now,
         };
         let kept = self.with_write_txn_grouped(|txn| {
-            if !INTENTS.contains(&self.store, &*txn, &intent.audit_id)? {
+            #[cfg(feature = "sync")]
+            if !super::keeps_audit_rows_in_txn(self, &*txn)? {
+                return Ok(None);
+            }
+            if INTENTS.get(&self.store, &*txn, &intent.audit_id)?.as_ref() != Some(intent) {
                 return Ok(None);
             }
             if let Some(held) = SELECTIONS.get(&self.store, &*txn, &intent.audit_id)? {
@@ -497,7 +509,8 @@ impl Vault {
             SELECTIONS.put(&self.store, txn, &intent.audit_id, &selection)?;
             Ok(Some(selection.clone()))
         })?;
-        // A candidate erased while it was asked keeps nothing and is done.
+        // A candidate erased, changed or moved away while it was asked keeps
+        // nothing here and is done.
         Ok(Some(kept.unwrap_or(TopologyAuditSelection {
             selected: false,
             ..selection
@@ -577,10 +590,11 @@ impl Vault {
     /// Keeps one candidate's result, and on a concern the Coach's
     /// correction, in one writer. A result another job kept first stands,
     /// and so does its correction: none is made twice. The writer first
-    /// requires the candidate and the selection the review ran under to be
-    /// the kept ones still: a candidate an erase took, or one whose kept
-    /// rows differ, gets no correction and no result (`None`), so no undo
-    /// ever lands without the result that receipts it.
+    /// requires this node to keep the rows still (it froze none for a move
+    /// since), and the candidate and the selection the review ran under to
+    /// be the kept ones still: a candidate an erase took, one whose kept
+    /// rows differ, or one a move took, gets no correction and no result
+    /// (`None`), so no undo ever lands without the result that receipts it.
     fn record_topology_audit_result(
         &self,
         intent: &TopologyAuditIntent,
@@ -599,6 +613,10 @@ impl Vault {
             None => (None, Vec::new(), [0; 32], None),
         };
         self.with_write_txn_grouped(move |txn| {
+            #[cfg(feature = "sync")]
+            if !super::keeps_audit_rows_in_txn(self, &*txn)? {
+                return Ok(None);
+            }
             if let Some(held) = RESULTS.get(&self.store, &*txn, &intent.audit_id)? {
                 return Ok(Some(held));
             }

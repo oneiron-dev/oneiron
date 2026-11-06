@@ -16,14 +16,16 @@
 //!
 //! A rejoined row lands where this node holds none under its key, and an
 //! equal one is a no-op. A different one is a Conflict, since a selection is
-//! kept first and a result is append-only, so two of either never combine;
-//! on a node that froze its rows for an earlier move they are history, and
-//! the carried row replaces this node's. A candidate whose decision or any
-//! subject is erased here lands nothing.
+//! kept first and a result is append-only, so two of either never combine.
+//! On a node that froze its rows for an earlier move they are history, and
+//! the carried state is the whole truth of the three tables: each carried
+//! row replaces this node's, and every row here the carried state lacks
+//! goes, a candidate with its selection and result. A candidate whose
+//! decision or any subject is erased here lands nothing.
 
 mod partition;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -87,6 +89,21 @@ fn land<V: PartialEq + Serialize + serde::de::DeserializeOwned>(
             Ok(true)
         }
     }
+}
+
+/// Deletes every row of `table` here whose key is not in `kept`.
+fn retain<V: Serialize + serde::de::DeserializeOwned>(
+    table: SideTable<[u8; 32], V, Named>,
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    kept: &BTreeSet<[u8; 32]>,
+) -> Result<()> {
+    for key in table.scan_keys(&vault.store, &*txn, &[])? {
+        if !kept.contains(&key) {
+            table.delete(&vault.store, txn, &key)?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether the candidate names a record erased here.
@@ -162,6 +179,10 @@ impl HomeTable for CoachTopologyAuditRows {
             .map(|result| (partition::result_audit(&result), result))
             .collect();
         let mut pending = false;
+        // What landed, per table: on history, every other row here goes.
+        let mut landed_intents = BTreeSet::new();
+        let mut landed_selections = BTreeSet::new();
+        let mut landed_results = BTreeSet::new();
         for intent in facts.intents {
             // A subject, or a record its review read, whose actor's piece is
             // not here went with that actor's erase: the candidate is
@@ -186,19 +207,31 @@ impl HomeTable for CoachTopologyAuditRows {
             if !land(INTENTS, here, txn, &audit, &intent)? {
                 return Ok(TableAdopt::Conflict);
             }
-            if let Some(selection) = &selection
-                && !land(SELECTIONS, here, txn, &audit, selection)?
-            {
-                return Ok(TableAdopt::Conflict);
+            landed_intents.insert(audit);
+            if let Some(selection) = &selection {
+                if !land(SELECTIONS, here, txn, &audit, selection)? {
+                    return Ok(TableAdopt::Conflict);
+                }
+                landed_selections.insert(audit);
             }
             match &result {
                 Some(result) => {
                     if !land(RESULTS, here, txn, &audit, result)? {
                         return Ok(TableAdopt::Conflict);
                     }
+                    landed_results.insert(audit);
                 }
                 None => pending = true,
             }
+        }
+        // On history the carried state is the whole truth: a selection or
+        // result this node kept after its freeze, for a candidate the move
+        // carried without one, goes, and so does every row of a candidate
+        // the move dropped (erased) or never carried.
+        if history {
+            retain(INTENTS, vault, txn, &landed_intents)?;
+            retain(SELECTIONS, vault, txn, &landed_selections)?;
+            retain(RESULTS, vault, txn, &landed_results)?;
         }
         // The new home reviews what the old one left pending.
         if pending {
