@@ -635,18 +635,24 @@ impl Vault {
 
     /// The `edge.provenance` Claim of one link a NOTE birth's content writer
     /// staged in `wtxn` (FIX 3959), written in that same transaction, never a
-    /// nested one: a structural link takes the authored-structural path of
-    /// [`Vault::put_structural_edge_provenance`] and keeps its 12-byte value;
-    /// a semantic link takes [`Vault::put_edge_provenance`]'s path and is
-    /// stamped from its cohort winner.
+    /// nested one, through the authored-structural path of
+    /// [`Vault::put_structural_edge_provenance`]: the engine's audit record of
+    /// a link the birth already passed its writer's gate for, so it runs no
+    /// claim write gate, and the link keeps its stored value, 12 B structural
+    /// or 24 B semantic, with no flags. It records the verified actor, its
+    /// class and the body's validated `source_revision_ref`.
     pub(crate) fn put_authored_link_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
     ) -> Result<()> {
-        let structural =
-            edge_value_layout_for_kind(write.subject.kind, false) == EdgeValueLayout::Structural;
-        self.write_edge_provenance_inner(wtxn, write, structural, false)
+        self.write_edge_provenance_through(
+            wtxn,
+            write,
+            true,
+            false,
+            ProvenanceWriteDoor::AuthoredLink,
+        )
     }
 
     /// FIX 7755: [`Self::write_edge_provenance_in_txn`] with an explicit
@@ -659,6 +665,26 @@ impl Vault {
         write: EdgeProvenanceWrite<'_>,
         allow_structural: bool,
         without_edge: bool,
+    ) -> Result<()> {
+        self.write_edge_provenance_through(
+            wtxn,
+            write,
+            allow_structural,
+            without_edge,
+            ProvenanceWriteDoor::Asserted,
+        )
+    }
+
+    /// [`Self::write_edge_provenance_inner`] through `door`: an
+    /// [`ProvenanceWriteDoor::AuthoredLink`] record skips the new Claim's
+    /// claim write gate and every flag stamp.
+    fn write_edge_provenance_through(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+        allow_structural: bool,
+        without_edge: bool,
+        door: ProvenanceWriteDoor,
     ) -> Result<()> {
         let EdgeProvenanceWrite {
             claim_id,
@@ -849,14 +875,16 @@ impl Vault {
         }
 
         let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
-        crate::gate::check_edge_provenance_claim_policy(
-            &self.store,
-            wtxn,
-            &claim_body,
-            &record,
-            actor_class,
-            &policy,
-        )?;
+        if door == ProvenanceWriteDoor::Asserted {
+            crate::gate::check_edge_provenance_claim_policy(
+                &self.store,
+                wtxn,
+                &claim_body,
+                &record,
+                actor_class,
+                &policy,
+            )?;
+        }
 
         // Explicit-prior gates (supersede path): the named Claim must be a
         // live edge.provenance Claim addressing the SAME EdgeRef. A stale
@@ -1020,7 +1048,9 @@ impl Vault {
         // graph, so no flag restamp runs here.
         // A cut restore never recreates the deleted link: no flag restamp,
         // no invalidation, no version bump on the missing edge.
+        // An authored link's audit record leaves the link's value as stored.
         if without_edge
+            || door == ProvenanceWriteDoor::AuthoredLink
             || edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural
         {
             return Ok(());
@@ -1030,6 +1060,18 @@ impl Vault {
 
         Ok(())
     }
+}
+
+/// The door an `edge.provenance` write comes through.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProvenanceWriteDoor {
+    /// A Claim its writer asserts: the claim write gate judges it, and a
+    /// semantic subject's flags are stamped from its cohort winner.
+    Asserted,
+    /// The engine's audit record of a link a NOTE birth staged in the same
+    /// transaction (FIX 3959): the birth already passed its writer's gate,
+    /// so the record runs none, and the link keeps its stored value.
+    AuthoredLink,
 }
 
 impl Vault {

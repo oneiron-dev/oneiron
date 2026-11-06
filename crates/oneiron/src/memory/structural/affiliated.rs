@@ -270,6 +270,9 @@ impl Memory<'_> {
     /// the links it stages (FIX 3959): `NOTE -AuthoredBy-> actor` and the
     /// NOTE's link to its target each get an `edge.provenance` Claim naming
     /// the bound actor and its class, in the NOTE's own content transaction.
+    /// That Claim is the engine's audit record of the link, written through
+    /// the structural provenance path: it runs no claim write gate beyond the
+    /// birth's own, and each link keeps its stored value, with no flags.
     /// `source` cites the revision the take was read from; without one the
     /// Claims cite no source. A diary entry's private links get none, nor do
     /// the links of a NOTE born in a world: a wrapper names no world yet, and
