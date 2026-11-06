@@ -107,7 +107,7 @@ impl RunInner {
                     native,
                     &permit.native,
                     &hold.unit,
-                    &permit.rates,
+                    &hold.rates,
                     hold.reserved_units,
                 ),
                 None if started => hold.reserved_units,
