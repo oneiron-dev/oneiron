@@ -87,8 +87,8 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 
 /// Runs in the purge's transaction: the identity ops first, then origin's
 /// claims and the actor's stamp tokens, then every declared table's scrub in
-/// catalog order; a hard erase then soft-erases the witnessed exchange of
-/// each reply job naming the actor (FIX 10897). Behind the
+/// catalog order; a marker-only hard erase then soft-erases the witnessed
+/// exchange of each reply job naming the actor (FIX 10897). Behind the
 /// permanent hard-delete marker, the dispatch text the actor owns leaves the
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
@@ -136,8 +136,10 @@ pub(super) fn erase_actor_fields_in_txn(
         )?;
     }
     // A reply job naming the actor takes its witnessed exchange with its
-    // event (FIX 10897), found now, before the payload erase clears it.
-    let witnessed = if hard || accepted_hard_purge {
+    // event (FIX 10897). A purge or an erase's scrub erased it before its
+    // provenance pass; a marker-only hard path never reaches that pass, so
+    // its rows are found now, before the payload erase below clears them.
+    let witnessed = if hard && !accepted_hard_purge {
         crate::outbound::connector_witness_rows_in_txn(vault, wtxn, &BTreeSet::from([*actor]))?
     } else {
         BTreeSet::new()

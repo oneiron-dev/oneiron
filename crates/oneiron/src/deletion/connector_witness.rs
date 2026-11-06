@@ -23,6 +23,22 @@ use crate::side_table::HexId;
 
 use super::tombstone::ROW_DELETION_FENCE;
 
+/// Soft-erases the witnessed exchange of each reply job naming `id`, in the
+/// erase's transaction under `act`. An erase calls it before its provenance
+/// pass clears those jobs' events, while they still name the rows.
+///
+/// # Errors
+/// As [`erase_connector_witness_rows_in_txn`].
+pub(super) fn erase_connector_witness_of_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    act: Option<&EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let rows = crate::outbound::connector_witness_rows_in_txn(vault, wtxn, &BTreeSet::from([*id]))?;
+    erase_connector_witness_rows_in_txn(vault, wtxn, &rows, act)
+}
+
 /// Soft-erases `rows`, the (MESSAGE, TURN) ids reply jobs' witnesses land
 /// at ([`crate::outbound::connector_witness_rows_in_txn`]), in the erase's
 /// transaction under `act`. A row that is absent, of another type or
