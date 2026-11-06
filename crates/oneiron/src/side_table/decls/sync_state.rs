@@ -395,6 +395,9 @@ side_tables! {
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
     SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    /// Authenticated own-device record/document source metadata, not body or admission.
+    /// Key: window ":" hex32 (entity) ":" hex64 (exact pair identity).
+    SYNC_RECORD_DOCUMENT_SOURCE: SyncState b"record:source:" Named;
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
     SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;

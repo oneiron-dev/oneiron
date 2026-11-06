@@ -820,6 +820,8 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
         }
     }
     super::citation_floor::erase_in_txn(store, txn, entity)?;
+    #[cfg(feature = "sync")]
+    crate::store::window_record_sources::remove_entity_in_txn(store, txn, entity)?;
     ENTITY_DOC_HEAD.delete(store, txn, &HexId(*entity))?;
     Ok(())
 }

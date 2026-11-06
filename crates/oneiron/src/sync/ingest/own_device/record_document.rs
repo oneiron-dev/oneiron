@@ -4,6 +4,10 @@
 //! the selected pair only, never the author, hub standing or native write
 //! permission. Ordinary batch admission must still judge the logical body.
 
+mod capture;
+pub(crate) use capture::{CapturedRecordDocuments, RecordDocumentSources};
+pub(in crate::sync) use capture::persist_record_document_update;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -21,13 +25,7 @@ use crate::sync::skill_docs::{SKILL_DOCS_MAP, affected_rows, selected_record_doc
 use crate::sync::types::WindowKey;
 use crate::{EntityId, Vault};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct PairDigest {
-    row: [u8; 32],
-    head: [u8; 32],
-    snapshot: [u8; 32],
-    refinement: Option<[u8; 32]>,
-}
+use crate::store::window_record_sources::RecordDocumentPair as PairDigest;
 
 impl PairDigest {
     fn of(
@@ -76,7 +74,9 @@ impl Drop for Restore {
 /// Run beside, not instead of, the original MESSAGE import span. A nested
 /// import with no proof clears this span until that import returns too.
 /// The outer result reports only an actual materializer error in this span;
-/// the land closure's own value or result stays unchanged. An error does not
+/// success pairs the unchanged land value with an uncommitted capture. Its
+/// persistence owner rechecks the durable carrier in the original writer.
+/// An error does not
 /// undo Loro's import: its owner must discard the live window before ACK or
 /// persistence, as on its existing persist-failure path.
 /// The client inlet handles the outer error before either durability path;
@@ -87,7 +87,7 @@ pub(in crate::sync) fn with_import<T>(
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
     land: impl FnOnce() -> T,
-) -> Result<T> {
+) -> Result<(T, Option<CapturedRecordDocuments>)> {
     let span = import
         .filter(|_| key.world().is_none())
         .map(|import| ImportSpan {
@@ -101,14 +101,19 @@ pub(in crate::sync) fn with_import<T>(
     let _restore =
         Restore(RECORD_DOCUMENT_SPAN.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
     let landed = land();
-    let error = RECORD_DOCUMENT_SPAN.with(|slot| {
-        slot.borrow_mut()
-            .as_mut()
-            .and_then(|span| span.materializer_error.take())
+    let (error, captured) = RECORD_DOCUMENT_SPAN.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(span) = slot.as_mut() else {
+            return (None, None);
+        };
+        let error = span.materializer_error.take();
+        let captured = (error.is_none() && !span.pairs.is_empty())
+            .then(|| CapturedRecordDocuments::take(span));
+        (error, captured)
     });
     match error {
         Some(error) => Err(error),
-        None => Ok(landed),
+        None => Ok((landed, captured)),
     }
 }
 
