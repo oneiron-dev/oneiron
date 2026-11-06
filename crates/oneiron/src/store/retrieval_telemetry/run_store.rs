@@ -700,7 +700,11 @@ fn stage_retrieval_run_with_visibility(
     }
     if let Some(memory) = memory {
         let row = RETRIEVAL_RUN.stage(&record.run_id, record)?;
-        memory.materialized(0, row.value_capacity_bytes());
+        memory.materialized(
+            0,
+            row.value_capacity_bytes()
+                .saturating_add(row.key_capacity_bytes()),
+        );
         row.put(target, wtxn)?;
     } else {
         RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
