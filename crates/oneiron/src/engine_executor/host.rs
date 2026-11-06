@@ -400,12 +400,12 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     }
 
     fn store_reply(&mut self, reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
-        // A stored card stands for the reply: no skill body it holds reaches
-        // the guest (FIX 3608).
-        self.held_delivery.clear();
         let Some(storage) = self.storage else {
             return Ok(None);
         };
+        // A stored card stands for the reply: no skill body it holds reaches
+        // the guest (FIX 3608).
+        self.held_delivery.clear();
         let mut sink = storage.code_run_output_sink()?;
         write_json(&mut sink, reply)?;
         self.bind_stored(storage, sink, None).map(Some)
