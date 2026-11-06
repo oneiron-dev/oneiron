@@ -500,3 +500,16 @@ Revision identity, prior revision, scores, source rows, prices, model fields,
 clocks and finite conversion diagnostics are unchanged. This changes no native
 catalog validation or persistence, authority, inputs, clients, hooks or public
 records. It does not prove end-to-end depth, memory or runtime bounds.
+
+## Merge queue observation output schemas
+
+`vault.code.merge_queue.observe` consumes both optional schema values from every
+`SchemaDrift` verdict difference before the first conversion error. The original
+whole-result codec converts the finite observation, then restores both sides in
+verdict and difference order. Missing and null optional values still read as
+absent. Other difference variants, queue batches, drive and export holds, verdict
+identities, candidate trees and receipt references are unchanged.
+
+This changes no native schema parser, oracle, queue state, review or settlement,
+authority, inputs, clients, hooks or public records. It does not prove end-to-end
+depth, memory or runtime bounds; the existing parser depth bound is unchanged.
