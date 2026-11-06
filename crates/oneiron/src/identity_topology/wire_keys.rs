@@ -19,18 +19,28 @@ pub(crate) const IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM: u64 = 1_024;
 pub(super) const IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT: u64 =
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING - IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM;
 
-/// Hard per-record limits for the append-only replicated family. The body
-/// limit bounds decode/allocation work before MessagePack parsing; the
-/// participant limit bounds per-event fold and reconciliation fan-out.
+/// Hard limits of ONE stored record of the append-only replicated family,
+/// never of a decision (FIX 10188). The body limit bounds decode/allocation
+/// work before MessagePack parsing; the participant limit bounds one inline
+/// record's fold and reconciliation fan-out. A decision past either is stored
+/// as an operation manifest plus bounded operation parts
+/// ([`super::operation_parts`]) and applied whole.
 pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES: usize = 64 * 1024;
 pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS: usize = 256;
 
-/// Masks one facet op may mint (ONE-1745). A facet op names exactly ONE
-/// pre-existing entity, so the participant bound above does not reach its
-/// fan-out — minting is the op's own effect. Bounded by the same number for
-/// the same reason: one op's write batch stays fixed-size.
+/// Masks one INLINE facet record may name (ONE-1745). A facet op names
+/// exactly ONE pre-existing entity, so the participant bound above does not
+/// reach its fan-out — minting is the op's own effect. Bounded by the same
+/// number for the same reason; a facet that mints more is stored in
+/// operation parts (FIX 10188).
 pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_FACETS: usize =
     MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS;
+
+/// Payload bytes one operation part carries (FIX 10188). The rest of the
+/// body bound is left for the part's envelope, so every part decodes under
+/// [`MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES`].
+pub(super) const IDENTITY_TOPOLOGY_OPERATION_PART_BYTES: usize =
+    MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES - 4 * 1024;
 
 pub(super) const BODY_KEY_KIND: &str = "kind";
 pub(super) const BODY_KEY_SEQ: &str = "seq";
@@ -99,6 +109,23 @@ pub(super) const EVENT_KIND_UNDO: &str = "undo";
 pub(super) const EVENT_KIND_PROPOSAL_RESOLUTION: &str = "proposal_resolution";
 /// Automatic retirement of a proposal whose participant was deleted.
 pub(super) const EVENT_KIND_PROPOSAL_CANCELLATION: &str = "proposal_cancellation";
+/// Wire kind of an operation manifest (FIX 10188): the root record of a
+/// merge, split or facet decision too large for one record. Its id, seq and
+/// consent are the decision's; its signed admission binds the payload
+/// length, digest and part count it names.
+pub(super) const EVENT_KIND_OPERATION_MANIFEST: &str = "operation_manifest";
+/// Wire kind of one operation part: a bounded slice of its manifest's
+/// payload, inert on its own.
+pub(super) const EVENT_KIND_OPERATION_PART: &str = "operation_part";
+/// The decision kind a manifest carries: merge, split or facet.
+pub(super) const BODY_KEY_OPERATION_KIND: &str = "op_kind";
+pub(super) const BODY_KEY_OPERATION_PARTS: &str = "op_parts";
+pub(super) const BODY_KEY_OPERATION_LENGTH: &str = "op_len";
+pub(super) const BODY_KEY_OPERATION_DIGEST: &str = "op_digest";
+/// The manifest an operation part belongs to.
+pub(super) const BODY_KEY_OPERATION_ROOT: &str = "op_root";
+pub(super) const BODY_KEY_OPERATION_INDEX: &str = "op_index";
+pub(super) const BODY_KEY_OPERATION_PAYLOAD: &str = "op_payload";
 
 /// Ramp-scope actor stamped when the resolved proposal bound no proposer
 /// handle (FIX 9870): no actor wrote it, or its seal predates admission v4.
