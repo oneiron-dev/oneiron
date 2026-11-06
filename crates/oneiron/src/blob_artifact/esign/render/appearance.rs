@@ -96,7 +96,7 @@ pub(super) fn flatten(
         if !sx.is_finite() || !sy.is_finite() {
             return Err(PdfPreparationError::InvalidGeometry);
         }
-        let object = copier.copy(out, normal, 0)?;
+        let object = copier.copy(out, normal)?;
         let id = match object {
             Object::Reference(id) => id,
             other => out.add_object(other),

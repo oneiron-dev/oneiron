@@ -22,8 +22,17 @@ is freed before its backing admission. An inspection without host memory keeps
 ordinary allocation behavior. No new budget, timeout, configuration or default
 limit is introduced.
 
-Other preparation paths, including visual-resource copying and glyph content,
-still have their existing depth and stream limits. These changes do not prove
-whole-parse memory coverage, arbitrary-depth preparation, cryptographic validity
-or a runtime signing result. Use a matching engine/server build; no schema,
-client, storage ABI or organ-protocol change is required for these worklists.
+Visual-resource copying also uses an explicit worklist. Indirect objects keep
+their leaf-first output IDs, and shared resource maps keep their cached member
+IDs. Stream admission, dictionary/member order, direct-member promotion and
+Type 3 glyph checks retain their existing order. There is no fixed copy or
+glyph-array depth limit. Active-path cycle checks allow repeated acyclic
+references; malformed graphs still fail. Glyph streams keep their per-stream
+codec bounds, and content/operator checks are unchanged.
+
+Visual copying still uses ordinary unadmitted preparation allocations. The
+existing reference resolver and codec/format limits remain. These changes do
+not prove whole-parse memory coverage, arbitrary-depth preparation,
+cryptographic validity or a runtime signing result. Use a matching
+engine/server build; no schema, client, storage ABI or organ-protocol change
+is required for these worklists.
