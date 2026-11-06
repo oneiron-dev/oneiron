@@ -310,6 +310,7 @@ pub(super) fn create(
         &mut txn,
         &child,
         row.source_run,
+        state.cut.bridge_start,
         state.actor,
         &inherited,
     )?;
