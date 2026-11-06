@@ -306,6 +306,26 @@ publication, external telephony integration and runtime answering proof remain p
 No number is provisioned, no audio or transcript is persisted by metadata intake, and
 these source changes do not prove the complete anonymous-call lifecycle.
 
+## Typed receiving-agent phone verbs
+
+The host SDK also publishes `ai.phone.voice.start`, `audio`, `events`, `ack`, `usage`,
+`tool`, `end` and `close`. These are separate from the owner-only `ai.voice.*` verbs.
+Every phone verb keeps the raw transport's holder-bound receiving-agent credential and
+core read/write requirement. Session operations select the same phone-only session store.
+The actual phone key and record bounds stay on reads; these verbs do not substitute an
+unrestricted owner handle.
+
+`ai.phone.voice.start` takes `PhoneVoiceStartRequest` with `identity_ref`, the opaque
+`arrival_ref`, and a nested `voice` containing the existing `LiveVoiceStartRequest`.
+The nested request carries the configured sample rate and channel count; the owner DTO
+is unchanged.
+The remaining verbs use the same request and reply types as the raw phone routes above.
+The tool verb carries its facade invocation onto the original connector memory, while
+its actual connector actor still comes from the proved phone session. Its reply uses the
+same destination narrowing as the owner tool path. The native phone event page still
+withholds tool-context labels. Generated SDK publication is source, not a running phone
+call or proof of complete historical and derived source accounting.
+
 ## Completion boundaries
 
 The settings/metadata/admission and HTTP doors are not a claim that a provider can ring

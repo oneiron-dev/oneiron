@@ -4636,6 +4636,46 @@ export_facade! {
     let output = client.ai_voice_close(&input)?;
     crate::codec::lift_record("ai.voice.close", &output)
 };
+"ai.phone.voice.start" => fn ai_phone_voice_start(&self, input: PhoneVoiceStartRequest) -> LiveVoiceSession = |client| {
+    let input: oneiron::task_verb::sdk::PhoneVoiceStartRequest = crate::codec::lower_record("ai.phone.voice.start", input)?;
+    let output = client.ai_phone_voice_start(&input)?;
+    crate::codec::lift_record("ai.phone.voice.start", &output)
+};
+"ai.phone.voice.audio" => fn ai_phone_voice_audio(&self, input: LiveVoiceAudioRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceAudioRequest = crate::codec::lower_record("ai.phone.voice.audio", input)?;
+    let output = client.ai_phone_voice_audio(&input)?;
+    crate::codec::lift_record("ai.phone.voice.audio", &output)
+};
+"ai.phone.voice.events" => fn ai_phone_voice_events(&self, input: LiveVoiceEventsRequest) -> LiveVoiceEvents = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceEventsRequest = crate::codec::lower_record("ai.phone.voice.events", input)?;
+    let output = client.ai_phone_voice_events(&input)?;
+    crate::codec::lift_record("ai.phone.voice.events", &output)
+};
+"ai.phone.voice.ack" => fn ai_phone_voice_ack(&self, input: LiveVoiceAckRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceAckRequest = crate::codec::lower_record("ai.phone.voice.ack", input)?;
+    let output = client.ai_phone_voice_ack(&input)?;
+    crate::codec::lift_record("ai.phone.voice.ack", &output)
+};
+"ai.phone.voice.usage" => fn ai_phone_voice_usage(&self, input: LiveVoiceUsageRequest) -> LiveVoiceUsage = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceUsageRequest = crate::codec::lower_record("ai.phone.voice.usage", input)?;
+    let output = client.ai_phone_voice_usage(&input)?;
+    crate::codec::lift_record("ai.phone.voice.usage", &output)
+};
+"ai.phone.voice.tool" => fn ai_phone_voice_tool(&self, input: LiveVoiceToolRequest) -> ActAnswerLiveVoiceToolReply = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceToolRequest = crate::codec::lower_record("ai.phone.voice.tool", input)?;
+    let output = client.ai_phone_voice_tool(&input)?;
+    match output { oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => Ok(ActAnswerLiveVoiceToolReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => Ok(ActAnswerLiveVoiceToolReply::Done(crate::LiveVoiceToolReply { processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => Ok(ActAnswerLiveVoiceToolReply::Done(crate::LiveVoiceToolReply { processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), other => crate::codec::lift_record("ai.phone.voice.tool", &other) }
+};
+"ai.phone.voice.end" => fn ai_phone_voice_end(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.phone.voice.end", input)?;
+    let output = client.ai_phone_voice_end(&input)?;
+    crate::codec::lift_record("ai.phone.voice.end", &output)
+};
+"ai.phone.voice.close" => fn ai_phone_voice_close(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.phone.voice.close", input)?;
+    let output = client.ai_phone_voice_close(&input)?;
+    crate::codec::lift_record("ai.phone.voice.close", &output)
+};
 "ai.anonymous_chat" => fn ai_anonymous_chat(&self, input: AnonymousChatRequest) -> AnonymousChatResponse = |client| {
     let input: oneiron::task_verb::sdk::AnonymousChatRequest = crate::codec::lower_record("ai.anonymous_chat", input)?;
     let output = client.ai_anonymous_chat(&input)?;

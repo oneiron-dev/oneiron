@@ -1188,6 +1188,14 @@ pub(crate) fn mcp_agent_verb_input(
         "ai.voice.tool" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.end" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.close" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.start" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.audio" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.events" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.ack" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.usage" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.tool" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.end" => a.spec.clone().ok_or_else(invalid),
+        "ai.phone.voice.close" => a.spec.clone().ok_or_else(invalid),
         "ai.anonymous_chat" => a.spec.clone().ok_or_else(invalid),
         "vault.models.catalog.refresh" => a.spec.clone().ok_or_else(invalid),
         "vault.models.catalog.get" => a.spec.clone().ok_or_else(invalid),
@@ -4404,6 +4412,30 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.voice.close" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.start" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.audio" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.events" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.ack" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.usage" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.tool" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.end" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.phone.voice.close" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.anonymous_chat" => {
@@ -21468,6 +21500,157 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_close(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.start" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.start", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::PhoneVoiceStartRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_start(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.audio" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.audio", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceAudioRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_audio(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.events" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.events", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceEventsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_events(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.ack" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.ack", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceAckRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_ack(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.usage" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.usage", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceUsageRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_usage(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.tool" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.tool", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceToolRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_tool(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "ai.phone.voice.tool",
+                ),
+                input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.end" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.end", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_end(
+                server, auth, input,
+            ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.phone.voice.close" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.phone.voice.close", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_phone_voice_close(
                 server, auth, input,
             ))
             .await;

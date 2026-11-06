@@ -29243,6 +29243,263 @@ async fn ai_voice_close(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn ai_phone_voice_start(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.start")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.start", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.start", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_start(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_audio(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.audio")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.audio", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.audio", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_audio(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_events(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.events")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.events", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.events", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_events(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_ack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.ack")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.ack", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.ack", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_ack(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_usage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.usage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.usage", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.usage", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_usage(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_tool(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.tool")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.tool", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.tool", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::ai_phone_voice_tool(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_end(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.end")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.end", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.end", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_end(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_phone_voice_close(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "ai.phone.voice.close")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.phone.voice.close", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.phone.voice.close", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_phone_voice_close(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn ai_anonymous_chat(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41868,6 +42125,14 @@ async fn call_verb_row(
         "ai.voice.tool" => Box::pin(ai_voice_tool(server, call, input)).await,
         "ai.voice.end" => Box::pin(ai_voice_end(server, call, input)).await,
         "ai.voice.close" => Box::pin(ai_voice_close(server, call, input)).await,
+        "ai.phone.voice.start" => Box::pin(ai_phone_voice_start(server, call, input)).await,
+        "ai.phone.voice.audio" => Box::pin(ai_phone_voice_audio(server, call, input)).await,
+        "ai.phone.voice.events" => Box::pin(ai_phone_voice_events(server, call, input)).await,
+        "ai.phone.voice.ack" => Box::pin(ai_phone_voice_ack(server, call, input)).await,
+        "ai.phone.voice.usage" => Box::pin(ai_phone_voice_usage(server, call, input)).await,
+        "ai.phone.voice.tool" => Box::pin(ai_phone_voice_tool(server, call, input)).await,
+        "ai.phone.voice.end" => Box::pin(ai_phone_voice_end(server, call, input)).await,
+        "ai.phone.voice.close" => Box::pin(ai_phone_voice_close(server, call, input)).await,
         "ai.anonymous_chat" => Box::pin(ai_anonymous_chat(server, call, input)).await,
         "vault.models.catalog.refresh" => {
             Box::pin(vault_models_catalog_refresh(server, call, input)).await

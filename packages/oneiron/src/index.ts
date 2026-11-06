@@ -3641,6 +3641,26 @@ export class Oneiron {
       /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
       close: (input: Facade.LiveVoiceSessionRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceClose(input) as Facade.LiveVoiceProcessed),
     },
+    phone: {
+      voice: {
+        /** Opens an anonymous phone session from the receiving agent's credential, actual line identity and opaque admitted arrival; uses its configured models and original phone share ceiling. */
+        start: (input: Facade.PhoneVoiceStartRequest): Facade.LiveVoiceSession => this.#call(() => this.#client.aiPhoneVoiceStart(input) as Facade.LiveVoiceSession),
+        /** Feeds PCM16LE to the exact receiving-agent phone session through the shared voice queue and cancellation path. */
+        audio: (input: Facade.LiveVoiceAudioRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiPhoneVoiceAudio(input) as Facade.LiveVoiceProcessed),
+        /** Reads the phone session's source-checked event page; tool-context labels remain withheld and saved audio retains its original generation checks. */
+        events: (input: Facade.LiveVoiceEventsRequest): Facade.LiveVoiceEvents => this.#call(() => this.#client.aiPhoneVoiceEvents(input) as Facade.LiveVoiceEvents),
+        /** Acknowledges the exact phone playout event through the existing generation and event-sequence checks. */
+        ack: (input: Facade.LiveVoiceAckRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiPhoneVoiceAck(input) as Facade.LiveVoiceProcessed),
+        /** Observes the phone session's existing run settlements and metering state without creating usage or settling it. */
+        usage: (input: Facade.LiveVoiceUsageRequest): Facade.LiveVoiceUsage => this.#call(() => this.#client.aiPhoneVoiceUsage(input) as Facade.LiveVoiceUsage),
+        /** Calls a connector as the phone session's proved receiving agent on its original credential memory conjoined with the phone ceiling; delivered results enter the next utterance with their actual listed sources. */
+        tool: (input: Facade.LiveVoiceToolRequest): Facade.ActAnswer<Facade.LiveVoiceToolReply> => this.#call(() => this.#client.aiPhoneVoiceTool(input) as Facade.ActAnswer<Facade.LiveVoiceToolReply>),
+        /** Ends the exact receiving-agent phone session through the shared cancellation path while retaining final events. */
+        end: (input: Facade.LiveVoiceSessionRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiPhoneVoiceEnd(input) as Facade.LiveVoiceProcessed),
+        /** Ends and releases the receiving-agent phone session and retained events through the existing teardown path. */
+        close: (input: Facade.LiveVoiceSessionRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiPhoneVoiceClose(input) as Facade.LiveVoiceProcessed),
+      },
+    },
     /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
     anonymous_chat: (input: Facade.AnonymousChatRequest): Facade.AnonymousChatResponse => this.#call(() => this.#client.aiAnonymousChat(input) as Facade.AnonymousChatResponse),
     /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows. */

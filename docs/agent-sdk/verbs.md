@@ -933,6 +933,14 @@ both bindings and their export-census tests in one change.
 - `ai.voice.tool`
 - `ai.voice.end`
 - `ai.voice.close`
+- `ai.phone.voice.start`
+- `ai.phone.voice.audio`
+- `ai.phone.voice.events`
+- `ai.phone.voice.ack`
+- `ai.phone.voice.usage`
+- `ai.phone.voice.tool`
+- `ai.phone.voice.end`
+- `ai.phone.voice.close`
 - `ai.anonymous_chat`
 - `vault.models.catalog.refresh`
 - `vault.models.catalog.get`

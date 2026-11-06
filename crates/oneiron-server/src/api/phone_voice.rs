@@ -36,7 +36,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/phone-voice/close", post(close))
 }
 
-fn credential(auth: &CoreAuth) -> Result<(), ApiError> {
+pub(super) fn credential(auth: &CoreAuth) -> Result<(), ApiError> {
     if auth.verified_slip().is_none() {
         return Err(ApiError::unauthorized());
     }

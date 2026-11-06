@@ -962,6 +962,14 @@ aiVoiceUsage(input: unknown): unknown
 aiVoiceTool(input: unknown): unknown
 aiVoiceEnd(input: unknown): unknown
 aiVoiceClose(input: unknown): unknown
+aiPhoneVoiceStart(input: unknown): unknown
+aiPhoneVoiceAudio(input: unknown): unknown
+aiPhoneVoiceEvents(input: unknown): unknown
+aiPhoneVoiceAck(input: unknown): unknown
+aiPhoneVoiceUsage(input: unknown): unknown
+aiPhoneVoiceTool(input: unknown): unknown
+aiPhoneVoiceEnd(input: unknown): unknown
+aiPhoneVoiceClose(input: unknown): unknown
 aiAnonymousChat(input: unknown): unknown
 vaultModelsCatalogRefresh(input: unknown): unknown
 vaultModelsCatalogGet(input: unknown): unknown

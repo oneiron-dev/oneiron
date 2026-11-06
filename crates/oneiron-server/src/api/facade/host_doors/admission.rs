@@ -49,6 +49,14 @@ pub(in crate::api::facade) fn door_admits(
         };
     };
     match row {
+        Row::AiPhoneVoiceStart
+        | Row::AiPhoneVoiceAudio
+        | Row::AiPhoneVoiceEvents
+        | Row::AiPhoneVoiceAck
+        | Row::AiPhoneVoiceUsage
+        | Row::AiPhoneVoiceTool
+        | Row::AiPhoneVoiceEnd
+        | Row::AiPhoneVoiceClose => super::super::phone_voice_doors::preflight(auth),
         Row::VaultBookingConstraintTurn
         | Row::VaultBookingAvailability
         | Row::VaultBookingBook
