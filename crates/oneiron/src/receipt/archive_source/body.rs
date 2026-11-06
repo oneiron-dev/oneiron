@@ -84,3 +84,26 @@ pub(crate) fn receipt_archive_mirror_row_in_txn(
     }
     Ok(raw)
 }
+
+/// The ORIGINAL carrier header and the SAME staged canonical body. No current
+/// entity read can substitute another incarnation for the received bytes.
+#[cfg(feature = "sync")]
+pub(crate) fn receipt_archive_mirror_row_from_staged(
+    id: &EntityId,
+    carrier: &[u8],
+    staged: &crate::store::StagedAssetBody,
+) -> Result<Option<Vec<u8>>> {
+    let Some(body) = staged.receipt_archive_bytes()? else {
+        return Ok(None);
+    };
+    if !super::codec::receipt_archive_matches_id(&body, id) {
+        return Err(invalid());
+    }
+    let header = carrier
+        .get(..crate::batch::ENTITY_METADATA_HEADER_LEN)
+        .ok_or_else(invalid)?;
+    let mut raw = Vec::with_capacity(header.len().saturating_add(body.len()));
+    raw.extend_from_slice(header);
+    raw.extend_from_slice(&body);
+    Ok(Some(raw))
+}

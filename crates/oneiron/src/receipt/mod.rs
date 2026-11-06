@@ -229,7 +229,9 @@ pub(crate) use archive_source::{
 
 pub(crate) use archive_source::receipt_archive_mirror_row_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_id};
+pub(crate) use archive_source::{
+    receipt_archive_holder, receipt_archive_matches_id, receipt_archive_mirror_row_from_staged,
+};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.

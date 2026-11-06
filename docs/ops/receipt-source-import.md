@@ -108,10 +108,27 @@ file carriers keep their by-reference path. Thus these outgoing readers need
 no historical-file reopen after a receipt's native key is retired. They still
 materialize the one logical source, as the original inline sync path did.
 
-The inbound by-reference landing path is not converted by these source
-changes. Completing persistent receipt production needs its original bound
-carrier and staged bytes to join durable window publication without changing
-origin-position consumption or publishing before the native writer commits.
-A current row, a manifest, a missing payload or a file pin is not an immutable
-historical source. This remains part of FIX 11180; the source changes do not
-claim complete activation, bounded total memory or runtime proof.
+A by-reference receipt body lands through the same native ingest ladder as
+other bodies, at the original lane tier. The landing uses its original bound
+carrier and the complete staged canonical bytes, not a later current-row read.
+A detached candidate is prepared before the writer opens: Loro's live `fork`
+can commit pending local edits, so it must not run inside that writer. Only
+that isolated candidate is edited and exported there. The same landing writer
+journals its ordinary window update and queue entry beside the native row.
+An abort publishes neither. The live document takes the update only after the
+commit and the socket's original local-land position handling. A failed or
+pending live import leaves the durable journal and queue for native replay;
+it does not change a committed body's Receipt to false.
+
+Optional origin positions keep their original incoming values and connection
+proofs. An inline receipt can match its original file representation only when
+the canonical id, whole logical header/body digest and measured body facts
+match, and reconstructing the original header plus manifest satisfies the
+original reference's full carrier hash. The immutable scope, birth, facet,
+complete source set, registry identity, residence and own-device proof checks
+remain. This preserves later position arrival and optional retry errors without
+turning a file reference or current id into authority. Ordinary rows retain
+their exact representation checks. A manifest, missing payload or file pin is
+not an immutable historical source. These source changes still do not claim
+bounded total memory or runtime proof; the logical receipt body remains whole
+at the sync carrier boundary.

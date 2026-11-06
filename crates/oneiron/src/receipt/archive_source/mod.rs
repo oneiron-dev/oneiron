@@ -15,6 +15,8 @@ pub(crate) use custody::{
 #[cfg(feature = "sync")]
 pub(crate) use codec::{receipt_archive_holder, receipt_archive_matches_id};
 pub(crate) use body::receipt_archive_mirror_row_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use body::receipt_archive_mirror_row_from_staged;
 
 #[cfg(test)]
 mod tests;
