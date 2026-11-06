@@ -237,6 +237,8 @@ impl AgentDispatcher<'_> {
         let mut member = None;
         let mut binders = Vec::new();
         let mut cursor = Some(attempt);
+        // The dispatch level whose parent the walk goes to next.
+        let mut below = None;
         while let Some(id) = cursor {
             if !seen.insert(id) {
                 return Err(super::widen_record::invalid("context ancestor cycle"));
@@ -244,6 +246,14 @@ impl AgentDispatcher<'_> {
             let Some(record) = queue.get_in_txn(txn, id)? else {
                 if chain.is_empty() {
                     return Ok(None);
+                }
+                // A run that outlived its root (REVIEW-6638) is a root of its
+                // own on a machine that took it over, which holds no row of
+                // its settled parent: its own level ends the walk there.
+                if let Some(below) = below
+                    && super::run_task::attempt_outlived_root_in(self.vault, txn, below)?
+                {
+                    break;
                 }
                 return Err(super::widen_record::invalid("context ancestor is missing"));
             };
@@ -269,6 +279,7 @@ impl AgentDispatcher<'_> {
                     .scope
                     .to_world_scope(),
             ));
+            below = Some(id);
             cursor = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
         }
         Ok(Some((chain, member, binders)))
