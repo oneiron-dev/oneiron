@@ -98,7 +98,9 @@ impl HostSelfDispatcher<'_> {
             SelfCall::Summarize(call) => self.dispatch_summarize(*call, site),
             SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),
-            SelfCall::TeamSubmit(input) => self.dispatch_team_submit(input),
+            // A CLAIM or document output is read under the key its door
+            // admitted the call with.
+            SelfCall::TeamSubmit(input) => self.dispatch_team_submit(input, read_as),
             // The binding reads its TASK and workflow under the key its door
             // admitted it with.
             SelfCall::WorkflowDispatch(call) => self.dispatch_workflow_bound(*call, read_as),

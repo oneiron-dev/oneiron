@@ -149,6 +149,15 @@ URL. Managed serve (`--managed-by-hypnos`) takes both from its supervisor on
 argv (`--kit-bundle-public-urls`, `--oauth-resource-indicator`), and its
 settings file may not set them.
 
+`git_door_base` (flag `--git-door-base`, env `ONEIRON_GIT_DOOR_BASE`) is the
+host's own Git door, `https://<host>/git` (plain `http` only on loopback).
+When it is set, every run checkout bind (the public `vault.repo` door, a code
+run's `repo.checkout_bind`, and a resident run's) names this base, and the
+endpoint the caller sent is ignored. When it is unset, the caller's explicit
+endpoint is used, as before. The server refuses to start on a value outside
+that grammar. Managed serve takes it from its supervisor on argv, like the
+other public addresses.
+
 `artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
 port of a second listener, on the same host, that serves hosted artifacts
 (`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
