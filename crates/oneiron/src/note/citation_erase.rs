@@ -181,7 +181,8 @@ fn restored_citers(
 /// (FIX 18270): each erased pin goes, and so does every byte of it in the
 /// document's history (a state-only copy, as the live scrub stores one),
 /// its text, authorship and surviving pins kept; its reverse rows are written
-/// again from the pins that stay. Unlike the live scrub it writes only the
+/// again from the pins that stay, and a fence the image carried for it is
+/// cleared, as the live scrub clears it. Unlike the live scrub it writes only the
 /// document and those rows: the body is the one the image held, admitted
 /// when it was written, so it is neither admitted nor projected again, and
 /// no custody read runs before the restore commits.
@@ -205,7 +206,12 @@ fn rebuild_restored(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: EntityId) ->
     validate_pins(vault, txn, &pins)?;
     super::storage::snapshot(vault, txn, note, &clean.doc, true)?;
     super::pin_index::remove_citing(&vault.store, txn, note)?;
-    super::pin_index::index_pins(&vault.store, txn, note, &pins)
+    super::pin_index::index_pins(&vault.store, txn, note, &pins)?;
+    // A fence the image carried for this NOTE is done with: its document no
+    // longer holds what any fenced source left in it.
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    NOTE_ERASE_PENDING.delete_from(&vault.store, txn, &key_prefix)?;
+    Ok(())
 }
 
 /// Drops `note`'s unacknowledged local edit frames and disclosure floors, as
