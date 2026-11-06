@@ -27,7 +27,10 @@ use crate::store::GateReadAnchors;
 use oneiron_authority::federation::Scope;
 
 mod anchor;
+mod canonical;
 mod rubric;
+
+pub(crate) use canonical::{CanonicalJudgeLabel, canonical_judge_label_in_txn};
 
 pub use self::anchor::judge_label_anchor;
 pub(crate) use self::anchor::{

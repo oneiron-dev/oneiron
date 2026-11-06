@@ -222,7 +222,8 @@ pub use self::labels::{
     set_judge_digest_minutes,
 };
 pub(crate) use self::labels::{
-    judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+    CanonicalJudgeLabel, canonical_judge_label_in_txn, judge_ask_room, recheck_judge_labels,
+    take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
