@@ -15,14 +15,15 @@ use heed::{RoTxn, RwTxn};
 
 use super::reader_folds::{MEMOS, SummaryMemo};
 use super::records::REPLAY_RECORDS;
-use super::wait_delivery::deliver_wait_in_txn;
+use super::wait_delivery::deliver_wait_listing_in_txn;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
-    ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
-    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
+    ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, ResultOrigins,
+    SpawnHostSeat, SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reader_job_cutoff,
+    reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -192,9 +193,10 @@ pub(crate) struct ReaderTxn<'t, 'e> {
     /// transaction; `None` on a session's route.
     vault: Option<&'t Vault>,
     /// The wait sets this transaction settled on a session's route, each
-    /// delivered along it once the transaction commits: its id, its reply
-    /// and when it settled.
-    settled: Vec<(EntityId, serde_json::Value, u64)>,
+    /// delivered along it once the transaction commits: its id, its reply,
+    /// the origins frozen with the reply here (FIX 7083) and when it
+    /// settled.
+    settled: Vec<(EntityId, serde_json::Value, Option<ResultOrigins>, u64)>,
 }
 
 impl ReaderTxn<'_, '_> {
@@ -391,7 +393,7 @@ impl ReaderTxn<'_, '_> {
                 serde_json::json!({"task": job.task.to_hex(), "state": "failed", "reason": "no_finding"})
             }
         };
-        self.deliver_reply(job.task, reply, now_ms)
+        self.deliver_reply(job.task, reply, None, now_ms)
     }
 
     /// Deletes only this task's occurrence index and first-reporter content alias.
@@ -450,40 +452,47 @@ impl ReaderTxn<'_, '_> {
             reply.program_steps = super::type_diagnostics::runs_program_steps_in_txn(
                 &self.read, &*self.txn, &settled,
             );
-            self.deliver_settled_task_wait(set.id, &reply, now_ms)?;
+            self.deliver_settled_task_wait(set.id, &reply, None, now_ms)?;
             return Ok(result);
         }
         Ok(result)
     }
 
     /// The settled reduction of wait set `wait`, as the reply of the wait a
-    /// parent parked on it: in this transaction on the canonical vault, so a
-    /// resident parent's trap wakes in the commit that settles it; along the
-    /// session's route once this transaction commits otherwise.
+    /// parent parked on it, with `origins`: in this transaction on the
+    /// canonical vault, so a resident parent's trap wakes in the commit that
+    /// settles it; along the session's route once this transaction commits
+    /// otherwise.
     fn deliver_settled_task_wait(
         &mut self,
         wait: EntityId,
         result: &TaskWaitSetResult,
+        origins: Option<ResultOrigins>,
         now_ms: u64,
     ) -> Result<()> {
         let reply = serde_json::to_value(result)
             .map_err(|_| Error::InvariantViolation("a wait set reduction is plain data"))?;
-        self.deliver_reply(wait, reply, now_ms)
+        self.deliver_reply(wait, reply, origins, now_ms)
     }
 
-    /// `reply` as the reply of wait `wait`: in this transaction on the
-    /// canonical vault, along the session's route once it commits otherwise.
+    /// `reply` as the reply of wait `wait`, settled with `origins`, the
+    /// origins frozen with it in this transaction (FIX 7083): in this
+    /// transaction on the canonical vault, along the session's route once it
+    /// commits otherwise. The delivery after the commit carries them as
+    /// frozen here and reads no ledger again.
     fn deliver_reply(
         &mut self,
         wait: EntityId,
         reply: serde_json::Value,
+        origins: Option<ResultOrigins>,
         now_ms: u64,
     ) -> Result<()> {
         match self.vault {
             Some(vault) => {
-                deliver_wait_in_txn(vault, self.txn, wait, &reply, now_ms)?;
+                let origins = origins.as_ref();
+                deliver_wait_listing_in_txn(vault, self.txn, wait, &reply, None, origins, now_ms)?;
             }
-            None => self.settled.push((wait, reply, now_ms)),
+            None => self.settled.push((wait, reply, origins, now_ms)),
         }
         Ok(())
     }
@@ -601,8 +610,8 @@ impl ExecutorStorage<'_> {
                             Ok((answer, tx.settled))
                         })
                 })?;
-                for (wait, reply, now_ms) in settled {
-                    self.deliver_wait(wait, &reply, None, now_ms)?;
+                for (wait, reply, origins, now_ms) in settled {
+                    self.deliver_wait(wait, &reply, None, origins.as_ref(), now_ms)?;
                 }
                 Ok(answer)
             }
