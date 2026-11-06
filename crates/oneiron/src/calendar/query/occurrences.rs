@@ -71,15 +71,17 @@ fn civil_occurrences(
     {
         return Ok(Vec::new());
     }
-    Ok(civil_starts(row, master, window, exceptions, length)?
-        .into_iter()
-        .map(|(_, civil)| super::facts::civil_envelope(civil, length))
-        .collect())
+    Ok(
+        civil_starts(row, master, window, exceptions, row.facts.uids(), length)?
+            .into_iter()
+            .map(|(_, civil)| super::facts::civil_envelope(civil, length))
+            .collect(),
+    )
 }
 
 /// The starts of an all-day or floating series whose civil envelope meets
 /// `window`, each as its recurrence key and its civil start on the UTC
-/// carrier, its exceptions masked; `length` is its civil length. A master
+/// carrier, the exceptions of `uids` masked; `length` is its civil length. A master
 /// seeded in a zone (a dated `DTSTART` with a `TZID`) keys its starts as
 /// instants, read back to their civil times here.
 pub(in crate::calendar) fn civil_starts(
@@ -87,6 +89,7 @@ pub(in crate::calendar) fn civil_starts(
     master: &crate::calendar::claims::CalendarSeriesMasterValue,
     window: TimeRange,
     exceptions: &[CalendarSeriesExceptionValue],
+    uids: &[String],
     length: u64,
 ) -> Result<Vec<(u64, u64)>> {
     let failed = || Error::InvalidConfig("calendar recurrence projection failed".into());
@@ -102,7 +105,7 @@ pub(in crate::calendar) fn civil_starts(
     };
     let mut starts = crate::calendar::series::expand_window(&master.rrule, master.into(), expanded)
         .map_err(|_| failed())?;
-    for uid in row.facts.uids() {
+    for uid in uids {
         starts = crate::calendar::series::mask_master_exceptions(row.id, uid, starts, exceptions);
     }
     let mut kept = Vec::with_capacity(starts.len());
@@ -150,17 +153,18 @@ pub(in crate::calendar) fn civil_occurrences_named(
         {
             Vec::new()
         }
-        Some(master) => civil_starts(row, master, window, exceptions, length)?
+        Some(master) => civil_starts(row, master, window, exceptions, row.facts.uids(), length)?
             .into_iter()
             .map(|(_, civil)| civil)
             .collect(),
     };
     let all_day = row.facts.civil_all_day();
+    let duration = row.facts.civil_duration();
     Ok(Some(
         starts
             .into_iter()
             .filter_map(|start| {
-                super::civil::civil_span(all_day, start, length)
+                super::civil::civil_span(all_day, start, duration)
                     .map(|named| (super::facts::civil_envelope(start, length), named))
             })
             .collect(),
