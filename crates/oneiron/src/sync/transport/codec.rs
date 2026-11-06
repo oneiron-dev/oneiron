@@ -289,6 +289,37 @@ pub struct WireSocket<S> {
     bytes: LinkBytes,
 }
 
+/// A binary frame prepared with the socket's negotiated codec and inner-byte accounting.
+/// Its bytes are complete before the socket write begins.
+#[derive(Debug)]
+pub struct PreparedWireFrame {
+    tag: u8,
+    raw_len: usize,
+    wire: Bytes,
+}
+
+fn encode_codec_frame_with<E>(
+    tag: u8,
+    inner_len: usize,
+    peer: WireCodecs,
+    write_body: impl FnOnce(&mut dyn std::io::Write) -> Result<(), E>,
+) -> Option<Vec<u8>> {
+    if !peer.decodes_zstd()
+        || inner_len < CODEC_MIN_FRAME_BYTES
+        || inner_len > MAX_CODEC_INNER_BYTES
+        || tag == TAG_CODEC
+    {
+        return None;
+    }
+    let mut wrapped = Vec::with_capacity(inner_len / 2);
+    wrapped.extend_from_slice(&[TAG_CODEC, codec_ids::ZSTD]);
+    let mut encoder = zstd::stream::Encoder::new(wrapped, CODEC_ZSTD_LEVEL).ok()?;
+    std::io::Write::write_all(&mut encoder, &[tag]).ok()?;
+    write_body(&mut encoder).ok()?;
+    let wrapped = encoder.finish().ok()?;
+    (wrapped.len() < inner_len).then_some(wrapped)
+}
+
 impl<S> WireSocket<S> {
     /// Wraps `socket` toward a peer that decodes `peer`, unwrapping at most `max_inner` bytes.
     pub fn new(socket: S, peer: WireCodecs, max_inner: usize) -> Self {
@@ -317,6 +348,48 @@ impl<S> WireSocket<S> {
 
     pub fn get_mut(&mut self) -> &mut S {
         &mut self.socket
+    }
+
+    /// Prepares one binary frame without staging its uncompressed bytes when compression
+    /// succeeds. `inner_len` includes `tag`; `write_body` emits the bytes after that tag.
+    /// Both callbacks must describe the same immutable frame. The ordinary encoder remains
+    /// the fallback when streaming compression fails or does not shrink it.
+    pub fn prepare_binary<E>(
+        &self,
+        tag: u8,
+        inner_len: usize,
+        write_body: impl FnOnce(&mut dyn std::io::Write) -> Result<(), E>,
+        plain: impl FnOnce() -> Bytes,
+    ) -> PreparedWireFrame {
+        let wire = match encode_codec_frame_with(tag, inner_len, self.peer, write_body) {
+            Some(wrapped) => wrapped.into(),
+            None => {
+                let frame = plain();
+                match encode_codec_frame(&frame, self.peer) {
+                    Some(wrapped) => wrapped.into(),
+                    None => frame,
+                }
+            }
+        };
+        PreparedWireFrame {
+            tag,
+            raw_len: inner_len,
+            wire,
+        }
+    }
+
+    /// Sends and flushes a prepared frame, counting its original inner bytes exactly once.
+    /// As for an ordinary send, a readiness error records nothing; later errors retain the
+    /// attempted-send accounting and never mean the request was unsent.
+    pub async fn send_prepared(&mut self, frame: PreparedWireFrame) -> Result<(), WsError>
+    where
+        S: Sink<Message, Error = WsError> + Unpin,
+    {
+        std::future::poll_fn(|cx| Pin::new(&mut self.socket).poll_ready(cx)).await?;
+        self.bytes
+            .record_sent(frame.tag, frame.raw_len, frame.wire.len());
+        Pin::new(&mut self.socket).start_send(Message::Binary(frame.wire))?;
+        std::future::poll_fn(|cx| Pin::new(&mut self.socket).poll_flush(cx)).await
     }
 
     fn unwrap_read(&self, frame: Bytes) -> Result<Bytes, WsError> {
