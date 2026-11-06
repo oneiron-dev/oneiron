@@ -209,6 +209,10 @@ pub const MAIL_MESSAGE: &[u8] = b"oneiron.mail_pack.message.v1";
 /// source id, the provider's message id, the attachment's MIME part id.
 pub const MAIL_ATTACHMENT: &[u8] = b"oneiron.mail_pack.attachment.v1";
 
+/// One drafted mail reply (`mail_pack`, FIX 15420). Parts: the drafter's id
+/// (hex), the thread's CONVERSATION id (hex), the drafter's request key.
+pub const MAIL_REPLY_DRAFT: &[u8] = b"oneiron.mail_pack.reply_draft.v1";
+
 /// A pack calendar source's EVENT (`mail_pack`): one per source and
 /// provider UID, so two people's copies of one meeting never share a row.
 /// Parts: calendar source id, the event's UID.
@@ -329,7 +333,7 @@ pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 63] = [
+pub(crate) const ALL: [&[u8]; 64] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -376,6 +380,7 @@ pub(crate) const ALL: [&[u8]; 63] = [
     MAIL_TURN,
     MAIL_MESSAGE,
     MAIL_ATTACHMENT,
+    MAIL_REPLY_DRAFT,
     MAIL_CALENDAR_EVENT,
     MAIL_CALENDAR_SOURCE_BLOB,
     IMPORTED_NOTE,

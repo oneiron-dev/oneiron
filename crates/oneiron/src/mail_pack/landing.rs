@@ -11,8 +11,8 @@ use serde_json::{Map, Value};
 
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
-    BODY_QUEUE, MailOccurrence, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key,
-    occurrence_key, record_occurrence_rows_in_txn,
+    BODY_QUEUE, MailOccurrence, MailPresence, MailReplyHeaders, MailStage, OCCURRENCES, SYNC,
+    body_queue_key, occurrence_key, record_occurrence_rows_in_txn,
 };
 use super::wire::{MailFull, MailHeaders};
 use crate::consent::AuthenticatedOwner;
@@ -383,6 +383,7 @@ impl<'v> Landing<'v> {
                 received_at: headers.received_at,
                 searched,
                 attachments: Vec::new(),
+                reply: None,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
@@ -407,6 +408,7 @@ impl<'v> Landing<'v> {
             if let Some(full) = full {
                 occurrence.attachments.clone_from(&full.attachments);
             }
+            occurrence.reply = Some(MailReplyHeaders::of(headers));
             occurrence.updated_at = self.imported_at;
             let queued = body_queue_key(source, occurrence.received_at, &headers.provider_id);
             if occurrence.stage == MailStage::Headers {

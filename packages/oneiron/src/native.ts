@@ -1238,6 +1238,10 @@ vaultMailSourcesMembersSet(input: unknown): unknown
 vaultMailSourcesAudienceEvents(input: unknown): unknown
 vaultMailThreadsShare(input: unknown): unknown
 vaultMailThreadsUnshare(input: unknown): unknown
+vaultMailReplyDraft(input: unknown): unknown
+vaultMailReplyDrafts(input: unknown): unknown
+vaultMailReplyDiscard(input: unknown): unknown
+vaultMailReplyApprove(input: unknown): unknown
 vaultMailComplianceSetting(input: unknown): unknown
 vaultMailComplianceSet(input: unknown): unknown
 vaultMailComplianceLog(input: unknown): unknown

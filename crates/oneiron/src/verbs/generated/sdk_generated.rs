@@ -6745,6 +6745,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.mail.reply.draft",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailReplyDraftRequest,
+                >(),
+            ),
+            (
+                "vault.mail.reply.drafts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailReplyDraftsRequest,
+                >(),
+            ),
+            (
+                "vault.mail.reply.discard",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailReplyDraftRef>(
+                ),
+            ),
+            (
+                "vault.mail.reply.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailReplyApproveRequest,
+                >(),
+            ),
+            (
                 "vault.mail.compliance.setting",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -19187,6 +19210,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.reply.draft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.reply.drafts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.reply.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.reply.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.compliance.setting" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23589,6 +23640,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.threads.unshare" => {
             let _input: crate::mail_pack::MailThreadShareRequest = decode(value.clone())?;
         }
+        "vault.mail.reply.draft" => {
+            let _input: crate::mail_pack::MailReplyDraftRequest = decode(value.clone())?;
+        }
+        "vault.mail.reply.drafts" => {
+            let _input: crate::mail_pack::MailReplyDraftsRequest = decode(value.clone())?;
+        }
+        "vault.mail.reply.discard" => {
+            let _input: crate::mail_pack::MailReplyDraftRef = decode(value.clone())?;
+        }
+        "vault.mail.reply.approve" => {
+            let _input: crate::mail_pack::MailReplyApproveRequest = decode(value.clone())?;
+        }
         "vault.mail.compliance.setting" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -26186,6 +26249,10 @@ pub fn invoke(
         }
         "vault.mail.threads.share" => encode(vault_mail_threads_share(memory, decode(value)?)?),
         "vault.mail.threads.unshare" => encode(vault_mail_threads_unshare(memory, decode(value)?)?),
+        "vault.mail.reply.draft" => encode(vault_mail_reply_draft(memory, decode(value)?)?),
+        "vault.mail.reply.drafts" => encode(vault_mail_reply_drafts(memory, decode(value)?)?),
+        "vault.mail.reply.discard" => encode(vault_mail_reply_discard(memory, decode(value)?)?),
+        "vault.mail.reply.approve" => encode(vault_mail_reply_approve(memory, decode(value)?)?),
         "vault.mail.compliance.setting" => {
             encode(vault_mail_compliance_setting(memory, decode(value)?)?)
         }
@@ -36712,6 +36779,30 @@ pub fn vault_mail_threads_unshare(
     input: crate::mail_pack::MailThreadShareRequest,
 ) -> MemoryResult<crate::mail_pack::MailThreadShareReceipt> {
     memory.mail_threads_unshare(&input)
+}
+pub fn vault_mail_reply_draft(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyDraftRequest,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftView> {
+    memory.mail_reply_draft(&input)
+}
+pub fn vault_mail_reply_drafts(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyDraftsRequest,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftPage> {
+    memory.mail_reply_drafts(&input)
+}
+pub fn vault_mail_reply_discard(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyDraftRef,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftView> {
+    memory.mail_reply_discard(&input)
+}
+pub fn vault_mail_reply_approve(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyApproveRequest,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftView> {
+    memory.mail_reply_approve(&input)
 }
 pub fn vault_mail_compliance_setting(
     memory: &Memory<'_>,

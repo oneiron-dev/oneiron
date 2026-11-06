@@ -1209,6 +1209,10 @@ both bindings and their export-census tests in one change.
 - `vault.mail.sources.audience_events`
 - `vault.mail.threads.share`
 - `vault.mail.threads.unshare`
+- `vault.mail.reply.draft`
+- `vault.mail.reply.drafts`
+- `vault.mail.reply.discard`
+- `vault.mail.reply.approve`
 - `vault.mail.compliance.setting`
 - `vault.mail.compliance.set`
 - `vault.mail.compliance.log`

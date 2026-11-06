@@ -93,6 +93,10 @@ pub struct MailHeaders {
     pub from: Option<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    /// The `Reply-To` addresses, where a reply goes when the sender named
+    /// one (FIX 15420).
+    #[serde(default)]
+    pub reply_to: Vec<String>,
     pub subject: Option<String>,
     /// The authored `Date` header, Unix seconds.
     pub date: Option<u64>,
