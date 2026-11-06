@@ -333,7 +333,7 @@ fn prepare_in(
             None => Vec::new(),
         };
         let mut resources = match page.get(b"Resources".as_slice()) {
-            Some(v) => copier.resources(&mut out, v, 0)?,
+            Some(v) => copier.resources(&mut out, v)?,
             None => Dictionary::new(),
         };
         let mut ops = appearance::flatten(
@@ -362,7 +362,7 @@ fn prepare_in(
         // (ISO 32000-1 section 7.8.2 reads the array as one stream).
         let mut page_streams = vec![Object::Reference(open)];
         for id in streams {
-            page_streams.push(copier.copy(&mut out, &Object::Reference(id), 0)?);
+            page_streams.push(copier.copy(&mut out, &Object::Reference(id))?);
         }
         let mut close = b"\nQ\nn\n".to_vec();
         close.extend(Content { operations: ops }.encode()?);
@@ -374,7 +374,7 @@ fn prepare_in(
         new_page.set("UserUnit", Object::Real(geometry.user_unit as f32));
         for key in [b"Group".as_slice(), b"TrimBox", b"BleedBox", b"ArtBox"] {
             if let Some(value) = page.get(key) {
-                new_page.set(key, copier.copy(&mut out, value, 0)?);
+                new_page.set(key, copier.copy(&mut out, value)?);
             }
         }
         kids.push(out.add_object(new_page).into());
@@ -392,7 +392,7 @@ fn prepare_in(
     page_tree(&mut out, parent, kids)?;
     let mut catalog_out = dictionary! { "Type" => "Catalog", "Pages" => parent };
     if let Ok(intents) = catalog.get(b"OutputIntents") {
-        catalog_out.set("OutputIntents", copier.copy(&mut out, intents, 0)?);
+        catalog_out.set("OutputIntents", copier.copy(&mut out, intents)?);
     }
     let root = out.add_object(catalog_out);
     out.trailer.set("Root", root);
