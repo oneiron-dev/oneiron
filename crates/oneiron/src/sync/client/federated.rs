@@ -40,21 +40,25 @@ impl SyncClient {
             return self.import_federated_window_update(window_key, update, role);
         }
         // A tier its caller names proves no connection: the bytes take no
-        // own-device lane (FIX 11709).
-        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown)
+        // own-device lane (FIX 11709). This door answers no frame: a deferred
+        // sealed update it lets in whose pads do not install stays deferred
+        // for a drain that can answer (FIX 10474).
+        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown, None)
     }
 
     /// The own-device import of raw window bytes `from` sent: the machine this
     /// client's connection proved when they came in. Their MESSAGE rows take
     /// the own-device lane while `from` stands here as one of the owner's own
-    /// machines and no federation peer is bound (FIX 11709).
+    /// machines and no federation peer is bound (FIX 11709). `answers` is
+    /// the drain's after it ([`Self::drain_staged_world_updates`]).
     pub(super) fn import_own_device_window_update(
         &mut self,
         window_key: &str,
         update: &[u8],
         from: PeerMachine,
+        answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
-        self.import_own_device_window_update_with_copies(window_key, update, from, None)
+        self.import_own_device_window_update_with_copies(window_key, update, from, None, answers)
     }
 
     /// Takes only holders opened for this exact delivery before world deferral.
@@ -65,6 +69,7 @@ impl SyncClient {
         update: &[u8],
         from: PeerMachine,
         prepared: Option<crate::embed::home_vectors::PreparedHomeClaimDelivery>,
+        answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
@@ -104,21 +109,19 @@ impl SyncClient {
                     from,
                     copies,
                 });
-            let pending_bytes: usize = self
-                .staged_world_updates
-                .iter()
-                .map(|staged| staged.bytes.len())
-                .sum();
             // An update joined from its envelope's parts may pass the bound
             // alone (FIX 8247): it waits while nothing else does, and beside
-            // others they share the bound.
-            if pending_bytes > MAX_DECODED_PAYLOAD_BYTES && self.staged_world_updates.len() > 1 {
+            // others, sealed ones deferred included (FIX 10474), they share
+            // the bound.
+            if self.staged_world_bytes() > MAX_DECODED_PAYLOAD_BYTES
+                && self.staged_world_count() > 1
+            {
                 self.staged_world_updates.pop();
                 return Err(TransportError::InvalidPayload(
                     "unresolved world updates past the memory bound",
                 ));
             }
-            return self.drain_staged_world_updates();
+            return self.drain_staged_world_updates(answers);
         }
         let own_device = self.own_device_import(from);
         self.import_accepted_window_update_with_copies(
@@ -129,7 +132,7 @@ impl SyncClient {
             own_device.as_ref(),
             &copies,
         )?;
-        self.drain_staged_world_updates()
+        self.drain_staged_world_updates(answers)
     }
 
     /// Builds a selector request frame for a selector-capable caller.
