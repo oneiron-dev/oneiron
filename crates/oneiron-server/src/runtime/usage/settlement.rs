@@ -99,7 +99,7 @@ impl VaultUsage {
 
 /// Builds usage only from the original admitted facts and terminal receipt.
 /// It reads no catalog, owner map, clock, memory cache or ledger.
-fn settlement_event(
+pub(super) fn settlement_event(
     vault_id: &str,
     receipt: &RunReceipt,
     call: AdmittedCall,
