@@ -478,6 +478,18 @@ pub(crate) fn apply_ops_session(
                         )));
                     }
                 }
+                // Base's one RECEIPT_RECORD put door, on the room's view and
+                // the entry's own stamps (FIX 7354): a carrier decodes, binds
+                // its id and time, and no body replaces a stored one.
+                crate::receipt::validate_receipt_record_put(
+                    view,
+                    wtxn,
+                    id,
+                    *entity_type,
+                    data,
+                    entry.occurred,
+                    entry.learned_at,
+                )?;
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).
