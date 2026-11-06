@@ -176,6 +176,16 @@ before the lease on success, error and unwind. An unstarted detached write
 keeps its payload and lease together. An unbound terminal keeps the original
 direct put without an added accounting walk or a new memory line.
 
+The canonical detached finalizer also records the actual backing capacity of
+its existing copied surfaced-ID vector, using the native ID element size. It
+creates the same optional lease before that copy and records its capacity after
+the copy. The queued owner keeps the vector before the lease and consumes the
+whole owner when staging, so the copied input drops before its charge even
+when the write never starts or fails. The caller's original IDs, the separate
+provisional record and the later decoded record are not this allocation.
+Session-overlay and admitted-base finalizers borrow their caller's IDs without
+making this copy, so their input handling is unchanged.
+
 After the existing finalizer decodes a retrieval row, the same optional lease
 also records four stable parts of that decoded record: the actual slot
 capacities of its signal, degradation and policy-decision vectors, using their
@@ -185,9 +195,17 @@ the staging call, before the caller's lease. They are distinct from the
 original capture, detached provisional clone and encoded final-row buffers.
 An absent field adds no backing, and an unbound finalizer adds no walk.
 
+After its existing surfaced-ID assignment, that finalizer also records the
+actual backing capacity of the newly copied result-ID vector, using the native
+ID element size. The assignment still drops the old decoded ID vector first;
+that discarded backing is not included in this charge. The new vector remains
+unchanged until the decoded record drops before the caller's lease. It is
+separate from the canonical detached input copy and from borrowed caller IDs.
+The existing copy, remaining mutations and row writes are unchanged.
+
 These finalization charges do not cover the decoded record's other backing,
-mutation copies, finalizer input storage, hash sets, config-map and number
-internals, serialization scratch, marker/index/retention keys and values,
+mutation copies, other finalizer input storage, hash sets, config-map and
+number internals, serialization scratch, marker/index/retention keys and values,
 construction peaks or pre-growth admission. They do not establish a full
 working-set bound or a compiler/runtime result.
 
