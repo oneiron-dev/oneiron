@@ -73,12 +73,10 @@ impl<'a> IntoIterator for &'a MediaQueries {
 fn query_bytes(query: &MediaQuery) -> u64 {
     (query.space_id.capacity() as u64)
         .saturating_add(
-            (query.vector.capacity() as u64)
-                .saturating_mul(std::mem::size_of::<f32>() as u64),
+            (query.vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64),
         )
         .saturating_add(
-            (query.kinds.capacity() as u64)
-                .saturating_mul(std::mem::size_of::<InputKind>() as u64),
+            (query.kinds.capacity() as u64).saturating_mul(std::mem::size_of::<InputKind>() as u64),
         )
 }
 
