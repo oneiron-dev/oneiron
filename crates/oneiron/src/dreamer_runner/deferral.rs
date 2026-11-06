@@ -13,6 +13,11 @@ use super::DreamerRunnerStore;
 /// The reason a deferral leaves on its row's history.
 pub(crate) const SELECTION_DEFERRED_REASON: &str = "consolidation selection deferred";
 
+/// The reason a backlog wait leaves on its row's history: the pass's frozen
+/// preparation did not hold the try (it was queued after the capture, or
+/// past the head), so it ran nothing and its next run is still its first.
+pub(crate) const BACKLOG_DEFERRED_REASON: &str = "consolidation backlog deferred";
+
 /// Whether `record` runs again after a deferred selection.
 pub(crate) fn selection_deferred(record: &AttemptRecord) -> bool {
     record
