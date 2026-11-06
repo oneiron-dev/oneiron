@@ -107,6 +107,8 @@ pub(super) struct PendingConnectorCall {
     pub(super) attempt_id: AttemptId,
     pub(super) call_seq: u64,
     pub(super) principal_ref: String,
+    /// Scope resolved from the real caller, never the tool's arguments.
+    pub(super) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     /// When the call was first held. Its expiry deadline counts from here,
     /// and no retry moves it.
     pub(super) held_at_ms: u64,

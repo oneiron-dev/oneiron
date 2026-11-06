@@ -72,7 +72,12 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// (FIX 12062). 21: the fold keeps each repository's owner origin cuts (FIX 15740). 22: the fold
 /// keeps each predecessor device key's owner-named successor (FIX 11135). 23: replay
 /// anchors use only the first parent and overflow keeps a whole-state suffix (FIX 11762).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 23;
+/// 24: residence compaction excludes the writing install's checkpoint metadata (FIX 18583).
+/// 25: a pact keeps the signed nonce and the consent epoch its scope commitment is keyed under
+/// (FIX 11730). 26: the fold counts a removal-archive consume's slip consumed (FIX 11862).
+/// 27: the fold admits carrier-signed membership execution records, an image carries their
+/// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 27;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -321,9 +326,9 @@ impl AuthorityCheckpointV2 {
     }
 
     /// Bounds replay by its own encoded points, retaining a self-contained
-    /// parents-first suffix on overflow. Residence eligibility uses the same
-    /// replay-free image size as before, so retaining more replay cannot
-    /// newly drop residence bodies. Mandatory signed bodies stay whole.
+    /// parents-first suffix on overflow. Residence eligibility excludes replay
+    /// and writer-local metadata, so neither can newly drop residence bodies.
+    /// Mandatory signed bodies stay whole.
     pub(super) fn compact_optional_evidence(mut self) -> Result<Self> {
         if let ReplayEvidence::Rows(points) = &self.replay {
             let partial = points.len() < self.covered.len() - self.per_parent.len();
@@ -344,9 +349,19 @@ impl AuthorityCheckpointV2 {
             }
         }
         let kept = std::mem::replace(&mut self.replay, AUTHORITY_REPLAY_OVERFLOW);
+        // Root attestation substitutes these writer-local fields after rebuilding.
+        // They must not change which residence bodies either fold keeps.
+        let parent = self.parent.take();
+        let archives = std::mem::take(&mut self.archive_manifests);
+        let held = std::mem::take(&mut self.unresolved.held);
+        let missing = std::mem::take(&mut self.unresolved.missing);
         let encoded =
             rmp_serde::to_vec_named(&self).map_err(|_| refused("checkpoint image does not encode"));
         self.replay = kept;
+        self.parent = parent;
+        self.archive_manifests = archives;
+        self.unresolved.held = held;
+        self.unresolved.missing = missing;
         if encoded?.len() + AUTHORITY_CHECKPOINT_V2_DOMAIN.len()
             <= AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES
         {
