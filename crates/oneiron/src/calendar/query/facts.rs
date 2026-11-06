@@ -254,15 +254,6 @@ pub(in crate::calendar) fn civil_envelope(start: u64, length: u64) -> TimeRange 
     }
 }
 
-/// The civil start (a key on the UTC carrier) and the civil length of the
-/// span [`CalendarEventFacts::wall_span`] made; the inverse of
-/// [`civil_envelope`].
-pub(in crate::calendar) fn civil_bounds(span: TimeRange) -> (u64, u64) {
-    let start = span.start.saturating_add(EASTERNMOST_OFFSET_SECS);
-    let last = span.end.saturating_sub(WESTERNMOST_OFFSET_SECS);
-    (start, last.saturating_sub(start))
-}
-
 /// How far a civil occurrence's span reaches before and after its start key.
 pub(in crate::calendar) const CIVIL_REACH_SECS: (u64, u64) =
     (EASTERNMOST_OFFSET_SECS, WESTERNMOST_OFFSET_SECS);
@@ -345,6 +336,32 @@ impl CalendarEventFacts {
             start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
             end: last.saturating_add(WESTERNMOST_OFFSET_SECS),
         })
+    }
+
+    /// The civil start (a key on the UTC carrier) and civil length of a
+    /// floating or all-day EVENT, read from its admitted wall time as
+    /// [`Self::wall_span`] reads it, before any zone's reach widens it: the
+    /// first occurrence of a civil series (FIX 16568).
+    pub(in crate::calendar) fn civil_extent(&self) -> Option<(u64, u64)> {
+        let LaneFact::Read(kind) = self.time_kind else {
+            return None;
+        };
+        if !matches!(
+            kind.kind,
+            crate::calendar::claims::CalendarTimeKind::Floating
+                | crate::calendar::claims::CalendarTimeKind::AllDay
+        ) {
+            return None;
+        }
+        let LaneFact::Read((start, end)) = self.wall_time else {
+            return None;
+        };
+        let start = civil_seconds(start)?;
+        let last = match end {
+            Some(end) => civil_seconds(end)?.saturating_sub(1).max(start),
+            None => start,
+        };
+        Some((start, last - start))
     }
 
     pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {
