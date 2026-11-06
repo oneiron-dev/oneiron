@@ -331,13 +331,14 @@ pub(crate) fn canonical_witness_message_body_for_test(
     .encode_body()
 }
 
-/// The REPLICATED MESSAGE door for a row one of the owner's own machines sent
-/// (FIX 9600; L02 01:07).
+/// The REPLICATED MESSAGE door for a row one of the owner's own machines
+/// wrote (FIX 9600, FIX 12113; L02 01:07, 23:24).
 ///
 /// Its caller holds the row's own-device lane (`sync::ingest::own_device`):
-/// `machine`, an own machine whose connection proved it, sent these exact
-/// bytes at this id, and no federation peer's import brought them. That proof
-/// covers the connection and the bytes and names no actor, and a MESSAGE body
+/// `machine` wrote these exact bytes at this id, as its writer proof over
+/// them verified; an own machine's proven connection sent them, and no
+/// federation peer's import brought them. That proof covers the writer and
+/// the bytes and names no actor, and a MESSAGE body
 /// names its author bucket, never an actor, so a row passes only where this
 /// store itself binds its author, all read in `txn`:
 ///
@@ -384,7 +385,7 @@ pub(crate) fn validate_own_device_witness_message_body(
 
 /// Whether `machine` stands on this vault's machine roster and this is a
 /// personal vault whose embedded owner PERSON is live, all in `txn`: the one
-/// person whose words its `user` bucket holds, sending from a machine still
+/// person whose words its `user` bucket holds, written on a machine still
 /// theirs.
 fn owner_speaks_from(store: &Store, txn: &heed::RoTxn<'_>, machine: EntityId) -> Result<bool> {
     let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
