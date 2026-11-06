@@ -96,7 +96,7 @@ impl Memory<'_> {
         let current = manifest
             .symbols
             .iter()
-            .map(|symbol| code_symbol_entity_id(&manifest.repo_ref, symbol))
+            .map(|symbol| code_symbol_entity_id(&manifest.repo_identity, symbol))
             .collect::<crate::error::Result<BTreeSet<EntityId>>>()?;
         if let Some(stray) = symbols.iter().find(|symbol| !current.contains(*symbol)) {
             return Err(MemoryError::bad_request(format!(
