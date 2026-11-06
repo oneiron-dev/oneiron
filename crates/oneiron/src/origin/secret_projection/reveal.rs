@@ -19,13 +19,13 @@
 
 use super::{
     RepoBodyProjection, RepoGrantedFileProof, RepoSecretAudience, project_repo_blob,
-    project_repo_bytes_in_txn,
+    project_repo_bytes_in_txn, repo_file_keys_in_txn,
 };
 use crate::Vault;
 use crate::error::Result;
 use crate::origin::secret_marks::RepoBlobMarks;
 use crate::secret_custody::{RepoFileReadDisclosure, RepoFileRevealTarget, RepoFileSight};
-use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
+use crate::secret_record::RepoFileOriginal;
 
 /// CALL 4: what a text door names when the bytes a grant would open are not
 /// text. The byte-valued doors deliver granted bytes with their receipts.
@@ -109,9 +109,11 @@ where
         return project_repo_blob(vault, marks, &RepoSecretAudience::Masked, read_exact)
             .map(RepoFileRevealRead::projected);
     };
+    // A file no mark names has no grant to ask for (FIX 8966): it reads as
+    // a masked reader reads it, each value custody knows masked.
     if marks.is_empty() {
-        return read_exact()
-            .map(|bytes| RepoFileRevealRead::projected(RepoBodyProjection::Exact(bytes)));
+        return project_repo_blob(vault, marks, &RepoSecretAudience::Masked, read_exact)
+            .map(RepoFileRevealRead::projected);
     }
     let bytes = read_exact()?;
     let masked = |bytes: Vec<u8>| -> Result<RepoBodyProjection> {
@@ -131,10 +133,11 @@ where
         return Ok(read);
     }
     let target = RepoFileRevealTarget::new(original, &asker);
-    let keys = RepoFileKeys {
-        custody: marks.custody(),
-        opaque: marks.opaque(),
-    };
+    // The grant must cover each value custody knows in the bytes too.
+    let keys = vault.with_known_values(|known| {
+        let txn = vault.store.env.read_txn()?;
+        repo_file_keys_in_txn(vault, &txn, marks, &bytes, known)
+    })?;
     let delivery = match vault.repo_file_sight(&asker, &target, &raw_blake3, &keys, &why)? {
         RepoFileSight::Delivered(delivery) => delivery,
         RepoFileSight::Masked => return masked(bytes).map(RepoFileRevealRead::projected),

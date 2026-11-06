@@ -63,6 +63,7 @@ use crate::code_document::CodeDocumentFrontier;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::git_wire::GitOid;
+use crate::secret_record::RepoFileKeys;
 use crate::store::file_key_masks::masked_file_in_txn;
 use crate::store::known_value_index::KnownValues;
 
@@ -236,6 +237,38 @@ pub(crate) fn project_repo_bytes_in_txn(
             None => RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }),
         },
     )
+}
+
+/// The keys a release of `bytes`, the stored bytes of the marked repo file
+/// `marks` names, shows (FIX 8966): its marks' custody and residue, and,
+/// with `known`, each custody record past them whose value custody knows
+/// reads in `bytes`, its own and every member's. Value-free: a grant must
+/// cover every class among them before the stored bytes go out, so a value
+/// learned after a grant leaves the file masked.
+///
+/// # Errors
+/// A store failure, or a walk failure.
+pub(crate) fn repo_file_keys_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoBlobMarks,
+    bytes: &[u8],
+    known: Option<&KnownValues>,
+) -> Result<RepoFileKeys> {
+    let mut custody = marks.custody();
+    if let Some(known) = known {
+        let hash = *blake3::hash(bytes).as_bytes();
+        let check = RepoKnownCheck::for_blob_in_txn(vault, txn, known, &hash)?;
+        for holder in check.holders(bytes)? {
+            if !custody.contains(&holder) {
+                custody.push(holder);
+            }
+        }
+    }
+    Ok(RepoFileKeys {
+        custody,
+        opaque: marks.opaque(),
+    })
 }
 
 /// The Git blob id of `bytes`: SHA-1 over the blob header and the bytes,

@@ -15,6 +15,8 @@
 //! entry's name) leaves the blob opaque. Nothing is written: a Git-only
 //! blob the sweep never walks reads masked all the same.
 
+use std::collections::BTreeSet;
+
 use heed::RoTxn;
 use zeroize::Zeroizing;
 
@@ -130,6 +132,34 @@ impl<'a> RepoKnownCheck<'a> {
         // A container no reader here reads shows a reader nothing more.
         match walk_retained_repo_members_with_hidden(bytes, &mut visit) {
             Ok(()) | Err(Stop::Refuse(_)) => Ok(hit),
+            Err(Stop::Fail(error)) => Err(error),
+        }
+    }
+
+    /// Each custody record a value that reads in `bytes` is held by, read as
+    /// [`Self::reads_known`] reads: whose keys a release of the stored bytes
+    /// shows (FIX 8966), never a value.
+    ///
+    /// # Errors
+    /// A walk failure.
+    pub(crate) fn holders(&self, bytes: &[u8]) -> Result<BTreeSet<EntityId>> {
+        let mut holders = BTreeSet::new();
+        if self.owner_kept {
+            return Ok(holders);
+        }
+        let keep = |value: &[u8]| self.keep(value);
+        let mut read = |buffer: &[u8]| {
+            for hit in self.known.spans_except(buffer, keep) {
+                holders.insert(hit.custody);
+            }
+        };
+        read(bytes);
+        let mut visit = |_: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
+            read(member);
+            Ok(())
+        };
+        match walk_retained_repo_members_with_hidden(bytes, &mut visit) {
+            Ok(()) | Err(Stop::Refuse(_)) => Ok(holders),
             Err(Stop::Fail(error)) => Err(error),
         }
     }
