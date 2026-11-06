@@ -17,7 +17,8 @@
 //! manifest construction yields between whole packs and within each chunk hash.
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
-//! completion turn; pure snapshot equality then resumes one row at a time.
+//! completion turn; pure snapshot equality resumes between rows and within
+//! entity blobs and current document text.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
