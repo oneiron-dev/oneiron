@@ -5,9 +5,10 @@ use serde::{Serialize, Serializer as _};
 
 use super::{
     BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalAssetBodyRef,
-    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalDocument, CanonicalEntity,
-    CanonicalEntityDocument, CanonicalHeadMove, CanonicalPinCarrier, CanonicalRoomFact,
-    CanonicalRoomTurn, CanonicalRowBirth, CanonicalSnapshot, CanonicalTombstone,
+    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalDocument, CanonicalDocumentVersion,
+    CanonicalEntity, CanonicalEntityDocument, CanonicalEntityDocumentHistory, CanonicalHeadMove,
+    CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn, CanonicalRowBirth,
+    CanonicalSnapshot, CanonicalTombstone,
 };
 use crate::error::Result;
 
@@ -279,7 +280,7 @@ impl TextRow for CanonicalEntityDocument {
         write_named(out, "text")
     }
 
-    fn write_suffix(&self, out: &mut BoundedWriter, _cursor: &mut RowCursor) -> Result<bool> {
+    fn write_suffix(&self, out: &mut BoundedWriter, cursor: &mut RowCursor) -> Result<bool> {
         let CanonicalEntityDocument {
             entity_id: _,
             document_id: _,
@@ -293,6 +294,11 @@ impl TextRow for CanonicalEntityDocument {
             birth_at,
             history,
         } = self;
+        if let Some(history) = history
+            && cursor.items.is_some()
+        {
+            return write_history(out, history, cursor);
+        }
         write_named(out, "native_skill_state")?;
         write_named(out, native_skill_state)?;
         write_named(out, "metadata")?;
@@ -307,12 +313,93 @@ impl TextRow for CanonicalEntityDocument {
         write_named(out, birth_actor)?;
         write_named(out, "birth_at")?;
         write_named(out, birth_at)?;
-        if history.is_some() {
+        if let Some(history) = history {
             write_named(out, "history")?;
-            write_named(out, history)?;
+            return write_history(out, history, cursor);
         }
         Ok(true)
     }
+}
+
+fn write_history(
+    out: &mut BoundedWriter,
+    history: &CanonicalEntityDocumentHistory,
+    cursor: &mut RowCursor,
+) -> Result<bool> {
+    let CanonicalEntityDocumentHistory {
+        versions,
+        shallow,
+        pins,
+        receipts,
+        forks,
+        purges,
+    } = history;
+    let Some(index) = cursor.items else {
+        write_struct_header(out, "CanonicalEntityDocumentHistory", 6)?;
+        write_named(out, "versions")?;
+        write_array_header(out, versions.len())?;
+        cursor.items = Some(0);
+        return Ok(false);
+    };
+    let Some(version) = versions.get(index) else {
+        write_named(out, "shallow")?;
+        write_named(out, shallow)?;
+        write_named(out, "pins")?;
+        write_named(out, pins)?;
+        write_named(out, "receipts")?;
+        write_named(out, receipts)?;
+        write_named(out, "forks")?;
+        write_named(out, forks)?;
+        write_named(out, "purges")?;
+        write_named(out, purges)?;
+        return Ok(true);
+    };
+    let CanonicalDocumentVersion {
+        parents,
+        prefix,
+        suffix,
+        middle,
+        native_skill_state,
+        metadata,
+        summary_meta,
+    } = version;
+    if let Some(next) = cursor.bytes.as_mut() {
+        if *next < middle.len() {
+            let end = next.saturating_add(blake3::CHUNK_LEN).min(middle.len());
+            out.bytes.extend_from_slice(&middle.as_bytes()[*next..end]);
+            *next = end;
+            return Ok(false);
+        }
+        write_named(out, "native_skill_state")?;
+        write_named(out, native_skill_state)?;
+        write_named(out, "metadata")?;
+        write_named(out, metadata)?;
+        if !summary_meta.is_empty() {
+            write_named(out, "summary_meta")?;
+            write_named(out, summary_meta)?;
+        }
+        cursor.items = Some(index + 1);
+        cursor.bytes = None;
+        return Ok(false);
+    }
+    write_struct_header(
+        out,
+        "CanonicalDocumentVersion",
+        6 + usize::from(!summary_meta.is_empty()),
+    )?;
+    write_named(out, "parents")?;
+    write_named(out, parents)?;
+    write_named(out, "prefix")?;
+    write_named(out, prefix)?;
+    write_named(out, "suffix")?;
+    write_named(out, suffix)?;
+    write_named(out, "middle")?;
+    rmp::encode::write_str_len(&mut *out, middle.len() as u32).map_err(|_| out.refusal())?;
+    if !middle.is_empty() {
+        out.reserve_write(middle.len()).map_err(|_| out.refusal())?;
+    }
+    cursor.bytes = Some(0);
+    Ok(false)
 }
 
 struct TextRows<'a, T>(&'a [T]);
