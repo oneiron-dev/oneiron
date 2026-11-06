@@ -625,6 +625,7 @@ pub(super) fn restore(
     mut bodies: SealedBodies<'_>,
     room: &mut RestoreRoom<'_>,
     (custody, retired): (Option<&CustodyBinding>, &BTreeSet<[u8; 16]>),
+    unlanded: &mut Vec<[u8; 32]>,
 ) -> Result<()> {
     let files = image.bodies.len();
     if files + image.inline_bodies.len() == 0 {
@@ -691,7 +692,7 @@ pub(super) fn restore(
         value.truncate(keep);
         value.extend_from_slice(&body);
     }
-    replay::land(image, &read, retired)
+    replay::land(image, &read, retired, unlanded)
 }
 
 /// Lands the `index`th file, the body `digest` of `len` bytes sealed under
