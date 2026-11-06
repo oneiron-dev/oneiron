@@ -159,8 +159,8 @@ lopdf = { path = "crates/oneiron-seal/vendor/lopdf-0.44.0" }
 # formualizer 0.9.3 from the org fork, pinned by rev below: the owned error-concatenation
 # patch, Excel parity work, resource checkpoints and matrix builtin polls on `oneiron/parity`.
 # See docs/ops/forked-dependencies.md.
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "bccd581fa8d821770682c4049af186550611284a" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "bccd581fa8d821770682c4049af186550611284a" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "bccd581fa8d821770682c4049af186550611284a" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "bccd581fa8d821770682c4049af186550611284a" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "bccd581fa8d821770682c4049af186550611284a" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "b2b115af6d4b260d8bae60e7a638ebf847529b3f" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "b2b115af6d4b260d8bae60e7a638ebf847529b3f" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "b2b115af6d4b260d8bae60e7a638ebf847529b3f" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "b2b115af6d4b260d8bae60e7a638ebf847529b3f" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "b2b115af6d4b260d8bae60e7a638ebf847529b3f" }
