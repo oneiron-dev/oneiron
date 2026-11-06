@@ -23,14 +23,15 @@ mod recipe;
 pub mod shadow_values;
 pub mod step_replay;
 mod store;
-mod types;
-mod wake_park;
 #[cfg(test)]
 mod tests;
+mod types;
+mod wake_park;
 
 pub(crate) use self::admission::{
-    AdmittedBudgetLine, AdmittedCallId, NativeCallPayment, NativeMeterSnapshot,
-    bind_native_call_terminal_in_txn, invoice_native_call_in_txn, record_native_call_meter_in_txn, record_native_house_completions_in_txn,
+    AdmittedBudgetLine, AdmittedCallId, NativeCallPayment, NativeMeterSnapshot, NativeNetSnapshot,
+    NativeNetTally, bind_native_call_terminal_in_txn, invoice_native_call_in_txn,
+    record_native_call_meter_in_txn, record_native_house_completions_in_txn,
     record_native_net_response_in_txn, retain_native_call_in_txn,
 };
 
