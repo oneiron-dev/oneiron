@@ -29,10 +29,10 @@ pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
 mod default_manifest;
-mod value_encoding;
 pub(crate) mod experiment_selection_policy;
 pub(crate) mod failure_signal_policy;
 pub(crate) mod team_review;
+mod value_encoding;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
 /// (ARCH-0070) reads as landed against these.

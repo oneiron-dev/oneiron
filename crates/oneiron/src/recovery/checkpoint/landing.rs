@@ -90,6 +90,7 @@ impl Vault {
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
+            .transpose()?
             .unwrap_or_default();
         for (_, blob) in &opened_entities {
             validate_checkpoint_entity_row(blob)?;
