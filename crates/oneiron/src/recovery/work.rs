@@ -14,8 +14,8 @@
 //! retained-parent and workflow checks still run whole. Encoding yields between
 //! top-level named fields and source rows, and within entity blobs, edge/tombstone
 //! values, custody carriers, room turn/side rows, document pins, head receipts,
-//! row births and ASSET body-reference byte arrays. NOTE and EntityDoc current
-//! text copies also yield within their native UTF-8 bodies, after the whole
+//! row births and ASSET body-reference byte arrays. NOTE text and titles and
+//! EntityDoc current text copies yield within their native UTF-8 bodies, after the whole
 //! string's original budget admission and capacity reservation. Fixed prefixes,
 //! keys, other scalar and nested row serializers and that reservation still
 //! run whole. The envelope checksum and outer canonical digest yield between

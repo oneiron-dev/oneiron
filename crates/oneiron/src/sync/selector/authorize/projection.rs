@@ -97,11 +97,13 @@ pub(super) fn copy_companions(
     })?;
     crate::sync::asset_body::references::copy_refs_within(source, out)?;
     // FIX 2902: a proved machine of this vault's takes, beside each shipped
-    // row, the origin this vault's import judged its bytes by.
+    // row, the origin this vault's import judged its bytes by, and beside each
+    // shipped MESSAGE its writer's proof (FIX 12113).
     if matches!(reach, BirthReach::OwnMachines)
         && matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_))
     {
         crate::sync::ingest::copy_peer_origins(source, out)?;
+        crate::sync::ingest::copy_writer_proofs(source, out)?;
         crate::sync::origin_positions::copy_for_own_machines(source, out)?;
     }
     crate::sync::note::copy_selected(source, out, notes)?;

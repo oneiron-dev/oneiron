@@ -31,7 +31,9 @@ use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
-use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
+use crate::sync::ingest::{
+    MESSAGE_WRITER_MAP, PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_writer_proof_carrier,
+};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
 use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
@@ -46,7 +48,7 @@ use crate::sync::withdrawn_cutoffs::{
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 22] = [
+pub(super) const WINDOW_ROOTS: [&str; 23] = [
     "entities",
     "edges",
     "tombstones",
@@ -55,6 +57,7 @@ pub(super) const WINDOW_ROOTS: [&str; 22] = [
     ROW_BIRTHS_MAP,
     ORIGIN_POSITIONS_MAP,
     PEER_ORIGIN_MAP,
+    MESSAGE_WRITER_MAP,
     WITHDRAWN_CUTOFFS_MAP,
     "documents",
     "document_heads",
@@ -138,6 +141,11 @@ pub(crate) fn root_entry(
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::entry(key, value),
         ORIGIN_POSITIONS_MAP => crate::sync::origin_positions::checkpoint_entry(key, value),
         PEER_ORIGIN_MAP => match (entity, admit_peer_origin_carrier(key, &binary(value))) {
+            (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
+            _ => undecodable(),
+        },
+        // A writer's proof holds while its MESSAGE row does (FIX 12113).
+        MESSAGE_WRITER_MAP => match (entity, admit_writer_proof_carrier(key, &binary(value))) {
             (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
         },
@@ -239,6 +247,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         | ROW_BIRTHS_MAP
         | ORIGIN_POSITIONS_MAP
         | PEER_ORIGIN_MAP
+        | MESSAGE_WRITER_MAP
         | ROOM_TURNS_MAP
         | ASSET_BODY_REFS_MAP => id_key(key),
         "edges" => match parse_edge_key(key) {
