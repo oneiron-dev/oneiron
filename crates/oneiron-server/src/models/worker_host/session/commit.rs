@@ -234,7 +234,7 @@ async fn advance(
         .filter(|_| matches!(admitted, Admitted::Granted(_)))
         .map(|scope| {
             Arc::new(Basis {
-                authority: kept,
+                authority: Arc::clone(&kept),
                 scope,
                 head,
                 message,
@@ -357,6 +357,9 @@ async fn advance(
             conversation,
             source,
             dispatch_lease,
+            authority: kept,
+            head,
+            message,
         });
     }
 }

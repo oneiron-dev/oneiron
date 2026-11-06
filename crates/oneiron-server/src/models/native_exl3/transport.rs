@@ -48,7 +48,10 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
-use super::session_ops::{AppendSourceCheck, SnapshotSourceCheck, SnapshotSourceMiss};
+use super::session_ops::{
+    AppendSourceCheck, PrepareSourceCheck, PrepareSourceMiss, SnapshotSourceCheck,
+    SnapshotSourceMiss,
+};
 use super::wire::{self, Incoming, Outgoing};
 use super::worker_host::{self, NativeLaunch};
 
@@ -654,6 +657,24 @@ impl Channel {
             })
     }
 
+    pub(super) async fn exchange_prepare_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: &PrepareSourceCheck<'_>,
+    ) -> Result<Incoming, PrepareExchangeError> {
+        self.exchange_fd_checked(op, epoch, body, input, lease, Some(source))
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => PrepareExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => PrepareExchangeError::Release(error),
+                DispatchWriteError::Source(miss) => PrepareExchangeError::Source(miss),
+            })
+    }
+
     async fn exchange_fd_checked<F, Fut, E>(
         &mut self,
         op: &str,
@@ -842,6 +863,12 @@ pub(super) enum AppendExchangeError {
     Transport(io::Error),
     Release(oneiron::LlmError),
     Source(oneiron::llm::SessionInvalidation),
+}
+
+pub(super) enum PrepareExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(PrepareSourceMiss),
 }
 
 enum DispatchWriteError<E = std::convert::Infallible> {

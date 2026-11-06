@@ -31,10 +31,11 @@ use oneiron::llm::{
 };
 use serde_json::Value as JsonValue;
 
-use super::NextTurnSource;
 use super::policy;
 use super::registry::{self, Place, Serves, send};
+use super::{AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit, tail};
 use crate::config::models::sessions::{PlannerMode, SessionPreparePolicy};
+use crate::models::native_exl3::{PrepareSourceFuture, PrepareSourceMiss};
 use crate::models::status::PreparedTailStatus;
 
 /// The policy this process takes from `[models.sessions]`.
@@ -204,6 +205,9 @@ pub(super) struct Published {
     pub(super) conversation: JsonValue,
     pub(super) source: Arc<dyn NextTurnSource>,
     pub(super) dispatch_lease: Option<oneiron::BudgetLease>,
+    pub(super) authority: Arc<dyn CheckpointAuthority>,
+    pub(super) head: oneiron::EntityId,
+    pub(super) message: oneiron::EntityId,
 }
 
 /// Prepares `published`'s next tail on a task of its own, when the policy
@@ -225,6 +229,9 @@ async fn prepare(published: Published) {
         mut conversation,
         source,
         dispatch_lease,
+        authority,
+        head,
+        message,
     } = published;
     let policy = policy_now();
     if !policy.prepare_tail {
@@ -252,6 +259,7 @@ async fn prepare(published: Published) {
     else {
         return;
     };
+    let expected_tail = dispatch_lease.as_ref().map(|_| tail.clone());
     messages.extend(tail);
     // Only the session that published this successor, still at it.
     if !still_published(
@@ -277,13 +285,40 @@ async fn prepare(published: Published) {
     add(&COUNTS.started, 1);
     // A refusal is no fault of the session: the turn arrived, another
     // publish moved it, or it stopped serving. It goes on as it was.
-    let prepared: Result<SessionPrepared, registry::ReleasedSessionFault> = match &dispatch_lease {
+    let prepared: Result<SessionPrepared, tail::Failure> = match &dispatch_lease {
         Some(lease) => {
-            registry::send_released(&place, SessionOp::Prepare, &body, &conversation, lease).await
+            let check = || -> PrepareSourceFuture<'_> {
+                let authority = Arc::clone(&authority);
+                let source = &source;
+                let expected_tail = &expected_tail;
+                Box::pin(async move {
+                    let current = source.next_tail().await;
+                    // A tail miss must not hide withdrawal of the canonical path.
+                    let verdict = tokio::task::spawn_blocking(move || {
+                        authority.recheck(&ReplyCommit {
+                            head,
+                            message,
+                            text: String::new(),
+                        })
+                    })
+                    .await
+                    .unwrap_or(AuthorityVerdict::Rejects(
+                        oneiron::llm::SessionInvalidation::DisclosureOrScope,
+                    ));
+                    if let AuthorityVerdict::Rejects(reason) = verdict {
+                        return Err(PrepareSourceMiss::Canonical(reason));
+                    }
+                    match (current, expected_tail) {
+                        (Some(current), Some(expected)) if current == *expected => Ok(()),
+                        _ => Err(PrepareSourceMiss::TailChanged),
+                    }
+                })
+            };
+            tail::send(&place, &body, &conversation, lease, &check).await
         }
         None => send(&place, SessionOp::Prepare, &body, Some(&conversation))
             .await
-            .map_err(registry::ReleasedSessionFault::Invalidation),
+            .map_err(tail::Failure::Invalidation),
     };
     match prepared {
         Ok(prepared) => {
@@ -295,13 +330,20 @@ async fn prepare(published: Published) {
                 "a model session prepared its next turn's tail"
             );
         }
-        Err(registry::ReleasedSessionFault::Invalidation(reason)) => {
+        Err(tail::Failure::Invalidation(reason)) => {
             add(&COUNTS.stopped, 1);
             tracing::debug!(?reason, "a model session's tail preparation stopped");
         }
-        Err(registry::ReleasedSessionFault::Release(error)) => {
+        Err(tail::Failure::Release(error)) => {
             add(&COUNTS.stopped, 1);
             tracing::debug!(?error, "a model session's tail dispatch ended");
+        }
+        Err(tail::Failure::Source(reason)) => {
+            add(&COUNTS.stopped, 1);
+            if let PrepareSourceMiss::Canonical(invalidation) = &reason {
+                registry::drop_session(&worker_id, &place.epoch, &binding, *invalidation);
+            }
+            tracing::debug!(?reason, "a model session's tail source changed");
         }
     }
 }

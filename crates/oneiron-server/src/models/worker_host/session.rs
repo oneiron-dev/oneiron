@@ -57,6 +57,8 @@ mod registry;
 #[cfg(unix)]
 mod restore;
 #[cfg(unix)]
+mod tail;
+#[cfg(unix)]
 mod turn;
 
 use std::collections::BTreeMap;

@@ -202,6 +202,22 @@ Complete tool/control and saved-notice replay source accounting, explicit no-rec
 execution and the actual answering lifecycle remain open. These native read and output-check ports are not a
 claim that a phone call can be answered.
 
+Native sessions with a live dispatch check also carry the committed reply's original
+checkpoint authority into next-turn preparation, even when no parkable snapshot basis
+was made. Before each physical preparation-frame write, the coordinator renders the
+same tail producer again, then rechecks that original authority off the runtime. It
+sends only if the new wire rows equal the captured tail. The live call check runs
+before and after this work and keeps its original typed error.
+
+A canonical authority rejection uses the existing session-drop path. A changed or
+unavailable speculative tail stops only that preparation; it is not a claim that the
+canonical base remains valid. Stopped preparation keeps computed work unknown. The
+next-state board filters unreadable loaded-skill handles only in its cloned read set;
+served rows, the live baseline and acknowledgments are not changed. Ordinary sessions
+without a live dispatch check retain their original send path. These checks do not
+qualify all historical or derived sources, erase a worker's already received descriptor,
+close the separate control-frame interval, or activate the phone call lifecycle.
+
 ## HTTP doors
 
 - `GET /v1/owner/phone-lines/{identity_ref}` reads the owner's stored setting.
