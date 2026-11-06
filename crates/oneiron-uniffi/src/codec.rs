@@ -85,7 +85,7 @@ mod lens_selections;
 mod merge_queue;
 pub(crate) use merge_queue::lift_merge_queue_observation;
 mod model_catalogs;
-pub(crate) use model_catalogs::lift_model_catalog_revision;
+pub(crate) use model_catalogs::{lift_model_catalog_diff, lift_model_catalog_revision};
 mod notifications;
 mod policy_settings;
 mod proposal_results;
