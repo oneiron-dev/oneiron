@@ -46,7 +46,7 @@ pub(super) async fn resolve_client(
         return Some(client);
     }
     let url = client_id.to_owned();
-    let guard = server.hosted_egress_guard();
+    let guard = Some(server.untrusted_url_egress_guard());
     // reqwest's blocking client runs a runtime of its own, which panics inside an async one: the
     // fetch runs on a thread of its own, off the request worker (FIX 9529).
     let document = tokio::task::spawn_blocking(move || {
