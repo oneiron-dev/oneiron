@@ -196,7 +196,19 @@ impl SessionBinding<'_> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output_sourced(
+        self.publish_output_produced(path, sink, complete, owner, input_rows, None)
+    }
+
+    pub(super) fn publish_output_produced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+        producing_step_start: Option<u64>,
+    ) -> Result<CodeRunRawOutput> {
+        let mut finished = finish_output_sourced(
             path,
             sink,
             complete,
@@ -204,6 +216,7 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = producing_step_start;
         self.mark_secret(&finished.output, owner, finished.secret)?;
         self.put_output_row(&finished, &finished.output, owner)?;
         Ok(finished.output)
@@ -241,7 +254,7 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output_sourced(
+        let mut finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
@@ -249,6 +262,7 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = output.producing_step_start;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",

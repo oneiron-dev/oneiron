@@ -838,13 +838,37 @@ impl<'a> ExecutorStorage<'a> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
+        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None)
+    }
+
+    /// Carries the producer's native step coordinate along the same route
+    /// as the occurrence's bytes and source rows.
+    pub(crate) fn publish_code_run_output_produced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+        producing_step_start: Option<u64>,
+    ) -> Result<CodeRunRawOutput> {
         match self {
-            Self::Canonical(vault) => {
-                vault.publish_code_run_output_sourced(path, sink, complete, Some(owner), input_rows)
-            }
-            Self::Session(binding) => {
-                binding.publish_output_sourced(path, sink, complete, owner, input_rows)
-            }
+            Self::Canonical(vault) => vault.publish_code_run_output_produced(
+                path,
+                sink,
+                complete,
+                Some(owner),
+                input_rows,
+                producing_step_start,
+            ),
+            Self::Session(binding) => binding.publish_output_produced(
+                path,
+                sink,
+                complete,
+                owner,
+                input_rows,
+                producing_step_start,
+            ),
         }
     }
 

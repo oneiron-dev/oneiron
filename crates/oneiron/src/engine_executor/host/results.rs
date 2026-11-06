@@ -274,8 +274,19 @@ impl RecordingJsHost<'_, '_> {
             .replayed_store_ordinal(&digest)
             .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
         let path = store_result_output_path(&digest, ordinal);
-        let output =
-            storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
+        let producing_step_start = self
+            .results
+            .iter()
+            .find(|held| held.path == path)
+            .map_or(Some(self.step_start), |held| held.producing_step_start);
+        let output = storage.publish_code_run_output_produced(
+            path,
+            sink,
+            true,
+            self.run_id,
+            input_rows,
+            producing_step_start,
+        )?;
         // FIX 18924: a stored value may copy the run's fold answers.
         storage.record_code_run_fold_sources(self.run_id, &output, &self.fold_sources())?;
         if !inherit.is_empty() {
