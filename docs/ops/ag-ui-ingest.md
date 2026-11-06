@@ -156,9 +156,40 @@ write, so an earlier erased read cannot resurrect a copied answer. A recipe
 changed by admission aborts the write rather than storing different pins.
 
 This is an explicit Rust case-recording door, not automatic authoring or a
-measurement result. Released Repair hydration, the dedicated response grader,
-scoped cut audit, inventory and nomination remain separate consumer work. No
-family-purpose default or Development-only restriction is introduced.
+measurement result. No family-purpose default or Development-only restriction
+is introduced.
+
+## Claimed Repair task release and response grading
+
+`Memory::released_eval_task` reads a stored claimed measurement and one of its
+members. For a Repair case it prepares the caller's original scoped lane,
+persists its grant clock and holds result bodies before opening the source
+snapshot. That final snapshot checks the stored measurement, three distinct
+Candidate exposures with their exact leg names and arm pins, current cohort
+membership and rubric, case/family/seat bindings, and the original source row.
+It reads the exact capture through the normal scoped projection and recompiles
+the complete pinned task and grader. Membership, a hash, an owner capture or a
+Coach identity is not a source-read grant.
+
+The result keeps the original scoped read receipt. Missing or withheld source
+content yields no task; a changed capture or recipe fails rather than taking
+new input under old pins. `EvalReleasedTask::input` returns the response-only
+input and source provenance with no expected-answer label.
+`EvalReleasedTask::grade_response` checks exact response bytes against the
+recompiled in-memory grader and returns `Some(true)` or `Some(false)`. It does
+not write a score or call a model judge. The expected answer stays in the
+source and this dedicated grader, not in a second persistent task store.
+
+Kept-attempt tasks return through the existing receipt/Synthetic hydration
+before opening a new source lane. Their grader result is `None`: they retain
+their existing label/scorer path and gain no new grant requirement. The native
+`Vault::released_eval_task` API retains that original behavior.
+
+This adds a native source-aware release and grading API. It does not yet wire
+the server's measuring job to a caller-authorized Memory handle or select its
+dedicated scorer. That job's current `&Vault` and Coach identity alone do not
+provide the caller's source permission. Scoped cut-audit text reads, inventory
+and automatic nomination remain separate work. Nothing here runs an eval case.
 
 ## Remaining feature work
 
@@ -167,8 +198,9 @@ compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
 Repair nomination, executable worlds beyond the explicit response-only task,
-released-task hydration, measurement and the scoped cut-audit consumer remain
-open. The explicit owner case door records source recipes, family assignment
-and exact-task reuse; it does not activate those remaining consumers. The file
+server measurement integration and the scoped cut-audit consumer remain open.
+The explicit owner case door records source recipes, family assignment and
+exact-task reuse; the native release/grading API does not activate those
+remaining consumers. The file
 path adds no table, family ledger, migration, old-format reader, default cap
 or timer.
