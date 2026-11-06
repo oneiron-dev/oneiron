@@ -51,3 +51,17 @@ with the time as factual evidence under the same intent hash, for example
 The time adds no urgency gate and bypasses no quiet hours, grant, or outbound
 rule. This feature needs the normal matching engine/server rollout; no
 migration or new configuration is needed.
+
+## Read a saved digest
+
+Owner-grade agent clients can call `vault.proactivity.digest` with
+`{"id":"<64-hex source.result>"}` from a delivered digest notification,
+or `{}` for the latest digest. It returns the existing screened
+`ProactivityDigestView`, or `null` when no digest is stored there.
+The locator identifies the digest; it grants no access.
+
+This is the same live-owner read as
+`GET /v1/owner/proactivity/digest?id=<locator>`. Any live vault owner can
+read any saved locator, not only their own inbox's digests. Stored digest
+verification and viewer screening are unchanged. Non-owner credentials
+do not gain this owner-grade door. No new setting or migration is needed.
