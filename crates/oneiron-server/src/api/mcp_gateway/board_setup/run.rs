@@ -354,16 +354,21 @@ pub(super) fn run_board_sections(
             .collect(),
     );
     let mut sections = vec![verb_section, worlds_section];
-    if let Some(memories) =
-        crate::api::context_board::lane_pins_projection(read, pins).map_err(super::mcp_api_error)?
     {
-        hooks.memories = memories.section.hook_shares(pins);
-        served.extend_from_slice(memories.receipt.delivered());
-        sections.extend(
-            oneiron::context_board::assemble_memories_sections(&memories.section)
-                .map_err(mcp_board_frame_error)?,
-        );
-        hooks.receipt = Some(memories.receipt);
+        let mut memories_storage =
+            crate::api::context_pack::output_memory::RetainedMemoriesOutput::new(&server.memory);
+        if let Some(memories) =
+            crate::api::context_board::lane_pins_projection(read, pins, &mut memories_storage)
+                .map_err(super::mcp_api_error)?
+        {
+            hooks.memories = memories.section.hook_shares(pins);
+            served.extend_from_slice(memories.receipt.delivered());
+            sections.extend(
+                oneiron::context_board::assemble_memories_sections(&memories.section)
+                    .map_err(mcp_board_frame_error)?,
+            );
+            hooks.receipt = Some(memories.receipt);
+        }
     }
     sections.push(tasks_section);
     sections.extend(run_scratchpad_section(server, actor, session, served));
