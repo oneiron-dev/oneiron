@@ -83,7 +83,7 @@ pub use self::pad_custody::{
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{
-    ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,
+    QueuedSends, ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,
 };
 pub use self::repo_manifest_conflict::{
     RepoManifestConflictDiscard, RepoManifestConflictReview,

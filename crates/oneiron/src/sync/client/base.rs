@@ -129,6 +129,11 @@ pub struct SyncClient {
     /// The open peer session's receipt, written again with its end (FIX
     /// 4748); `None` for a home session.
     pub(crate) peer_receipt: Option<crate::sync::peer_route::PeerSyncReceipt>,
+    /// The version of the last state-only copy of each window this peer
+    /// session kept out (FIX 4748): it asks a peer for a window again only
+    /// while the peer's copies move on. Cleared at every connect and at each
+    /// copy it installs.
+    pub(crate) kept_out_peer_copies: HashMap<String, VersionVector>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -245,6 +250,7 @@ impl SyncClient {
             home_peer: crate::authority::PeerMachine::Unknown,
             peer_session: None,
             peer_receipt: None,
+            kept_out_peer_copies: HashMap::new(),
             status: SyncStatus::Disconnected,
             event_tx,
         };

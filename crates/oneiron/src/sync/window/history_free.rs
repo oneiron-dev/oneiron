@@ -632,8 +632,8 @@ pub fn export_promotion_snapshot(
 /// promotion's is ([`export_promotion_snapshot`]) and never before `baseline`, always a
 /// [`WindowExport::Replacement`]. A window withheld from that machine is answered as
 /// [`export_window_since_for`] answers it, with the update that carries nothing. A machine served
-/// as a peer gets this for a window it does not hold
-/// ([`crate::sync::peer_route::peer_export_is_state_only`]), and for every replacement.
+/// as a peer gets this and nothing else of a window, whatever vector it sends, and none when it
+/// holds every operation already ([`crate::sync::peer_route::peer_state_copy_owed`]).
 ///
 /// # Errors
 /// Typed `HistoryFreeRootUnavailable` when no root at or past both floors passes the history

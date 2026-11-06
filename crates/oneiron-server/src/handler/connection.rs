@@ -341,13 +341,22 @@ fn window_broadcast_allowed(
 /// socket is pushed the window, a `WINDOW_INVALIDATE` where it forgot the
 /// window's subscription past `max_windows_per_connection`, or nothing. A
 /// frame this server withholds as device-only is neither.
+///
+/// A socket served as a peer (FIX 4748) is sent no operation, live ones
+/// included: a change of a window it is pushed, or forgot, reaches it as the
+/// `WINDOW_INVALIDATE` notice, once until its asker asks again
+/// (`peer_serve::notices_change`). The asker answers with its vector, and the
+/// export door with the window's fresh state-only copy. A peer on a protocol
+/// that takes no notice is sent nothing: it gets the copy at its next
+/// connect.
 fn window_delivery(
     server: &SyncServer,
     protocol_version: u8,
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
 ) -> Option<Vec<u8>> {
-    if window_broadcast_allowed(protocol_version, state, &frame) {
+    let pushed = window_broadcast_allowed(protocol_version, state, &frame);
+    if pushed && !state.peer_served {
         let peer = state.peer_machine(server.vault());
         return (!window_update_withheld(server, peer, &frame)).then_some(frame);
     }
@@ -358,8 +367,9 @@ fn window_delivery(
         .get(1..)
         .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
     let window = oneiron::sync::WindowKey::try_new(key)?;
-    if !state.invalidates_window(&window)
+    if !(pushed || state.invalidates_window(&window))
         || window_update_withheld(server, state.peer_machine(server.vault()), &frame)
+        || !super::peer_serve::notices_change(state, &window)
     {
         return None;
     }

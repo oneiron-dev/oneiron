@@ -18,10 +18,14 @@
 //! here) never counts its home down.
 //!
 //! The serving side reads [`authority_fold_settled`]: a machine serves a
-//! peer only while its own authority fold is settled. It reads
-//! [`peer_export_is_state_only`] at each window export to a peer: a window the
-//! asker does not hold goes as its state-only copy, never as history. Both
-//! ends leave a [`PeerSyncReceipt`] naming the other machine and the session.
+//! peer only while its own authority fold is settled. A peer gets state,
+//! never operations: every window export to it is the window's state-only
+//! copy, whatever vector its asker sends, or nothing when the asker already
+//! holds all of it ([`peer_state_copy_owed`]). The asking side installs a
+//! peer's copy only when the copy holds everything its own replica holds
+//! ([`installs_peer_state_copy`]), so it never loses its own writes to one.
+//! Both ends leave a [`PeerSyncReceipt`] naming the other machine and the
+//! session.
 
 use loro::{LoroDoc, VersionVector};
 
@@ -173,25 +177,36 @@ pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
 }
 
 /// FIX 4748 engine call (CALLS "FIX 4748 peer state-only export"): whether a
-/// window export to a machine served as a peer while the home is down must be
-/// the window's state-only copy ("It serves state-only copies, never
-/// history"; `window::export_window_state_for`), not updates since `remote`,
-/// the asker's version vector of `doc`.
+/// machine served as a peer while the home is down owes its asker a copy of
+/// window `doc`, `remote` being the asker's version vector of it.
 ///
-/// It must when the asker does not hold the window: `remote` is empty, or
-/// does not cover `doc`'s shallow root or the socket's promotion `baseline`.
-/// An asker that holds the window keeps the ordinary update exchange since its
-/// vector, as the home serves it: that is two replicas of one window syncing,
-/// not a peer fetch.
+/// A peer gets state, never operations ("It serves state-only copies, never
+/// history"): every window export to it is the state-only copy of the
+/// window's current state (`window::export_window_state_for`), whatever
+/// `remote` holds, and no update since `remote` goes, so a vector that names
+/// part of the window's history earns none of it. The vector decides only
+/// whether a copy goes at all: one is owed when `remote` does not cover every
+/// operation `doc` holds, and none when the asker already holds them all, so
+/// an asker that installed the current copy and asks again is sent nothing.
 #[must_use]
-pub fn peer_export_is_state_only(
-    doc: &LoroDoc,
-    remote: &VersionVector,
-    baseline: Option<&VersionVector>,
-) -> bool {
-    remote.is_empty()
-        || !remote.includes_vv(&doc.shallow_since_vv().to_vv())
-        || baseline.is_some_and(|floor| !remote.includes_vv(floor))
+pub fn peer_state_copy_owed(doc: &LoroDoc, remote: &VersionVector) -> bool {
+    !remote.includes_vv(&doc.oplog_vv())
+}
+
+/// FIX 4748 engine call (CALLS "FIX 4748 peer copy install"): whether a
+/// device in a peer session installs a peer's state-only copy of a window in
+/// place of its own replica, `copy` the copy's version vector and `local` the
+/// replica's.
+///
+/// It does only when `copy` covers `local`: the peer holds everything this
+/// device holds of the window, so the install loses none of this device's
+/// writes. Otherwise the device keeps its replica, sends the peer its own
+/// writes first, and asks for the window again. Either way its queue stays
+/// whole: a peer session retires no queued send, so the home session replays
+/// every one.
+#[must_use]
+pub fn installs_peer_state_copy(copy: &VersionVector, local: &VersionVector) -> bool {
+    copy.includes_vv(local)
 }
 
 /// The part one end of a peer sync session plays (FIX 4748).

@@ -354,6 +354,7 @@ impl WindowManager {
                 &HashMap::new(),
                 || true,
                 SEALED_KIT_REPLACEMENT_BYTE_BOUND,
+                crate::sync::window::QueuedSends::Retire,
                 None,
             )?;
             drop(window);
