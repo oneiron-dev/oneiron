@@ -4,9 +4,13 @@
 //! Local only: no receipt, marker, fence or Loro operation. Landing receipts
 //! (ids, verdict, actor, time) stay as identifier-only immutable history; a
 //! review bundle keeps its other notes' forks. Its free-text explainer can
-//! quote any member: it reads "redacted", as an erase leaves it, once every
-//! note the bundle names is discarded, and stays as shared content while one
-//! it names stays (call 1 = A).
+//! quote any member, so it reads "redacted" once a waiting fork leaves it, as
+//! an erase and a carrier leave it (`NoteReviewBundle::carried_here`): no
+//! later erase could find the fork that left to redact it then. One whose
+//! discarded notes it names by landing receipts only keeps its explainer
+//! while a note it names stays, as shared content a later erase still finds
+//! by those receipts, and reads "redacted" once every note it names is
+//! discarded (call 1 = A).
 
 use std::collections::BTreeSet;
 
@@ -53,11 +57,12 @@ pub(crate) fn discard_workflow_in_txn(
             continue;
         }
         let alone = names_only(&bundle, notes);
+        let waited = bundle.waiting.len();
         bundle.waiting.retain(|fork| !notes.contains(&fork.note));
         if bundle.waiting.is_empty() && bundle.landed.is_empty() {
             NOTE_PROPOSAL_BUNDLE.delete(store, txn, &key)?;
         } else {
-            if alone {
+            if alone || bundle.waiting.len() != waited {
                 bundle.explainer = REDACTED_EXPLAINER.to_owned();
             }
             NOTE_PROPOSAL_BUNDLE.put(store, txn, &key, &bundle)?;
