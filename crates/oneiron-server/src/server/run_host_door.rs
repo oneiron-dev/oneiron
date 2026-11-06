@@ -328,8 +328,11 @@ impl AgentVerbDoor for RunHostDoor {
             let mut hook_notice = None;
             let result = with_run_write_token(run_writes.as_ref(), || match resident {
                 Some(ResidentRow::Board) => {
-                    board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
-                        .map(|(output, rows)| (output, Some(rows)))
+                    let (answer, notice) = board_as_agent_with_notice(
+                        &server, actor, &origin, invocation, &board, verb, input,
+                    );
+                    hook_notice = notice;
+                    answer.map(|(output, rows)| (output, Some(rows)))
                 }
                 Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
                     &server,
@@ -604,7 +607,7 @@ fn is_board_row(verb: AgentVerb, input: &Value) -> bool {
 /// row the board was derived from. The hook rows it shows are delivered once
 /// the answer clears those hooks. Blocking: call it on a blocking thread of
 /// the server's runtime.
-fn board_as_agent(
+fn board_as_agent_with_notice(
     server: &Arc<SyncServer>,
     actor: WriteActor,
     origin: &HostWriteOrigin,
@@ -612,12 +615,12 @@ fn board_as_agent(
     board: &StreamConnectionId,
     verb: AgentVerb,
     input: Value,
-) -> MemoryResult<(Value, Vec<EntityId>)> {
+) -> (MemoryResult<(Value, Vec<EntityId>)>, Option<bool>) {
     let memory = agent_memory(server, actor, origin, invocation);
     let name = verb.as_str();
     let mut rows = Vec::new();
     let mut hooks = None;
-    let output = verb_hook_boundary::row(&memory, name, input, |input| {
+    let (output, notice) = verb_hook_boundary::row_with_notice(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
         let call = match verb {
             AgentVerb::SelfFocusRefresh => BoardVerbCall::Refresh {
@@ -644,11 +647,14 @@ fn board_as_agent(
         )?;
         rows = served;
         Ok(output)
-    })?;
-    if let Some(hooks) = hooks {
-        tokio::runtime::Handle::current().block_on(deliver_run_board_hooks(server, hooks))?;
-    }
-    Ok((output, rows))
+    });
+    let result = output.and_then(|output| {
+        if let Some(hooks) = hooks {
+            tokio::runtime::Handle::current().block_on(deliver_run_board_hooks(server, hooks))?;
+        }
+        Ok((output, rows))
+    });
+    (result, notice)
 }
 
 /// Answers one host row for `actor`, with its verb hooks once around it, on
