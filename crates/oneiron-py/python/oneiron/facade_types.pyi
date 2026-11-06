@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1248 facade rows, 4524 declarations.
-Inputs: 1179 of 1248 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1083 of 1248 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 119; unread shapes: 0.
+Census: 1256 facade rows, 4547 declarations.
+Inputs: 1187 of 1256 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1090 of 1256 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -328,6 +328,52 @@ class ScratchpadWriteReply(TypedDict):
     sealed_prior: NotRequired[EntityId | None]
 class ScratchpadSealRequest(TypedDict):
     session_id: str
+class FoldBaseline(TypedDict):
+    total: int
+    counts: NotRequired[dict[str, int]]
+class SectionFold(TypedDict):
+    note: NotRequired[str | None]
+    keep: NotRequired[list[EntityId]]
+    baseline: NotRequired[FoldBaseline | None]
+    section_baselines: NotRequired[dict[str, FoldBaseline]]
+BoardActorClass = Literal["human", "agent", "system"]
+class BoardWhoFilterMine(TypedDict):
+    kind: Literal["mine"]
+class BoardWhoFilterActor(TypedDict):
+    kind: Literal["actor"]
+    actor: EntityId
+BoardWhoFilterClass = TypedDict("BoardWhoFilterClass", {"kind": Literal["class"], "class": BoardActorClass})
+class BoardWhoFilterGroup(TypedDict):
+    kind: Literal["group"]
+    group: EntityId
+BoardWhoFilter = BoardWhoFilterMine | BoardWhoFilterActor | BoardWhoFilterClass | BoardWhoFilterGroup
+class SectionFilter(TypedDict):
+    who: NotRequired[BoardWhoFilter | None]
+    status: NotRequired[list[str]]
+class SectionLayout(TypedDict):
+    share_pct: NotRequired[int | None]
+    fold: NotRequired[SectionFold | None]
+    filter: NotRequired[SectionFilter | None]
+class BoardLayout(TypedDict):
+    sections: NotRequired[dict[str, SectionLayout]]
+class BoardLayoutState(TypedDict):
+    live: BoardLayout
+    pending: NotRequired[BoardLayout | None]
+    owner_override: NotRequired[BoardLayout]
+class BoardFoldRequest(TypedDict):
+    section: str
+    note: NotRequired[str | None]
+    keep: NotRequired[list[EntityId]]
+class BoardSectionRequest(TypedDict):
+    section: str
+class BoardSizeRequest(TypedDict):
+    section: str
+    share_pct: NotRequired[int | None]
+class BoardFilterRequest(TypedDict):
+    section: str
+    filter: NotRequired[SectionFilter | None]
+class BoardReplaceRequest(TypedDict):
+    layout: BoardLayout
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -18698,6 +18744,61 @@ class ProductivityNode(TypedDict):
 class ProductivityTree(TypedDict):
     root_ref: str
     nodes: list[ProductivityNode]
+AgUiObservationKind = Literal["action", "failure", "repair", "outcome"]
+class AgUiCustomMapping(TypedDict):
+    name: str
+    kind: AgUiObservationKind
+    id: NotRequired[str | None]
+    thread_id: NotRequired[str | None]
+    run_id: NotRequired[str | None]
+    tool_call_id: NotRequired[str | None]
+    failure_id: NotRequired[str | None]
+    repair_id: NotRequired[str | None]
+    outcome: NotRequired[str | None]
+class AgUiFileImport(TypedDict):
+    claim_ref: NotRequired[str | None]
+    project_ref: str
+    app_id: str
+    custom_mappings: list[AgUiCustomMapping]
+    jsonl: str
+class AgUiFileReceipt(TypedDict):
+    claim_ref: str
+    source_hash: str
+    event_count: int
+class AgUiFileReadInput(TypedDict):
+    claim_ref: str
+    source_hash: str
+class AgUiAppObservation(TypedDict):
+    ordinal: int
+    name: str
+    kind: AgUiObservationKind
+    id: NotRequired[str | None]
+    thread_id: NotRequired[str | None]
+    run_id: NotRequired[str | None]
+    tool_call_id: NotRequired[str | None]
+    failure_id: NotRequired[str | None]
+    repair_id: NotRequired[str | None]
+    outcome: NotRequired[Any | None]
+AgUiRepairLinkStatus = Literal["linked", "missing_link", "ambiguous_link", "namespace_mismatch", "missing_outcome"]
+class AgUiRepairLink(TypedDict):
+    outcome_ordinal: int
+    repair_ordinal: NotRequired[int | None]
+    failure_ordinal: NotRequired[int | None]
+    status: AgUiRepairLinkStatus
+class AgUiFileView(TypedDict):
+    claim_ref: str
+    source_hash: str
+    capture_actor_ref: str
+    project_ref: str
+    app_id: str
+    custom_mappings: list[AgUiCustomMapping]
+    jsonl: str
+    event_count: int
+    observations: list[AgUiAppObservation]
+    repair_links: list[AgUiRepairLink]
+class AgUiFileRead(TypedDict):
+    source: NotRequired[AgUiFileView | None]
+    receipt: ScopedReadReceipt
 class AdmitImportedClaimInput(TypedDict):
     source_id: str
     source_record_id: str

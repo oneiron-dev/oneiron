@@ -40,6 +40,8 @@ pub(crate) struct SocketCallContext {
     /// `None` when the context names no subscription; `Some(None)` when the
     /// one it names is not open on this socket.
     subscription: Option<Option<String>>,
+    /// Observed on this call's own socket upgrade, never supplied by its JSON.
+    signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 }
 
 impl SocketCallContext {
@@ -62,9 +64,21 @@ impl SocketCallContext {
             carried,
             arrived_anonymous: false,
             subscription,
+            signing_request_transport: None,
         };
         context.arrived_anonymous = context.anonymous(server, auth);
         context
+    }
+
+    /// Binds this socket's actual upgrade observations for signing audit only.
+    pub(crate) fn with_signing_request_transport(
+        self,
+        transport: Option<oneiron::memory::SigningRequestTransport>,
+    ) -> Self {
+        Self {
+            signing_request_transport: transport,
+            ..self
+        }
     }
 
     /// The session the context names, as the off-record surface reads it.
@@ -122,6 +136,7 @@ impl SocketCallContext {
         )
         .resuming_hook_ask(self.carried.hook_ask.as_deref())
         .lens_held(None, self.subscription.clone().flatten())
+        .with_signing_request_transport(self.signing_request_transport.clone())
     }
 }
 

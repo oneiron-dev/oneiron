@@ -267,17 +267,20 @@ impl Child {
     /// the route `bound`, its dispatcher, captured, as a run's is: on base
     /// for a canonical job (`run_seat`), where a manifest-backed vault
     /// refuses a seatless executor, and on its room's route for a job in an
-    /// off-record session (`run_seat_on`, FIX 2594), never base. A session
-    /// job whose seat is not born there runs its configured model, as before
-    /// (`session_seat_or_seatless`). A read and a summary alike are held to
-    /// the list their spawning run froze (`birth_under_inherited_list`, FIX
-    /// 4539), and so is a seatless one's configured model
-    /// ([`Child::held_to_list`]). Its pick runs inside its parent's clock
-    /// where that clock binds ([`Child::seat_parent_at`], FIX 8230), and a
-    /// canonical job whose birth fails under it ends at its cutoff
-    /// ([`Child::unseated`]). A child its host profiled is born on its
-    /// profile's model (FIX 9013), the one the profile's backend serves,
-    /// never another the pick would choose.
+    /// off-record session (`run_seat_on`, FIX 2594), never base. The job's
+    /// pin is read on that route first, whatever its list (FIX 7641). Only a
+    /// session job with no pin whose fresh seat is not born runs its
+    /// configured model, as before (`session_seat_or_seatless`). A pin that
+    /// does not read or does not resume ends the job as a canonical job's
+    /// failed birth does ([`Child::unseated`]): the run never takes another
+    /// model or a new seat. A read and a summary alike are held to the list
+    /// their spawning run froze (`birth_under_inherited_list`, FIX 4539), and
+    /// so is a seatless one's configured model ([`Child::held_to_list`]). Its
+    /// pick runs inside its parent's clock where that clock binds
+    /// ([`Child::seat_parent_at`], FIX 8230), and a birth that fails under it
+    /// ends at its cutoff. A child its host profiled is born on its profile's
+    /// model (FIX 9013), the one the profile's backend serves, never another
+    /// the pick would choose.
     fn seat(
         &self,
         vault: &Vault,
@@ -289,58 +292,50 @@ impl Child {
     ) -> Result<Option<ModelSeat>, Unseated> {
         let job = &self.job;
         let parent_at = self.seat_parent_at();
+        let unseated = |error: String| self.unseated(parent_at.is_some(), error);
+        let prior = bound
+            .model_seat_receipt(job.run)
+            .map_err(|error| unseated(error.to_string()))?;
         let profiled = self.profile().map(|profile| profile.model);
-        let born = || -> Result<Option<ModelSeat>, String> {
-            let inherited = &job.binding.listed;
-            let prior = if inherited.is_empty() {
-                None
-            } else {
-                bound
-                    .model_seat_receipt(job.run)
-                    .map_err(|error| error.to_string())?
-            };
-            birth_under_inherited_list(
-                job.run,
-                inherited,
-                prior.as_ref().map(|receipt| &receipt.model),
-                |listed| {
-                    let seat_task = |facet: &str| SeatTask {
-                        kind: SeatKind::Child,
-                        warm_scope: format!("reader-run:{}", job.run.to_hex()),
-                        task: task.to_owned(),
-                        purpose: purpose.clone(),
-                        facet: facet.to_owned(),
-                        required: Vec::new(),
-                        min_context_tokens,
-                        locality,
-                        override_model: profiled.clone(),
-                        override_effort: None,
-                        listed,
-                        worlds: Vec::new(),
-                        served: None,
-                        learning: None,
-                    };
-                    let provider = self.provider.as_ref();
-                    // No read scope is threaded here: the birth inherits (FIX 11768).
-                    match self.session {
-                        None => {
-                            run_seat(vault, provider, job.run, parent_at, Vec::new(), seat_task)
-                        }
-                        Some(_) => provider.run_seat_on(
-                            vault,
-                            bound,
-                            job.run,
-                            parent_at,
-                            Vec::new(),
-                            seat_task,
-                        ),
-                    }
-                },
-            )
-        };
-        match self.session {
-            None => born().map_err(|error| self.unseated(parent_at.is_some(), error)),
-            Some(_) => Ok(session_seat_or_seatless(job.task, born())),
+        let born = birth_under_inherited_list(
+            job.run,
+            &job.binding.listed,
+            prior.as_ref().map(|receipt| &receipt.model),
+            |listed| {
+                let seat_task = |facet: &str| SeatTask {
+                    kind: SeatKind::Child,
+                    warm_scope: format!("reader-run:{}", job.run.to_hex()),
+                    task: task.to_owned(),
+                    purpose: purpose.clone(),
+                    facet: facet.to_owned(),
+                    required: Vec::new(),
+                    min_context_tokens,
+                    locality,
+                    override_model: profiled.clone(),
+                    override_effort: None,
+                    listed,
+                    worlds: Vec::new(),
+                    served: None,
+                    learning: None,
+                };
+                let provider = self.provider.as_ref();
+                // No read scope is threaded here: the birth inherits (FIX 11768).
+                match self.session {
+                    None => run_seat(vault, provider, job.run, parent_at, Vec::new(), seat_task),
+                    Some(_) => provider.run_seat_on(
+                        vault,
+                        bound,
+                        job.run,
+                        parent_at,
+                        Vec::new(),
+                        seat_task,
+                    ),
+                }
+            },
+        );
+        match (&self.session, &prior) {
+            (Some(_), None) => Ok(session_seat_or_seatless(job.task, born)),
+            _ => born.map_err(unseated),
         }
     }
 
@@ -365,8 +360,9 @@ impl Child {
         }
     }
 
-    /// How a canonical job whose seat was not born ends (CALLS, open, FIX
-    /// 8230): at its cutoff when its parent's clock bound the pick
+    /// How a job whose seat was not born ends (CALLS, open, FIX 8230): a
+    /// canonical job, or a session job whose pin exists or does not read
+    /// (FIX 7641). At its cutoff when its parent's clock bound the pick
     /// (`capped`: [`Child::seat_parent_at`] lent it) or is spent now, as its
     /// run would end at its first entry; otherwise `reader_seat_failed`, as
     /// before. A birth the parent's clock did not bind ends as it does today.
@@ -381,12 +377,13 @@ impl Child {
     /// A seatless job runs its configured `model` only when the list its
     /// spawning run froze admits it (`ensure_inherited_model_list`, FIX 5070
     /// under FIX 6030's ruling that the engine enforces only the list): one
-    /// off the list ends failed, its reason the refusal naming the list. An
+    /// off the list ends `reader_seat_failed`, the stable reason a refused
+    /// seat ends with (FIX 7642); the refusal naming the list is logged. An
     /// empty list admits any model, as before.
     fn held_to_list(&self, model: &ModelId) -> Result<(), ReaderRunEnd> {
         ensure_inherited_model_list(&self.job.binding.listed, model).map_err(|refused| {
             tracing::info!(%refused, task = %self.job.task.to_hex(), "a seatless job's configured model is off its inherited list");
-            ReaderRunEnd::Failed(refused.to_string())
+            ReaderRunEnd::Failed("reader_seat_failed".to_owned())
         })
     }
 

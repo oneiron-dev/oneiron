@@ -766,6 +766,138 @@ async fn self_focus_scratchpad_seal(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
+async fn self_board_layout(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.layout",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
+async fn self_board_fold(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.fold",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
+async fn self_board_unfold(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.unfold",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
+async fn self_board_size(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.size",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
+async fn self_board_filter(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.filter",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
+async fn self_board_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.replace",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
 async fn self_memory_diary(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -35466,6 +35598,66 @@ async fn vault_productivity_tree(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
+async fn vault_ingest_ag_ui_import(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.ingest.ag_ui.import")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.ingest.ag_ui.import", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.ingest.ag_ui.import", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_ingest_ag_ui_import(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error.with_hook_notice(hook_notice));
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
+    })
+}
+async fn vault_ingest_ag_ui_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "vault.ingest.ag_ui.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
 async fn vault_claims_admit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -43122,6 +43314,12 @@ async fn call_verb_row(
         "self.focus.scratchpad.seal" => {
             Box::pin(self_focus_scratchpad_seal(server, call, input)).await
         }
+        "self.board.layout" => Box::pin(self_board_layout(server, call, input)).await,
+        "self.board.fold" => Box::pin(self_board_fold(server, call, input)).await,
+        "self.board.unfold" => Box::pin(self_board_unfold(server, call, input)).await,
+        "self.board.size" => Box::pin(self_board_size(server, call, input)).await,
+        "self.board.filter" => Box::pin(self_board_filter(server, call, input)).await,
+        "self.board.replace" => Box::pin(self_board_replace(server, call, input)).await,
         "self.memory.diary" => Box::pin(self_memory_diary(server, call, input)).await,
         "self.memory.diary.reads" => Box::pin(self_memory_diary_reads(server, call, input)).await,
         "self.memory.diary.review" => Box::pin(self_memory_diary_review(server, call, input)).await,
@@ -45237,6 +45435,10 @@ async fn call_verb_row(
             Box::pin(vault_productivity_create(server, call, input)).await
         }
         "vault.productivity.tree" => Box::pin(vault_productivity_tree(server, call, input)).await,
+        "vault.ingest.ag_ui.import" => {
+            Box::pin(vault_ingest_ag_ui_import(server, call, input)).await
+        }
+        "vault.ingest.ag_ui.read" => Box::pin(vault_ingest_ag_ui_read(server, call, input)).await,
         "vault.claims.admit" => Box::pin(vault_claims_admit(server, call, input)).await,
         "vault.artifacts.create" => Box::pin(vault_artifacts_create(server, call, input)).await,
         "vault.esign.create" => Box::pin(vault_esign_create(server, call, input)).await,
