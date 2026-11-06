@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4581 declarations.
-Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1264 facade rows, 4585 declarations.
+Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -10793,6 +10793,7 @@ class ConsentRegistryAgentGrant(TypedDict):
     delegated_by: EntityId
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
+    verb_classes: NotRequired[list[str]]
     confers: bool
 ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
@@ -13952,6 +13953,7 @@ class AgentGrantMintRequest(TypedDict):
     authority_scope: Scope
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
+    verb_classes: NotRequired[list[str]]
 class AgentGrantView(TypedDict):
     grant_ref: EntityId
     agent: EntityId
@@ -13959,6 +13961,7 @@ class AgentGrantView(TypedDict):
     delegated_by: EntityId
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
+    verb_classes: NotRequired[list[str]]
     confers: bool
     revoke_command: str
 class AgentGrantMinted(TypedDict):
@@ -13972,6 +13975,19 @@ class AgentGrantRevoked(TypedDict):
     changed: bool
     agent: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class AgentVerbClassRow(TypedDict):
+    name: str
+    verbs: list[str]
+class AgentVerbClassesView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    classes: list[AgentVerbClassRow]
+class AgentVerbClassesConfigureRequest(TypedDict):
+    expected_body_hash: str
+    classes: list[AgentVerbClassRow]
+class AgentVerbClassesReceipt(TypedDict):
+    configuration: AgentVerbClassesView
+    receipt_ref: str
 class GitPushRepo(TypedDict):
     repo: EntityId
     project: EntityId

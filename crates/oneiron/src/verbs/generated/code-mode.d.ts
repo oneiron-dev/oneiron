@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4638 declarations.
-// Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4642 declarations.
+// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2152,7 +2152,7 @@ declare namespace Sdk {
   type BypassExtent = { scope: BypassScope; floor_version: number };
   type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach };
   type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] };
-  type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; confers: boolean };
+  type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; verb_classes?: string[]; confers: boolean };
   type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type HeldFailureSignalBatchView = { batch_id: string; endpoint: string; send_ref: string; content_ref: string; content: string; content_digest: string; approval_digest: string; count_rows: number; signal_count: number; code_fix_records: number; training_permitted: boolean; created_at: number; custody_stage: string };
@@ -2815,11 +2815,15 @@ declare namespace Sdk {
   type DreamingModeInput = "own" | "inherit" | "off";
   type AgentDreamingView = { agent_def_ref: EntityId; version: string; mode?: DreamingModeInput | null; effective_mode: DreamingModeInput; dreaming_model?: string | null };
   type AgentDreamingSetRequest = { agent_def_ref: EntityId; expected_version: string; new_version: string; mode: DreamingModeInput; dreaming_model?: string | null };
-  type AgentGrantMintRequest = { agent: EntityId; authority_scope: Scope; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null };
-  type AgentGrantView = { grant_ref: EntityId; agent: EntityId; authority_scope: Scope; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; confers: boolean; revoke_command: string };
+  type AgentGrantMintRequest = { agent: EntityId; authority_scope: Scope; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; verb_classes?: string[] };
+  type AgentGrantView = { grant_ref: EntityId; agent: EntityId; authority_scope: Scope; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; verb_classes?: string[]; confers: boolean; revoke_command: string };
   type AgentGrantMinted = { grant: AgentGrantView; act_ref: string };
   type AgentGrantRevokeRequest = { grant_ref: EntityId; seen?: string | null };
   type AgentGrantRevoked = { grant_ref: EntityId; changed: boolean; agent?: EntityId | null; act_ref?: string | null };
+  type AgentVerbClassRow = { name: string; verbs: string[] };
+  type AgentVerbClassesView = { manifest_ref: string; body_hash: string; classes: AgentVerbClassRow[] };
+  type AgentVerbClassesConfigureRequest = { expected_body_hash: string; classes: AgentVerbClassRow[] };
+  type AgentVerbClassesReceipt = { configuration: AgentVerbClassesView; receipt_ref: string };
   type GitPushRepo = { repo: EntityId; project: EntityId };
   type GitPushGrantMintInput = { member: EntityId; repos: GitPushRepo[]; expires_at?: number | null };
   type GitPushGrantView = { grant_ref: EntityId; member: EntityId; repos: GitPushRepo[]; delegated_by: EntityId; expires_at?: number | null; stands: boolean; revoke_command: string };
@@ -5258,7 +5262,7 @@ declare const vault: Sdk.VaultHost & {
     /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     grants: {
-      /** The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door. */
+      /** The owner grants one named agent explicit verbs and verb classes in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it. */
       mint(input: Sdk.AgentGrantMintRequest): Promise<Sdk.AgentGrantMinted | StoredResult>;
       /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
       revoke(input: Sdk.AgentGrantRevokeRequest): Promise<Sdk.AgentGrantRevoked | StoredResult>;
@@ -5270,6 +5274,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
+    verb_classes: {
+      /** The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once. */
+      configure(input: Sdk.AgentVerbClassesConfigureRequest): Promise<Sdk.AgentVerbClassesReceipt | StoredResult>;
+      /** The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.AgentVerbClassesView | StoredResult>;
+    };
   };
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;

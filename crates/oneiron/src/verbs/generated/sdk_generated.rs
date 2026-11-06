@@ -4199,6 +4199,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.verb_classes.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.agents.verb_classes.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+                >(),
+            ),
+            (
                 "vault.repo.git_push.mint",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GitPushGrantMintInput,
@@ -7808,6 +7818,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.dreaming.set",
     "vault.agents.grants.mint",
     "vault.agents.grants.revoke",
+    "vault.agents.verb_classes.get",
+    "vault.agents.verb_classes.configure",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
     "vault.connectors.read_grants.grant",
@@ -9819,6 +9831,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentGrantRevoked,
+        >(),
+        "vault.agents.verb_classes.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::AgentVerbClassesView,
+        >(),
+        "vault.agents.verb_classes.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::AgentVerbClassesReceipt,
         >(),
         "vault.repo.git_push.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantMintOutput,
@@ -16133,6 +16151,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.verb_classes.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.verb_classes.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.repo.git_push.mint" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22220,6 +22252,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.grants.revoke" => {
             let _input: crate::task_verb::sdk::AgentGrantRevokeRequest = decode(value.clone())?;
         }
+        "vault.agents.verb_classes.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.agents.verb_classes.configure" => {
+            let _input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest =
+                decode(value.clone())?;
+        }
         "vault.repo.git_push.mint" => {
             let _input: crate::task_verb::sdk::GitPushGrantMintInput = decode(value.clone())?;
         }
@@ -25587,6 +25626,12 @@ pub fn invoke(
         "vault.agents.dreaming.set" => encode(vault_agents_dreaming_set(memory, decode(value)?)?),
         "vault.agents.grants.mint" => encode(vault_agents_grants_mint(memory, decode(value)?)?),
         "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
+        "vault.agents.verb_classes.get" => {
+            encode(vault_agents_verb_classes_get(memory, decode(value)?)?)
+        }
+        "vault.agents.verb_classes.configure" => {
+            encode(vault_agents_verb_classes_configure(memory, decode(value)?)?)
+        }
         "vault.repo.git_push.mint" => encode(vault_repo_git_push_mint(memory, decode(value)?)?),
         "vault.repo.git_push.revoke" => encode(vault_repo_git_push_revoke(memory, decode(value)?)?),
         "vault.connectors.read_grants.grant" => {
@@ -33050,6 +33095,27 @@ pub fn vault_agents_grants_revoke(
         crate::authority::ActSurface::ThisInstall,
         input,
     )
+}
+pub fn vault_agents_verb_classes_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::AgentVerbClassesView> {
+    crate::policy_manifest_doors::agent_verb_classes_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.verb_classes.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_agents_verb_classes_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::AgentVerbClassesReceipt> {
+    crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.verb_classes.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_repo_git_push_mint(
     memory: &Memory<'_>,

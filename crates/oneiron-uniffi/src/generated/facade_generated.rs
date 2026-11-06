@@ -3796,6 +3796,16 @@ export_facade! {
     let output = client.vault_agents_grants_revoke(&input)?;
     crate::codec::lift_record("vault.agents.grants.revoke", &output)
 };
+"vault.agents.verb_classes.get" => fn vault_agents_verb_classes_get(&self) -> AgentVerbClassesView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.agents.verb_classes.get")?;
+    let output = client.vault_agents_verb_classes_get(&input)?;
+    crate::codec::lift_record("vault.agents.verb_classes.get", &output)
+};
+"vault.agents.verb_classes.configure" => fn vault_agents_verb_classes_configure(&self, input: AgentVerbClassesConfigureRequest) -> AgentVerbClassesReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::AgentVerbClassesConfigureRequest = crate::codec::lower_record("vault.agents.verb_classes.configure", input)?;
+    let output = client.vault_agents_verb_classes_configure(&input)?;
+    crate::codec::lift_record("vault.agents.verb_classes.configure", &output)
+};
 "vault.repo.git_push.mint" => fn vault_repo_git_push_mint(&self, input: GitPushGrantMintInput) -> GitPushGrantMintOutput = |client| {
     let input: oneiron::task_verb::sdk::GitPushGrantMintInput = crate::codec::lower_record("vault.repo.git_push.mint", input)?;
     let output = client.vault_repo_git_push_mint(&input)?;

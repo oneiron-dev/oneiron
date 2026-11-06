@@ -908,6 +908,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.agents.dreaming.set" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.grants.mint" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.grants.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.verb_classes.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.verb_classes.configure" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.git_push.mint" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.git_push.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.connectors.read_grants.grant" => a.spec.clone().ok_or_else(invalid),
@@ -3856,6 +3858,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.agents.grants.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.verb_classes.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.verb_classes.configure" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.repo.git_push.mint" => {
@@ -18866,6 +18874,44 @@ async fn execute_agent_verb_row_on(
                     input,
                 ))
                 .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.verb_classes.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.verb_classes.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_agents_verb_classes_get(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.verb_classes.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.verb_classes.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_manifest_doors::AgentVerbClassesConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_agents_verb_classes_configure(
+                    server, auth, input,
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,

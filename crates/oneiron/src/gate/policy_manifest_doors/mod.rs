@@ -1,6 +1,14 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod agent_verb_classes;
+pub(crate) use agent_verb_classes::{
+    AGENT_VERB_CLASSES_KEY, agent_verb_class_rows_for_store_in_txn, decode_agent_verb_classes,
+};
+pub use agent_verb_classes::{
+    AgentVerbClassRow, AgentVerbClassesConfigureRequest, AgentVerbClassesReceipt,
+    AgentVerbClassesView, agent_verb_classes_as_owner, configure_agent_verb_classes_as_owner,
+};
 mod calendar_outcome_grace;
 pub use calendar_outcome_grace::{
     calendar_outcome_grace_as_owner, set_calendar_outcome_grace_as_owner,
