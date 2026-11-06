@@ -9,7 +9,7 @@ receipt; a model name or evidence reference is not that receipt.
 
 ## Owner command
 
-`oneiron meeting-transcript <recording> --native-config <host-json>` produces the
+`oneiron meeting-transcript <recording> --native-config <host-json> --language <language>` produces the
 native meeting-transcript artifact. It reads the ordinary `serve` configuration
 and accepts the same flattened configuration flags, including `--config` and
 `--vault-path`. The vault must already exist and be stopped. The existing owner
@@ -18,7 +18,9 @@ not supply this configuration.
 
 Output is JSON on stdout, or an owner-only new file with `--out`. An existing
 output file is never overwritten. `--capture-started-at` supplies the recording's
-start in Unix milliseconds when known; `--language` supplies its language hint.
+start in Unix milliseconds when known. `--language` is required: it supplies the
+recording's language for both native ASR and forced alignment. The configured
+runtime must support that language; the command chooses no language default.
 No recording is imported, no voiceprint is enrolled, and no claims are admitted.
 A later import still needs the existing complete-artifact bulk consent.
 
