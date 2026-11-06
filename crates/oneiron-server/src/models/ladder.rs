@@ -23,6 +23,7 @@ mod decision_posture;
 mod live_fork;
 mod model_call;
 mod model_list;
+mod replay_prompt;
 mod rung;
 mod shadow_capture;
 mod step_attempt;
@@ -53,6 +54,7 @@ use tokio::sync::oneshot;
 
 pub use call_deadline::CallDeadline;
 pub(crate) use model_call::ModelCallBinding;
+use replay_prompt::RungPrompt;
 
 use super::cooldown::{
     Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Rest, leaves_device,
@@ -409,8 +411,8 @@ impl OfferLadder {
 
     /// The route prompt this ladder's one picked rung puts first, when it is
     /// one picked model (the ladder [`Self::generate_exact_within`] takes):
-    /// a step replay compares it with the prompt its capsule was answered
-    /// under (FIX 3028). `None` for any other ladder.
+    /// a step replay compares its digest with its capsule's, never its text
+    /// ([`Self::exact_prompt_digest`], FIX 6255). `None` for any other ladder.
     #[must_use]
     pub fn exact_prompt(&self) -> Option<Option<&str>> {
         match self.rungs.as_slice() {
@@ -1297,14 +1299,16 @@ impl OfferLadder {
                 deadline,
                 may_fall_back,
                 sources,
+                RungPrompt::Configured,
             )
             .await
         })
     }
 
+    /// The walk of one chat call; its rung puts `prompt` first (FIX 6255).
     #[expect(
         clippy::too_many_arguments,
-        reason = "one walk takes its call, its gate, its budget, its fallback and its sources"
+        reason = "one walk takes its call, gate, budget, fallback, sources and prompt"
     )]
     async fn walk_generate(
         &self,
@@ -1315,6 +1319,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
+        prompt: RungPrompt<'_>,
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
@@ -1372,7 +1377,10 @@ impl OfferLadder {
                     break;
                 };
                 sent[index] = true;
-                match self.send(call, index, may_send, sources, &mut walk).await? {
+                match self
+                    .send(call, index, may_send, sources, prompt, &mut walk)
+                    .await?
+                {
                     Sent::Answer(response) => {
                         return Ok((response, ModelCallBinding::for_rung(&self.rungs[index])));
                     }
@@ -1385,17 +1393,19 @@ impl OfferLadder {
     }
 
     /// Sends the call to the rung at `index`, with what `sources` admits for
-    /// that rung's destination when a caller opted in (FIX 8714). A failure
-    /// that ends the call is the error.
+    /// that rung's destination when a caller opted in (FIX 8714), the rung
+    /// putting `prompt` first (FIX 6255). A failure that ends the call is
+    /// the error.
     async fn send(
         &self,
         call: Call<'_>,
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
         sources: Option<&dyn SourceAdmission>,
+        prompt: RungPrompt<'_>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
-        let mut rung = self.rungs[index].clone();
+        let mut rung = prompt.rung(&self.rungs[index]);
         let offered = match source_admission::offered(sources, call.request, &rung.offer) {
             Ok(offered) => offered,
             Err(reason) => {
@@ -1472,7 +1482,9 @@ impl OfferLadder {
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     permit.settle(CallOutcome::Answered(&response.usage))?;
                     response.usage = self.answered(index, walk, response.usage);
-                    rung.note_answered(call.request);
+                    if prompt.noted() {
+                        rung.note_answered(call.request);
+                    }
                     return Ok(Sent::Answer(response));
                 }
                 Err(error) => {

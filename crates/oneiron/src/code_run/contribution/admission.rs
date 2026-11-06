@@ -147,15 +147,13 @@ fn target_capsule(
 }
 
 /// Whether `fork` regenerated `capsule`: its request, model, route prompt
-/// and seed, with its content still held.
+/// (by the hash of its body as stored, FIX 6255) and seed, with its content
+/// still held.
 fn regenerates(capsule: &StepReplayCapsule, fork: &ContributionForkReceipt) -> bool {
     let Some(binding) = &capsule.binding else {
         return false;
     };
-    let route_prompt = binding
-        .prompt
-        .as_deref()
-        .map(|prompt| *blake3::hash(prompt.as_bytes()).as_bytes());
+    let route_prompt = binding.stored_prompt_hash();
     capsule.content.actor().is_some()
         && fork.attempt == capsule.attempt
         && fork.lease_generation == capsule.lease_generation

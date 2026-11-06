@@ -1,10 +1,9 @@
 //! The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's
 //! own writer. Each capsule of the actor's steps keeps what the step was and
-//! loses what it held: its request, start, replay context and fork answers
-//! are released as the run's occurrences, each with only its own taint and
-//! secret marks, so another holder of the same bytes keeps them and its
-//! marks. A soft delete
-//! runs this scrub too, so it retires no body instance: the erase cause
+//! loses what it held: its request, start, replay context, route prompt
+//! (FIX 6255) and fork answers are released as the run's occurrences, each
+//! with only its own taint and secret marks, so another holder of the same
+//! bytes keeps them and its marks. A soft delete runs this scrub too, so it retires no body instance: the erase cause
 //! comes from the provenance door alone (KS-2B1), and a release keeps the
 //! restore window. A restore runs this again for every erased actor, so a
 //! restored capsule stays erased. It is also the one callback the actor's
@@ -65,8 +64,8 @@ pub(crate) fn erase_capsule_actor_in_txn(
 }
 
 /// Every body `actor`'s capsules name, with the run that owns it: each
-/// kept request, each start, each replay context, each fork answer and each
-/// fork's executed body, read before the erase releases them, so the
+/// kept request, each start, each replay context, each kept route prompt
+/// (FIX 6255), each fork answer and each fork's executed body, read before the erase releases them, so the
 /// provenance door's hard erase retires their instances (FIX 6278). A
 /// capsule erased before names none.
 ///
@@ -119,7 +118,8 @@ fn owned_capsules_in_txn(
 
 /// The bodies the capsule at `key` names: its request when it kept one
 /// (a withheld request kept none, FIX 6254), its start, its replay context
-/// (FIX 6351), and each fork answer among `answers` that regenerated it.
+/// (FIX 6351), its route prompt when it kept one (FIX 6255), and each fork
+/// answer among `answers` that regenerated it.
 fn capsule_bodies(
     key: &CapsuleKey,
     capsule: &StepReplayCapsule,
@@ -134,6 +134,11 @@ fn capsule_bodies(
     }
     if let Some(context) = &capsule.context {
         bodies.push((context.body, context.path.clone()));
+    }
+    if let Some(binding) = &capsule.binding
+        && let Some(CapsuleRequest::Kept { body, path, .. }) = &binding.prompt
+    {
+        bodies.push((*body, path.clone()));
     }
     bodies.extend(
         answers
