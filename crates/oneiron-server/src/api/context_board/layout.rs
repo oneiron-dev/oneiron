@@ -13,10 +13,10 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 use oneiron::EntityId;
 use oneiron::context_board::{
-    BoardActorClass, BoardLayout, BoardLayoutCandidate, PeopleView, PersonKind, SectionFilter,
-    TasksSectionRows,
+    BoardActorClass, BoardLayout, BoardLayoutCandidate, BoardSection, BoardWhoFilter, MemoryTier,
+    PeopleView, PersonKind, SectionFilter, TasksSectionRows,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The layout one board renders under, the actor it belongs to, and the
 /// candidate the board's turn activates.
@@ -110,4 +110,109 @@ pub(crate) fn filter_task_rows(
             filter.matches(who, actor, &members, |id| people.kind(id).map(person_class))
         })
     }))
+}
+
+/// The MEMORIES `sections` of `actor`'s board narrowed by its layout's
+/// MEMORIES `who` filter (BOARD-LAYOUT add-on 2): a detail row stays while
+/// the actor who wrote it matches, or while the fold keeps it open by id.
+/// The writer is the row's stamped maker ([`oneiron::Vault::memory_row_writers`]),
+/// and, as an INBOX sender (FIX 9745), it counts only while `read` reads it
+/// or it is `actor` itself; a row with no such writer matches no `who`.
+/// Pinned rows and each section's count and fold summary stay. The filter
+/// narrows the rendered board only: the typed MEMORIES section is unchanged.
+/// Beside the sections it answers what the choice read: the writer of each
+/// detail row it kept by its writer (other than `actor`) and the group it
+/// resolved, which a keyed replay re-admits, so a replay never shows a row
+/// chosen by a writer or roster the caller can no longer read.
+pub(crate) fn filter_memories_sections(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    people: &PeopleView<'_>,
+    actor: Option<EntityId>,
+    layout: &BoardLayout,
+    memories: &oneiron::MemoriesSection,
+    sections: Vec<BoardSection>,
+) -> Result<(Vec<BoardSection>, Vec<EntityId>), oneiron::Error> {
+    let Some(who) = layout
+        .filter("memories")
+        .and_then(|filter| filter.who.as_ref())
+    else {
+        return Ok((sections, Vec::new()));
+    };
+    let keep = layout
+        .fold("memories")
+        .map(|fold| fold.keep.as_slice())
+        .unwrap_or_default();
+    let rows: Vec<EntityId> = memories
+        .rows
+        .iter()
+        .filter_map(|row| EntityId::from_hex(&row.id).ok())
+        .collect();
+    let mut readable = BTreeMap::new();
+    let mut writers = BTreeMap::new();
+    for (row, writer) in vault.memory_row_writers(&rows)? {
+        let shown = match readable.get(&writer) {
+            Some(shown) => *shown,
+            None => {
+                let shown = Some(writer) == actor || read.is_entity_readable(&writer)?;
+                readable.insert(writer, shown);
+                shown
+            }
+        };
+        if shown {
+            writers.insert(row, writer);
+        }
+    }
+    let members = match who.group() {
+        Some(group) if read.is_entity_readable(&group)? => {
+            vault.board_filter_group_members(group)?
+        }
+        _ => BTreeSet::new(),
+    };
+    let detail: BTreeSet<EntityId> = memories
+        .rows
+        .iter()
+        .filter(|row| row.tier != MemoryTier::Pinned)
+        .filter_map(|row| EntityId::from_hex(&row.id).ok())
+        .collect();
+    let matched: BTreeSet<EntityId> = writers
+        .iter()
+        .filter(|(_, writer)| {
+            who.matches(Some(**writer), actor, &members, |id| {
+                people.kind(id).map(person_class)
+            })
+        })
+        .map(|(row, _)| *row)
+        .collect();
+    // What each detail row the filter alone keeps rests on: its writer
+    // (other than `actor`), the PERSON a class match read the writer's class
+    // from, and the group whose roster matched it. A pinned or fold-kept row
+    // rests on none of them.
+    let mut read_sources: Vec<EntityId> = Vec::new();
+    for row in matched
+        .iter()
+        .filter(|row| detail.contains(*row) && !keep.contains(*row))
+    {
+        let Some(writer) = writers.get(row).copied() else {
+            continue;
+        };
+        let mut rests_on = vec![writer];
+        match who {
+            BoardWhoFilter::Class { .. } => {
+                rests_on.extend(people.people.get(writer).map(|person| person.person));
+            }
+            BoardWhoFilter::Group { group } => rests_on.push(*group),
+            BoardWhoFilter::Mine | BoardWhoFilter::Actor { .. } => {}
+        }
+        for source in rests_on {
+            if Some(source) != actor && !read_sources.contains(&source) {
+                read_sources.push(source);
+            }
+        }
+    }
+    let sections = sections
+        .into_iter()
+        .map(|section| section.narrowed(|row| keep.contains(&row) || matched.contains(&row)))
+        .collect();
+    Ok((sections, read_sources))
 }
