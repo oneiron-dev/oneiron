@@ -97,6 +97,8 @@ pub(super) struct KeepHistory {
     /// Those of the staged Keeps the owner declined there (FIX 7072): still
     /// members, standing for nothing, so a Keep after them stages afresh.
     pub(super) declined: Vec<(EntityId, EntityId)>,
+    /// Fresh MACHINE copies the owner's settlement reverts restored.
+    pub(super) restored: Vec<EntityId>,
 }
 
 /// What the earlier Keeps of `marker`, on `subject`, left of its retained
@@ -167,6 +169,10 @@ fn subject_keeps_in_txn(
         let Some(claim) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
         };
+        if landings && restored_marker(&claim) == Some(marker) {
+            kept.restored.push(id);
+            continue;
+        }
         if let Some(link) = KeptConflictLink::of_claim(&claim) {
             if link.marker == marker {
                 kept.staged.push((link.selector, id));
@@ -201,6 +207,29 @@ fn subject_keeps_in_txn(
         kept.landings.push((selector, landed));
     }
     Ok(kept)
+}
+
+/// The marker stamped by the settlement revert that wrote this Dreamer copy.
+/// A generic change revert carries no marker and joins no conflict.
+fn restored_marker(body: &ClaimBody) -> Option<EntityId> {
+    let Some(rmpv::Value::Map(fields)) = &body.evidence else {
+        return None;
+    };
+    let provenance = fields
+        .iter()
+        .find(|(key, _)| {
+            key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)
+        })
+        .map(|(_, value)| value)?;
+    if string_at(provenance, "surface").and_then(rmpv::Value::as_str)
+        != Some("conflict_settlement_revert")
+    {
+        return None;
+    }
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id().ok()?;
+    (crate::memory::claim_author(body) == Some(dreamer))
+        .then(|| marker_ids(provenance, super::settle::RESTORED_MARKER_KEY).next())
+        .flatten()
 }
 
 /// The retained alternatives a responder may keep: each one no member
