@@ -1,6 +1,10 @@
 //! Pure equality of one owned recapture after native pad normalization.
 //! Payload bytes, titles and field names resume one byte per existing work unit.
 
+mod history;
+
+use history::HistoryComparison;
+
 use crate::error::Result;
 use crate::note::{NoteFork, NoteReviewBundle};
 use crate::recovery::canonical::{
@@ -15,6 +19,7 @@ pub(in crate::recovery) struct CanonicalComparison {
     byte: usize,
     payload: PayloadPart,
     record_field: usize,
+    history: HistoryComparison,
     bundle: BundleComparison,
 }
 
@@ -74,6 +79,7 @@ impl CanonicalComparison {
             byte: 0,
             payload: PayloadPart::First,
             record_field: 0,
+            history: HistoryComparison::default(),
             bundle: BundleComparison::default(),
         }
     }
@@ -161,6 +167,7 @@ impl CanonicalComparison {
                     &mut self.byte,
                     &mut self.payload,
                     &mut self.record_field,
+                    &mut self.history,
                 )?,
                 Group::DocumentHeads,
             ),
@@ -258,6 +265,7 @@ impl CanonicalComparison {
             self.byte = 0;
             self.payload = PayloadPart::First;
             self.record_field = 0;
+            self.history = HistoryComparison::default();
             self.bundle = BundleComparison::default();
         }
         Ok(matches!(self.group, Group::Complete))
@@ -346,6 +354,7 @@ fn compare_entity_documents(
     byte: &mut usize,
     payload: &mut PayloadPart,
     record_field: &mut usize,
+    history_state: &mut HistoryComparison,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
     let Some(CanonicalEntityDocument {
@@ -409,11 +418,13 @@ fn compare_entity_documents(
     }
     compare_value(birth_actor, expected_birth_actor)?;
     compare_value(birth_at, expected_birth_at)?;
-    compare_value(history, expected_history)?;
-    *next += 1;
-    *byte = 0;
-    *payload = PayloadPart::First;
-    *record_field = 0;
+    if history_state.advance(history, expected_history)? {
+        *next += 1;
+        *byte = 0;
+        *payload = PayloadPart::First;
+        *record_field = 0;
+        *history_state = HistoryComparison::default();
+    }
     Ok(false)
 }
 
