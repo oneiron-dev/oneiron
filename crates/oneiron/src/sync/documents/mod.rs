@@ -654,13 +654,14 @@ impl EntityDocument {
                 Some(head) => note_state::payload(&self.vault, txn, self.id, head, &bytes)?,
                 None => bytes,
             };
-            let frame = encode_document(
-                copy.as_ref().map_or(self.id, |copy| copy.key),
-                kind,
-                &payload,
-            )
-            .into_result()
-            .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))?;
+            let entity = copy.as_ref().map_or(self.id, |copy| copy.key);
+            let encoded = if note_head.is_some() {
+                crate::sync::transport::encode_unsplit_document(entity, kind, &payload)
+            } else {
+                encode_document(entity, kind, &payload).into_result()
+            };
+            let frame = encoded
+                .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))?;
             let worlds = cache.and_then(|(requested, blob, scope)| {
                 let selector = super::selector::decode_sync_selector(admission_key).ok()?;
                 super::residence::cache_worlds::capture_in_txn(

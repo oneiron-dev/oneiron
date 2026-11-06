@@ -6,7 +6,8 @@
 //! entity row by its kind, an edge by its two ends, a NOTE workflow record
 //! by the NOTE it binds, a room's rows by the turn or room they ride with,
 //! a pin by its citer and the message it quotes, a message document by its
-//! message. A value naming a live actor no split here takes out, a nested
+//! message, an author carrier by the actor it attributes (FIX 17143). A
+//! value naming a live actor no split here takes out, a nested
 //! history, and a map no adapter reads stay unclassified, named. A Loro
 //! PeerID is the writer of an operation, never an owner of what it wrote.
 //!
@@ -32,6 +33,7 @@ use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
+use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
@@ -43,13 +45,14 @@ use crate::sync::withdrawn_cutoffs::{
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 21] = [
+pub(super) const WINDOW_ROOTS: [&str; 22] = [
     "entities",
     "edges",
     "tombstones",
     HELD_EDIT_CAUSALITY_MAP,
     "retained_claim_worlds",
     ROW_BIRTHS_MAP,
+    ORIGIN_POSITIONS_MAP,
     PEER_ORIGIN_MAP,
     WITHDRAWN_CUTOFFS_MAP,
     "documents",
@@ -69,8 +72,11 @@ pub(super) const WINDOW_ROOTS: [&str; 21] = [
 
 /// Whether a key holding a digest of what it carries (a pin's, a part's, a
 /// protected input's) may stand plaintext in a skeleton. A digest commits to
-/// its value and would outlive the value's erase, so it does not, and its
-/// window stays under the vault-wide seal. Call, behind this one constant.
+/// its value and would outlive the value's erase, so it does not: the key is
+/// withheld in an atom of its own under its rightful holders
+/// ([`withheld_key`], [`withheld_part_key`], [`withheld_client_key`]; FIX
+/// 10278), and only a window whose digest key no holder claims stays under
+/// the vault-wide seal. Call, behind this one constant.
 const DIGEST_KEYS_ARE_PLAIN: bool = false;
 
 /// An `authored_by` edge, whose key names its actor.
@@ -99,7 +105,10 @@ pub(crate) fn root_entry(
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
     let entity = named(key);
     match root {
-        "entities" => entity.map_or_else(undecodable, |id| entity_row(id, value, owners)),
+        // An author carrier's actor is split out (FIX 17143).
+        "entities" => entity.map_or_else(undecodable, |id| {
+            super::author_carrier::entry(id, value).unwrap_or_else(|| entity_row(id, value, owners))
+        }),
         "edges" => match parse_edge_key(key) {
             // An authored_by edge is its source's: the actor it names rides
             // in its withheld key alone (FIX 10279, `withheld_key`), so the
@@ -126,6 +135,7 @@ pub(crate) fn root_entry(
             _ => undecodable(),
         },
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::entry(key, value),
+        ORIGIN_POSITIONS_MAP => crate::sync::origin_positions::checkpoint_entry(key, value),
         PEER_ORIGIN_MAP => match (entity, admit_peer_origin_carrier(key, &binary(value))) {
             (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
@@ -173,6 +183,12 @@ pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwn
         return match crate::ports::checkpoint::entity_row_placement(value) {
             EntityRowPlacement::Owner => Placement::owned(owner, Vec::new()),
             EntityRowPlacement::Other(client) => Placement::Dispatched(client),
+            // Only an identity-topology carrier is one, and no such kind
+            // takes this branch: a window's copy splits in
+            // `author_carrier`, and a thin cache copy stays whole.
+            EntityRowPlacement::Actor(_) => {
+                Placement::unclassified(Some(owner), SyncUnclassified::UnknownKind)
+            }
             EntityRowPlacement::Unclassified(reason) => {
                 Placement::unclassified(Some(owner), unclassified(reason))
             }
@@ -217,6 +233,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         | "retained_claim_worlds"
         | "entity_documents"
         | ROW_BIRTHS_MAP
+        | ORIGIN_POSITIONS_MAP
         | PEER_ORIGIN_MAP
         | ROOM_TURNS_MAP
         | ASSET_BODY_REFS_MAP => id_key(key),
@@ -392,6 +409,10 @@ pub(super) fn root_fill(
         }
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::fill(no_one, opened),
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::fill(key, no_one, opened),
+        "entities" => {
+            let id = named(key).ok_or_else(bad_part)?;
+            super::author_carrier::fill(id, no_one, opened)
+        }
         _ => Err(bad_part()),
     }
 }
