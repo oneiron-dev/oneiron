@@ -13,6 +13,11 @@
 //! the work with the content and stamps it keeps. The last owed body
 //! settled, or a cancellation, drops all three; the confirmation itself is
 //! never undone.
+//!
+//! The owner may attach a host-registered producer to the work, the source
+//! home that serves the artifact's window: the sync client then fetches the
+//! owed bodies from it on its own. Each attachment bumps the work's
+//! generation, so a fetch begun under an earlier one lands nothing more.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +46,14 @@ pub(crate) struct StagedImportBodyWork {
     pub(crate) owed: Vec<OwedBody>,
     /// Every row the kept admitted content carries, sorted.
     carried: Vec<[u8; 16]>,
+    /// The host-registered producer the owner attached to fetch the owed
+    /// bodies; `None` until one is.
+    #[serde(default)]
+    pub(crate) source: Option<[u8; 32]>,
+    /// Bumped at each attachment: a fetch begun under an earlier one lands
+    /// nothing more.
+    #[serde(default)]
+    pub(crate) generation: u64,
 }
 
 /// One owed body: the window of the admitted part that brings its row, and
@@ -67,6 +80,8 @@ impl StagedImportBodyWork {
             v: WORK_VERSION,
             owed,
             carried,
+            source: None,
+            generation: 0,
         }
     }
 
@@ -132,6 +147,58 @@ pub(crate) fn staged_import_body_work(
         .get(&vault.store, &txn, &Hex64(*id))?
         .map(|raw| StagedImportBodyWork::decode(&raw))
         .transpose()
+}
+
+/// Every receipt's body work that has a producer attached, by receipt id in
+/// key order. A row that does not decode is left to the doors that settle
+/// or drop it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn attached_staged_import_body_work(
+    vault: &Vault,
+) -> Result<Vec<([u8; 32], StagedImportBodyWork)>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(BODY_WORK
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .filter_map(|(key, raw)| {
+            let work = StagedImportBodyWork::decode(&raw).ok()?;
+            work.source.is_some().then_some((key.0, work))
+        })
+        .collect())
+}
+
+/// Attaches the host-registered producer `source` to the body work of the
+/// confirmed receipt `id`, in one write, and answers the work's generation
+/// after: a new producer bumps it, the one already attached keeps it.
+/// `None` when the receipt owes no body.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+pub(crate) fn attach_staged_import_body_source(
+    vault: &Vault,
+    id: &[u8; 32],
+    source: [u8; 32],
+) -> Result<Option<u64>> {
+    vault.with_write_txn_grouped(|w| {
+        let Some(raw) = BODY_WORK.get(&vault.store, w, &Hex64(*id))? else {
+            return Ok(None);
+        };
+        let mut work = StagedImportBodyWork::decode(&raw)?;
+        if work.source == Some(source) {
+            return Ok(Some(work.generation));
+        }
+        work.source = Some(source);
+        work.generation = work
+            .generation
+            .checked_add(1)
+            .ok_or(Error::InvariantViolation(WORK_LABEL))?;
+        BODY_WORK.put(&vault.store, w, &Hex64(*id), &work.encode()?)?;
+        Ok(Some(work.generation))
+    })
 }
 
 /// Keeps `work` for the receipt `id` in `w`, beside the content and stamps
