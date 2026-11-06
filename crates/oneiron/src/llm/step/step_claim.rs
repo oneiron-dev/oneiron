@@ -32,8 +32,8 @@ use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 
 pub(super) use super::step_index::{
-    STEP_INDEX_CLAIM, STEP_INDEX_FORWARD, StepIndexClaimKey, StepIndexKey,
-    step_claim_binding_is_trusted, step_index_lookup, step_index_lookup_in_txn,
+    STEP_INDEX_CLAIM, STEP_INDEX_FORWARD, StepIndexClaimKey, StepIndexKey, step_index_lookup,
+    step_index_lookup_in_txn,
 };
 pub(crate) use super::step_index::{
     deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,

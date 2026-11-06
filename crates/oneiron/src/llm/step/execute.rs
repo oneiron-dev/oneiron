@@ -541,7 +541,7 @@ fn verified_step_response_in_txn(
         || body.stale
         || decoded.attempt_id != binding.attempt_id
         || decoded.step_hash != binding.step_hash
-        || !super::step_claim::step_claim_binding_is_trusted(&decoded, &body)
+        || !super::step_index::step_claim_is_runner_execution(&decoded, &body)
     {
         return Err(Error::InvalidClaimBody("step-derived effect request mismatch").into());
     }
