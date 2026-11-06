@@ -54,6 +54,21 @@ impl PreparedHomeClaimSend {
         recipient: PeerMachine,
         delivery: &HomeClaimDelivery<'_>,
     ) -> Result<Option<SenderSignedHomeClaimVector>> {
+        if self.copy_for(vault, recipient, delivery)?.is_some() {
+            Ok(Some(self.signed))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Borrows the signed bytes only while this native token still matches
+    /// the actual delivery and the recipient's current source and keys.
+    pub(crate) fn copy_for(
+        &self,
+        vault: &Vault,
+        recipient: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+    ) -> Result<Option<&SenderSignedHomeClaimVector>> {
         if self.vault != vault.store.env.path()
             || self.recipient != recipient
             || !self.signed.copy.matches_delivery(delivery)
@@ -96,7 +111,7 @@ impl PreparedHomeClaimSend {
                 return Ok(None);
             }
         }
-        Ok(Some(self.signed))
+        Ok(Some(&self.signed))
     }
 }
 

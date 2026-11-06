@@ -62,6 +62,7 @@ mod types;
 mod window_pads;
 
 pub use self::base::SyncClient;
+pub(crate) use self::window_pads::WindowClaimCopyRelease;
 pub use self::connect::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
 };
