@@ -18,7 +18,11 @@
 //! The child runs the source's task, model, locality, seat effort, tier,
 //! clock and limits. It inherits the source's epochs and fold ledger as the
 //! start captured them, kept inside the copied prefix, so it neither renders
-//! that prefix whole nor compacts it again (FIX 4198). Its first seed keeps
+//! that prefix whole nor compacts it again (FIX 4198). After a failed step,
+//! that capture is the earlier start's, so the fold verbs the failed step
+//! called are not inherited, and its copied calls keep their answers. The
+//! child's ledger then gives out handles past the highest one those answers
+//! name, so its next mark never reuses one (FIX 18695). Its first seed keeps
 //! the frozen config as child-owned content, so reopening does not need the
 //! parent's start body again. The child's own content and all current
 //! lease, source and cut checks still
