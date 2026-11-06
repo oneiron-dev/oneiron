@@ -241,7 +241,12 @@ impl Step<'_> {
     /// deleted at the provider; else it carries its labels now.
     fn label_gone(&mut self, label: &str) -> MemoryResult<()> {
         let under = {
-            let txn = self.vault.store.env.read_txn()?;
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
             let mut under = Vec::new();
             for occurrence in
                 OCCURRENCES.iter_from(&self.vault.store, &txn, self.source.as_bytes())?
