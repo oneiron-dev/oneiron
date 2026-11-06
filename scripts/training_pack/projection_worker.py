@@ -58,7 +58,7 @@ def pinned(path, pin):
 def parse(data):
     job = common._closed(common._load_json(data, "request"), {
         "format", "run", "spec_blake3", "compute", "model", "settings", "harness", "base",
-        "features", "training_blake3", "probes", "export_logit_tolerance", "preparation_seconds"}, "request")
+        "features", "training_blake3", "probes", "export_logit_tolerance", "preparation_seconds", "encoder"}, "request")
     need(job["format"] == "oneiron.embedding-projection.job/1", "unknown projection job")
     need(common.MODEL_ID.fullmatch(job["model"]), "output model id is malformed")
     need(job["compute"] == {"kind": "engine_run", "reference": "training_pack:" + job["run"]},
@@ -203,6 +203,7 @@ def main(argv=None):
         job, pairs, probes = parse(body)
         receipt |= {key: job[key] for key in ("run", "spec_blake3", "settings", "harness", "training_blake3")}
         receipt["authorization"] = job["compute"]
+        receipt["encoder"] = job["encoder"]
         receipt["request_sha256"] = hashlib.sha256(body).hexdigest()
         torch.use_deterministic_algorithms(True)
         torch.set_float32_matmul_precision("highest")

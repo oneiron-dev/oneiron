@@ -29,7 +29,9 @@ The plan explicitly supplies `epochs`, `batch_size`, `learning_rate`,
 and the training split need at least two pairs. No hyperparameter defaults
 are supplied. Native feature computation and GPU-training wall time are
 included in the worker's `gpu_wall_second` quantity; the receipt records the environment and
-all projection-worker source hashes.
+all projection-worker source hashes. The native feature checkpoint hash,
+dimensions, runtime/device provenance and requested input window ride on the
+request and receipt; the held-out log records its own actual runtime.
 
 The original authorization, budget reservation, one `(run,spec)` job directory,
 recovery polling, immutable completion and Used/Kept settlement remain in use.
