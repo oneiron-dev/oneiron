@@ -135,6 +135,7 @@ impl fmt::Debug for ServeConfig {
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
+            .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
