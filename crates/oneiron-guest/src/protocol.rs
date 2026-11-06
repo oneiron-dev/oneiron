@@ -13,7 +13,6 @@ pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
 pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
 pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
 pub(crate) const MAX_CHUNK: usize = oneiron_sandbox_contract::MAX_CHUNK_BYTES;
-pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
 /// Source identities and exact lengths; seeded bytes stay in the workspace.
@@ -116,7 +115,6 @@ struct SeedFile {
 
 pub(crate) struct Session<T> {
     channel: T,
-    requests: usize,
     finished: bool,
 }
 
@@ -124,7 +122,6 @@ impl<T: Read + Write> Session<T> {
     pub(crate) fn new(channel: T) -> Self {
         Self {
             channel,
-            requests: 0,
             finished: false,
         }
     }
@@ -162,16 +159,10 @@ impl<T: Read + Write> Session<T> {
         let mut files = BTreeMap::new();
         let mut shape = WorkspaceShape::new();
         let mut open: Option<SeedFile> = None;
-        let mut requests = 1;
+        // No frame count ends the source: each frame is checked as it comes
+        // (FIX 8026).
         loop {
             let frame = self.read()?;
-            // One logical file spends one request, regardless of byte length.
-            if !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose) {
-                if requests == MAX_REQUESTS {
-                    return Err(Error::Protocol("source request count exhausted"));
-                }
-                requests += 1;
-            }
             if open.is_some()
                 && !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose)
             {
@@ -359,11 +350,11 @@ impl<T: Read + Write> Session<T> {
     }
 
     fn request(&mut self, frame: &GuestFrame<'_>) -> Result<bool> {
-        // Reserve the terminal step-result and finish frames.
-        if self.finished || self.requests >= MAX_REQUESTS - 2 {
-            return Err(Error::Protocol("outbound request count exhausted"));
+        // No lifetime count ends a run's requests (FIX 8026); none follows
+        // its finish.
+        if self.finished {
+            return Err(Error::Protocol("outbound request after finish"));
         }
-        self.requests += 1;
         self.send(frame)?;
         match self.read()? {
             HostFrame::Receipt { accepted } => Ok(accepted),
