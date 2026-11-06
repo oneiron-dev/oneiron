@@ -1,4 +1,4 @@
-//! Frozen canonical receipt bytes held outside the all-sources preparation vector.
+//! Canonical receipt preparation in one native, unlinked temporary body.
 use std::io::{self, Read, Write};
 
 use super::codec::{ID_DOMAIN, ReceiptArchive};
@@ -8,24 +8,53 @@ use crate::{
     store::{AssetBodyFacts, BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES},
 };
 
-/// An unlinked native temp, sealed under an in-memory key on a sealed vault.
-/// It is not a published body file and needs no persistent body instance.
+/// One native temp for the whole restore, not one open file per source.
+/// A sealed vault uses an in-memory ephemeral key, never a body instance.
+pub(super) struct ReceiptArchivePreparation {
+    dir: BodyDir,
+    temp: String,
+    spill: Option<BodySpill>,
+    hash: blake3::Hasher,
+    len: u64,
+}
+
 pub(super) struct PreparedReceiptArchive {
-    file: BodyFile,
+    pub(super) id: EntityId,
+    offset: u64,
     len: u64,
     digest: [u8; 32],
 }
 
-impl PreparedReceiptArchive {
-    pub(super) fn new(dir: &BodyDir, archive: &ReceiptArchive) -> Result<Self> {
-        let mut spill = BodySpill::ephemeral(dir)?;
-        let _temp = TempArchive {
+pub(super) struct PreparedReceiptBytes {
+    file: BodyFile,
+}
+
+impl ReceiptArchivePreparation {
+    pub(super) fn new(dir: BodyDir) -> Result<Self> {
+        let spill = BodySpill::ephemeral(&dir)?;
+        Ok(Self {
+            temp: spill.temp().to_owned(),
             dir,
-            name: spill.temp().to_owned(),
-        };
+            spill: Some(spill),
+            hash: blake3::Hasher::new(),
+            len: 0,
+        })
+    }
+
+    pub(super) fn push(&mut self, archive: &ReceiptArchive) -> Result<PreparedReceiptArchive> {
+        // The canonical serializer reads this owned, validated data tree,
+        // not an archive file. Count its frame before hashing that frame.
+        let mut count = CountBytes(0);
+        archive.write_canonical(&mut count)?;
+        let len = count.0;
+        let mut identity = framed_id(0, len);
         let mut out = ArchiveWriter {
-            spill: &mut spill,
-            hasher: blake3::Hasher::new(),
+            spill: self.spill.as_mut().ok_or(Error::InvariantViolation(
+                "receipt preparation already finished",
+            ))?,
+            whole: &mut self.hash,
+            identity: &mut identity,
+            body: blake3::Hasher::new(),
             len: 0,
             error: None,
         };
@@ -34,38 +63,34 @@ impl PreparedReceiptArchive {
             return Err(error);
         }
         encoded?;
-        let len = out.len;
-        let digest = *out.hasher.finalize().as_bytes();
-        let spilled = spill.finish(&digest, len)?;
-        // The descriptor and ephemeral key survive unlinking the temp name.
-        let file = spilled.reader()?;
-        Ok(Self { file, len, digest })
-    }
-
-    /// The same domain, salt and one length-prefixed part as id_of_bytes.
-    pub(super) fn id(&self) -> Result<EntityId> {
+        if out.len != len {
+            return Err(Error::CorruptedIndex("prepared receipt archive length"));
+        }
+        let digest = *out.body.finalize().as_bytes();
+        let offset = self.len;
+        self.len = self.len.checked_add(len).ok_or(Error::ArithmeticOverflow(
+            "receipt archive preparation length",
+        ))?;
+        let mut first = Some(identity);
         for salt in 0_u64..=u64::MAX {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(ID_DOMAIN);
-            hasher.update(&salt.to_le_bytes());
-            hasher.update(&self.len.to_le_bytes());
-            let mut body_hash = blake3::Hasher::new();
-            let mut at = 0;
-            while at < self.len {
-                let take = (self.len - at).min(u64::from(LINE_INDEX_BLOCK_BYTES)) as usize;
-                let bytes = self.file.read_range(at, take)?;
-                hasher.update(&bytes);
-                body_hash.update(&bytes);
-                at += take as u64;
-            }
-            if *body_hash.finalize().as_bytes() != self.digest {
-                return Err(Error::CorruptedIndex("prepared receipt archive digest"));
-            }
-            let hash = hasher.finalize();
+            let hash = match first.take() {
+                Some(hash) => hash,
+                None => {
+                    let mut hash = framed_id(salt, len);
+                    archive.write_canonical(&mut HashBytes(&mut hash))?;
+                    hash
+                }
+            };
+            let hash = hash.finalize();
             let mut id = [0_u8; ENTITY_ID_LEN];
             id.copy_from_slice(&hash.as_bytes()[..ENTITY_ID_LEN]);
             if let Ok(id) = EntityId::from_bytes(id) {
-                return Ok(id);
+                return Ok(PreparedReceiptArchive {
+                    id,
+                    offset,
+                    len,
+                    digest,
+                });
             }
         }
         Err(Error::InvariantViolation(
@@ -73,35 +98,95 @@ impl PreparedReceiptArchive {
         ))
     }
 
+    pub(super) fn finish(mut self) -> Result<PreparedReceiptBytes> {
+        let digest = *self.hash.finalize().as_bytes();
+        let spill = self.spill.take().ok_or(Error::InvariantViolation(
+            "receipt preparation already finished",
+        ))?;
+        let spilled = spill.finish(&digest, self.len)?;
+        let file = spilled.reader()?;
+        let mut hash = blake3::Hasher::new();
+        let mut at = 0;
+        while at < self.len {
+            let take = (self.len - at).min(u64::from(LINE_INDEX_BLOCK_BYTES)) as usize;
+            hash.update(&file.read_range(at, take)?);
+            at += take as u64;
+        }
+        if *hash.finalize().as_bytes() != digest {
+            return Err(Error::CorruptedIndex("prepared receipt archive digest"));
+        }
+        // Drop unlinks the name; this descriptor and its ephemeral key survive.
+        Ok(PreparedReceiptBytes { file })
+    }
+}
+
+impl Drop for ReceiptArchivePreparation {
+    fn drop(&mut self) {
+        self.dir.discard(&self.temp);
+    }
+}
+
+impl PreparedReceiptArchive {
     pub(super) fn check_facts(&self, facts: AssetBodyFacts) -> Result<()> {
         if facts.len != self.len || facts.blake3 != self.digest {
             return Err(Error::CorruptedIndex("prepared receipt archive digest"));
         }
         Ok(())
     }
+}
 
-    pub(super) fn reader(&self) -> impl Read + '_ {
+impl PreparedReceiptBytes {
+    pub(super) fn reader<'a>(&'a self, archive: &'a PreparedReceiptArchive) -> impl Read + 'a {
         ArchiveReader {
-            archive: self,
+            file: &self.file,
+            archive,
             at: 0,
         }
     }
 }
 
-struct TempArchive<'a> {
-    dir: &'a BodyDir,
-    name: String,
+fn framed_id(salt: u64, len: u64) -> blake3::Hasher {
+    let mut hash = blake3::Hasher::new();
+    hash.update(ID_DOMAIN);
+    hash.update(&salt.to_le_bytes());
+    hash.update(&len.to_le_bytes());
+    hash
 }
 
-impl Drop for TempArchive<'_> {
-    fn drop(&mut self) {
-        self.dir.discard(&self.name);
+struct CountBytes(u64);
+
+impl Write for CountBytes {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len() as u64)
+            .ok_or(io::ErrorKind::InvalidData)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct HashBytes<'a>(&'a mut blake3::Hasher);
+
+impl Write for HashBytes<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
 struct ArchiveWriter<'a> {
     spill: &'a mut BodySpill,
-    hasher: blake3::Hasher,
+    whole: &'a mut blake3::Hasher,
+    identity: &'a mut blake3::Hasher,
+    body: blake3::Hasher,
     len: u64,
     error: Option<Error>,
 }
@@ -116,7 +201,9 @@ impl Write for ArchiveWriter<'_> {
             self.error = Some(error);
             return Err(io::ErrorKind::Other.into());
         }
-        self.hasher.update(bytes);
+        self.whole.update(bytes);
+        self.identity.update(bytes);
+        self.body.update(bytes);
         self.len = len;
         Ok(bytes.len())
     }
@@ -127,6 +214,7 @@ impl Write for ArchiveWriter<'_> {
 }
 
 struct ArchiveReader<'a> {
+    file: &'a BodyFile,
     archive: &'a PreparedReceiptArchive,
     at: u64,
 }
@@ -140,9 +228,8 @@ impl Read for ArchiveReader<'_> {
             return Ok(0);
         }
         let bytes = self
-            .archive
             .file
-            .read_range(self.at, take)
+            .read_range(self.archive.offset + self.at, take)
             .map_err(io::Error::other)?;
         out[..take].copy_from_slice(&bytes);
         self.at += take as u64;
