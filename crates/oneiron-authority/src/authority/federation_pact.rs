@@ -147,6 +147,13 @@ pub struct FederationPactState {
     /// Dual-signed scope commitment for the current ceiling. A pact that
     /// ended keeps it, the one trace of its scope.
     pub scope_digest: [u8; 32],
+    /// The signed nonce `scope_digest` is keyed over (FIX 11730): the
+    /// Connect's, or the last dual-signed re-pact's. Public, as in the log.
+    pub pact_nonce: [u8; 16],
+    /// The consent epoch whose opening key keyed `scope_digest` (FIX
+    /// 11730): 1 for a Connect, a re-pact's own epoch. Promote moves
+    /// `pact_epoch` and keeps the ceiling, so it keeps this too.
+    pub scope_epoch: u64,
     /// Dual-signed ceiling scope pair; ⊥ in both directions once the pact
     /// ends ([`Self::erase_scope`]).
     pub pact_scope: FederationPactScope,
