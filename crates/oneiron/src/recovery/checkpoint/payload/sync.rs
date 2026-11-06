@@ -498,7 +498,11 @@ fn staged<'e>(
 /// its capture's (FIX 10283).
 pub(super) fn restore_window_carriers(
     source: super::restore::OpenedWindowRestoreSource<'_>,
-) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+) -> Result<(
+    Vec<(RowLocator, Vec<u8>)>,
+    Vec<crate::store::window_record_sources::PreparedRecordDocumentRebinding>,
+)> {
+    let source_rows = source.source_rows();
     let (records, windows, unopened) = source.parts();
     let carriers = records
         .iter()
@@ -542,7 +546,11 @@ pub(super) fn restore_window_carriers(
     let restored = restore_checkpoint_windows(&carriers, &opened)?;
     let mut rows = restored.rows;
     rows.extend(restored.markers);
-    Ok(rows)
+    let rebindings = crate::store::window_record_sources::prepare_opened_rebindings(
+        restored.record_sources,
+        source_rows,
+    )?;
+    Ok((rows, rebindings))
 }
 
 /// The window copies a restore opened (FIX 10277): an owner's copy from

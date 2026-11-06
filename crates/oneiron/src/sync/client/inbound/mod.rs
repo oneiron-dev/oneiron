@@ -2,6 +2,7 @@
 
 use loro::VersionVector;
 
+use super::PreparedSyncFrame;
 use super::base::{SyncClient, load_root_doc};
 use super::types::SyncResidenceMode;
 use crate::sync::SyncEvent;
@@ -21,7 +22,7 @@ impl SyncClient {
     pub fn handle_server_message(
         &mut self,
         data: &[u8],
-    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+    ) -> std::result::Result<Vec<PreparedSyncFrame>, TransportError> {
         if data.is_empty() {
             return Err(TransportError::InvalidPayload("empty message"));
         }
@@ -45,27 +46,51 @@ impl SyncClient {
                         max: MAX_DECODED_PAYLOAD_BYTES,
                     });
                 }
-                responses.extend(self.handle_lfs_chunk_reply(payload)?);
+                responses.extend(
+                    (self.handle_lfs_chunk_reply(payload)?)
+                        .into_iter()
+                        .map(PreparedSyncFrame::from),
+                );
             }
             transport::TAG_RPC if self.config.note_session.is_some() => {
                 super::note_session::accept_bind_reply(payload)?;
                 self.note_session_bound = true;
             }
             transport::TAG_ASSET_BODY_WANT..=transport::TAG_ASSET_BODY_RECEIPT => {
-                responses.extend(self.handle_asset_body_frame(tag, payload)?);
+                responses.extend(
+                    (self.handle_asset_body_frame(tag, payload)?)
+                        .into_iter()
+                        .map(PreparedSyncFrame::from),
+                );
             }
             transport::TAG_LEAF_KEY_REQUEST..=transport::TAG_LEAF_KEY_FAILURE => {
-                responses.extend(self.handle_leaf_key_frame(tag, payload)?);
+                responses.extend(
+                    (self.handle_leaf_key_frame(tag, payload)?)
+                        .into_iter()
+                        .map(PreparedSyncFrame::from),
+                );
             }
             transport::TAG_SEALED_UPDATE => {
-                responses.extend(self.handle_sealed_update_frame(payload)?);
+                responses.extend(
+                    (self.handle_sealed_update_frame(payload)?)
+                        .into_iter()
+                        .map(PreparedSyncFrame::from),
+                );
             }
             transport::TAG_DOCUMENT => {
-                responses.extend(self.handle_document_frame(transport::decode_document(payload)?)?);
+                responses.extend(
+                    (self.handle_document_frame(transport::decode_document(payload)?)?)
+                        .into_iter()
+                        .map(PreparedSyncFrame::from),
+                );
             }
             transport::TAG_BATCH => {
                 for frame in transport::decode_document_batch(payload)? {
-                    responses.extend(self.handle_document_frame(frame)?);
+                    responses.extend(
+                        (self.handle_document_frame(frame)?)
+                            .into_iter()
+                            .map(PreparedSyncFrame::from),
+                    );
                 }
             }
             TAG_SYNC_UPDATE => {
@@ -111,7 +136,11 @@ impl SyncClient {
                     self.root_doc = restored;
                     return Err(TransportError::Storage(format!("persist root doc: {err}")));
                 }
-                responses.extend(self.newly_followed_window_requests()?);
+                responses.extend(
+                    (self.newly_followed_window_requests()?)
+                        .into_iter()
+                        .map(PreparedSyncFrame::from),
+                );
             }
             TAG_EPHEMERAL => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
@@ -198,7 +227,11 @@ impl SyncClient {
         if tag != TAG_WINDOW_SYNC {
             self.replay_deferred_federation_update()?;
         } else {
-            responses.extend(self.owner_note_requests()?);
+            responses.extend(
+                (self.owner_note_requests()?)
+                    .into_iter()
+                    .map(PreparedSyncFrame::from),
+            );
         }
         Ok(responses)
     }

@@ -47,6 +47,7 @@ use crate::sync::window::{
 mod deferred;
 mod send;
 
+pub use send::PreparedSyncFrame;
 pub(crate) use send::WindowClaimCopyRelease;
 
 /// A sealed world update whose isolated check waits on an edge endpoint no
@@ -380,7 +381,7 @@ impl SyncClient {
         window_key: &str,
         sub_tag: u8,
         payload: &[u8],
-    ) -> Result<Vec<Vec<u8>>, TransportError> {
+    ) -> Result<Vec<PreparedSyncFrame>, TransportError> {
         let receipt = WindowPadReceipt::decode(payload)?;
         let held = sub_tag == window_sub_tags::RESIDENCE_HELD;
         if held && receipt.readiness == WindowPadReadiness::NotReady {
@@ -420,13 +421,13 @@ impl SyncClient {
                 &raw,
                 window.as_ref().map(|window| &window.doc),
             );
-            return self.window_send_frames(
-                &carrier,
+            let carrier = self.prepare_window_claim_send(
+                carrier,
                 window_key,
                 sent.sub_tag,
-                sent.binding.queue_seq,
-                &raw,
+                window.as_ref().map(|window| &window.doc),
             );
+            return carrier.reply_frames(self, sent.binding.queue_seq, &raw);
         }
         if let SentKey::Residence(seq) = key {
             let answer = if held {
@@ -457,7 +458,7 @@ impl SyncClient {
         sub_tag: u8,
         payload: &'a [u8],
     ) -> Result<
-        ControlFlow<Vec<Vec<u8>>, (u8, WindowPadPayload<'a>, HomeClaimCopies)>,
+        ControlFlow<Vec<PreparedSyncFrame>, (u8, WindowPadPayload<'a>, HomeClaimCopies)>,
         TransportError,
     > {
         if sub_tag == window_sub_tags::WINDOW_PAD_RECEIPT {
@@ -516,9 +517,15 @@ impl SyncClient {
                     // What it carries may prove an edge another staged update waits on.
                     let mut answers = Vec::new();
                     self.drain_staged_world_updates(Some(&mut answers))?;
-                    return Ok(ControlFlow::Break(answers));
+                    return Ok(ControlFlow::Break(
+                        answers.into_iter().map(PreparedSyncFrame::from).collect(),
+                    ));
                 }
-                SealedCheck::Answered(answer) => return Ok(ControlFlow::Break(answer)),
+                SealedCheck::Answered(answer) => {
+                    return Ok(ControlFlow::Break(
+                        answer.into_iter().map(PreparedSyncFrame::from).collect(),
+                    ));
+                }
                 SealedCheck::Held => {
                     if self.record_held_window_payload(key, &envelope.payload)? {
                         return Ok(ControlFlow::Break(Vec::new()));
@@ -554,8 +561,9 @@ impl SyncClient {
                 },
             );
         }
-        self.not_ready_answer(key, sub_tag, &receipt)
-            .map(ControlFlow::Break)
+        self.not_ready_answer(key, sub_tag, &receipt).map(|frames| {
+            ControlFlow::Break(frames.into_iter().map(PreparedSyncFrame::from).collect())
+        })
     }
 
     /// A bulk state's envelope for `key`, its pads installed here first.

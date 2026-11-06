@@ -235,6 +235,33 @@ pub(in crate::sync) fn peer_row_in_txn(
     Ok(false)
 }
 
+/// Transport-only origin check for a restored native SKILL source. It reads
+/// both original origin forms without minting an import or changing either.
+pub(crate) fn record_document_peer_source_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    window: &str,
+    entity: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if !EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SKILL)
+    {
+        return Err(Error::InvalidConfig("not a native skill source".into()));
+    }
+    let sent = digest(raw);
+    if carries_origins(doc)
+        && map_get_bytes(&doc.get_map(PEER_ORIGIN_MAP), &entity.to_hex()).as_deref()
+            == Some(sent.as_slice())
+    {
+        return Ok(true);
+    }
+    Ok(PEER_ORIGIN
+        .get(store, txn, &origin_key(window, entity))?
+        .is_some_and(|held| latest_origin(&held) == sent.as_slice()))
+}
+
 /// Drops the record of each carrier a local path removes, in any window,
 /// when it holds those exact bytes.
 pub(in crate::sync) fn forget_peer_rows(

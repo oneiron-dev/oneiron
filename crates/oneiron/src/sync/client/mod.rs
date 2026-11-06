@@ -62,7 +62,6 @@ mod types;
 mod window_pads;
 
 pub use self::base::SyncClient;
-pub(crate) use self::window_pads::WindowClaimCopyRelease;
 pub use self::connect::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
 };
@@ -91,7 +90,8 @@ pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
     SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
-
+pub use self::window_pads::PreparedSyncFrame;
+pub(crate) use self::window_pads::WindowClaimCopyRelease;
 #[cfg(test)]
 mod tests;
 

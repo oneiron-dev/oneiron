@@ -1,20 +1,24 @@
 //! Metadata of an authenticated record/document transport, not native admission.
 
 mod history;
+mod rebind;
 mod retained;
 pub(crate) use history::remove_history_in_txn;
+pub(crate) use rebind::{
+    PreparedRecordDocumentRebinding, persist_opened_rebindings, prepare_opened_rebindings,
+};
 pub(crate) use retained::{RetainedRecordDocumentSource, retained_in_txn};
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::entity_doc::CarriedRecordDocument;
+use crate::entity_doc::{CarriedRecordDocument, RefinementOriginSource};
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RecordDocumentPair {
     pub(crate) row: [u8; 32],
@@ -24,6 +28,26 @@ pub(crate) struct RecordDocumentPair {
 }
 
 impl RecordDocumentPair {
+    pub(crate) fn of(
+        raw: &[u8],
+        head: &CarriedRecordDocument,
+        snapshot: &[u8],
+        refinement: Option<&RefinementOriginSource>,
+    ) -> Result<Self> {
+        let refinement = refinement.map(|source| {
+            let mut digest = blake3::Hasher::new();
+            digest.update(&source.revision().0);
+            digest.update(source.raw());
+            *digest.finalize().as_bytes()
+        });
+        Ok(Self {
+            row: *blake3::hash(raw).as_bytes(),
+            head: *blake3::hash(&head.encode()?).as_bytes(),
+            snapshot: *blake3::hash(snapshot).as_bytes(),
+            refinement,
+        })
+    }
+
     fn identity(&self) -> String {
         let mut digest = blake3::Hasher::new();
         digest.update(&self.row);
