@@ -507,8 +507,14 @@ impl LimitsConfig {
             (EngineLimit::KeyedKeyBytes, keyed_key_bytes),
             (EngineLimit::BookingEmailBytes, booking_email_bytes),
             (EngineLimit::BookingIntakeAnswers, booking_intake_answers),
-            (EngineLimit::BookingIntakeValueBytes, booking_intake_value_bytes),
-            (EngineLimit::BookingLocalTimeWindows, booking_local_time_windows),
+            (
+                EngineLimit::BookingIntakeValueBytes,
+                booking_intake_value_bytes,
+            ),
+            (
+                EngineLimit::BookingLocalTimeWindows,
+                booking_local_time_windows,
+            ),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,
