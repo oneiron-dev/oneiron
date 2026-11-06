@@ -108,6 +108,11 @@ pub struct EngineExecutorConfig {
     pub global_tier: ModelTierRef,
     pub determinism: CodeRunDeterminism,
     pub limits: EngineExecutorLimits,
+    /// What started this run when its dispatch was an event (FIX 15011):
+    /// its opening model request closes with the wake opener. `None` for a
+    /// run no event started, and for a continuation, which goes on from its
+    /// fork. Not part of the run's replay identity.
+    pub wake: Option<crate::context_board::TurnWake>,
 }
 
 impl EngineExecutorConfig {
