@@ -12,10 +12,17 @@
 //!   same Gmail id, as the IMAP wire names a message there; it lands under
 //!   no label, and the live sync files it under the folders that hold it. A
 //!   message with no Gmail id is refused.
-//! - Any other IMAP mailbox takes any mbox: a message's id is the hash of
-//!   its `Message-ID`, its header block and its size with each line ended by
-//!   CRLF, as the IMAP wire names it on a server that is not Gmail (of its
-//!   bytes when it has no `Message-ID`).
+//! - Any other IMAP mailbox takes any mbox, and a message is named as the
+//!   IMAP wire names it where the server names messages neither by Gmail's
+//!   id nor by its own (`OBJECTID`). Its header id, the hash of its
+//!   `Message-ID`, its header block and its size with each line ended by
+//!   CRLF, only proposes a name (fix list row 19145): when the vault holds a
+//!   copy under that id, the BLAKE3 of the whole message decides. The same
+//!   as that copy's, it is that message; another, or not known (a copy the
+//!   live sync landed by its headers only), it is its own message, named by
+//!   its digest. One with no `Message-ID` is named by the hash of its bytes.
+//!   Every message landed keeps its digest, so a copy the live sync finds
+//!   later is proved against it.
 //!
 //! Trash, spam, drafts and chats never land; a "recent months" copy setting
 //! leaves older mail out; a search-only mailbox imports nothing. One call
@@ -30,7 +37,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::gmail::{address_list, reads_google_mail, rfc2822_seconds};
-use super::imap::{content_id, gmail_id, imap_account_on_gmail};
+use super::imap::{content_id, digest_variant_id, gmail_id, imap_account_on_gmail, whole_digest};
 use super::importer::{MONTH_SECONDS, copies};
 use super::landing::{LandOutcome, Landing};
 use super::mbox::{MboxMessage, MboxReader};
@@ -39,7 +46,7 @@ use super::pack::require_pack_active_in;
 use super::source::{
     MailCopySetting, MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES,
 };
-use super::state::{MailPresence, MailStage, OCCURRENCES, occurrence_key};
+use super::state::{MailOccurrence, MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::{MailFull, MailHeaders};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
@@ -237,7 +244,8 @@ enum ImportNaming {
     /// An IMAP mailbox on Google's IMAP host: the Gmail id, as the IMAP wire
     /// names a message where the server announces `X-GM-EXT-1`.
     GmailImap,
-    /// Any other IMAP mailbox: its `Message-ID`, header block and size.
+    /// Any other IMAP mailbox: its `Message-ID`, header block and size,
+    /// proved by its whole digest on a collision.
     HeaderBlock,
 }
 
@@ -344,19 +352,20 @@ impl Intake<'_> {
             self.report.skipped += 1;
             return Ok(());
         }
-        let held = {
-            let txn = self
-                .vault
-                .store
-                .env
-                .read_txn()
-                .map_err(crate::Error::from)?;
-            OCCURRENCES.get(
-                &self.vault.store,
-                &txn,
-                &occurrence_key(self.source, &headers.provider_id),
-            )?
-        };
+        let digest = whole_digest(&message.raw);
+        let mut held = self.occurrence(&headers.provider_id)?;
+        // A header id is proved as the IMAP wire proves it (fix list row
+        // 19145): a copy under it whose digest is another, or not known, is
+        // another message, and this one is named by its own digest.
+        if self.naming == ImportNaming::HeaderBlock
+            && headers.rfc_message_id.is_some()
+            && held
+                .as_ref()
+                .is_some_and(|held| held.content_digest != Some(digest))
+        {
+            headers.provider_id = digest_variant_id(&headers.provider_id, &digest);
+            held = self.occurrence(&headers.provider_id)?;
+        }
         if held.as_ref().is_some_and(|held| {
             held.stage == MailStage::Body || held.presence != MailPresence::Present
         }) {
@@ -380,6 +389,7 @@ impl Intake<'_> {
             headers: headers.clone(),
             body_text: body.text,
             attachments: body.attachments,
+            content_digest: Some(digest),
         };
         match self.landing.land(&self.row, &headers, Some(&full), false)? {
             LandOutcome::Landed => self.report.landed += 1,
@@ -387,6 +397,21 @@ impl Intake<'_> {
             LandOutcome::Refused(reason) => self.report.refuse(reason),
         }
         Ok(())
+    }
+
+    /// The source's copy of `provider_id`, of any presence.
+    fn occurrence(&self, provider_id: &str) -> MemoryResult<Option<MailOccurrence>> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(OCCURRENCES.get(
+            &self.vault.store,
+            &txn,
+            &occurrence_key(self.source, provider_id),
+        )?)
     }
 
     fn save(&self, key: &(EntityId, [u8; 32]), progress: &MboxImportProgress) -> MemoryResult<()> {
