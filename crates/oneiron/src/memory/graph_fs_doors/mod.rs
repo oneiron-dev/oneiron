@@ -10,7 +10,7 @@ use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::ClaimReadStatus;
 use crate::graph_fs::{
     GRAPH_FS_PROJECTION_VERSION, GraphFsCommandOutput, GraphFsCoreutilsDecision, GraphFsEntryKind,
-    GraphFsOptions, GraphFsResolver,
+    GraphFsOptions, GraphFsResolver, checkpoint, copy_text_parts,
 };
 
 impl GraphFsMountRequest {
@@ -117,8 +117,8 @@ impl Memory<'_> {
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> MemoryResult<GraphFsDirectoryView> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree =
-            self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
+        let options = input.mount.options();
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, options)?;
         let call = call_key("graph_fs.readdir", &input.path)?;
         let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
         let page = tree.readdir_with_reader(&input.path, cursor.as_deref(), reader)?;
@@ -126,15 +126,19 @@ impl Memory<'_> {
             .entries()
             .iter()
             .map(|entry| {
+                checkpoint(reader)?;
                 Ok(GraphFsEntryView {
-                    name: entry.name().to_owned(),
+                    name: copy_text_parts(&[entry.name()], reader, options.page_byte_cap())?,
                     kind: match entry.kind() {
                         GraphFsEntryKind::Directory => GraphFsKind::Directory,
                         GraphFsEntryKind::File => GraphFsKind::File,
                         GraphFsEntryKind::Symlink => GraphFsKind::Symlink,
                         GraphFsEntryKind::Cursor => GraphFsKind::Cursor,
                     },
-                    target: entry.target().map(str::to_owned),
+                    target: entry
+                        .target()
+                        .map(|target| copy_text_parts(&[target], reader, options.page_byte_cap()))
+                        .transpose()?,
                     cursor: entry
                         .cursor_token()
                         .map(|cursor| tree.seal_public_cursor_with_reader(&call, cursor, reader))
@@ -145,7 +149,7 @@ impl Memory<'_> {
             .collect::<MemoryResult<Vec<_>>>()?;
         Ok(GraphFsDirectoryView {
             mount: descriptor(&tree, &input.mount),
-            path: page.path().to_owned(),
+            path: copy_text_parts(&[page.path()], reader, options.page_byte_cap())?,
             entries,
             next_cursor: page
                 .next_cursor()
