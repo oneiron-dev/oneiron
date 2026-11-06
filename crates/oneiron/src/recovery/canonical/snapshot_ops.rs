@@ -8,7 +8,7 @@ impl CanonicalSnapshot {
     /// Validate every section and reference before any reconstruction or storage write.
     pub fn validate(&self) -> Result<()> {
         let mut validation = CanonicalValidation::default();
-        while !validation.advance(self)? {}
+        while !validation.advance(self, usize::MAX)? {}
         Ok(())
     }
 
