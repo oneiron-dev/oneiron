@@ -290,6 +290,15 @@ Tag field storage is now the native TagAttributes carrier; mutable borrows expos
 only the attribute slice, and plain Vec extraction returns the carrier instead
 when it still has an owned guard. No markup5ever trait, package version, manifest,
 content cap, default, deadline or configuration setting changes. Atomic payload
-copies, original-name scratch, public extraction/mutations/clones, other parser
+copies, ordinary unhooked merge-name scratch, public extraction/mutations/clones, other parser
 vectors, boxed callback/guard metadata, allocator-private work and opaque native
 intervals remain unadmitted; this does not complete FIX 9615.
+
+The native checked attribute-merge callback now compares incoming names only
+with the original destination prefix, recorded before its first push. Incoming
+entries never become part of that prefix, so duplicate incoming names absent
+from the original destination remain accepted. The callback no longer copies
+original names into a temporary vector, including when the incoming carrier is
+empty. Its owning iterator still frees input storage before releasing admission.
+The ordinary unhooked TreeSink Vec entry keeps its original wrapping and copied
+names; that separate public path remains unadmitted.
