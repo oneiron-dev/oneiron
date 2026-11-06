@@ -361,5 +361,10 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
+mod bootstrap_check;
 mod filter;
+mod projection;
+mod projection_history;
+mod selection;
+pub(in crate::sync) use bootstrap_check::check_bootstrap_sources;
 pub(super) use filter::{filter_window_doc, filter_window_doc_in_scope};
