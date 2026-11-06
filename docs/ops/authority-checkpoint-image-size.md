@@ -23,6 +23,9 @@ chain parents, archive manifests, unresolved rows, or other image fields:
    retained point is a whole state or an explicit rejection. No retained delta
    needs a dropped base. The first non-fitting or missing older point ends the
    suffix; omitted states remain unknown and request history when needed.
+   A late fork on a refolded row also requests history if any main-log
+   ancestor has unknown state, rather than treating missing rejection evidence
+   as an admitted ancestor.
 3. A successor of a partial image carries its actual known states through the
    same serialization normalization, then selects the suffix from all covered
    row parents. Dropped older points cannot re-enter the fitting suffix as an
