@@ -10,8 +10,8 @@ use super::archive_index::{
 };
 use super::document_import::parse_id;
 use super::{
-    ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportEpochFloor,
-    ExportPack, ExportRowBirth, ExportRun,
+    ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportPack,
+    ExportRowBirth, ExportRun,
 };
 use crate::Vault;
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
@@ -28,10 +28,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// (OF-222).
     pub(super) fn validate(&mut self, vault: &Vault) -> Result<()> {
         self.manifest.validate()?;
-        let mut floors = self.spool.rows(ArchiveRecordKind::EpochFloor);
-        while let Some((_, floor)) = floors.next_parsed::<ExportEpochFloor>(&self.spool)? {
-            parse_id(&floor.session)?;
-        }
+        super::epoch_floors::validate_epoch_floors(&self.spool)?;
         let mut runs = self.spool.rows(ArchiveRecordKind::Run);
         while let Some((_, run)) = runs.next_parsed::<ExportRun>(&self.spool)? {
             if !self
