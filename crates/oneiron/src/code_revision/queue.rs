@@ -83,6 +83,9 @@ impl Vault {
                 ));
             }
             seal.attach_in_txn(self, &mut wtxn)?;
+            crate::skill_attribution::note_queue_revision_derivations_in_txn(
+                self, &mut wtxn, revision,
+            );
             wtxn.commit()?;
             return Ok(revision.revision_id);
         }
@@ -99,6 +102,7 @@ impl Vault {
         }
         super::queue_root::put_queue_root_in_txn(&self.store, &mut wtxn, revision)?;
         seal.attach_in_txn(self, &mut wtxn)?;
+        crate::skill_attribution::note_queue_revision_derivations_in_txn(self, &mut wtxn, revision);
         wtxn.commit()?;
         Ok(revision.revision_id)
     }

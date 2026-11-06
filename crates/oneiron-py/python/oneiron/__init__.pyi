@@ -172,6 +172,7 @@ class RecallResidence(TypedDict):
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
+    narrowing: Facade.ScopedReadReceipt
     scope_honesty: ScopeHonesty
     retrieval_meta: RetrievalMeta
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
