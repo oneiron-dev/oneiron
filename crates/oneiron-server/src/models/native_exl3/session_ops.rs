@@ -13,8 +13,8 @@
 use std::path::Path;
 
 use oneiron::llm::{
-    SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionCapability, SessionExport, SessionExported,
-    SessionImport, SessionImported, SessionOp,
+    SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionAppend, SessionAppended, SessionCapability,
+    SessionExport, SessionExported, SessionImport, SessionImported, SessionInvalidation, SessionOp,
 };
 use oneiron_driver::InferenceWorker;
 use serde::Serialize;
@@ -133,6 +133,74 @@ pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
     }
     report(worker, &frame.body);
     serde_json::from_value(frame.body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))
+}
+
+pub(in crate::models) type AppendSourceFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(), SessionInvalidation>> + Send + 'a>,
+>;
+pub(in crate::models) type AppendSourceCheck<'a> = dyn Fn() -> AppendSourceFuture<'a> + Sync + 'a;
+
+/// The successor authority keeps its rejection separate from a worker fault.
+pub(in crate::models) enum ReleasedAppendFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(SessionInvalidation),
+}
+
+pub(in crate::models) async fn append_source_released(
+    socket: &Path,
+    epoch: &str,
+    body: &SessionAppend,
+    conversation: &JsonValue,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &AppendSourceCheck<'_>,
+) -> Result<SessionAppended, ReleasedAppendFault> {
+    let op = SessionOp::Append;
+    if !lease.has_dispatch_release() {
+        return send(socket, epoch, op, body, Some(conversation), worker)
+            .await
+            .map_err(ReleasedAppendFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let bytes =
+        serde_json::to_vec(conversation).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let input = InputRegion::new(&bytes).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let mut channel = Channel::connect(socket)
+        .await
+        .map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_append_released(
+            op.wire_name(),
+            Some(epoch),
+            body,
+            input.outbound(),
+            lease,
+            source,
+        )
+        .await
+        .map_err(|error| match error {
+            super::transport::AppendExchangeError::Transport(_) => {
+                ReleasedAppendFault::Op(OpFault::Cut)
+            }
+            super::transport::AppendExchangeError::Release(error) => {
+                ReleasedAppendFault::Release(error)
+            }
+            super::transport::AppendExchangeError::Source(reason) => {
+                ReleasedAppendFault::Source(reason)
+            }
+        })?;
+    drop(input);
+    if frame.op == "refused" {
+        return Err(ReleasedAppendFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedAppendFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))
 }
 
 /// `session.export` of `body` to the incarnation `epoch` names: its answer
