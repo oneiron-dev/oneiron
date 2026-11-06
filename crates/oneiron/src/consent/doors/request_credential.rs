@@ -38,6 +38,7 @@ impl Vault {
             || person.request_credential.is_some()
             || person.host_action.is_some()
             || credential.claims().holder_ref != person.actor.to_hex()
+            || credential.claims().trusted_contact.is_some()
         {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "credential is not this person's own request slip",

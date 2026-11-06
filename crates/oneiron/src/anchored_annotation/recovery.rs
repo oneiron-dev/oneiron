@@ -32,9 +32,6 @@ use crate::write_envelope::WriteActor;
 
 mod scoped;
 
-/// The most prior-anchor hops one restore walks back.
-const MAX_PRIOR_HOPS: usize = 4_096;
-
 /// Key: artifact + thread + the version the sweep moved the thread onto.
 const PRIOR: SideTable<(EntityId, EntityId, u64), PriorAnchor, Named> =
     SideTable::new(&side_table::ANNOTATION_PRIOR_ANCHOR);
@@ -599,11 +596,13 @@ impl Vault {
         }
         for thread in self.effect_annotation_threads_for_artifact_in_txn(wtxn, artifact_id)? {
             let locator = match thread.drift {
-                Some(drift) => (drift.pinned_version == restored
-                    && thread.anchor.version == restored)
-                    .then(|| thread.anchor.locator.clone()),
+                Some(drift)
+                    if drift.pinned_version == restored && thread.anchor.version == restored =>
+                {
+                    Some(thread.anchor.locator.clone())
+                }
                 None if thread.anchor.version == restored => Some(thread.anchor.locator.clone()),
-                None => self.prior_locator_in_txn(wtxn, artifact_id, &thread, restored)?,
+                _ => self.prior_locator_in_txn(wtxn, artifact_id, &thread, restored)?,
             };
             let Some(locator) = locator else {
                 continue;
@@ -663,7 +662,7 @@ impl Vault {
         restored: u64,
     ) -> Result<Option<Locator>> {
         let mut at = thread.anchor.version;
-        for _ in 0..MAX_PRIOR_HOPS {
+        loop {
             let Some(prior) = PRIOR.get(&self.store, txn, &(*artifact_id, thread.thread_id, at))?
             else {
                 return Ok(None);
@@ -676,7 +675,6 @@ impl Vault {
             }
             at = prior.from_version;
         }
-        Ok(None)
     }
 
     #[expect(clippy::too_many_arguments)]

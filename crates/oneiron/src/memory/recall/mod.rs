@@ -6,6 +6,7 @@ use super::structural::*;
 use super::*;
 use crate::ports::EntityStoreRead;
 
+mod admission;
 mod call_mode;
 mod conversation;
 mod home;
@@ -224,12 +225,9 @@ fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
     let Some(kinds) = &scope.kinds else {
         return Ok(None);
     };
-    if kinds.is_empty() || kinds.len() > crate::registry::ENTITY_TYPE_REGISTRY.len() {
+    if kinds.is_empty() {
         return Err(MemoryError::bad_request_with(
-            format!(
-                "scope.kinds must name between 1 and {} registry kinds",
-                crate::registry::ENTITY_TYPE_REGISTRY.len()
-            ),
+            "scope.kinds must name at least one registry kind",
             &["Name each kind once, or omit kinds for the default kinds."],
         ));
     }
@@ -437,195 +435,36 @@ pub struct MemoryPack {
     pub residence: Option<RecallResidence>,
 }
 
+/// The pack a recall answers with when its door stops waiting at the
+/// deadline before retrieval finished: nothing was ready, so no items, marked
+/// partial, under the reader's own read receipt. The census did not run, so
+/// it says it stopped early. An opened device's says it answered alone.
+fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
+    let quality = RetrievalQuality::Passthrough;
+    let mut pack = MemoryPack {
+        items: Vec::new(),
+        scope_honesty: ScopeHonesty {
+            out_of_scope_worlds: Vec::new(),
+            census_capped: true,
+        },
+        retrieval_meta: RetrievalMeta {
+            quality,
+            confidence_adjustment: quality.confidence_adjustment(),
+            sparse: Some(true),
+            partial: true,
+            ..RetrievalMeta::default()
+        },
+        pack_version: MEMORY_PACK_VERSION,
+        rendered: None,
+        narrowing: Box::new(receipt.clone()),
+        retrieval_run_id: None,
+        residence: None,
+    };
+    pack.stamp_residence(home::local_residence(vault, None));
+    pack
+}
+
 impl Memory<'_> {
-    /// Minimal recall for an exact-world view, with kind/predicate narrowing
-    /// BEFORE lexical top-k. Uses the same recall assembly and ranking as
-    /// [`Self::recall`]; no authority is inferred from these relevance filters.
-    pub fn recall_view(
-        &self,
-        query: &str,
-        scope: &RecallScope,
-        kind: Option<&str>,
-        predicate: Option<&str>,
-        limit: usize,
-    ) -> MemoryResult<MemoryPack> {
-        if limit == 0 || limit > 1000 {
-            return Err(MemoryError::bad_request(
-                "view limit must be between 1 and 1000",
-            ));
-        }
-        let world = scope
-            .world_ref
-            .as_deref()
-            .map(|reference| self.resolve_ref(reference))
-            .transpose()?;
-        let filter = |store: &crate::store::StoreRead<'_>,
-                      txn: &heed::RoTxn<'_>,
-                      id: &EntityId|
-         -> crate::Result<bool> {
-            let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
-                return Ok(false);
-            };
-            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-                return Ok(false);
-            };
-            match kind {
-                Some(kind) if kind_string_for_type(header.entity_type) != kind => return Ok(false),
-                // A view that names no kind takes the scope's kinds, which
-                // recall applies, or else the default kinds.
-                None if scope.kinds.is_none() && CONTAINER_KINDS.contains(&header.entity_type) => {
-                    return Ok(false);
-                }
-                _ => {}
-            }
-            if header.entity_type != ENTITY_TYPE_CLAIM {
-                return Ok(world.is_none() && predicate.is_none());
-            }
-            let Some(body) = raw
-                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-            else {
-                return Ok(false);
-            };
-            Ok(claim_surfaceable(&body)
-                && crate::claim::has_live_support_in_txn(store, txn, &body)?
-                && body.world == world
-                && predicate.is_none_or(|predicate| body.predicate == predicate))
-        };
-        let mut pack = self.recall_routed(
-            None,
-            query,
-            Effort::Light,
-            scope,
-            limit,
-            None,
-            None,
-            Some(&filter),
-            &RecallExecution::default(),
-            None,
-        )?;
-        let world_hex = world.map(|id| id.to_hex());
-        pack.items.retain(|item| {
-            item.world == world_hex
-                && kind.is_none_or(|kind| item.kind == kind)
-                && predicate.is_none_or(|predicate| item.predicate.as_deref() == Some(predicate))
-        });
-        Ok(pack)
-    }
-
-    /// Effort-dialed retrieval into an S6 `MemoryPack`.
-    ///
-    /// High, xhigh and max require a lease and a prepared reranker; use
-    /// [`Self::recall_with_execution`] to supply execution inputs. The ordinary
-    /// door refuses unsupported paid work instead of returning a fake success.
-    /// Dense and phonetic inputs are optional, explicit host inputs.
-    pub fn recall(
-        &self,
-        query: &str,
-        effort: Effort,
-        scope: &RecallScope,
-        limit: usize,
-        format: Option<&str>,
-        lease: Option<&BudgetLease>,
-    ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(
-            None,
-            query,
-            effort,
-            scope,
-            limit,
-            format,
-            lease,
-            None,
-            &RecallExecution::default(),
-            None,
-        )
-    }
-
-    /// Runs the same recall body with dense input, prepared scoring and/or a deadline.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "adds per-request execution inputs to recall"
-    )]
-    pub fn recall_with_execution(
-        &self,
-        query: &str,
-        effort: Effort,
-        scope: &RecallScope,
-        limit: usize,
-        format: Option<&str>,
-        lease: Option<&BudgetLease>,
-        execution: &RecallExecution<'_>,
-    ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(
-            None, query, effort, scope, limit, format, lease, None, execution, None,
-        )
-    }
-
-    /// Recalls inside a session. Retrieval reads the room's overlay ∪ base
-    /// under the same scope and gates (ARCH-0052 §2); every telemetry write
-    /// (including the seed search and pack finalization) rides the one
-    /// session route captured for this call. Off-record rows therefore
-    /// evaporate with the room, never leaking into the base retrieval ledger.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "recall's public parameter list plus the session it runs inside; the two \
-                  doors must stay call-compatible, so neither may regroup its parameters"
-    )]
-    pub fn recall_in_session(
-        &self,
-        session: &crate::off_record::OffRecordSession<'_>,
-        query: &str,
-        effort: Effort,
-        scope: &RecallScope,
-        limit: usize,
-        format: Option<&str>,
-        lease: Option<&BudgetLease>,
-    ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(
-            Some(session),
-            query,
-            effort,
-            scope,
-            limit,
-            format,
-            lease,
-            None,
-            &RecallExecution::default(),
-            None,
-        )
-    }
-
-    /// Recall with explicit execution inputs, keeping all telemetry on the room route.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "session sibling of recall_with_execution"
-    )]
-    pub fn recall_in_session_with_execution(
-        &self,
-        session: &crate::off_record::OffRecordSession<'_>,
-        query: &str,
-        effort: Effort,
-        scope: &RecallScope,
-        limit: usize,
-        format: Option<&str>,
-        lease: Option<&BudgetLease>,
-        execution: &RecallExecution<'_>,
-    ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(
-            Some(session),
-            query,
-            effort,
-            scope,
-            limit,
-            format,
-            lease,
-            None,
-            execution,
-            None,
-        )
-    }
-
     /// The one recall body. `session` is `None` for every canonical caller,
     /// which therefore takes byte-identical base paths. `pin` is a paid
     /// recall's one selection, shared by its passes (FIX 5006).
@@ -759,8 +598,15 @@ impl Memory<'_> {
         // as_of, never at the wall clock (FIX 12226).
         let census = census.with_judged_at(execution.as_of);
         let lane = lane.with_judged_at(execution.as_of);
-        let mut receipt = lane.read_receipt(None, 0)?;
-        let (plan_filter, plan_policy) = lane.recall_plan()?;
+        // The receipt of a search: the candidates it ranks, the key's own
+        // rows and those its own live Grants read (FIX 7528). A key that
+        // reads nothing by itself still recalls what a Grant of its own reads.
+        let mut receipt = lane.search_receipt(None, 0)?;
+        let crate::claim::SearchPlan {
+            filter: plan_filter,
+            candidates: plan_candidates,
+            policy: plan_policy,
+        } = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
         let pack_format = format.map(parse_pack_format).transpose()?;
@@ -932,7 +778,7 @@ impl Memory<'_> {
                 .world(world_scope)
                 .corpus(projects.clone())
                 .retrieval_effort(effective, &seeds)
-                .authority_filter(plan_filter.clone())
+                .authority_filter(plan_candidates.clone())
                 .token_budget(budget);
             builder = builder
                 .filter_candidates(&admitted)
@@ -1127,38 +973,7 @@ impl Memory<'_> {
         }
         Ok(pack)
     }
-}
 
-/// The pack a recall answers with when its door stops waiting at the
-/// deadline before retrieval finished: nothing was ready, so no items, marked
-/// partial, under the reader's own read receipt. The census did not run, so
-/// it says it stopped early. An opened device's says it answered alone.
-fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
-    let quality = RetrievalQuality::Passthrough;
-    let mut pack = MemoryPack {
-        items: Vec::new(),
-        scope_honesty: ScopeHonesty {
-            out_of_scope_worlds: Vec::new(),
-            census_capped: true,
-        },
-        retrieval_meta: RetrievalMeta {
-            quality,
-            confidence_adjustment: quality.confidence_adjustment(),
-            sparse: Some(true),
-            partial: true,
-            ..RetrievalMeta::default()
-        },
-        pack_version: MEMORY_PACK_VERSION,
-        rendered: None,
-        narrowing: Box::new(receipt.clone()),
-        retrieval_run_id: None,
-        residence: None,
-    };
-    pack.stamp_residence(home::local_residence(vault, None));
-    pack
-}
-
-impl Memory<'_> {
     /// The worlds one recall reads (ARCH-0022). A named world reads with base
     /// reality; no name reads the actor's default, base plus its active world.
     /// A handle bound to a room turn meets either with the room's Scope.

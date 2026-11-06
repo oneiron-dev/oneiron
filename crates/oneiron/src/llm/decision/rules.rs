@@ -9,8 +9,6 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
 use super::ladder::{DecisionCall, DecisionProvider, ProviderDecision, validate_pin};
 use super::types::invalid;
 use super::{
@@ -19,12 +17,9 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::derived_domains::DECISION_HOST_RULE;
-use crate::side_table::{self, Named, SideTable};
+pub use crate::store::decision_rule_rows::HostRule;
+use crate::store::decision_rule_rows::RULES;
 use crate::{EntityId, Result, Vault};
-
-/// Every revision of every rule row, keyed by the rule's id and its revision.
-pub(super) const RULES: SideTable<(EntityId, u64), HostRule, Named> =
-    SideTable::new(&side_table::DECISION_HOST_RULE);
 
 /// The longest reason a rule row keeps, in bytes: the consent confirm's reason bound.
 pub const MAX_RULE_REASON_BYTES: usize = 1_024;
@@ -33,51 +28,9 @@ pub const MAX_RULE_REASON_BYTES: usize = 1_024;
 /// the owner gave (P(yes) 1 or 0 for yes/no, 1 for any other answer).
 const RULE_CERTAINTY: f64 = 1.0;
 
-/// One revision of a rule row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostRule {
-    #[serde(with = "super::codec::entity")]
-    #[schemars(with = "String")]
-    pub id: EntityId,
-    /// From 1.
-    pub revision: u32,
-    /// The question it answers, pinned whole: a new wording, contract or version is a new
-    /// question, and this row does not answer it.
-    pub question: DecisionQuestion,
-    /// The evidence the ask was about, in the order it was asked.
-    #[serde(with = "super::codec::entities")]
-    #[schemars(with = "Vec<String>")]
-    pub evidence: Vec<EntityId>,
-    pub answer: DecisionAnswer,
-    /// The owner's reason, as typed.
-    pub reason: String,
-    /// The ask whose answer wrote this revision.
-    #[serde(with = "super::codec::entity")]
-    #[schemars(with = "String")]
-    pub ask: EntityId,
-    pub ask_seq: u64,
-    /// The owner who wrote it; erased once that owner was erased (FIX 3520).
-    #[serde(with = "super::codec::answer_actor")]
-    #[schemars(with = "String")]
-    pub by: AnswerActor,
-    /// Vault clock seconds when it was written.
-    pub written_at: u64,
-    /// Vault clock seconds when the owner revoked it; none while it stands.
-    pub revoked_at: Option<u64>,
-}
-
 pub use crate::model_decision::HostRuleRef;
 
 impl HostRule {
-    #[must_use]
-    pub fn rule_ref(&self) -> HostRuleRef {
-        HostRuleRef {
-            id: self.id,
-            revision: self.revision,
-        }
-    }
-
     /// The Rule rung's answer from this row.
     fn decision(&self) -> ProviderDecision {
         let probability = match self.answer {

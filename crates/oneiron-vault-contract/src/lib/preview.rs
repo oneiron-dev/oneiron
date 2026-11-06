@@ -70,3 +70,52 @@ pub fn validate_preview_ref(reference: &str) -> Result<(), &'static str> {
     }
     Ok(())
 }
+
+/// Native vault → supervisor registration on the authenticated wake-ledger
+/// socket. The connection stays open for this exact preview lease.
+pub const PREVIEW_ROUTE_OPEN_OP: &str = "preview_route_open";
+
+/// A trusted session manifest from the currently running managed vault.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewRouteRequest {
+    pub op: String,
+    pub vault: String,
+    pub token: crate::TokenHex,
+    pub manifest: PreviewSessionManifest,
+}
+
+impl PreviewRouteRequest {
+    pub fn validate(&self, now: UnixTs) -> anyhow::Result<()> {
+        anyhow::ensure!(self.op == PREVIEW_ROUTE_OPEN_OP, "unknown op");
+        anyhow::ensure!(crate::valid_vault_name(&self.vault), "bad vault name");
+        let token = self.token.expose();
+        anyhow::ensure!(
+            token.len() == crate::TOKEN_LEN * 2
+                && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "malformed token"
+        );
+        self.manifest.validate(now).map_err(anyhow::Error::msg)
+    }
+}
+
+/// The supervisor's projection of the same private lease into its configured
+/// public namespace. This carries no preview credential or independent lease.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewRouteBinding {
+    pub manifest: PreviewSessionManifest,
+    pub lease_handle: String,
+    pub origin: String,
+    pub generation: u64,
+}
+
+/// A successful response has no binding only when the supervisor has no
+/// preview domain configured. Errors do not stand for an unconfigured domain.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewRouteAck {
+    pub ok: bool,
+    pub error: Option<String>,
+    pub binding: Option<PreviewRouteBinding>,
+}

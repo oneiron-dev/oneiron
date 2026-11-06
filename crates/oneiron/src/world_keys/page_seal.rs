@@ -66,7 +66,7 @@ pub use self::creation::{refuse_unfinished_sealed_creation, remove_unfinished_se
 pub(crate) use self::mirror_rewrite::CapturedMirror;
 use self::mirror_rewrite::{captured_identity_current, write_mirror_if_changed};
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
-pub use self::sealed_swap::SealedSwap;
+pub use self::sealed_swap::{SealedSwap, finish_restore_archive_mirror};
 
 /// What the owner is told before choosing the tier, and while it is on.
 pub const PAGE_SEAL_WARNING: &str =

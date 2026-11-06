@@ -11,32 +11,18 @@
 //! receipt's metadata (actor, step hash, key, retry policy and model) and
 //! answers `Erased`: the step is over and is never asked again.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::ResponseFormat;
-use super::public::{ModelStepResult, ModelStepSubmit};
+use super::public::ModelStepResult;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideKey, SideTable};
+pub(super) use crate::store::model_step_submission::Submission;
 use crate::store::{ResponseCarriage, ResponseScan, Store};
 
 pub(super) const SUBMISSIONS: SideTable<AttemptId, Submission, Named> =
     SideTable::new(&side_table::MODEL_STEP_SUBMISSION);
-/// Whether a masked copy of a `MODEL_STEP_SUBMISSION` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn model_step_submission_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<Submission, Named>(bytes)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Submission {
-    pub(super) actor: EntityId,
-    pub(super) input: ModelStepSubmit,
-    pub(super) step_hash: [u8; 32],
-    pub(super) result: Option<ModelStepResult>,
-}
 
 /// Whether an erase already took the row's copies.
 pub(super) fn erased(row: &Submission) -> bool {

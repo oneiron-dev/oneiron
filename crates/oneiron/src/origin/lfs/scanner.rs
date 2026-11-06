@@ -1,4 +1,7 @@
-//! Bounded credential scanning across transport and content-defined boundaries.
+//! Core half of `origin::lfs::scanner`: its store-layer items live in `oneiron_store::origin::lfs::scanner` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::origin::lfs::scanner::*;
 
 use crate::error::{Error, GateError, Result};
 
@@ -40,19 +43,6 @@ pub(crate) struct CredentialStream {
 /// is read whole however a peer cuts it.
 const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
 
-/// The longest key a provider rule reads from where it starts.
-const KEY_MAX: usize = 128;
-
-/// How much of a run of one repeated character a seam keeps: as much as the
-/// longest token any text rule measures (a stream keeps 128 bytes of one too),
-/// so the run reads as it did.
-const RUN_KEEP: usize = 128;
-
-/// How much of a run of whitespace a seam keeps: its first two characters,
-/// which every text rule reads as it reads the whole run (the assignment
-/// rule's `export ` prefix strips only before a run of one space).
-const SPACE_KEEP: usize = 2;
-
 /// How much a segment longer than [`SEAM_MAX`] keeps of each of the places
 /// the assignment rule reads (see [`Seam::bound`]).
 const PART_KEEP: usize = SEAM_MAX / 4;
@@ -91,17 +81,6 @@ struct Seam {
     separator: Option<usize>,
     /// Which part of a segment longer than [`SEAM_MAX`] `tail` holds.
     long: Option<Part>,
-}
-
-/// The part of a long segment a seam's tail holds.
-#[derive(Clone, Copy)]
-enum Part {
-    /// The key, past its first [`PART_KEEP`].
-    Key,
-    /// The value's start, until it holds [`PART_KEEP`].
-    Value,
-    /// What follows the value's start; `true` once some of it was dropped.
-    Rest(bool),
 }
 
 impl Seam {
@@ -254,10 +233,6 @@ impl Seam {
     }
 }
 
-fn segment_break(byte: u8) -> bool {
-    matches!(byte, b'\n' | b'\r' | b',' | b';' | b'{' | b'}')
-}
-
 impl CredentialStream {
     /// The always-on custody reading alone: provider keys and private-key
     /// armor across each feed edge. A hit refuses an object bound for a repo
@@ -388,32 +363,6 @@ impl CredentialStream {
         }
         Ok(())
     }
-}
-
-fn advance(pattern: &[u8], matched: usize, byte: u8) -> usize {
-    if matched == 0 {
-        return usize::from(byte == pattern[0]);
-    }
-    if pattern[matched] == byte {
-        return matched + 1;
-    }
-    // Tiny patterns: recomputing the proper prefix is bounded by eleven bytes.
-    // This handles six-or-more leading dashes without missing a BEGIN marker.
-    let mut candidate = [0u8; 12];
-    candidate[..matched].copy_from_slice(&pattern[..matched]);
-    candidate[matched] = byte;
-    let candidate = &candidate[..matched + 1];
-    (1..=pattern.len().min(candidate.len()))
-        .rev()
-        .find(|&n| candidate.ends_with(&pattern[..n]))
-        .unwrap_or(0)
-}
-
-fn denied(reason: &'static str) -> Error {
-    Error::Gate(GateError::GateWriteRejected {
-        outcome: "deny",
-        reason_codes: vec!["gate.secret_scan.detected", reason],
-    })
 }
 
 /// [`CredentialStream::custody`] as a detector over one whole byte run

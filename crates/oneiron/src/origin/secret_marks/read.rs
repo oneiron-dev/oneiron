@@ -410,7 +410,7 @@ fn for_each_readable_mark_claim_in_txn(
     visit: &mut dyn FnMut(EntityId, ClaimBody) -> Result<()>,
     undecoded: &mut dyn FnMut(EntityId, &[u8], Error) -> Result<()>,
 ) -> Result<()> {
-    crate::claim::for_each_claim_id_for_predicate_in_txn(
+    crate::store::claim_projection::for_each_claim_id_for_predicate_in_txn(
         &vault.store,
         txn,
         REPO_SECRET_MARK_PREDICATE,

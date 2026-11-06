@@ -1,3 +1,6 @@
+//! Cross-actor consult ladder projection over stored ladder state.
+//! Entry [`project_consult_ladder_state`]; read by ladder dashboards and the `verbs` dispatch.
+//! Owned by `task_verb`; transitions themselves run in `consult_ladder`, never here.
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 

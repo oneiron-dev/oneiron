@@ -17,12 +17,13 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::provenance::made_by::MadeByInputRole;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::write_envelope::claim_body::decode_claim_body;
 
 /// The stored rows a query written from `document` is written from: the rows its words or
 /// bytes are read from, and every record those derive from, walked to the end through
 /// `DerivedFrom` edges, registered source versions, the inputs of row births and later text
-/// commits, and a TURN's messages, each row once.
+/// commits, supported typed CLAIM citations, and a TURN's messages, each row once.
 ///
 /// # Errors
 /// A store failure.
@@ -43,6 +44,20 @@ pub(super) fn probe_source_refs_in(
             continue;
         };
         sources.insert(row);
+        // Local citation registration keeps the raw id, not a promotion-normalized TURN.
+        // Unsupported bodies or evidence keep the existing ancestry walk.
+        if record.entity_type == ENTITY_TYPE_CLAIM
+            && let Ok(claim) = decode_claim_body(&record.body, true)
+            && let Ok(references) = claim.evidence_refs()
+        {
+            for reference in references {
+                if let Ok(source) = EntityId::from_hex(&reference.entity)
+                    && vault.store.port_entity_present(txn, &source)?
+                {
+                    frontier.push(source);
+                }
+            }
+        }
         if record.entity_type == ENTITY_TYPE_TURN
             && let Some(members) =
                 crate::tagging::turn_members_in_txn(vault, &vault.store, txn, &row, false)?

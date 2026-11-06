@@ -19,9 +19,13 @@ use crate::write_envelope::provenance::made_by::{
 use super::provenance::BlobVersionProvenance;
 
 /// The class the authenticated writer and the version's own provenance imply.
+/// Queue-check exhaust concludes its run (like an agent run), even though
+/// its author data is the original Human approver (FIX 7227).
 fn version_process_class(actor: &WriteActor, provenance: &BlobVersionProvenance) -> MadeByClass {
     match provenance {
-        BlobVersionProvenance::AgentRun { .. } => MadeByClass::Concluded,
+        BlobVersionProvenance::AgentRun { .. } | BlobVersionProvenance::QueueCheck { .. } => {
+            MadeByClass::Concluded
+        }
         _ if actor.actor_class() == EdgeActorClass::Human => MadeByClass::Stated,
         _ => MadeByClass::Concluded,
     }
@@ -102,7 +106,7 @@ pub(super) fn validate_version_made_by_in_txn(
         secret_scan::scan_metadata_field(text)?;
     }
     if let Some(trigger) = &made_by.trigger
-        && !crate::provenance::birth::trigger_is_live_in_txn(&vault.store, rtxn, trigger)?
+        && !crate::store::birth_record::trigger_is_live_in_txn(&vault.store, rtxn, trigger)?
     {
         return Err(invalid(
             "made_by trigger must name a live task, ask, run or skill",

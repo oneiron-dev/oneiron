@@ -51,6 +51,7 @@ pub mod dispatch_target;
 pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
 mod authorship;
+mod candidate_write;
 pub mod code_instruction;
 pub mod consult_payload_ref;
 pub mod retrieval_scope;
@@ -133,7 +134,11 @@ pub use scope_stamp::{
 };
 pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
 pub use scoped_read::*;
-pub(crate) use scoped_read::{Admitted, claim_access_axes, invalidate_weave_digest_source_in_txn};
+pub(crate) use scoped_read::{
+    Admitted, ClaimReadStatusExt, SearchPlan, claim_access_axes,
+    invalidate_weave_digest_source_in_txn, saved_weave_loop_reason_decisions_in_txn,
+    scrub_saved_weave_loop_reasons_in_txn,
+};
 pub use source_trust::*;
 pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker};
 pub(crate) use write_target::validate_claim_write_target_in_txn;

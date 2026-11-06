@@ -95,16 +95,21 @@ secret). For example, replace **every** placeholder:
 `{"layers":["shipped","vault","holder"],"mode":"nested_narrowing","holder_cap":"vault"}`.
 The host may select `{"layers":["shipped","vault"],...}` to disable holder
 participation; a supplied holder row then refuses. The resolver evaluates the
-selected layers in order. Each override may set `glossary_max_bytes`,
-`glossary_max_terms`, `glossary_max_term_bytes`, `stage_timeout_seconds`, or a
-complete `cleanup` object with `max_candidates_per_word`,
-`max_candidate_bytes` and `language_rules`. A language rule has
-`protected_tokens`, `protected_suffixes`, and `allowed_pairs` of `{from,to}`.
-The vault may adjust shipped defaults within protocol ceilings. A holder may
-only lower bounds, remove permitted pairs/languages, or add protections;
-widening a vault right refuses. Absent rows inherit
+selected layers in order. Each override may supply a complete `cleanup`
+object with `language_rules`. A language rule has `protected_tokens`,
+`protected_suffixes`, and `allowed_pairs` of `{from,to}`. A holder may only
+remove permitted pairs/languages or add protections; widening a vault right
+refuses. Absent rows inherit
 `scripts/meeting-audio-adapter/policy-defaults.json`. The agent writes
 language-specific correction policy and glossary, not Rust constants.
+
+The adapter applies no file-size, glossary-count or term-size cutoff. Large
+profiles still need their exact pinned digest and routed model identity.
+Glossary and policy JSON are decoded from buffered file readers, while the
+native producer still needs the audio bytes and parsed glossary in host
+memory. Blank glossary terms and malformed input remain errors. There is no
+adapter stage-timeout setting; native work uses per-unit admission and
+progress accounting.
 
 Run from the repository root, with an owned target and a timeout:
 

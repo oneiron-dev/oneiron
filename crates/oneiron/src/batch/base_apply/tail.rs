@@ -14,7 +14,7 @@ pub(super) fn apply_tail(
     require_consumed_claim_bindings(&state.claim_materializations, &state.claim_transitions)?;
     // Rule A: each born row's made_by lands in the transaction that births it.
     for (row, birth) in &state.births {
-        crate::provenance::birth::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
+        crate::store::birth_record::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
     }
     if state
         .preflight_gate_decision_ids
@@ -124,11 +124,15 @@ pub(super) fn apply_tail(
         crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture);
     }
 
+    state
+        .question_arrival_ids
+        .extend(&state.materialized_entity_ids);
     finalize_batch_indexes(
         store,
         config,
         wtxn,
         &state.materialized_entity_ids,
+        &state.question_arrival_ids,
         state.pending_hnsw_rebuild,
         state.had_graph_mutation,
         state.had_vector_mutation,

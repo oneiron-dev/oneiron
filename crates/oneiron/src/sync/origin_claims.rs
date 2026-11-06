@@ -214,9 +214,11 @@ fn scrub_held_section_fit_in_txn(
             end: header.occurred_end,
         },
         learned_at: header.learned_at,
+        row_version: header.row_version,
         body: encoded.to_vec(),
     };
     let staged = next.encode();
+    crate::ports::claim_order::observe_in_txn(&vault.store, wtxn, header.row_version)?;
     crate::ports::EntityStoreStaging::port_stage_entity_row(&vault.store, wtxn, id, &staged)?;
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
     let raw = vault

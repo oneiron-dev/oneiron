@@ -2,8 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    BudgetGuard, ContentPart, FallbackRegistry, FatalLlmError, LlmBackend, LlmError, LlmRequest,
-    LlmResponse, LlmUsage, ResponseFormat,
+    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, ResponseFormat,
 };
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
@@ -29,17 +28,10 @@ pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
 pub(crate) use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
+pub use crate::store::model_step_submission::{
+    ModelStepFailure, ModelStepFailureClass, ModelStepResult, ModelStepRetryPolicy, ModelStepSubmit,
+};
 const WORKER: &str = "model-step-door";
-
-/// Transport attempts per model request, including the first send. Retries
-/// past the engine schedule wait its last interval (FIX 9930); the default is
-/// the schedule's own four. Schema corrections remain the existing
-/// one/native or three/shim paid calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelStepRetryPolicy {
-    pub max_attempts: u8,
-}
 
 impl Default for ModelStepRetryPolicy {
     fn default() -> Self {
@@ -49,67 +41,10 @@ impl Default for ModelStepRetryPolicy {
     }
 }
 
-/// A caller-owned stable key freezes one exact request and its retry policy.
-/// The envelope's CallClass declares the deterministic fallback, if any.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelStepSubmit {
-    pub step_key: String,
-    pub request: LlmRequest,
-    #[serde(default)]
-    pub retry: ModelStepRetryPolicy,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStepReceiptRequest {
     pub step_key: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelStepFailureClass {
-    Retryable,
-    Fatal,
-    BudgetDenied,
-    SchemaValidation,
-    Fallback,
-    FinalizeRefused,
-    DeadlineHardCut,
-    Engine,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ModelStepFailure {
-    pub class: ModelStepFailureClass,
-    pub message: String,
-    pub llm: Option<LlmError>,
-    pub validation_attempts: Option<u8>,
-    pub validation_errors: Vec<String>,
-    pub spent_usage: Option<LlmUsage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum ModelStepResult {
-    Finished {
-        response: LlmResponse,
-        /// Present only for ResponseFormat::Json, parsed after the engine's validation.
-        json: Option<serde_json::Value>,
-        memoized: bool,
-        fallback_source: Option<FatalLlmError>,
-        claim_ref: String,
-    },
-    Failed {
-        failure: ModelStepFailure,
-    },
-    /// The existing step executor parked this attempt on its budget trap.
-    BudgetDenied {
-        trap_ref: String,
-    },
-    /// An owner's erase took this step's request and result (FIX 9929). The
-    /// receipt keeps its metadata; the step is over and is never asked again.
-    Erased,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -134,6 +69,49 @@ pub async fn submit_as_owner(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
+    submit(vault, owner, input, Some((backend, guard)))
+        .await?
+        .ok_or_else(|| {
+            MemoryError::from(Error::InvariantViolation(
+                "admitted model step returned no receipt".into(),
+            ))
+        })
+}
+
+/// Resume this owner's frozen saved work before provider admission. A new
+/// or Started-only step returns `None`, without a queue lease or model call.
+/// Saved terminals, including a still-waiting budget trap, keep their
+/// existing receipt path; a consumed trap needs the ordinary admitted path
+/// unless an actual response has since been saved.
+pub async fn resume_saved_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &ModelStepSubmit,
+) -> MemoryResult<Option<ModelStepReceipt>> {
+    if let Some(receipt) = saved_terminal_as_owner(vault, owner, input)? {
+        return Ok(Some(receipt));
+    }
+    let actor = owner.revalidate(vault)?;
+    let id = identity(actor, &input.step_key)?;
+    let frozen = {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        SUBMISSIONS
+            .get(&vault.store, &txn, &id)?
+            .filter(|row| row.actor == actor && same_frozen_request(&row.input, input))
+            .map(|row| row.input)
+    };
+    let Some(frozen) = frozen else {
+        return Ok(None);
+    };
+    submit(vault, owner, frozen, None).await
+}
+
+async fn submit(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: ModelStepSubmit,
+    execution: Option<(&dyn LlmBackend, &BudgetGuard)>,
+) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
     let actor = owner.revalidate(vault)?;
     let id = identity(actor, &input.step_key)?;
@@ -153,7 +131,8 @@ pub async fn submit_as_owner(
                 &ModelStepReceiptRequest {
                     step_key: input.step_key.clone(),
                 },
-            );
+            )
+            .map(Some);
         }
         InvocationEntry::Conflict => {
             return Err(MemoryError::bad_request(
@@ -161,7 +140,7 @@ pub async fn submit_as_owner(
             ));
         }
     };
-    let (mut row, attempt) = vault.with_write_txn(|txn| {
+    let prepared = vault.try_with_write_txn(|txn| -> MemoryResult<_> {
         owner.revalidate_in_txn(vault, txn)?;
         let queue = AttemptQueue::new(vault);
         let mut row = match SUBMISSIONS.get(&vault.store, txn, &id)? {
@@ -170,10 +149,12 @@ pub async fn submit_as_owner(
                 if row.actor != actor || (!erased(&row) && row.input != input) {
                     return Err(Error::InvalidConfig(
                         "model-step key already names another request or retry policy".into(),
-                    ));
+                    )
+                    .into());
                 }
                 row
             }
+            None if execution.is_none() => return Ok(None),
             None => {
                 let mut row = Submission {
                     actor,
@@ -202,8 +183,21 @@ pub async fn submit_as_owner(
             }
         };
         if terminal_result(vault, txn, &row) {
-            return Ok((row, None));
+            return Ok(Some((row, None, None)));
         }
+        // Capture the real saved response in THIS writer before taking the
+        // same attempt's lease. A miss leaves all queue state untouched.
+        let recovery = if execution.is_none() {
+            let Some(recovery) =
+                super::execute::recovery_in_txn(vault, txn, id, &row.step_hash, &row.input.request)
+                    .map_err(super::settled::step_error)?
+            else {
+                return Ok(None);
+            };
+            Some(recovery)
+        } else {
+            None
+        };
         // A consumed budget trap's suspension answers no longer: the SAME
         // attempt and step hash resume (FIX 9928).
         if row.result.take().is_some() {
@@ -222,18 +216,21 @@ pub async fn submit_as_owner(
         )? {
             ClaimOutcome::Claimed(attempt) => attempt,
             _ => {
-                return Err(Error::InvalidConfig(
-                    "model-step attempt is not runnable".into(),
-                ));
+                return Err(
+                    Error::InvalidConfig("model-step attempt is not runnable".into()).into(),
+                );
             }
         };
-        Ok((row, Some(attempt)))
+        Ok(Some((row, Some(attempt), recovery)))
     })?;
+    let Some((mut row, attempt, recovery)) = prepared else {
+        return Ok(None);
+    };
     let Some(attempt) = attempt else {
         if let Some(ModelStepResult::Finished { memoized, .. }) = &mut row.result {
             *memoized = true;
         }
-        return view(vault, id, &row).map_err(MemoryError::from);
+        return view(vault, id, &row).map(Some).map_err(MemoryError::from);
     };
     let context = DurableStepContext {
         vault,
@@ -244,15 +241,24 @@ pub async fn submit_as_owner(
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
     };
-    let outcome = super::execute::call_as_step_with_fallbacks_and_retries(
-        &context,
-        backend,
-        guard,
-        row.input.request.clone(),
-        &FallbackRegistry::standard(),
-        usize::from(row.input.retry.max_attempts - 1),
-    )
-    .await;
+    let outcome = if let Some((backend, guard)) = execution {
+        super::execute::call_as_step_with_fallbacks_and_retries(
+            &context,
+            backend,
+            guard,
+            row.input.request.clone(),
+            &FallbackRegistry::standard(),
+            usize::from(row.input.retry.max_attempts - 1),
+        )
+        .await
+    } else {
+        let recovery = recovery.ok_or_else(|| {
+            MemoryError::from(Error::InvariantViolation(
+                "saved model step lost its captured recovery".into(),
+            ))
+        })?;
+        super::execute::recover_step(&context, &row.step_hash, &row.input.request, recovery, None)
+    };
     row.result = Some(match outcome {
         Ok(StepOutcome::Finished {
             response, memoized, ..
@@ -337,7 +343,7 @@ pub async fn submit_as_owner(
         put_submission_in_txn(vault, txn, &id, &mut row)?;
         Ok(())
     })?;
-    view(vault, id, &row).map_err(MemoryError::from)
+    view(vault, id, &row).map(Some).map_err(MemoryError::from)
 }
 
 /// The saved terminal of the caller's own step `input` names, read before
@@ -388,14 +394,15 @@ fn terminal_result(vault: &Vault, txn: &heed::RoTxn<'_>, row: &Submission) -> bo
 
 /// Whether `submitted` is the step `frozen` froze, apart from the fields a
 /// raw call's admission writes from the host's current configuration: the
-/// purpose's default tier, the model's catalog locality, and the world it
-/// clears.
+/// purpose's default tier, the model's catalog locality, the world it
+/// clears, and the host-only keyless stamp.
 fn same_frozen_request(frozen: &ModelStepSubmit, submitted: &ModelStepSubmit) -> bool {
     let mut submitted = submitted.clone();
     let envelope = &mut submitted.request.envelope;
     envelope.scope.world = None;
     envelope.tier.purpose_default = frozen.request.envelope.tier.purpose_default.clone();
     envelope.locality = frozen.request.envelope.locality.clone();
+    envelope.host_keyless = frozen.request.envelope.host_keyless;
     submitted == *frozen
 }
 

@@ -16,6 +16,7 @@ pub(crate) fn record_external_effect_policy(
         grant_ref,
         approve_once,
         approval_context,
+        ask_consent: _,
         matched_grant,
         envelope_reservation,
         envelope_wait,

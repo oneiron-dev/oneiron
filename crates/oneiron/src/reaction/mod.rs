@@ -36,7 +36,8 @@ pub use channel_adapters::{
     ReactionChannelCapability, reaction_channel_capability,
 };
 pub(crate) use erase::{
-    erase_reaction_claims, person_reaction_claims_in, record_reaction_claims_in,
+    ROOM_RECORD_KINDS, ROOM_RECORD_PAGE, erase_reaction_claims, person_reaction_claims_in,
+    person_reaction_page_in, record_reaction_claims_in,
 };
 pub(crate) use mirror::ensure_conversation_mirror_actor;
 pub use mirror::{ReactionIngress, conversation_mirror_actor_id};
@@ -52,7 +53,8 @@ pub(crate) use outcomes::{outcome_fact_admissible_in, outcome_question, outcome_
 pub use read::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, reaction_line};
 pub(crate) use read::{grouped_lines_in, person_name_in};
 pub use signal::{
-    MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalPage, page_reaction_signals,
+    MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalDeadlineExceeded, ReactionSignalPage,
+    check_reaction_signal_deadline, page_reaction_signals,
 };
 pub use value::{
     PREDICATE_CONVERSATION_REACTION, PREDICATE_CONVERSATION_REACTION_ECHO, ReactionExternalId,

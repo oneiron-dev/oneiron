@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 use super::super::actor_erase::reseal_gate_decision;
@@ -76,6 +76,33 @@ struct Owed {
     kind: OwedScrub,
     source: EntityId,
     redacted_at: u64,
+}
+
+/// The one owed-scrub write, in the decision's own write target.
+fn owe_gate_scrub_in_txn(
+    store: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    kind: OwedScrub,
+    source: &EntityId,
+    decision: GateDecisionId,
+    redacted_at: u64,
+) -> Result<()> {
+    let key = (kind.tag(), *source, decision);
+    if PENDING_SCRUB.contains(store, &*wtxn, &key)? {
+        return Ok(());
+    }
+    PENDING_SCRUB.put(store, wtxn, &key, &PendingScrub { redacted_at })
+}
+
+/// The append's held actor scrub, in the same target and transaction as its row.
+pub(super) fn owe_gate_actor_scrub_in_txn(
+    store: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+    decision: GateDecisionId,
+    at: u64,
+) -> Result<()> {
+    owe_gate_scrub_in_txn(store, wtxn, OwedScrub::Actor, actor, decision, at)
 }
 
 impl Store {
@@ -147,6 +174,54 @@ impl Store {
         Ok(changed)
     }
 
+    /// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34
+    /// call 4 = A): each decision bound to one of `claims`, and each bundle
+    /// whose every constituent is one, becomes its retention skeleton in
+    /// place at `at`, as an erase leaves it: identifier-only immutable
+    /// history. Local only: nothing is owed, and no tray, obligation, key or
+    /// other reader's saved weave digest is touched. A decision a hold keeps,
+    /// a bundle that names a claim that stays, and a batch preflight's future
+    /// receipt keep their bytes, and so does a claim-bound decision whose
+    /// reasons a saved weave period copies: shared content, which a later
+    /// erase still finds and scrubs with it. The number made skeletons.
+    pub(crate) fn discard_claim_gate_payload_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claims: &BTreeSet<EntityId>,
+        at: u64,
+    ) -> Result<usize> {
+        let members: BTreeSet<[u8; 16]> = claims.iter().map(|claim| *claim.as_bytes()).collect();
+        let mut redact = BTreeMap::new();
+        for claim in &members {
+            for (record, held) in self.claim_decisions_in_txn(&*wtxn, claim)? {
+                if held || redact.contains_key(&record.decision_id.bytes) {
+                    continue;
+                }
+                let alone = match record.claim_id {
+                    Some(bound) => members.contains(&bound),
+                    None => {
+                        let refs =
+                            self.gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?;
+                        !refs.is_empty() && refs.iter().all(|claim| members.contains(claim))
+                    }
+                };
+                if alone {
+                    redact.insert(record.decision_id.bytes, record);
+                }
+            }
+        }
+        if redact.values().any(|record| record.claim_id.is_some()) {
+            let quoted = crate::claim::saved_weave_loop_reason_decisions_in_txn(self, &*wtxn)?;
+            redact
+                .retain(|decision, record| record.claim_id.is_none() || !quoted.contains(decision));
+        }
+        let count = redact.len();
+        for record in redact.into_values() {
+            self.skeleton_gate_decision_in_txn(wtxn, record, at)?;
+        }
+        Ok(count)
+    }
+
     /// The unredacted decisions bound to `claim_id` or citing it, each with
     /// whether a legal hold keeps its own partition, all read before anything
     /// changes.
@@ -182,10 +257,27 @@ impl Store {
         Ok(found)
     }
 
+    /// `record`, live, as its retention skeleton in place, and the saved
+    /// weave digests that quote its reasons scrubbed: an erase's redaction.
+    fn redact_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: GateDecisionRecord,
+        redacted_at: u64,
+    ) -> Result<()> {
+        let decision = record.decision_id;
+        let bound = record.claim_id.is_some();
+        self.skeleton_gate_decision_in_txn(wtxn, record, redacted_at)?;
+        if bound {
+            crate::claim::scrub_saved_weave_loop_reasons_in_txn(self, wtxn, decision)?;
+        }
+        Ok(())
+    }
+
     /// `record`, live, as its retention skeleton in place: its grant-ref index
     /// row and its claim references go with its content, and so does every
     /// scrub it was owed. The claim index stays for discovery.
-    fn redact_gate_decision_in_txn(
+    fn skeleton_gate_decision_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         mut record: GateDecisionRecord,
@@ -228,11 +320,7 @@ impl Store {
         decision: GateDecisionId,
         redacted_at: u64,
     ) -> Result<()> {
-        let key = (kind.tag(), *source, decision);
-        if PENDING_SCRUB.contains(self, &*wtxn, &key)? {
-            return Ok(());
-        }
-        PENDING_SCRUB.put(self, wtxn, &key, &PendingScrub { redacted_at })
+        owe_gate_scrub_in_txn(self, wtxn, kind, source, decision, redacted_at)
     }
 
     /// Owes `decision` the clear of erased actor `actor` while a hold keeps

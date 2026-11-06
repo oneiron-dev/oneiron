@@ -20,13 +20,19 @@
 //! copy rows to the stored bytes or the shipped visible diff), then encoded
 //! again over the same spans on a second copy that does not hold them. A
 //! held row write becomes a causally equivalent delete in an empty map;
-//! its source stays unchanged. Snapshot and mixed-edge holds retain their
-//! whole-blob hold path.
+//! its source stays unchanged. Full snapshots can retain these neutral causal
+//! units through a same-span snapshot; shallow tails can too when their root
+//! is independently readable, with only the matching held frontier winner
+//! retargeted to the same neutral causal unit. Other coupled and mixed-edge
+//! holds retain their whole-blob hold path.
 //!
 //! A blob nothing marked touches goes as it came. One the checkpoint cannot
 //! take goes as it came only when its operations and state carry nothing
 //! marked; otherwise it is withheld (never released raw), and stays owed to
 //! the peer: nothing here retires, acknowledges or deletes it.
+
+mod shallow_tail;
+mod snapshot;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -242,6 +248,12 @@ impl SyncSecretProjection {
                     return as_sent();
                 }
                 if !held.is_empty() {
+                    if let Some(admitted) = self
+                        .admit_held_full_snapshot(store, context, &doc, &input)
+                        .or_else(|| self.admit_held_shallow_snapshot(store, context, &doc, &input))
+                    {
+                        return Ok(admitted);
+                    }
                     return Ok(WindowAdmission::Held(held));
                 }
                 Ok(WindowAdmission::Admit(
@@ -387,7 +399,7 @@ impl SyncSecretProjection {
     /// CALL S4FIX-UNKNOWN-MARK). A marked source's own id is a raw holder's
     /// write, admitted as today.
     fn unread_row(&self, store: &Store, context: Option<&LoroDoc>, id: &EntityId) -> Result<()> {
-        if self.unread.is_empty() || self.sources.contains_key(id) {
+        if self.unread_is_empty() || self.has_source(id) {
             return Ok(());
         }
         let Some(context) = context else {
@@ -404,7 +416,7 @@ impl SyncSecretProjection {
             .as_deref()
             .unwrap_or(raw)
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .is_some_and(|body| self.unread.contains_key(blake3::hash(body).as_bytes()));
+            .is_some_and(|body| self.is_unread(blake3::hash(body).as_bytes()));
         if unread {
             return Err(Error::InvariantViolation(UNREAD_EDIT));
         }
@@ -418,7 +430,7 @@ impl SyncSecretProjection {
         context: Option<&LoroDoc>,
         json: &JsonSchema,
     ) -> Result<()> {
-        if self.unread.is_empty() {
+        if self.unread_is_empty() {
             return Ok(());
         }
         for op in json.changes.iter().flat_map(|change| &change.ops) {
@@ -483,7 +495,7 @@ impl SyncSecretProjection {
 
     /// The copy generation `doc`'s state carries: one fingerprint over the
     /// stamp of every marked row it holds, a known copy id's row included
-    /// (FIX 10795), and an unread copy as [`super::UNREAD_STAMP`]; `None`
+    /// (FIX 10795), and an unread copy as [`SyncSecretProjection::unread_stamp`]; `None`
     /// when it holds none.
     pub(crate) fn window_generation(&self, doc: &LoroDoc) -> Option<[u8; 32]> {
         if self.is_empty() {
@@ -500,10 +512,9 @@ impl SyncSecretProjection {
             let (Ok(id), LoroValue::Binary(raw)) = (EntityId::from_hex(key), value) else {
                 continue;
             };
-            let bound = self.sources.get(&id).or_else(|| {
-                self.copies
-                    .get(&id)
-                    .and_then(|source| self.sources.get(source))
+            let bound = self.source_hash(&id).or_else(|| {
+                self.source_of_copy(&id)
+                    .and_then(|source| self.source_hash(&source))
             });
             let hash = match bound {
                 Some(hash) => *hash,
@@ -530,8 +541,10 @@ impl SyncSecretProjection {
 
     /// Whether `row`'s body is a copy this pass makes.
     fn is_copy_row(&self, row: &[u8]) -> bool {
-        row.get(ENTITY_METADATA_HEADER_LEN..)
-            .is_some_and(|body| self.copy_bodies.contains_key(blake3::hash(body).as_bytes()))
+        row.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
+            self.copy_body_source_hash(blake3::hash(body).as_bytes())
+                .is_some()
+        })
     }
 
     /// Each row value of `json` held as a pad reference whose pad is here, and

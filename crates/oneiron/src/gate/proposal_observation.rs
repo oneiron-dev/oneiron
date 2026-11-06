@@ -54,14 +54,7 @@ impl SideKey for HistoryKey {
     }
 }
 
-/// The manifest row (or shipped fallback) behind the advisory threshold.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProposalPolicySource {
-    pub threshold: u64,
-    pub deciding_row: Option<String>,
-    pub precedence_row: Option<String>,
-    pub shipped_default_precedence: bool,
-}
+pub use oneiron_store::proposal_observation_record::ProposalPolicySource;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalSubmissionCheck {

@@ -42,6 +42,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: &[u8],
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
@@ -59,6 +60,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
+    payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
@@ -209,7 +211,9 @@ pub(super) fn stage_skill_index_rows(
         record.content_hash,
     )?;
     // All put doors share this reverse index, including hub import and sync replay.
-    crate::skill_convert::maintain_skill_source_index_for_put(store, wtxn, id, previous, record)
+    crate::store::skill_source_index::maintain_skill_source_index_for_put(
+        store, wtxn, id, previous, record,
+    )
 }
 
 /// Keeps CLAIM-derived thread, Dreamer and counterparty-identity indexes on
@@ -283,12 +287,12 @@ pub(super) fn stage_project_put(
     };
     let data = project.as_deref().unwrap_or(data);
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-        && (crate::gate::project_depth::is_project_depth_id(&id)
-            || crate::gate::project_depth::is_project_depth_contribution(data))
+        && (oneiron_store::project_depth_record::is_project_depth_id(&id)
+            || oneiron_store::project_depth_record::is_project_depth_contribution(data))
     {
-        crate::gate::project_depth::validate_contribution_put(
-            store, txn, id, data, replicated, posture,
-        )?;
+        store
+            .gate_hooks
+            .validate_contribution_put(store, txn, id, data, replicated, posture)?;
     }
     Ok(project)
 }
@@ -428,17 +432,18 @@ pub(super) fn validate_domain_carriers(
 /// A local write also pins the typed citations it adds (FIX 904); a
 /// replicated row carries its citations as written.
 pub(super) fn stage_claim_projection(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
+    let store = write.store;
     if let Some(body) = body {
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(write, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
@@ -563,7 +568,7 @@ pub(super) fn stage_local_proposal_observation(
             None => crate::gate::resolve_policy_manifest(store, &*wtxn)?
                 .proposal_check_threshold_source(&scope),
         };
-        crate::gate::proposal_observation::observe_submission_in_txn(
+        store.gate_hooks.observe_submission_in_txn(
             store,
             wtxn,
             envelope.actor().entity_ref(),
@@ -587,7 +592,7 @@ pub(super) fn stage_task_and_turn(
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+            crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
@@ -597,9 +602,13 @@ pub(super) fn stage_task_and_turn(
     Ok(())
 }
 
-pub(super) fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn normalized_policy_scope(
+    store: &Store,
+    entity_type: u8,
+    data: &[u8],
+) -> Option<Vec<u8>> {
     if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
+        store.gate_hooks.normalize_policy_manifest_scope(data)
     } else {
         None
     }
