@@ -264,7 +264,8 @@ fn live_part<'r>(
 /// its live reply, or from its skeleton when the reply retired; a step
 /// start from its live rest, republished among the rows held inline under
 /// the same occurrence, or, its rest retired, left as a retired body
-/// leaves one. Either way each live ask goes back in its call, and each
+/// leaves one. Either way each live ask goes back in its call, unless a
+/// retired reply's skeleton erased its request (FIX 6534), and each
 /// retired one's call answers `TargetErased`, the one precedence
 /// `crate::code_run::recompose_replay_row` defines. The whole bodies the
 /// starts rested under are settled last.
