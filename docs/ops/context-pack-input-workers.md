@@ -323,6 +323,17 @@ while the operation is still building or replacing it. No clone is claimed
 covered because it came from a charged source. No memory wait, size cap,
 deadline, refusal, policy or format version changes here.
 
+The pinned-row delivery receipt has a separate holder for the actual capacity
+of its `Vec<EntityId>`. It never inherits the raw section's charge. Its private
+constructor uses the same server memory account as the HTTP, MCP or run caller.
+The delivery ids are stored before the holder, so they drop first. An in-place
+receipt filter keeps the original vector and its capacity charge. Recording
+moves the whole receipt into the existing blocking job, including the holder;
+the charge follows that job's ids, not just the outer future awaiting its result.
+Receipt order, error mapping and idempotency handling are unchanged. This holder
+does not count the receipt's channel set or interlocutor internals, construction
+peaks, or the independent vectors copied by later consumers.
+
 
 ## Chat capture buffer custody
 

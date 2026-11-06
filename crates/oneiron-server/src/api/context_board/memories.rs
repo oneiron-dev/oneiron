@@ -339,8 +339,15 @@ pub(crate) async fn board_pins_section(
         hooks: hook_pins,
     };
     let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
-    let Some(pinned) =
-        board_pins_projection(&server.vault, auth, read, room_id, &pins, memories_storage)?
+    let Some(pinned) = board_pins_projection(
+        &server.vault,
+        auth,
+        read,
+        room_id,
+        &pins,
+        memories_storage,
+        &server.memory,
+    )?
     else {
         return Ok(None);
     };
@@ -368,6 +375,8 @@ pub(crate) struct PinsReceipt {
     delivered: Vec<oneiron::EntityId>,
     interlocutors: Option<oneiron::InterlocutorSet>,
     channels: std::collections::BTreeSet<String>,
+    /// The delivery ids drop before their capacity charge.
+    delivered_storage: crate::machine::MemoryLease,
 }
 
 /// [`board_pins_section`]'s rows, read under `read` (the caller's own ceiling) narrowed to the
@@ -380,6 +389,7 @@ pub(crate) fn board_pins_projection<'a>(
     room_id: Option<oneiron::EntityId>,
     pins: &BoardPinSources<'_>,
     memories_storage: &mut super::super::context_pack::output_memory::RetainedMemoriesOutput,
+    memory: &crate::machine::MachineMemory,
 ) -> Result<Option<BoardPins>, ApiError> {
     if pins.refs.is_empty() && !pins.manifest && pins.hooks.is_empty() {
         return Ok(None);
@@ -428,11 +438,7 @@ pub(crate) fn board_pins_projection<'a>(
         .collect();
     Ok(Some(BoardPins {
         section,
-        receipt: PinsReceipt {
-            delivered,
-            interlocutors,
-            channels,
-        },
+        receipt: PinsReceipt::new(delivered, interlocutors, channels, memory),
     }))
 }
 
@@ -445,6 +451,7 @@ pub(crate) fn lane_pins_projection(
     read: &oneiron::claim::ScopedRead<'_>,
     hooks: &[oneiron::context_board::HookPin],
     memories_storage: &mut super::super::context_pack::output_memory::RetainedMemoriesOutput,
+    memory: &crate::machine::MachineMemory,
 ) -> Result<Option<BoardPins>, ApiError> {
     let mut section = oneiron::MemoriesSection::pins_only(None);
     memories_storage.retain(Some(&section));
@@ -471,11 +478,7 @@ pub(crate) fn lane_pins_projection(
     let delivered = pinned_row_ids(&section)?;
     Ok(Some(BoardPins {
         section,
-        receipt: PinsReceipt {
-            delivered,
-            interlocutors: None,
-            channels: std::collections::BTreeSet::new(),
-        },
+        receipt: PinsReceipt::new(delivered, None, std::collections::BTreeSet::new(), memory),
     }))
 }
 
@@ -490,6 +493,26 @@ fn pinned_row_ids(section: &oneiron::MemoriesSection) -> Result<Vec<oneiron::Ent
 }
 
 impl PinsReceipt {
+    fn new(
+        delivered: Vec<oneiron::EntityId>,
+        interlocutors: Option<oneiron::InterlocutorSet>,
+        channels: std::collections::BTreeSet<String>,
+        memory: &crate::machine::MachineMemory,
+    ) -> Self {
+        let mut receipt = Self {
+            delivered,
+            interlocutors,
+            channels,
+            delivered_storage: memory.empty_lease(),
+        };
+        receipt.delivered_storage.materialized(
+            0,
+            (receipt.delivered.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<oneiron::EntityId>() as u64),
+        );
+        receipt
+    }
+
     /// The rows this receipt covers.
     pub(crate) fn delivered(&self) -> &[oneiron::EntityId] {
         &self.delivered
@@ -510,11 +533,12 @@ impl PinsReceipt {
         let vault = std::sync::Arc::clone(vault);
         // A keyed hydration's receipt counts on its intent (FIX 10379).
         tokio::task::spawn_blocking(oneiron::store::carry_idempotency_intent(move || {
+            let receipt = self;
             vault.record_standing_disclosure_uses(
-                &self.delivered,
-                self.interlocutors.as_ref(),
+                &receipt.delivered,
+                receipt.interlocutors.as_ref(),
                 &std::collections::BTreeMap::new(),
-                &self.channels,
+                &receipt.channels,
             )
         }))
         .await
