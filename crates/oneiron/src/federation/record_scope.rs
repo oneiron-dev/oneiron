@@ -23,6 +23,8 @@ pub(crate) mod asset_text;
 mod delete;
 mod export;
 pub(crate) mod note_world;
+#[cfg(feature = "sync")]
+pub(crate) mod origin_positions;
 mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;

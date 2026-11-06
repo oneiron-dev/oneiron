@@ -47,9 +47,11 @@ impl Vault {
     /// person the slip names. Each is the copy that door answers, within its
     /// term, with its delivery version; one the holder acknowledged at its
     /// current version is not sent again. Each sent is Delivered at that
-    /// version from now, in the same writer that spends the nonce.
+    /// version from now, in the same writer that spends the nonce. `issuer`
+    /// signs a one-shot transfer's spend as the pull door does (FIX 11862).
     pub fn removal_deliveries(
         &self,
+        issuer: Option<&HostSlipIssuer>,
         slip: &CapabilitySlip,
         request_timestamp: u64,
         signature: &[u8],
@@ -62,9 +64,14 @@ impl Vault {
         let now = self.store.clock.now_recorded_at();
         let copies = match slip.transferred_bounds() {
             None => self.removal_exports_in_txn(&txn, person, now)?,
-            Some(bounds) => {
-                self.transferred_exports_in_txn(&mut txn, slip, person, None, now, bounds)?
-            }
+            Some(bounds) => self.transferred_exports_in_txn(
+                &mut txn,
+                issuer,
+                slip,
+                (person, None),
+                now,
+                bounds,
+            )?,
         };
         let holder = slip.current_binding_key();
         let mut owed = Vec::new();

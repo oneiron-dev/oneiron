@@ -137,7 +137,9 @@ pub(super) async fn serve_anchored(
         .await
         .map_err(|error| anyhow::anyhow!("artifact listener bind {artifact_bind}: {error}"))?;
     let artifact_addr = artifact_listener.local_addr()?;
-    let sync_server = sync_server.with_artifact_listener(artifact_addr.port());
+    let sync_server = sync_server
+        .with_artifact_listener(artifact_addr.port())
+        .with_api_listener(listener.local_addr()?);
     tracing::info!(%addr, artifacts = %artifact_addr, "listening");
     // Borrowed uniquely, so the closure is `Send` whenever the host is.
     let awake_host = &mut host;
