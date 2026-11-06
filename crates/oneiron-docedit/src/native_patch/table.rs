@@ -430,8 +430,11 @@ pub(super) fn set_cell(
 /// Replace the cell's paragraphs using the first paragraph's properties and
 /// first run's properties, or the first field's when no run exists. When the
 /// line count is unchanged, later lines use the same-index paragraph's
-/// properties and its first run's (else first field's, else the global run's)
-/// properties, falling back to the first paragraph's template on error.
+/// properties. Their common character prefix/suffix keeps each direct run
+/// or field's properties in static runs; the changed middle uses the first
+/// run's (else first field's, else the global run's) properties. Unsupported
+/// coverage or properties retain the one-template render, which falls back
+/// to the first paragraph's template on error.
 /// Copied properties keep their namespace bindings; removed field types are
 /// reported.
 fn rebuilt(
@@ -451,12 +454,10 @@ fn rebuilt(
     let source_run = within(tree, body)
         .find(|(_, node)| node.is(DML, "r"))
         .or_else(|| within(tree, body).find(|(_, node)| node.is(DML, "fld")));
-    let render = |paragraph: (usize, &Node),
-                  selected: Option<(usize, &Node)>,
-                  line: &str|
+    let run_xml = |selected: Option<(usize, &Node)>,
+                   para_node: &Node,
+                   text: &str|
      -> Result<String, NativeRefusal> {
-        let (para, para_node) = paragraph;
-        let p_pr = piece(tree.child(para, DML, "pPr")?);
         let r_pr = piece(
             selected
                 .map(|(run, _)| tree.child(run, DML, "rPr"))
@@ -479,18 +480,95 @@ fn rebuilt(
                 String::new(),
             ),
         };
+        if text.is_empty() {
+            Ok(String::new())
+        } else {
+            Ok(format!(
+                "<{r}{run_bindings}>{r_pr}<{t}>{}</{t}></{r}>",
+                escape_text(text)
+            ))
+        }
+    };
+    let render = |paragraph: (usize, &Node),
+                  selected: Option<(usize, &Node)>,
+                  line: &str|
+     -> Result<String, NativeRefusal> {
+        let (para, para_node) = paragraph;
+        let p_pr = piece(tree.child(para, DML, "pPr")?);
+        let run = run_xml(selected, para_node, line)?;
         let end = piece(tree.child(para, DML, "endParaRPr")?);
         let p = para_node.qualified.as_str();
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
-        let run = if line.is_empty() {
+        Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
+    };
+    let styled = |paragraph: (usize, &Node),
+                  selected: Option<(usize, &Node)>,
+                  line: &str|
+     -> Option<String> {
+        let (para, para_node) = paragraph;
+        let p_pr = piece(tree.child(para, DML, "pPr").ok()?);
+        let end = piece(tree.child(para, DML, "endParaRPr").ok()?);
+        let p = para_node.qualified.as_str();
+        let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
+        let segments: Vec<(usize, &Node, Vec<char>)> = tree
+            .children(para)
+            .filter(|(_, node)| node.is(DML, "r") || node.is(DML, "fld"))
+            .map(|(at, node)| {
+                let text = within(tree, at)
+                    .filter(|(_, node)| node.is(DML, "t"))
+                    .flat_map(|(_, node)| node.text.chars())
+                    .collect();
+                (at, node, text)
+            })
+            .collect();
+        let old: Vec<char> = within(tree, para)
+            .filter(|(_, node)| node.is(DML, "t"))
+            .flat_map(|(_, node)| node.text.chars())
+            .collect();
+        if !segments
+            .iter()
+            .flat_map(|(_, _, text)| text.iter())
+            .eq(old.iter())
+        {
+            return None;
+        }
+        let new: Vec<char> = line.chars().collect();
+        let mut prefix = 0;
+        while prefix < old.len() && prefix < new.len() && old[prefix] == new[prefix] {
+            prefix += 1;
+        }
+        let mut suffix = 0;
+        while suffix < old.len() - prefix
+            && suffix < new.len() - prefix
+            && old[old.len() - 1 - suffix] == new[new.len() - 1 - suffix]
+        {
+            suffix += 1;
+        }
+        let retained_runs = |from: usize, to: usize| -> Option<String> {
+            let mut runs = String::new();
+            let mut position = 0;
+            for (at, node, text) in &segments {
+                let start = position.max(from);
+                let end = (position + text.len()).min(to);
+                if start < end {
+                    let part: String = text[start - position..end - position].iter().collect();
+                    runs.push_str(&run_xml(Some((*at, *node)), para_node, &part).ok()?);
+                }
+                position += text.len();
+            }
+            Some(runs)
+        };
+        let head = retained_runs(0, prefix)?;
+        let middle = if prefix + suffix == new.len() {
             String::new()
         } else {
-            format!(
-                "<{r}{run_bindings}>{r_pr}<{t}>{}</{t}></{r}>",
-                escape_text(line)
-            )
+            let text: String = new[prefix..new.len() - suffix].iter().collect();
+            run_xml(selected, para_node, &text).ok()?
         };
-        Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
+        let tail = retained_runs(old.len() - suffix, old.len())?;
+        Some(format!(
+            "<{p}{p_bindings}>{p_pr}{head}{middle}{tail}{end}</{p}>"
+        ))
     };
     let same_count = paragraphs.len() == value.split('\n').count();
     let mut out = bytes[..first_node.span.start].to_vec();
@@ -501,9 +579,12 @@ fn rebuilt(
                 .find(|(_, node)| node.is(DML, "r"))
                 .or_else(|| within(tree, actual.0).find(|(_, node)| node.is(DML, "fld")))
                 .or(source_run);
-            match render(actual, actual_run, line) {
-                Ok(xml) => xml,
-                Err(_) => render((first, first_node), source_run, line)?,
+            match styled(actual, actual_run, line) {
+                Some(xml) => xml,
+                None => match render(actual, actual_run, line) {
+                    Ok(xml) => xml,
+                    Err(_) => render((first, first_node), source_run, line)?,
+                },
             }
         } else {
             render((first, first_node), source_run, line)?

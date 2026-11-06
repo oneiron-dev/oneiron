@@ -136,9 +136,19 @@ replacement semantics are unchanged; no Word-runtime comparison is claimed.
 
 The same-count later-paragraph fallback (2026-11-06, FIX 17480) touches
 `src/native_patch/table.rs`. When the rebuilt line count matches the original
-paragraph count, later lines reuse the same-index paragraph's properties and
-its first run's (else first field's, else the global run's) properties; a
-later-template error falls back to the first paragraph's template, and the
-first line and count-changed rebuilds keep the existing first-paragraph
-template. Field-removal receipts, expected-text checks and the retained/cut
-paths are unchanged.
+paragraph count, later lines reuse the same-index paragraph's properties;
+new replacement text uses its first run's (else first field's, else the global
+run's) properties. A later-template error falls back to the first paragraph's
+template, and the first line and count-changed rebuilds keep the existing
+first-paragraph template. Field-removal receipts, expected-text checks and
+the retained/cut paths are unchanged.
+
+The same-count later-paragraph run carry (2026-11-06, FIX 17480) keeps the
+common character prefix and suffix in their actual source run or field's
+explicit run properties and namespace bindings. It emits only static runs,
+including text kept from a field, so every field the rebuild reports removed
+is still removed. The replacement middle keeps the existing first-run
+template. Unknown text coverage or unreadable copied properties retain the
+existing one-template rebuild rather than refusing the write. This is a
+source-level text-diff assignment, not canonical text identity or a
+PowerPoint rendering proof; count-changing formatting remains partial.
