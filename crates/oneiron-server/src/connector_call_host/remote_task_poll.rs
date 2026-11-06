@@ -1,6 +1,7 @@
 //! The served poll of remote MCP tasks (FIX 11023; MCP 2025-11-25 tasks):
-//! one `tasks/get` per Deferred row its pass finds due, in the session the
-//! task was created in, under the row's own frozen endpoint and binding,
+//! one `tasks/get` per Deferred row its pass finds due, under the row's
+//! own frozen endpoint and binding. A session-bearing HTTP 404 makes one
+//! new initialize and one retry, never a replay of the original call,
 //! with the credential its send presented, through the same door. It never
 //! sends the row's `tools/call` again, and it reads the row again just
 //! before each `tasks/get`, so a row erased or settled since the pass began
@@ -68,7 +69,10 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
     };
     for task in due {
         // The intent id's first bytes name the row in the log.
-        let intent: String = task.intent[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+        let intent: String = task.intent[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let recorded = match host.poll_remote_task(&task) {
             Ok(Polled::Running {
                 status,
@@ -94,10 +98,13 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
 }
 
 impl ServedConnectorCallHost {
-    /// Polls `task` once: its credential presented again through its own
-    /// door, then one `tasks/get` in its session.
-    fn poll_remote_task(&mut self, task: &DueRemoteTask) -> Result<Polled, &'static str> {
-        let view = FrozenToolCallView::read(&task.call).map_err(|_| "frozen_call_unread")?;
+    /// The original poll's endpoint, binding and credential door, checked
+    /// again before a replacement initialize presents that credential.
+    fn remote_task_session(
+        &mut self,
+        task: &DueRemoteTask,
+        view: &FrozenToolCallView,
+    ) -> Result<LiveSession, &'static str> {
         let connector = self
             .connectors
             .get(view.server())
@@ -141,13 +148,20 @@ impl ServedConnectorCallHost {
             .present_again(&self.vault, row)
             .ok_or("credential_not_presented")?
             .auth;
-        let live = LiveSession {
+        Ok(LiveSession {
             client: self.client.clone(),
             endpoint: view.endpoint().to_owned(),
             protocol,
             session,
             auth,
-        };
+        })
+    }
+
+    /// Polls `task` once: its credential presented again through its own
+    /// door, then one `tasks/get` in its session.
+    fn poll_remote_task(&mut self, task: &DueRemoteTask) -> Result<Polled, &'static str> {
+        let view = FrozenToolCallView::read(&task.call).map_err(|_| "frozen_call_unread")?;
+        let mut live = self.remote_task_session(task, &view)?;
         // An erase or a settlement since the pass read the row sends nothing.
         let still_due = self
             .vault
@@ -162,10 +176,21 @@ impl ServedConnectorCallHost {
             "method": "tasks/get",
             "params": { "taskId": task.task_id },
         });
-        let response = live
+        let mut response = live
             .post(&request, Some(CALL_TIMEOUT))
             .send()
             .map_err(|_| "poll_unsent")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND && task.poll.session.is_some() {
+            drop(response);
+            let Some(replacement) = self.recover_remote_task_session(task, &view)? else {
+                return Ok(Polled::Gone);
+            };
+            live = replacement;
+            response = live
+                .post(&request, Some(CALL_TIMEOUT))
+                .send()
+                .map_err(|_| "poll_unsent")?;
+        }
         if !response.status().is_success() {
             return Err("poll_http_refused");
         }
@@ -184,6 +209,118 @@ impl ServedConnectorCallHost {
             },
             Read::Ended(end) => Polled::Ended(end, live),
         })
+    }
+
+    /// Reinitializes after a session-bearing 404, keeping the replacement before one
+    /// retry of tasks/get. The original tools/call never leaves here.
+    fn recover_remote_task_session(
+        &mut self,
+        task: &DueRemoteTask,
+        view: &FrozenToolCallView,
+    ) -> Result<Option<LiveSession>, &'static str> {
+        if !self
+            .vault
+            .remote_task_poll_matches(&task.intent, &task.task_id, &task.poll)
+            .map_err(|_| "row_unread")?
+        {
+            return Ok(None);
+        }
+        if view.protocol_revision() != Some(task.poll.protocol.as_str()) {
+            return Err("revision_unreadable");
+        }
+        let fresh = self.remote_task_session(task, view)?;
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let issuer = key_ref.map(|key_ref| (&self.vault, key_ref, view.tool()));
+        let live = match initialize(
+            &fresh.client,
+            &fresh.endpoint,
+            &task.poll.protocol,
+            &fresh.protocol,
+            fresh.auth.clone(),
+            &task.poll.capabilities,
+            issuer,
+        ) {
+            Ok(live) => live,
+            Err(failure) => {
+                if let Some(live) = failure.live {
+                    self.end_unkept_task_session(task, live, issuer);
+                }
+                return Err("poll_http_refused");
+            }
+        };
+        let session = match live.session.as_ref().map(HeaderValue::to_str).transpose() {
+            Ok(session) => session.map(str::to_owned),
+            Err(_) => {
+                self.end_unkept_task_session(task, live, issuer);
+                return Err("session_unreadable");
+            }
+        };
+        let mut replacement = task.poll.clone();
+        replacement.session = session.clone();
+        match self.vault.replace_remote_task_poll_session(
+            &task.intent,
+            &task.task_id,
+            &task.poll,
+            session,
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.end_unkept_task_session(task, live, issuer);
+                return Ok(None);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "replacement remote task session not stored");
+                // force_sync can fail after commit. Never DELETE a session
+                // that the writer actually kept, or whose readback failed.
+                self.end_unkept_task_session(task, live, issuer);
+                return Err("poll_http_refused");
+            }
+        }
+        let kept = self
+            .vault
+            .remote_task_poll_matches(&task.intent, &task.task_id, &replacement)
+            .map_err(|_| "row_unread")?;
+        if !kept {
+            self.end_unkept_task_session(task, live, issuer);
+            return Ok(None);
+        }
+        if check_issuer(issuer).is_err() {
+            return Err("credential_not_presented");
+        }
+        Ok(Some(live))
+    }
+
+    /// A failed/losing replacement is a courtesy end only when the ledger
+    /// proves it did not keep that same session and the issuer permits it.
+    fn end_unkept_task_session(
+        &self,
+        task: &DueRemoteTask,
+        mut live: LiveSession,
+        issuer: Option<(&Arc<Vault>, EntityId, &str)>,
+    ) {
+        let session = match live.session.as_ref().map(HeaderValue::to_str).transpose() {
+            Ok(session) => session.map(str::to_owned),
+            // An unreadable session was never eligible for the writer.
+            Err(_) => {
+                if check_issuer(issuer).is_err() {
+                    live.forget_credential();
+                }
+                live.end();
+                return;
+            }
+        };
+        let mut replacement = task.poll.clone();
+        replacement.session = session;
+        let kept = self
+            .vault
+            .remote_task_poll_matches(&task.intent, &task.task_id, &replacement)
+            .unwrap_or(true);
+        if !kept {
+            if check_issuer(issuer).is_err() {
+                live.forget_credential();
+            }
+            live.end();
+        }
     }
 }
 

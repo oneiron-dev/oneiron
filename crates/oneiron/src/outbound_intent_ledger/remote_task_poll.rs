@@ -34,6 +34,15 @@ const MAX_REMOTE_TASK_POLL_MS: u64 = 15 * 60 * 1_000;
 /// The longest status text kept.
 const MAX_STATUS_BYTES: usize = 64;
 
+/// The client capabilities the original send advertised at initialize.
+/// A replacement session uses this snapshot, not a later elicitation setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTaskClientCapabilities {
+    /// The original send's native elicitation capability, when advertised.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elicitation: Option<serde_json::Value>,
+}
+
 /// How a remote task is polled: what the send the provider took as a task
 /// had open. Opaque provider data: never logged.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +55,8 @@ pub struct RemoteTaskPoll {
     pub protocol: String,
     /// The credential the send presented, presented again for each poll.
     pub credential: RemoteTaskCredential,
+    /// The exact client capabilities advertised by the original send.
+    pub capabilities: RemoteTaskClientCapabilities,
 }
 
 impl fmt::Debug for RemoteTaskPoll {
@@ -105,7 +116,10 @@ pub struct DueRemoteTask {
 impl fmt::Debug for DueRemoteTask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DueRemoteTask")
-            .field("task_id", &format_args!("[{} bytes redacted]", self.task_id.len()))
+            .field(
+                "task_id",
+                &format_args!("[{} bytes redacted]", self.task_id.len()),
+            )
             .field("poll", &self.poll)
             .field("polls", &self.polls)
             .finish_non_exhaustive()
@@ -183,7 +197,14 @@ impl Vault {
                 if state.next_poll_ms > now_ms || due.len() >= limit {
                     continue;
                 }
-                let Some(handle) = intent_settlement_in_txn(self, &txn, &id)?.remote_task else {
+                let settlement = match intent_settlement_in_txn(self, &txn, &id) {
+                    Ok(settlement) => settlement,
+                    Err(error) => {
+                        tracing::warn!(%error, "remote task handle unreadable; skipping this poll row");
+                        continue;
+                    }
+                };
+                let Some(handle) = settlement.remote_task else {
                     stale.push(id);
                     continue;
                 };
@@ -269,6 +290,73 @@ impl Vault {
             && intent_settlement_in_txn(self, &txn, intent)?
                 .remote_task
                 .is_some_and(|handle| handle.id == task_id && handle.poll.is_some()))
+    }
+
+    /// Whether this Deferred task still keeps exactly `poll`, including its
+    /// session and credential choice. Used before a replacement poll leaves
+    /// and before an unkept replacement session is ended.
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn remote_task_poll_matches(
+        &self,
+        intent: &[u8; 32],
+        task_id: &str,
+        poll: &RemoteTaskPoll,
+    ) -> IntentLedgerResult<bool> {
+        let txn = self
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let deferred = super::store::get_ledger_record(self, &txn, intent)?
+            .is_some_and(|record| record.state == IntentState::Deferred);
+        Ok(deferred
+            && intent_settlement_in_txn(self, &txn, intent)?
+                .remote_task
+                .is_some_and(|handle| handle.id == task_id && handle.poll.as_ref() == Some(poll)))
+    }
+
+    /// Keeps a replacement session only if the SAME Deferred task still
+    /// keeps `old`. The handle's other fields, poll schedule, reservation and
+    /// all other settlement data stay unchanged.
+    ///
+    /// # Errors
+    /// Storage and row-codec faults. A sync error can follow a committed
+    /// replacement: read back the new poll before ending that session.
+    pub fn replace_remote_task_poll_session(
+        &self,
+        intent: &[u8; 32],
+        task_id: &str,
+        old: &RemoteTaskPoll,
+        session: Option<String>,
+    ) -> IntentLedgerResult<bool> {
+        let mut txn = self
+            .store
+            .env
+            .write_txn()
+            .map_err(crate::error::Error::from)?;
+        let deferred = super::store::get_ledger_record(self, &txn, intent)?
+            .is_some_and(|record| record.state == IntentState::Deferred);
+        if !deferred {
+            return Ok(false);
+        }
+        let Some(mut handle) = intent_settlement_in_txn(self, &txn, intent)?.remote_task else {
+            return Ok(false);
+        };
+        if handle.id != task_id {
+            return Ok(false);
+        }
+        let Some(poll) = handle.poll.as_mut().filter(|poll| **poll == *old) else {
+            return Ok(false);
+        };
+        poll.session = session;
+        super::settlement::keep_remote_task_in_txn(self, &mut txn, intent, handle)?;
+        txn.commit().map_err(crate::error::Error::from)?;
+        let synced = super::store::force_sync(self);
+        self.wake_owner_shed();
+        synced?;
+        Ok(true)
     }
 
     /// Settles row `intent` by how a poll found its task ended (FIX 11023):
