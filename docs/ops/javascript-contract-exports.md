@@ -52,8 +52,11 @@ A local named re-export with no reachable binding is unresolved.
 
 For CommonJS, the extractor recognizes top-level direct assignments to
 `module.exports`, `module.exports.name`, `module.exports["name"]`, `exports.name`
-and `exports["name"]`. Uninitialized root `var module` and `var exports`
-redeclare the CommonJS wrapper parameters, including hoisted or repeated
+and `exports["name"]`. Top-level comma expressions apply those same direct
+assignment and delete rules in left-to-right order, including nested comma
+expressions. They share the ordinary wrapper and alias state; no conditional or
+right-hand-side expressions are evaluated. Uninitialized root `var module` and
+`var exports` redeclare the CommonJS wrapper parameters, including hoisted or repeated
 redeclarations. Direct simple `var` initializers update the same alias state in
 source order. Lexical and function shadows remain distinct from wrapper bindings.
 Destructured, conditional and loop-carried initializer flows are not modeled.

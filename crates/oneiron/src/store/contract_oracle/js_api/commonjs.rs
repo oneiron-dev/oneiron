@@ -57,122 +57,136 @@ pub(super) fn collect(
         let Statement::ExpressionStatement(statement) = statement else {
             continue;
         };
-        let expression = statement.expression.get_inner_expression();
-        if let Expression::UnaryExpression(unary) = expression {
-            if unary.operator.is_delete()
-                && let Some(member) = unary.argument.get_inner_expression().as_member_expression()
-                && let Some(deleted) =
-                    target(member, semantic, alias, native_module, &mut accounted)
-            {
-                commonjs = true;
-                match deleted {
-                    Target::Property(Some(name)) => {
-                        module.bindings.remove(&name);
-                    }
-                    Target::Property(None) => {
-                        module
-                            .unresolved
-                            .insert("commonjs:computed-delete".to_owned());
-                    }
-                    Target::Whole => {
-                        module.bindings.clear();
-                        alias = false;
-                    }
-                }
+        let mut pending = vec![&statement.expression];
+        while let Some(expression) = pending.pop() {
+            let expression = expression.get_inner_expression();
+            if let Expression::SequenceExpression(sequence) = expression {
+                pending.extend(sequence.expressions.iter().rev());
+                continue;
             }
-            continue;
-        }
-        let Expression::AssignmentExpression(assignment) = expression else {
-            continue;
-        };
-        if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
-            if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
-                alias = assignment.operator.is_assign()
-                    && ((native_module
-                        && whole_value(&assignment.right, semantic, &mut accounted))
-                        || (alias
-                            && wrapper(&assignment.right, "exports", semantic, &mut accounted)));
-                accounted.insert((identifier.span.start, identifier.span.end));
-            } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
-                native_module = assignment.operator.is_assign()
-                    && native_module
-                    && wrapper(&assignment.right, "module", semantic, &mut accounted);
-                accounted.insert((identifier.span.start, identifier.span.end));
-            }
-            continue;
-        }
-        let Some(member) = assignment.left.as_member_expression() else {
-            continue;
-        };
-        let Some(target) = target(member, semantic, alias, native_module, &mut accounted) else {
-            continue;
-        };
-        commonjs = true;
-        match target {
-            Target::Property(Some(name)) => {
-                if name == "__proto__" && !module.bindings.contains_key(&name) {
-                    // Usually the inherited prototype setter, not an own key.
-                    // An own key from an earlier literal remains a real export.
-                    module
-                        .unresolved
-                        .insert("commonjs:prototype-assignment".to_owned());
-                } else {
-                    module.bindings.insert(name.clone(), Binding::Local(name));
-                }
-            }
-            Target::Property(None) => {
-                module.unresolved.insert("commonjs:computed-key".to_owned());
-            }
-            Target::Whole => {
-                if !assignment.operator.is_assign() {
-                    module
-                        .unresolved
-                        .insert("commonjs:compound-replacement".to_owned());
-                    continue;
-                }
-                // A replacement changes the object; the wrapper's original
-                // `exports` alias no longer points at it.
-                let value = assignment.right.get_inner_expression();
-                if whole_value(value, semantic, &mut accounted)
-                    || (alias && wrapper(value, "exports", semantic, &mut accounted))
+            if let Expression::UnaryExpression(unary) = expression {
+                if unary.operator.is_delete()
+                    && let Some(member) =
+                        unary.argument.get_inner_expression().as_member_expression()
+                    && let Some(deleted) =
+                        target(member, semantic, alias, native_module, &mut accounted)
                 {
-                    continue;
-                }
-                alias = false;
-                module.bindings.clear();
-                if let Expression::ObjectExpression(object) = value {
-                    for property in &object.properties {
-                        let Some(property) = property.as_property() else {
+                    commonjs = true;
+                    match deleted {
+                        Target::Property(Some(name)) => {
+                            module.bindings.remove(&name);
+                        }
+                        Target::Property(None) => {
                             module
                                 .unresolved
-                                .insert("commonjs:object-spread".to_owned());
-                            continue;
-                        };
-                        if let Some(name) = property.key.static_name() {
-                            // A non-computed colon __proto__ sets the prototype,
-                            // rather than declaring an own exported property.
-                            if name == "__proto__"
-                                && !property.computed
-                                && !property.shorthand
-                                && !property.method
-                                && !property.kind.is_accessor()
-                            {
-                                continue;
-                            }
-                            module
-                                .bindings
-                                .insert(name.to_string(), Binding::Local(name.into_owned()));
-                        } else {
-                            module.unresolved.insert("commonjs:computed-key".to_owned());
+                                .insert("commonjs:computed-delete".to_owned());
+                        }
+                        Target::Whole => {
+                            module.bindings.clear();
+                            alias = false;
                         }
                     }
-                } else if !matches!(
-                    value,
-                    Expression::FunctionExpression(_)
-                        | Expression::ArrowFunctionExpression(_)
-                        | Expression::ClassExpression(_)
-                ) {
-                    module.unresolved.insert("commonjs:opaque-value".to_owned());
+                }
+                continue;
+            }
+            let Expression::AssignmentExpression(assignment) = expression else {
+                continue;
+            };
+            if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+                if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
+                    alias = assignment.operator.is_assign()
+                        && ((native_module
+                            && whole_value(&assignment.right, semantic, &mut accounted))
+                            || (alias
+                                && wrapper(
+                                    &assignment.right,
+                                    "exports",
+                                    semantic,
+                                    &mut accounted,
+                                )));
+                    accounted.insert((identifier.span.start, identifier.span.end));
+                } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
+                    native_module = assignment.operator.is_assign()
+                        && native_module
+                        && wrapper(&assignment.right, "module", semantic, &mut accounted);
+                    accounted.insert((identifier.span.start, identifier.span.end));
+                }
+                continue;
+            }
+            let Some(member) = assignment.left.as_member_expression() else {
+                continue;
+            };
+            let Some(target) = target(member, semantic, alias, native_module, &mut accounted)
+            else {
+                continue;
+            };
+            commonjs = true;
+            match target {
+                Target::Property(Some(name)) => {
+                    if name == "__proto__" && !module.bindings.contains_key(&name) {
+                        // Usually the inherited prototype setter, not an own key.
+                        // An own key from an earlier literal remains a real export.
+                        module
+                            .unresolved
+                            .insert("commonjs:prototype-assignment".to_owned());
+                    } else {
+                        module.bindings.insert(name.clone(), Binding::Local(name));
+                    }
+                }
+                Target::Property(None) => {
+                    module.unresolved.insert("commonjs:computed-key".to_owned());
+                }
+                Target::Whole => {
+                    if !assignment.operator.is_assign() {
+                        module
+                            .unresolved
+                            .insert("commonjs:compound-replacement".to_owned());
+                        continue;
+                    }
+                    // A replacement changes the object; the wrapper's original
+                    // `exports` alias no longer points at it.
+                    let value = assignment.right.get_inner_expression();
+                    if whole_value(value, semantic, &mut accounted)
+                        || (alias && wrapper(value, "exports", semantic, &mut accounted))
+                    {
+                        continue;
+                    }
+                    alias = false;
+                    module.bindings.clear();
+                    if let Expression::ObjectExpression(object) = value {
+                        for property in &object.properties {
+                            let Some(property) = property.as_property() else {
+                                module
+                                    .unresolved
+                                    .insert("commonjs:object-spread".to_owned());
+                                continue;
+                            };
+                            if let Some(name) = property.key.static_name() {
+                                // A non-computed colon __proto__ sets the prototype,
+                                // rather than declaring an own exported property.
+                                if name == "__proto__"
+                                    && !property.computed
+                                    && !property.shorthand
+                                    && !property.method
+                                    && !property.kind.is_accessor()
+                                {
+                                    continue;
+                                }
+                                module
+                                    .bindings
+                                    .insert(name.to_string(), Binding::Local(name.into_owned()));
+                            } else {
+                                module.unresolved.insert("commonjs:computed-key".to_owned());
+                            }
+                        }
+                    } else if !matches!(
+                        value,
+                        Expression::FunctionExpression(_)
+                            | Expression::ArrowFunctionExpression(_)
+                            | Expression::ClassExpression(_)
+                    ) {
+                        module.unresolved.insert("commonjs:opaque-value".to_owned());
+                    }
                 }
             }
         }
