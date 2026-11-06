@@ -55,6 +55,14 @@ const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
 const STEPS: SideTable<StepSourceKey, StepReplaySource, Named> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE);
 
+/// Whether a masked copy of a `COACH_BLOCKED_SOURCE` row still decodes as
+/// either of its two current stored values, for the historical lift sweep
+/// (FIX 2680): a receipt row's replay source, or a step row's kept request.
+pub(crate) fn coach_blocked_source_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BlockedReplaySource, Named>(bytes)
+        || crate::side_table::decodes::<StepReplaySource, Named>(bytes)
+}
+
 /// The byte a step row's key leads with. A receipt row's key is the
 /// receipt's 16 bytes alone, so the two never share a key's length.
 const STEP_TAG: u8 = b's';

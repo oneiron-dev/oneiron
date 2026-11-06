@@ -106,12 +106,12 @@ impl HostSelfDispatcher<'_> {
         // search registers its run through it.
         binding.route.revalidate()?;
         let context = binding.session.read_context(&binding.route, key.clone())?;
-        let refused = match self.hooked_session_read(&context, read, call, key, site)? {
+        let (answer, hooks) = self.hooked_session_read(&context, read, call, key, site)?;
+        let refused = match answer {
             Ok(SessionAnswer::Answered { output, rows }) => {
-                return Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
-                    output,
-                    Some(rows),
-                )));
+                return Ok(SelfDispatchOutcome::AgentVerb(
+                    AgentVerbAnswer::new(output, Some(rows)).with_hooks(hooks),
+                ));
             }
             Err(refused) => SessionReadRefusal::Read(refused.code),
         };

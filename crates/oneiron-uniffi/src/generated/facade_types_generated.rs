@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1251 facade rows, 4536 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1203.
+// UniFFI census: 1259 facade rows, 4559 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1211.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -1052,6 +1052,161 @@ pub struct ScratchpadWriteReply {
 pub struct ScratchpadSealRequest {
     #[serde(rename = "session_id")]
     pub session_id: String,
+}
+
+/// `oneiron::context_board::layout::FoldBaseline`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FoldBaseline {
+    #[serde(rename = "total")]
+    pub total: u64,
+    #[serde(rename = "counts", default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<std::collections::HashMap<String, u64>>,
+}
+
+/// `oneiron::context_board::layout::SectionFold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionFold {
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "keep", default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<Vec<String>>,
+    #[serde(rename = "baseline", default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<FoldBaseline>,
+    #[serde(
+        rename = "section_baselines",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub section_baselines: Option<std::collections::HashMap<String, FoldBaseline>>,
+}
+
+/// `oneiron::context_board::layout::BoardActorClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BoardActorClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::context_board::layout::BoardWhoFilter`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum BoardWhoFilter {
+    #[serde(rename = "mine")]
+    Mine,
+    #[serde(rename = "actor")]
+    Actor {
+        #[serde(rename = "actor")]
+        actor: String,
+    },
+    #[serde(rename = "class")]
+    Class {
+        #[serde(rename = "class")]
+        class: BoardActorClass,
+    },
+    #[serde(rename = "group")]
+    Group {
+        #[serde(rename = "group")]
+        group: String,
+    },
+}
+
+/// `oneiron::context_board::layout::SectionFilter`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionFilter {
+    #[serde(rename = "who", default, skip_serializing_if = "Option::is_none")]
+    pub who: Option<BoardWhoFilter>,
+    #[serde(rename = "status", default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<Vec<String>>,
+}
+
+/// `oneiron::context_board::layout::SectionLayout`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionLayout {
+    #[serde(rename = "share_pct", default, skip_serializing_if = "Option::is_none")]
+    pub share_pct: Option<u8>,
+    #[serde(rename = "fold", default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<SectionFold>,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<SectionFilter>,
+}
+
+/// `oneiron::context_board::layout::BoardLayout`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardLayout {
+    #[serde(rename = "sections", default, skip_serializing_if = "Option::is_none")]
+    pub sections: Option<std::collections::HashMap<String, SectionLayout>>,
+}
+
+/// `oneiron::context_board::layout_store::BoardLayoutState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BoardLayoutState {
+    #[serde(rename = "live")]
+    pub live: BoardLayout,
+    #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<BoardLayout>,
+    #[serde(
+        rename = "owner_override",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_override: Option<BoardLayout>,
+}
+
+/// `oneiron::verbs::board_layout::BoardFoldRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardFoldRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "keep", default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::board_layout::BoardSectionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSectionRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+}
+
+/// `oneiron::verbs::board_layout::BoardSizeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSizeRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+    #[serde(rename = "share_pct", default, skip_serializing_if = "Option::is_none")]
+    pub share_pct: Option<u8>,
+}
+
+/// `oneiron::verbs::board_layout::BoardFilterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardFilterRequest {
+    #[serde(rename = "section")]
+    pub section: String,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<SectionFilter>,
+}
+
+/// `oneiron::verbs::board_layout::BoardReplaceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardReplaceRequest {
+    #[serde(rename = "layout")]
+    pub layout: BoardLayout,
 }
 
 /// `oneiron::verbs::self_verbs::DiaryEntryRequest`.
@@ -58954,6 +59109,190 @@ pub struct ScopedReadResultOptionalProductivityTree {
     pub value: Option<ProductivityTree>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::ingest::ag_ui::observations::AgUiObservationKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgUiObservationKind {
+    #[serde(rename = "action")]
+    Action,
+    #[serde(rename = "failure")]
+    Failure,
+    #[serde(rename = "repair")]
+    Repair,
+    #[serde(rename = "outcome")]
+    Outcome,
+}
+
+/// `oneiron::ingest::ag_ui::observations::AgUiCustomMapping`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgUiCustomMapping {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: AgUiObservationKind,
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "thread_id", default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(
+        rename = "tool_call_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_call_id: Option<String>,
+    #[serde(
+        rename = "failure_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub failure_id: Option<String>,
+    #[serde(rename = "repair_id", default, skip_serializing_if = "Option::is_none")]
+    pub repair_id: Option<String>,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+}
+
+/// `oneiron::ingest::ag_ui::file::AgUiFileImport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgUiFileImport {
+    #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
+    pub claim_ref: Option<String>,
+    #[serde(rename = "project_ref")]
+    pub project_ref: String,
+    #[serde(rename = "app_id")]
+    pub app_id: String,
+    #[serde(rename = "custom_mappings")]
+    pub custom_mappings: Vec<AgUiCustomMapping>,
+    #[serde(rename = "jsonl")]
+    pub jsonl: String,
+}
+
+/// `oneiron::ingest::ag_ui::file::AgUiFileReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgUiFileReceipt {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "source_hash")]
+    pub source_hash: String,
+    #[serde(rename = "event_count")]
+    pub event_count: u64,
+}
+
+/// `oneiron::ingest::ag_ui::file::AgUiFileReadInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgUiFileReadInput {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "source_hash")]
+    pub source_hash: String,
+}
+
+/// `oneiron::ingest::ag_ui::observations::AgUiAppObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgUiAppObservation {
+    #[serde(rename = "ordinal")]
+    pub ordinal: u64,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: AgUiObservationKind,
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "thread_id", default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(
+        rename = "tool_call_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_call_id: Option<String>,
+    #[serde(
+        rename = "failure_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub failure_id: Option<String>,
+    #[serde(rename = "repair_id", default, skip_serializing_if = "Option::is_none")]
+    pub repair_id: Option<String>,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::WireJson>,
+}
+
+/// `oneiron::ingest::ag_ui::observations::AgUiRepairLinkStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgUiRepairLinkStatus {
+    #[serde(rename = "linked")]
+    Linked,
+    #[serde(rename = "missing_link")]
+    MissingLink,
+    #[serde(rename = "ambiguous_link")]
+    AmbiguousLink,
+    #[serde(rename = "namespace_mismatch")]
+    NamespaceMismatch,
+    #[serde(rename = "missing_outcome")]
+    MissingOutcome,
+}
+
+/// `oneiron::ingest::ag_ui::observations::AgUiRepairLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgUiRepairLink {
+    #[serde(rename = "outcome_ordinal")]
+    pub outcome_ordinal: u64,
+    #[serde(
+        rename = "repair_ordinal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repair_ordinal: Option<u64>,
+    #[serde(
+        rename = "failure_ordinal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub failure_ordinal: Option<u64>,
+    #[serde(rename = "status")]
+    pub status: AgUiRepairLinkStatus,
+}
+
+/// `oneiron::ingest::ag_ui::file::AgUiFileView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgUiFileView {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "source_hash")]
+    pub source_hash: String,
+    #[serde(rename = "capture_actor_ref")]
+    pub capture_actor_ref: String,
+    #[serde(rename = "project_ref")]
+    pub project_ref: String,
+    #[serde(rename = "app_id")]
+    pub app_id: String,
+    #[serde(rename = "custom_mappings")]
+    pub custom_mappings: Vec<AgUiCustomMapping>,
+    #[serde(rename = "jsonl")]
+    pub jsonl: String,
+    #[serde(rename = "event_count")]
+    pub event_count: u64,
+    #[serde(rename = "observations")]
+    pub observations: Vec<AgUiAppObservation>,
+    #[serde(rename = "repair_links")]
+    pub repair_links: Vec<AgUiRepairLink>,
+}
+
+/// `oneiron::ingest::ag_ui::file::AgUiFileRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgUiFileRead {
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AgUiFileView>,
+    #[serde(rename = "receipt")]
+    pub receipt: ScopedReadReceipt,
 }
 
 /// `oneiron::blob_artifact::create::ArtifactCreateRequest`.

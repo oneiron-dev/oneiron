@@ -98,6 +98,24 @@ impl OneironClient {
                 "self.focus.scratchpad.seal" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ScratchpadWriteReply,
                 >(client, verb, &input),
+                "self.board.layout" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.fold" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.unfold" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.size" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.filter" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
+                "self.board.replace" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BoardLayoutState,
+                >(client, verb, &input),
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
@@ -3221,6 +3239,12 @@ impl OneironClient {
                 "vault.productivity.tree" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::memory::ProductivityTree>>,
                 >(client, verb, &input),
+                "vault.ingest.ag_ui.import" => remote_agent_verb_output::<
+                    oneiron::ingest::AgUiFileReceipt,
+                >(client, verb, &input),
+                "vault.ingest.ag_ui.read" => {
+                    remote_agent_verb_output::<oneiron::ingest::AgUiFileRead>(client, verb, &input)
+                }
                 "vault.claims.admit" => {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
@@ -4160,6 +4184,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.focus.scratchpad.seal", value)
+    }
+    pub fn self_board_layout(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.layout", value)
+    }
+    pub fn self_board_fold(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardFoldRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.fold", value)
+    }
+    pub fn self_board_unfold(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardSectionRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.unfold", value)
+    }
+    pub fn self_board_size(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardSizeRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.size", value)
+    }
+    pub fn self_board_filter(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardFilterRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.filter", value)
+    }
+    pub fn self_board_replace(
+        &self,
+        input: &oneiron::task_verb::sdk::BoardReplaceRequest,
+    ) -> Result<oneiron::task_verb::sdk::BoardLayoutState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.board.replace", value)
     }
     pub fn self_memory_diary(
         &self,
@@ -16642,6 +16738,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.productivity.tree", value)
+    }
+    pub fn vault_ingest_ag_ui_import(
+        &self,
+        input: &oneiron::ingest::AgUiFileImport,
+    ) -> Result<oneiron::ingest::AgUiFileReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.ingest.ag_ui.import", value)
+    }
+    pub fn vault_ingest_ag_ui_read(
+        &self,
+        input: &oneiron::ingest::AgUiFileReadInput,
+    ) -> Result<oneiron::ingest::AgUiFileRead, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.ingest.ag_ui.read", value)
     }
     pub fn vault_claims_admit(
         &self,
