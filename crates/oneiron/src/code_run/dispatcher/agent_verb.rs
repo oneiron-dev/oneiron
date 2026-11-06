@@ -734,12 +734,16 @@ fn connector_call_answer(verb: AgentVerb, outcome: SelfDispatchOutcome) -> SelfD
 /// operation was `connector.call`.
 fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
     let listing = match verb {
-        AgentVerb::ConnectorCall => output,
-        AgentVerb::SelfUse => output.get("result")?,
+        AgentVerb::ConnectorCall => Some(output),
+        AgentVerb::SelfUse => output.get("result"),
         _ => return None,
     };
     // Delivered never parks, even when its body or enclosing answer is malformed.
-    if listing.get("outcome").and_then(Value::as_str) == Some("delivered") {
+    if listing
+        .and_then(|listing| listing.get("outcome"))
+        .and_then(Value::as_str)
+        == Some("delivered")
+    {
         return None;
     }
     let reply = match verb {
