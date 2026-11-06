@@ -150,6 +150,7 @@ impl JointRead {
             }),
             person: None,
             served: None,
+            cost_per_thousand: None,
         })
     }
 }

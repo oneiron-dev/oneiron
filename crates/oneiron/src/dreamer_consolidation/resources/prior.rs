@@ -245,7 +245,11 @@ pub(in crate::dreamer_consolidation) fn standing(
     let facet = super::signals::facet(prior.body.scope.as_ref())?;
     let fits = keys.identity.world == axes.world
         && facet == axes.facet
-        && (axes.relationship.is_none() || keys.identity.rel == axes.relationship)
+        && (axes.relationship.is_none() || keys.identity.rel.as_ref().is_some_and(|rel| {
+                axes.relationship
+                    .as_ref()
+                    .is_some_and(|bound| rel.iter().eq(bound.iter()))
+            }))
         && axes.project.is_none_or(|p| keys.identity.project == p);
     Ok(fits.then_some(standing))
 }

@@ -421,6 +421,9 @@ fn persist_scanned_inner(
         crate::provenance::record_actor_stamp_uses_in_txn(store, txn, entity, native_tokens)?;
     }
     crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
+    // FIX 4817: a home part's new revision withdraws what wore the old one.
+    let custody = crate::secret_custody::CustodyWrite::of(vault);
+    crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;

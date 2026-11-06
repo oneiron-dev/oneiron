@@ -10,11 +10,20 @@
 //! a reuse proves its reader again, as the reader is now, and re-admits the
 //! rung through the live route. The flight's own copy stays in its flight.
 //!
+//! A row is kept for its stream generation before that generation's call is
+//! sent (FIX 5028), so a reply a crash cuts before its terminal is recovered
+//! on the same generation with its breakpoint in place. A generation whose
+//! kept call gives way to another call, or whose stream ends with no
+//! terminal, drops its row. A reuse re-reads the row's turns as its reader
+//! reads them now, a room's audience through the room's held projection, as
+//! the log was read (FIX 5031).
+//!
 //! Its words are the conversation's, so erasing any record of the
-//! conversation drops the conversation's breakpoints. The craft notes its
-//! request shows are pinned by revision too (FIX 8135): a reuse finds each
-//! still standing as it was shown, and erasing one drops the breakpoints
-//! that show it, and only those.
+//! conversation drops the conversation's breakpoints: every row is keyed
+//! under its conversation, a Retry's whose MESSAGE has not landed yet
+//! included. The craft notes its request shows are pinned by revision too
+//! (FIX 8135): a reuse finds each still standing as it was shown, and erasing
+//! one drops the breakpoints that show it, and only those.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,10 +31,12 @@ use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::compaction::ConversationTurnSpan;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::memory::{Memory, RoomTurnHandle};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TURN,
 };
+use crate::secret_custody::CustodyWrite;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault, WriteActor};
@@ -135,7 +146,9 @@ impl ChatBreakpoint {
 /// Keeps `seed` as the breakpoint of `message`'s stream `generation`, beside
 /// every other generation's: a Continue's new generation and a Retry's new
 /// reply each keep their own, and the source's stays as it was. The row is
-/// what the side-row wall stores.
+/// what the side-row wall stores. A generation keeps its row once: kept
+/// before its call was sent (FIX 5028), the terminal's keep confirms it and
+/// writes nothing again.
 ///
 /// # Errors
 ///
@@ -148,9 +161,50 @@ pub fn keep_chat_breakpoint(
 ) -> Result<()> {
     let key = (seed.conversation, message, generation);
     vault.with_write_txn_grouped(|txn| {
+        if BREAKPOINTS.contains(&vault.store, &*txn, &key)? {
+            return Ok(());
+        }
         BREAKPOINTS.admit(vault, txn, &key, &mut seed)?;
         BREAKPOINTS.put(vault, txn, &key, &seed)
     })
+}
+
+/// Drops the breakpoint of `message`'s stream `generation` in
+/// `conversation` (FIX 5028), with the custody its row lifted: a generation
+/// whose kept call gave way to another call, or whose stream never started,
+/// keeps none. Every other generation's row stays.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn forget_chat_breakpoint(
+    vault: &Vault,
+    conversation: EntityId,
+    message: EntityId,
+    generation: EntityId,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        forget_chat_breakpoint_in_txn(
+            &CustodyWrite::of(vault),
+            txn,
+            &(conversation, message, generation),
+        )
+    })
+}
+
+/// [`forget_chat_breakpoint`] in the caller's write, for the row `key`
+/// names: a stream retired with no terminal drops its generation's row in
+/// the write that drops its recovery seed.
+pub(crate) fn forget_chat_breakpoint_in_txn(
+    write: &CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, EntityId, EntityId),
+) -> Result<()> {
+    let place = format!("side:{}", BREAKPOINTS.decl().name);
+    let origin = crate::batch::secret_scan::side_row_origin(&place, &BREAKPOINTS.key_bytes(key))?;
+    crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
+    BREAKPOINTS.delete(write.store, txn, key)?;
+    Ok(())
 }
 
 /// The breakpoint of `message`'s latest stream generation in
@@ -173,49 +227,58 @@ pub fn chat_breakpoint(
     BREAKPOINTS.get(&vault.store, &txn, &(conversation, message, generation))
 }
 
-/// Whether `seed` still stands, read again as its reader in one snapshot:
-/// its request is its digest's, every turn it was read from projects the
-/// same fingerprint, every summary it holds still stands, and every craft
-/// note it shows still reads, with live support, at the revision it showed
-/// (FIX 8135).
+/// Whether `seed` still stands, read again in one snapshot as `memory`, its
+/// reader's handle as it stands now (where it sits, under its live
+/// authority): its request is its digest's, every turn it was read from
+/// projects the same fingerprint through the lane its log was read through,
+/// a room's audience through the room's held projection (FIX 5031), every
+/// summary it holds still stands for that reader (its evidence and words
+/// read through the same lane), and every craft note it shows still
+/// reads, with live support, at the revision it showed (FIX 8135). A handle
+/// of another reader, or a room projection that refuses or holds, finds its
+/// sources moved.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn chat_breakpoint_stands(
-    vault: &Vault,
+    memory: &Memory<'_>,
     seed: &ChatBreakpoint,
 ) -> Result<std::result::Result<(), ChatBreakpointStale>> {
-    use crate::ports::EntityStore;
     if seed.captured_request().is_none() {
         return Ok(Err(ChatBreakpointStale::RequestChanged));
     }
-    let Some(reader) = seed.reader() else {
+    if seed.reader != memory.actor() || seed.reader_class != memory.actor_class() as u8 {
+        return Ok(Err(ChatBreakpointStale::SourceMoved));
+    }
+    let vault = memory.vault();
+    let Ok(room) = crate::compaction::chat_log_room(memory, seed.conversation) else {
         return Ok(Err(ChatBreakpointStale::SourceMoved));
     };
+    let Ok(key) = room
+        .as_ref()
+        .map_or(memory, RoomTurnHandle::memory)
+        .read_key()
+    else {
+        return Ok(Err(ChatBreakpointStale::SourceMoved));
+    };
+    let read = vault.scoped_read(key);
     let txn = vault.store.env.read_txn()?;
     for span in &seed.sources {
-        let Some(row) = vault.port_entity_get(&txn, &span.turn)? else {
-            return Ok(Err(ChatBreakpointStale::SourceMoved));
-        };
-        let pinned = crate::dreamer_consolidation::live_turn_text_in(
-            vault, &txn, reader, &span.turn, &row.body,
-        )
-        .ok()
-        .and_then(|text| text.summary_fingerprint().ok())
-        .map(|fingerprint| bytes_to_hex_lower(&fingerprint));
+        let pinned = crate::dreamer_consolidation::scoped_turn_text_in(&read, &txn, &span.turn)
+            .ok()
+            .flatten()
+            .and_then(|text| text.summary_fingerprint().ok())
+            .map(|fingerprint| bytes_to_hex_lower(&fingerprint));
         if pinned.as_deref() != Some(span.fingerprint.as_str()) {
             return Ok(Err(ChatBreakpointStale::SourceMoved));
         }
     }
+    // Each summary is read as a chat log reads it, through the same reader:
+    // its evidence and words must stand for that reader now, not only be
+    // stored (FIX 5027, 5031).
     for summary in &seed.summaries {
-        let standing =
-            crate::ports::EntityStoreRead::port_entity_record(&vault.store, &txn, summary)?
-                .is_some_and(|record| {
-                    record.entity_type == ENTITY_TYPE_SUMMARY
-                        && crate::compaction::decode_epoch_summary_body(&record.body).is_ok()
-                });
-        if !standing {
+        if !crate::compaction::summary_stands_in(&read, &txn, summary)? {
             return Ok(Err(ChatBreakpointStale::SummaryWithdrawn));
         }
     }
@@ -321,11 +384,7 @@ fn erase_craft_breakpoints_in_txn(
         .map(|(key, _)| key)
         .collect();
     for key in &shown {
-        let place = format!("side:{}", BREAKPOINTS.decl().name);
-        let origin =
-            crate::batch::secret_scan::side_row_origin(&place, &BREAKPOINTS.key_bytes(key))?;
-        crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
-        BREAKPOINTS.delete(store, txn, key)?;
+        forget_chat_breakpoint_in_txn(write, txn, key)?;
     }
     Ok(())
 }
