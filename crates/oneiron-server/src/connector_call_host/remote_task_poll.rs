@@ -26,8 +26,15 @@
 //! takes the answer: it is parked as the next round. Every other request is
 //! refused as one this client does not serve: an elicitation in URL mode, in
 //! a session that declared none, of another task, or one the ledger cannot
-//! park, with `-32602`; any other method with `-32601`. A parked question
-//! whose task ended goes with its Ask after the pass.
+//! park, with `-32602`; any other method with `-32601`. A keyed call's issuer
+//! binding is read again just before each answer or refusal goes out, after
+//! any writer it waited on: while a hold stands (FIX 12166), or the binding
+//! does not read, nothing is sent, and a claimed answer that was not sent is
+//! Uncertain, never sent again. Every pass, whether it polled or not and
+//! whether or not its host was built, ends by forgetting the parked
+//! questions whose task ended with their Asks, reconciling the Asks with the
+//! rows, and carrying out the task-input key retirements committed writers
+//! staged.
 //!
 //! A `tasks/get` answered HTTP 404 in its session is the connector ending
 //! that session: the poll opens a new one under the same endpoint, revision
@@ -81,9 +88,25 @@ fn now_ms() -> u64 {
         })
 }
 
-/// One pass over the Deferred rows whose tasks are due a poll. Blocking: it
-/// sends, so run it on a blocking worker (the connector settler does).
+/// One pass over the Deferred rows whose tasks are due a poll, then the
+/// parked questions' reconciliation. Blocking: it sends, so run it on a
+/// blocking worker (the connector settler does).
 pub(crate) fn poll_remote_tasks(server: &SyncServer) {
+    poll_due_remote_tasks(server);
+    // FIX 16029: on every pass, however the poll went (nothing due, only
+    // sessions owed their end, no host built): the parked question of a task
+    // that ended, in this pass or another way, goes with its owner Ask; the
+    // Asks are reconciled with the rows a restore can leave apart; and every
+    // task-input key retirement a committed writer staged is carried out.
+    let vault = server.vault();
+    if let Err(error) = vault.forget_ended_remote_task_inputs() {
+        tracing::warn!(%error, "the questions of ended remote tasks not forgotten");
+        vault.finish_remote_task_input_retirements();
+    }
+}
+
+/// The polls of one pass, and the sessions owed their end.
+fn poll_due_remote_tasks(server: &SyncServer) {
     let vault = server.vault();
     // FIX 16029: a task whose parked question the owner answered is due now,
     // however recently its last poll read it, so this pass sends the answer.
@@ -116,7 +139,6 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
             return;
         }
     };
-    let polled = !due.is_empty();
     for task in due {
         // The intent id's first bytes name the row in the log.
         let intent: String = task.intent[..8]
@@ -150,12 +172,6 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
         if let Err(error) = recorded {
             tracing::warn!(%intent, %error, "remote task poll not recorded");
         }
-    }
-    // FIX 16029: the parked question of a task that ended, in this pass or
-    // another way, goes with its owner Ask; the forget carries out its key
-    // retirements once its writer committed.
-    if polled && let Err(error) = vault.forget_ended_remote_task_inputs() {
-        tracing::warn!(%error, "the questions of ended remote tasks not forgotten");
     }
     for (intent, end) in owed {
         // An end that cannot be sent (the connector gone or moved, its
@@ -455,7 +471,8 @@ enum Turned {
 /// question is parked first: the task is polled again, and leaving the
 /// stream does not cancel it. Nothing the requests or the result carry is
 /// kept outside the parked question's seal. A keyed call meets its issuer
-/// hold before the `tasks/result` and before each answer or refusal.
+/// hold before the `tasks/result` and just before each answer or refusal,
+/// after the writer that claims or parks its question committed.
 fn answer_task_input(
     live: &LiveSession,
     input: &TaskInput<'_>,
@@ -580,10 +597,16 @@ fn serve_request(live: &LiveSession, input: &TaskInput<'_>, request: Value) -> S
             Served::Leave
         }
         // A schema that is not a flat form, or a row that is no longer this
-        // task's Deferred send: a question this client cannot take.
+        // task's Deferred send: a question this client cannot take. The
+        // writer may have waited behind one that committed an issuer hold,
+        // so the binding is read again before the refusal goes out.
         Err(IntentLedgerError::InvalidInput(_)) => {
             zeroize_json(request_id);
-            live.refuse_params(request);
+            if input.held() {
+                zeroize_json(request);
+            } else {
+                live.refuse_params(request);
+            }
             Served::ReadOn
         }
         Err(error) => {
@@ -601,8 +624,12 @@ fn serve_request(live: &LiveSession, input: &TaskInput<'_>, request: Value) -> S
 /// Sends the owner's claimed `answer` in reply to the task's request
 /// `request_id`, the related-task metadata with it, in `live`, and records
 /// how its POST went (FIX 16029): taken (a 2xx), the answer is Sent and its
-/// sealed round retired; an outcome unknown, it is Uncertain. A refused or
-/// unsent answer stays Sending. None is ever sent again.
+/// sealed round retired; an outcome unknown, it is Uncertain. The keyed
+/// call's issuer binding is read again just before the POST, after the
+/// claim's writer committed: while a hold stands over it (FIX 12166), or
+/// the binding does not read, nothing goes out and the claimed answer is
+/// Uncertain. A refused or unsent answer stays Sending. None is ever sent
+/// again.
 fn send_answer(
     live: &LiveSession,
     input: &TaskInput<'_>,
@@ -619,23 +646,34 @@ fn send_answer(
     // place is wiped.
     zeroize_json(parked_id);
     zeroize_json(Value::from(session));
-    let posted = match serde_json::from_slice::<Map<String, Value>>(&result) {
-        Ok(elicit_result) => live.respond_in_task(request_id, &input.task.task_id, elicit_result),
-        Err(_) => {
-            zeroize_json(request_id);
-            Posted::Unsent
-        }
+    // `None`: an issuer hold stood, or the binding did not read, just before
+    // the POST, so nothing went out.
+    let posted = if input.held() {
+        zeroize_json(request_id);
+        None
+    } else if let Ok(elicit_result) = serde_json::from_slice::<Map<String, Value>>(&result) {
+        Some(live.respond_in_task(request_id, &input.task.task_id, elicit_result))
+    } else {
+        zeroize_json(request_id);
+        Some(Posted::Unsent)
     };
     drop(result);
+    if posted.is_none() {
+        tracing::info!(
+            reason = "remote_task_answer_issuer_held",
+            "an issuer hold stands over a remote task's claimed answer; it is not sent, and \
+             never sent again"
+        );
+    }
     let (vault, intent) = (input.vault, &input.task.intent);
     let recorded = match posted {
-        Posted::Accepted => vault.try_with_write_txn(|txn| {
+        Some(Posted::Accepted) => vault.try_with_write_txn(|txn| {
             vault.record_remote_task_answer_sent_in_txn(txn, intent, generation)
         }),
-        Posted::Uncertain => vault.try_with_write_txn(|txn| {
+        None | Some(Posted::Uncertain) => vault.try_with_write_txn(|txn| {
             vault.record_remote_task_answer_uncertain_in_txn(txn, intent, generation)
         }),
-        Posted::Refused | Posted::Unsent => {
+        Some(Posted::Refused | Posted::Unsent) => {
             tracing::info!(
                 reason = "remote_task_answer_not_taken",
                 "the connector did not take a remote task's answer; it is not sent again"

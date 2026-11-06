@@ -732,11 +732,25 @@ impl Vault {
         tool: &str,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
-        let catalog_slate = self
-            .get_connector_key(&route.key_ref)?
-            .and_then(|key| key.slate_ref);
+        let txn = self.store.env.read_txn()?;
+        self.connector_tool_class_in_txn(&txn, governing, route, tool, read)
+    }
+
+    /// [`Self::connector_tool_class`] read in `txn`, a writer's included, so
+    /// a check inside one opens no read of its own (FIX 16029).
+    pub(super) fn connector_tool_class_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        governing: &ConnectorKeyRecord,
+        route: &ConnectorCallRoute,
+        tool: &str,
+        read: &mut Vec<EntityId>,
+    ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
+        let catalog_slate =
+            crate::connector_key::read_key_for_pack_in_txn(self, txn, &route.key_ref)?
+                .and_then(|key| key.slate_ref);
         for slate_id in [governing.slate_ref, catalog_slate].into_iter().flatten() {
-            let slate = self.connector_slate(slate_id)?;
+            let slate = crate::connector_key::read_connector_slate_in_txn(self, txn, slate_id)?;
             if slate.is_some() {
                 read.push(slate_id);
             }

@@ -3,7 +3,9 @@
 //! read at park and checked again against the owner's values at submit.
 //!
 //! Every constraint a field states is enforced: its type, choices, lengths
-//! and bounds, a string's `pattern` (read as the ECMA-262 pattern JSON
+//! and bounds (a string's `enum` and its `oneOf` each on its own, so a value
+//! must meet both, and `oneOf`'s exactly-one rule with them), a string's
+//! `pattern` (read as the ECMA-262 pattern JSON
 //! Schema names, its ASCII classes kept ASCII) and the string formats form
 //! mode names (`email`, `uri`, `date`, `date-time`). A schema that states a
 //! constraint this reader cannot enforce (any other keyword, another
@@ -78,7 +80,11 @@ pub(super) struct FormSchema {
 /// One form field's kind, as its schema reads.
 enum FieldKind {
     Text {
+        /// Its `enum`: the value is one of these.
         choices: Option<Vec<String>>,
+        /// Its `oneOf` options' `const` values: the value matches exactly
+        /// one option, so a value two options name matches none.
+        options: Option<Vec<String>>,
         min_length: Option<u64>,
         max_length: Option<u64>,
         pattern: Option<regex::Regex>,
@@ -176,6 +182,7 @@ impl FieldKind {
                 states_only(property, &[FIELD_ANNOTATIONS, TEXT_KEYWORDS])?;
                 Ok(Self::Text {
                     choices: read_choices(property)?,
+                    options: read_options(property)?,
                     min_length: read_count(property, "minLength")?,
                     max_length: read_count(property, "maxLength")?,
                     pattern: read_pattern(property)?,
@@ -203,6 +210,7 @@ impl FieldKind {
             (
                 Self::Text {
                     choices,
+                    options,
                     min_length,
                     max_length,
                     pattern,
@@ -214,6 +222,12 @@ impl FieldKind {
                     .as_ref()
                     .is_some_and(|choices| !choices.contains(text))
                 {
+                    return Err(OUT_OF_CHOICES);
+                }
+                // `oneOf`: exactly one option matches.
+                if options.as_ref().is_some_and(|options| {
+                    options.iter().filter(|option| *option == text).count() != 1
+                }) {
                     return Err(OUT_OF_CHOICES);
                 }
                 // JSON Schema counts a string's length in code points.
@@ -294,30 +308,41 @@ fn states_only(object: &Map<String, Value>, allowed: &[&[&str]]) -> Result<(), &
     }
 }
 
-/// A string field's choices: its `enum` values and its `oneOf` options'
-/// `const` values; `None` for a field that names neither.
+/// A string field's `enum` values; `None` for a field that names none.
 fn read_choices(property: &Map<String, Value>) -> Result<Option<Vec<String>>, &'static str> {
+    let Some(values) = property.get("enum") else {
+        return Ok(None);
+    };
     let mut choices = Vec::new();
-    if let Some(values) = property.get("enum") {
-        for value in values.as_array().ok_or(NOT_PRIMITIVE)? {
-            choices.push(value.as_str().ok_or(NOT_PRIMITIVE)?.to_owned());
-        }
+    for value in values.as_array().ok_or(NOT_PRIMITIVE)? {
+        choices.push(value.as_str().ok_or(NOT_PRIMITIVE)?.to_owned());
     }
-    if let Some(options) = property.get("oneOf") {
-        for option in options.as_array().ok_or(NOT_PRIMITIVE)? {
-            states_only(option.as_object().ok_or(NOT_PRIMITIVE)?, &[CHOICE_KEYWORDS])?;
-            let value = option
-                .get("const")
-                .and_then(Value::as_str)
-                .ok_or(NOT_PRIMITIVE)?;
-            choices.push(value.to_owned());
-        }
-    }
-    let named = property.contains_key("enum") || property.contains_key("oneOf");
-    if named && choices.is_empty() {
+    if choices.is_empty() {
         return Err(NOT_PRIMITIVE);
     }
-    Ok(named.then_some(choices))
+    Ok(Some(choices))
+}
+
+/// A string field's `oneOf` options, each its `const` value, in the order
+/// named and duplicates kept, so the check counts the options a value
+/// matches; `None` for a field that names none.
+fn read_options(property: &Map<String, Value>) -> Result<Option<Vec<String>>, &'static str> {
+    let Some(options) = property.get("oneOf") else {
+        return Ok(None);
+    };
+    let mut values = Vec::new();
+    for option in options.as_array().ok_or(NOT_PRIMITIVE)? {
+        states_only(option.as_object().ok_or(NOT_PRIMITIVE)?, &[CHOICE_KEYWORDS])?;
+        let value = option
+            .get("const")
+            .and_then(Value::as_str)
+            .ok_or(NOT_PRIMITIVE)?;
+        values.push(value.to_owned());
+    }
+    if values.is_empty() {
+        return Err(NOT_PRIMITIVE);
+    }
+    Ok(Some(values))
 }
 
 fn read_count(property: &Map<String, Value>, key: &str) -> Result<Option<u64>, &'static str> {
