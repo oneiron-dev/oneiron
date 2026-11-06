@@ -373,7 +373,7 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
