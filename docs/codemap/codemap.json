@@ -21019,7 +21019,7 @@
      "path": "src/connector_key/events/paced.rs",
      "purpose": "Connector event wakes a full count-bound budget window paces (FIX 8686)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -56701,7 +56701,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 13
      }
