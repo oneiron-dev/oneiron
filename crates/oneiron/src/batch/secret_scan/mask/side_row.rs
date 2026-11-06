@@ -7,9 +7,15 @@
 //! was. A hit the mask cannot place refuses the write with the scan's error:
 //! a recovery phrase, a key split over members, a key in a container's
 //! member (FIX 2312), bytes no reading takes (an opaque codec), a masked copy
-//! the row's own codec refuses, or a writer whose target holds no custody
-//! door. With the owner's switch off the row is
-//! written as given, as the batch door skips its scan.
+//! the row's own codec refuses, or a secret that needs a new record in a
+//! writer whose target holds no custody door. A value custody already holds
+//! still takes its handle there (FIX 6647). With the owner's switch off the
+//! row is written as given, as the batch door skips its scan.
+//!
+//! A body a session route publishes is decided by the base vault
+//! ([`admit_decided_parts`], FIX 6647, FIX 5718 part 3): its switch, kept
+//! values and known values plan it, and its door mints only when the body
+//! lands in base.
 //!
 //! The custody records a mask mints go through their own door, into tables
 //! the catalog does not class as authored, so nothing here reads them again.
@@ -40,10 +46,13 @@ use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
+use crate::Vault;
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
 use crate::secret_custody::KeptValues;
+use crate::secret_record::CustodyWrite;
 use crate::side_table::{CodecName, RefPath, RefStep, SideTableDbs, SideTableDecl};
+use crate::store::Store;
 use crate::store::known_value_index::KnownValues;
 
 /// One part of a row the wall reads.
@@ -342,7 +351,7 @@ fn admit_read_parts(
 ) -> Result<Option<TextReplacements>> {
     let origins = vec![(origin(place, key)?, place); parts.len()];
     admitted(
-        dbs,
+        Scope::of(dbs, wtxn)?,
         wtxn,
         &origins,
         parts,
@@ -350,6 +359,56 @@ fn admit_read_parts(
         accepts,
         pass,
     )
+}
+
+/// [`admit_side_parts`] for a body the base vault `base` decides while the
+/// writer that publishes it may write elsewhere (FIX 6647, FIX 5718 part 3):
+/// `base`'s switch, the values its owner kept and the values its custody
+/// holds plan the parts, and `door` mints the plan's new records. With no
+/// door a value base custody holds still takes its handle, and a secret that
+/// needs a new record refuses the write.
+pub(super) fn admit_decided_parts(
+    base: &Vault,
+    door: Option<CustodyWrite<'_>>,
+    wtxn: &mut RwTxn<'_>,
+    (place, key): (&str, &[u8]),
+    parts: &mut [SidePart],
+) -> Result<bool> {
+    let scope = Scope {
+        mode: secret_scan_mode_in_txn(base, &*wtxn)?,
+        decides: Some(&base.store),
+        door,
+    };
+    let origins = vec![(origin(place, key)?, place); parts.len()];
+    let (mut seed, pass) = (Lifted::default(), Pass::default());
+    let placed = admitted(scope, wtxn, &origins, parts, &mut seed, |_| true, pass)?;
+    Ok(placed.is_some())
+}
+
+/// Who decides one admission and what mints the records it lifts: a
+/// writer's own target, or the base vault for a body a session route
+/// publishes (FIX 6647).
+struct Scope<'a> {
+    /// The owner's switch, as the deciding target reads it.
+    mode: SecretScanMode,
+    /// The store whose kept values and known values the plan reads.
+    decides: Option<&'a Store>,
+    /// The custody door the plan's new records go through; `None` mints
+    /// none.
+    door: Option<CustodyWrite<'a>>,
+}
+
+impl<'a> Scope<'a> {
+    /// A writer's own target, which decides with the custody door it holds
+    /// and mints through it.
+    fn of(dbs: &'a impl SideTableDbs, wtxn: &RwTxn<'_>) -> Result<Self> {
+        let door = dbs.side_custody();
+        Ok(Self {
+            mode: secret_scan_mode_in_txn(dbs, wtxn)?,
+            decides: door.as_ref().map(|door| door.store),
+            door,
+        })
+    }
 }
 
 /// How one admission runs: the fields the row keeps structural references
@@ -391,16 +450,17 @@ pub(crate) fn admit_seeded_parts(
         known,
         ..Pass::default()
     };
-    Ok(admitted(dbs, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
+    let scope = Scope::of(dbs, wtxn)?;
+    Ok(admitted(scope, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
 }
 
 /// The wall's one admission, for a side row and for a record's own parts
 /// alike: `None` when the parts are written as given, else, with a tracked
 /// `pass`, where each handle went in each text it masked. Only a clean copy
-/// the row's own reading `accepts` mints custody records. Both the plan and
-/// the minted pass read `pass.refs`.
+/// the row's own reading `accepts` mints custody records, and only through
+/// `scope`'s door. Both the plan and the minted pass read `pass.refs`.
 fn admitted(
-    dbs: &impl SideTableDbs,
+    scope: Scope<'_>,
     wtxn: &mut RwTxn<'_>,
     origins: &[(EntityId, &str)],
     parts: &mut [SidePart],
@@ -408,7 +468,7 @@ fn admitted(
     accepts: impl Fn(&[SidePart]) -> bool,
     pass: Pass,
 ) -> Result<Option<TextReplacements>> {
-    if secret_scan_mode_in_txn(dbs, &*wtxn)? == SecretScanMode::Off {
+    if scope.mode == SecretScanMode::Off {
         return Ok(None);
     }
     if origins.len() != parts.len() {
@@ -416,9 +476,9 @@ fn admitted(
             "a part the side-row wall reads names no origin",
         ));
     }
-    let kept = match dbs.side_custody() {
-        Some(custody) => KeptValues::for_records_in_txn(
-            custody.store,
+    let kept = match scope.decides {
+        Some(store) => KeptValues::for_records_in_txn(
+            store,
             &*wtxn,
             origins.iter().map(|(record, _)| *record),
         )?,
@@ -432,10 +492,10 @@ fn admitted(
         }
     }
     // A value custody already holds keeps its own handle in a row whose
-    // writer holds a custody door, shape or none (OF-560 C).
-    let known = match (pass.known, dbs.side_custody()) {
+    // scope decides with custody, shape or none (OF-560 C).
+    let known = match (pass.known, scope.decides) {
         (Some(known), _) => Some(known),
-        (None, Some(custody)) => KnownValues::shared_in_writer(custody.store, wtxn)?,
+        (None, Some(store)) => KnownValues::shared_in_writer(store, wtxn)?,
         (None, None) => None,
     };
     if refusal.is_none() && known.is_none() && kept.is_empty() {
@@ -468,12 +528,20 @@ fn admitted(
         return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
     }
     drop(planned);
-    let Some(custody) = dbs.side_custody() else {
-        return refusal.map_or(Ok(None), Err);
-    };
-    let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
-    seed.0
-        .adopt(plan.mint(&custody, wtxn, at)?.map(|(handle, _)| handle));
+    // With no door nothing is minted (FIX 6647): a plan that needs a new
+    // record refuses with the door's reason, and one that placed only
+    // values custody already holds takes their handles, minting none.
+    match &scope.door {
+        Some(door) => {
+            let at = crate::ports::recorded_at_in_txn(door.store, wtxn)?;
+            seed.0
+                .adopt(plan.mint(door, wtxn, at)?.map(|(handle, _)| handle));
+        }
+        None if !plan.found.is_empty() => {
+            return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
+        }
+        None => {}
+    }
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,

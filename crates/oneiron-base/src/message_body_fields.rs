@@ -59,6 +59,34 @@ pub fn message_fields(body: &[u8]) -> Option<MessageFields<'_>> {
     Some(fields)
 }
 
+/// One named value of a complete MessagePack map, borrowed without decoding
+/// the other values. Duplicate selected keys or malformed maps return none.
+pub fn map_value<'a>(body: &'a [u8], wanted: &[u8]) -> Option<&'a [u8]> {
+    let mut rd = body;
+    let entries = match byte(&mut rd)? {
+        marker @ 0x80..=0x8f => usize::from(marker & 0x0f),
+        0xde => uint(&mut rd, 2)?,
+        0xdf => uint(&mut rd, 4)?,
+        _ => return None,
+    };
+    let mut found = None;
+    for _ in 0..entries {
+        let key = string(&mut rd)?;
+        let value = rd;
+        skip(&mut rd, MAX_DEPTH)?;
+        if key == wanted {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(&value[..value.len() - rd.len()]);
+        }
+    }
+    if !rd.is_empty() {
+        return None;
+    }
+    found
+}
+
 /// The newest characters of `text`, at most `count`, and how many; `None`
 /// for bytes that do not end in that many characters of UTF-8. It reads back
 /// from the end, at most four bytes for each character it keeps.
