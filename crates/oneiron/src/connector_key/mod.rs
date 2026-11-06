@@ -34,6 +34,7 @@ mod slate_setting;
 mod tool_effect;
 mod tool_remember;
 mod txn;
+
 #[cfg(test)]
 mod tests;
 
