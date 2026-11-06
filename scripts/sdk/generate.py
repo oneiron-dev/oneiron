@@ -2420,6 +2420,10 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_drafter_policy({name}, output)'
             elif row['output'] == 'crate::drafter::DrafterStatus':
                 result = f'crate::codec::lift_drafter_status({name}, output)'
+            elif row['output'] == 'crate::memory::foreign_code::ForeignCodeRunResult':
+                result = f'crate::codec::lift_foreign_code_result({name}, output)'
+            elif row['output'] == 'crate::vault_cleanup::CleanupReviewView':
+                result = f'crate::codec::lift_cleanup_review({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):

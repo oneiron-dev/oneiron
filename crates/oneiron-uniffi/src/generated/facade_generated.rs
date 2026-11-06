@@ -2544,7 +2544,7 @@ export_facade! {
 "vault.cleanup.review" => fn vault_cleanup_review(&self, input: CleanupReviewRequest) -> CleanupReviewView = |client| {
     let input: oneiron::vault_cleanup::CleanupReviewRequest = crate::codec::lower_record("vault.cleanup.review", input)?;
     let output = client.vault_cleanup_review(&input)?;
-    crate::codec::lift_record("vault.cleanup.review", &output)
+    crate::codec::lift_cleanup_review("vault.cleanup.review", output)
 };
 "vault.cleanup.decide" => fn vault_cleanup_decide(&self, input: CleanupDecideRequest) -> CleanupDecideView = |client| {
     let input: oneiron::vault_cleanup::CleanupDecideRequest = crate::codec::lower_record("vault.cleanup.decide", input)?;
@@ -3409,7 +3409,7 @@ export_facade! {
 "execute_code" => fn execute_code(&self, input: ForeignCodeRunRequest) -> ForeignCodeRunResult = |client| {
     let input: oneiron::memory::foreign_code::ForeignCodeRunRequest = crate::codec::lower_record("execute_code", input)?;
     let output = client.execute_code(&input)?;
-    crate::codec::lift_record("execute_code", &output)
+    crate::codec::lift_foreign_code_result("execute_code", output)
 };
 "vault.code.model_heal_count" => fn vault_code_model_heal_count(&self, input: CodeRunModelHealCountRequest) -> CodeRunModelHealCountView = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
