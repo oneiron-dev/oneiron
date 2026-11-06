@@ -2,6 +2,13 @@
 
 side_tables! {
     SYNC_STATE;
+    /// A file-plane ASSET body this machine received from its home (FIX 14534): the home
+    /// machine (16 bytes), the carrier's BLAKE3 (32), the body's BLAKE3 (32) and its length
+    /// (u64be), written in the own-device client's landing commit. The owner's discard of a
+    /// world copy releases the ASSET's file only while its manifest names that body and the
+    /// row stands at the revision (16 bytes, last) the landing wrote. Runtime: never imaged,
+    /// a restore drops it. Key: hex32 (ASSET id).
+    SYNC_ASSET_BODY_FROM_HOME: SyncState b"ab:h:" Raw;
     /// Archived claim-less shell marker. Key: hex32.
     DELETION_ARCHIVE_MARKER: SyncState b"ac:" Raw;
     /// Per-admission disclosure floor: the VV as of the last full-state text-document export to one
@@ -61,6 +68,11 @@ side_tables! {
     /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
     /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
     AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
+    /// A BASE window the owner's discard of a world copy took rows from (FIX 14534 part E): a
+    /// first byte of 1 while its persisted copy still waits for its projection, 0 once
+    /// installed, then the version vector the last projection kept, the floor below which no
+    /// send of the window goes to the home. Key: window key.
+    SYNC_BASE_WINDOW_DISCARD: SyncState b"bd:w:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
@@ -291,9 +303,20 @@ side_tables! {
     /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
+    /// Which machine wrote the MESSAGE row this install stores (FIX 12113): the row's BLAKE3
+    /// (32 bytes) when this install's local put wrote it, or the writer's whole proof (the row's
+    /// BLAKE3, the writer machine and its Ed25519 signature, 112 bytes) when the own-device lane
+    /// admitted it. The reverse scan vouches for a row beside it only while its bytes are the
+    /// ones named here. Runtime: never imaged, a restore drops it. Key: hex32 (MESSAGE id).
+    SYNC_MESSAGE_WRITER: SyncState b"mw:" Raw;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
+    /// Marks a replica's NOTE fork its authority sent (FIX 12789): the
+    /// authority's fork set settles it, and a fork made here carries no mark.
+    /// Key: hex32(note) ":" hex32(fork); value: BLAKE3 of the fork document
+    /// as sent.
+    NOTE_FORK_AUTHORITY: SyncState b"note_fork_authority:v1:" Raw;
     /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
     /// module's erasure sweep. Key: yyyy-mm (window key).
     SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;

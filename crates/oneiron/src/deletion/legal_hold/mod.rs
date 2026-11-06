@@ -18,6 +18,8 @@
 //! (WILL-PLAN L01 rows 01-03, FIX 8849). Everywhere, "erase confirmed"
 //! stands apart from "erase completed" (C4, row 04).
 
+#[cfg(unix)]
+pub(super) mod clone;
 mod confirmation;
 mod held_scrubs;
 mod pending_delete;
