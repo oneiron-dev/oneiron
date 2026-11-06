@@ -153,7 +153,7 @@ fn checkpoint_key(park: EntityId) -> Vec<u8> {
 
 /// One bound call's row key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CallKey {
+pub(crate) struct CallKey {
     wake: WakeRef,
     attempt: AttemptId,
     call: EntityId,
@@ -465,7 +465,7 @@ fn record_call_closed(vault: &Vault, key: CallKey, end: WakeObservedCallEnd) {
 pub(crate) enum StepTerminal {
     /// A response this execution's call answered: the step's own call, when
     /// this execution bound one.
-    Fresh { bound: bool },
+    Fresh { key: Option<CallKey> },
     /// A stored response finished on recovery: the call that received it,
     /// in whichever pass admitted it.
     Recovered,
@@ -487,10 +487,18 @@ pub(crate) fn record_call_terminal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     claimed: &StepClaimed,
 ) {
-    if matches!(claimed.terminal, StepTerminal::Fresh { bound: false }) {
-        return;
-    }
-    let found = step_call_in_txn(vault, wtxn, claimed.attempt_id, &claimed.step_hash);
+    let found = match claimed.terminal {
+        StepTerminal::Fresh { key: Some(key) } => {
+            let bytes = key.bytes();
+            CALLS
+                .get(&vault.store, wtxn, &bytes)
+                .map(|row| row.map(|row| (bytes, row)))
+        }
+        StepTerminal::Fresh { key: None } => return,
+        StepTerminal::Recovered => {
+            step_call_in_txn(vault, wtxn, claimed.attempt_id, &claimed.step_hash)
+        }
+    };
     let (key, mut row) = match found {
         Ok(Some(found)) => found,
         Ok(None) => return,
