@@ -75,4 +75,6 @@ keep their existing transport-error message. Foreign response bytes still
 never appear in that message. All typed refusal fields keep their existing
 mapping. A lens callback's already-decoded 202 refusal goes straight from its
 JSON value to the same typed envelope, without serializing another byte copy.
-Raw asynchronous model responses keep their existing limits and readers.
+Pairing replies use the same bounded reader and keep the original no-slip,
+truncation, token and checkpoint-pin checks. Raw asynchronous model responses
+keep their existing limits and readers.
