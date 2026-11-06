@@ -194,7 +194,9 @@ impl Vault {
 
     /// Creates only after credential admission and an Allow setup receipt in
     /// the same writer. `None` leaves the shape item resting without storing a
-    /// proposed definition. A non-Allow result commits its Gate receipt only.
+    /// proposed definition. A non-Allow result stores its Gate receipt only.
+    /// The caller holds the credential's spend turn and commits this writer,
+    /// including its item journal, only after the result has been recorded.
     ///
     /// `channel_scope`, `channel_ref` and `effect` are the native adapter's
     /// observed context, never fields taken from a shape request. This door
@@ -203,8 +205,9 @@ impl Vault {
         clippy::too_many_arguments,
         reason = "setup binds the actual credential, channel, target, native effect and optional consuming signer in one writer"
     )]
-    pub(crate) fn create_agent_definition_for_actor_credential(
+    pub(crate) fn create_agent_definition_for_actor_credential_in_txn(
         &self,
+        txn: &mut heed::RwTxn<'_>,
         author: &EntityId,
         credential: &crate::authority::VerifiedSlip,
         issuer: Option<&crate::authority::HostSlipIssuer>,
@@ -221,70 +224,68 @@ impl Vault {
                 "author cannot replace its own definition through agents.put",
             )));
         }
-        self.with_capability_spend_txn(credential, |txn| {
-            let claims = credential.claims();
-            if claims.holder_ref != author.to_hex()
-                || !self.capability_slip_is_live_in_txn(txn, credential)?
-            {
-                return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                    "setup requires the author's live credential",
-                )));
-            }
-            // Without the real consuming signer this call retains the old
-            // resting state; an explicitly supplied signer supports one-shots.
-            if claims.single_use && issuer.is_none() {
-                return Ok(None);
-            }
-            let (definition, disposition) =
-                self.prepare_agent_definition_for_author_in_txn(txn, author, id, requested, false)?;
-            if disposition != AgentDefinitionPutDisposition::Active {
-                return Ok(None);
-            }
-            let data = encode_agent_definition(&definition)?;
-            let Some(position) = crate::federation::record_scope::candidate_put_position(
-                &self.store,
-                txn,
-                *id,
-                ENTITY_TYPE_AGENT_DEF,
-                &data,
-            )?
-            else {
-                return Ok(None);
-            };
-            let current = self.current_view_scope_in_txn(txn, claims);
-            let admitted = ["core:write", "write"]
-                .into_iter()
-                .any(|verb| current.admits(verb, &position, channel_scope))
-                && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
-                && (claims.channels.is_empty()
-                    || channel_ref.is_some_and(|channel| claims.channels.contains(channel)));
-            if !admitted {
-                return Ok(None);
-            }
-            let actor = crate::WriteActor::new(*author, crate::edge::EdgeActorClass::Agent);
-            let (decision, receipt) = crate::gate::record_agent_definition_setup_in_txn(
-                self, txn, actor, *id, &data, &position, effect,
-            )?;
-            let outcome = decision.outcome();
-            if outcome != crate::gate::GateOutcome::Allow {
-                return Ok(Some((outcome, receipt)));
-            }
-            if let Some(issuer) = issuer {
-                self.consume_verified_capability_slip_in_txn(txn, issuer, credential)?;
-            }
-            self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
-            crate::context_board::ensure_agent_person_in_txn(
-                self,
-                txn,
-                *id,
-                definition
-                    .display_name
-                    .as_deref()
-                    .unwrap_or(&definition.agent_id),
-                learned_at,
-            )?;
-            Ok(Some((outcome, receipt)))
-        })
+        let claims = credential.claims();
+        if claims.holder_ref != author.to_hex()
+            || !self.capability_slip_is_live_in_txn(txn, credential)?
+        {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "setup requires the author's live credential",
+            )));
+        }
+        // Without the real consuming signer this call retains the old
+        // resting state; an explicitly supplied signer supports one-shots.
+        if claims.single_use && issuer.is_none() {
+            return Ok(None);
+        }
+        let (definition, disposition) =
+            self.prepare_agent_definition_for_author_in_txn(txn, author, id, requested, false)?;
+        if disposition != AgentDefinitionPutDisposition::Active {
+            return Ok(None);
+        }
+        let data = encode_agent_definition(&definition)?;
+        let Some(position) = crate::federation::record_scope::candidate_put_position(
+            &self.store,
+            txn,
+            *id,
+            ENTITY_TYPE_AGENT_DEF,
+            &data,
+        )?
+        else {
+            return Ok(None);
+        };
+        let current = self.current_view_scope_in_txn(txn, claims);
+        let admitted = ["core:write", "write"]
+            .into_iter()
+            .any(|verb| current.admits(verb, &position, channel_scope))
+            && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+            && (claims.channels.is_empty()
+                || channel_ref.is_some_and(|channel| claims.channels.contains(channel)));
+        if !admitted {
+            return Ok(None);
+        }
+        let actor = crate::WriteActor::new(*author, crate::edge::EdgeActorClass::Agent);
+        let (decision, receipt) = crate::gate::record_agent_definition_setup_in_txn(
+            self, txn, actor, *id, &data, &position, effect,
+        )?;
+        let outcome = decision.outcome();
+        if outcome != crate::gate::GateOutcome::Allow {
+            return Ok(Some((outcome, receipt)));
+        }
+        if let Some(issuer) = issuer {
+            self.consume_verified_capability_slip_in_txn(txn, issuer, credential)?;
+        }
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
+        crate::context_board::ensure_agent_person_in_txn(
+            self,
+            txn,
+            *id,
+            definition
+                .display_name
+                .as_deref()
+                .unwrap_or(&definition.agent_id),
+            learned_at,
+        )?;
+        Ok(Some((outcome, receipt)))
     }
 
     /// Encodes (validating) and writes an `AgentDefinition` through the generic

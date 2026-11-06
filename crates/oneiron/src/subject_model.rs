@@ -39,6 +39,7 @@
 use rmpv::Value;
 
 mod archive;
+mod prepared;
 pub(crate) mod seeded;
 mod validation;
 pub use archive::SubjectRestoreReview;
@@ -399,36 +400,10 @@ fn ensure_fact_in_txn(
     body: ClaimBody,
     at: u64,
 ) -> Result<()> {
-    let ClaimSubject::Entity(subject) = body.subject else {
-        return Err(Error::InvariantViolation(
-            "subject model fact must name an entity",
-        ));
+    let Some(prepared) = prepared::prepare_subject_fact_in_txn(vault, txn, body, at)? else {
+        return Ok(());
     };
-    let prior = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
-        person_substrate_bodies_in_txn(vault, txn, &subject, at, false)?
-            .pop()
-            .map(|(_, body)| body.value)
-    } else {
-        let prior = single_subject_value(vault, txn, &subject, &body.predicate, at)?;
-        if prior.is_some() && actor_subject_anchor_in_txn(vault, txn, &subject, at)?.is_none() {
-            return Err(Error::InvalidClaimBody(
-                "actor.subject_ref requires one canonical subject",
-            ));
-        }
-        prior
-    };
-    if let Some(prior) = prior {
-        // Compare the stored assertion, not the redirected anchor: a retry
-        // must never rewrite the subject the original writer actually named.
-        return if prior == body.value {
-            Ok(())
-        } else {
-            Err(Error::InvalidClaimBody(
-                "subject model fact is already bound differently",
-            ))
-        };
-    }
-    write_head_in_txn(vault, txn, &vault.store.clock.entity_id()?, &body, at)
+    write_head_in_txn(vault, txn, &prepared.id, &prepared.body, at)
 }
 
 // Only PERSON puts create the constructor's subject-derived substrate FACET.
