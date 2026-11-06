@@ -8,41 +8,6 @@ use crate::batch::secret_scan::ContainerReader;
 use crate::error::Result;
 use oneiron_store::batch::secret_scan::container::{ReadProgress, withheld};
 
-/// Prints the lines of `bytes` from `from`, with a prefix from `prefix`
-/// (`None` skips it) and a newline, until `max_lines` are printed or the page
-/// is full. A line longer than a whole page prints across pages, cut on a character
-/// boundary. Returns how many lines it finished, and where the next page
-/// resumes when the page filled first.
-pub(super) fn page_lines(
-    bytes: &[u8],
-    from: LinePosition,
-    out: &mut CommandOutputBuilder,
-    max_lines: usize,
-    reader: &ContainerReader,
-    scan_bytes: usize,
-    mut prefix: impl FnMut(&str) -> Result<Option<String>>,
-) -> Result<(usize, Option<LinePosition>)> {
-    let mut finished = 0;
-    let mut at = from;
-    while at.line < bytes.len() && finished < max_lines {
-        let (line, next) = next_line(bytes, at.line, reader, scan_bytes)?;
-        let mut text = String::new();
-        lossy_for_each(line, reader, scan_bytes, |chunk| text.push_str(chunk))?;
-        if let Some(prefix) = prefix(&text)? {
-            if let Some(printed) = out.push_line_parts(&[&prefix, &text, "\n"], at.printed) {
-                at.printed = printed;
-                return Ok((finished, Some(at)));
-            }
-            finished += 1;
-        }
-        at = LinePosition {
-            line: next,
-            printed: 0,
-        };
-    }
-    Ok((finished, None))
-}
-
 /// Prints HEAD lines without materializing a whole lossy line.
 pub(super) fn page_head_lines(
     bytes: &[u8],
@@ -70,7 +35,7 @@ pub(super) fn page_head_lines(
     Ok((finished, None))
 }
 
-/// GREP uses a bounded lossy window for needles within the existing scan quantum.
+/// GREP searches overlapping lossy windows bounded by the needle and scan quantum.
 pub(super) fn page_grep_lines(
     bytes: &[u8],
     from: LinePosition,
@@ -81,13 +46,6 @@ pub(super) fn page_grep_lines(
     pattern: &str,
     mut prefix: impl FnMut() -> String,
 ) -> Result<(usize, Option<LinePosition>)> {
-    let quantum = scan_bytes.max(char::MAX.len_utf8());
-    if pattern.len() > quantum {
-        return page_lines(bytes, from, out, max_lines, reader, scan_bytes, |line| {
-            contains_literal(line, pattern, reader, scan_bytes)
-                .map(|matched| matched.then(|| prefix()))
-        });
-    }
     let mut finished = 0;
     let mut at = from;
     while at.line < bytes.len() && finished < max_lines {
@@ -121,17 +79,25 @@ fn contains_lossy_literal(
         return Ok(true);
     }
     let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let search_bytes = quantum.max(pattern.len());
+    let contains = |window: &str| {
+        if pattern.len() > quantum {
+            contains_literal(window, pattern, reader, scan_bytes)
+        } else {
+            Ok(window.contains(pattern))
+        }
+    };
     let mut window = String::new();
     let mut pending = 0;
     let mut matched = false;
     lossy_for_each(line, reader, scan_bytes, |chunk| {
         if matched {
-            return;
+            return Ok(());
         }
         window.push_str(chunk);
         pending += chunk.len();
-        if pending >= quantum {
-            matched = window.contains(pattern);
+        if pending >= search_bytes {
+            matched = contains(&window)?;
             if !matched {
                 let mut keep_from = window.len().saturating_sub(pattern.len() - 1);
                 while !window.is_char_boundary(keep_from) {
@@ -141,9 +107,10 @@ fn contains_lossy_literal(
                 pending = 0;
             }
         }
+        Ok(())
     })?;
     checkpoint(reader)?;
-    Ok(matched || window.contains(pattern))
+    if matched { Ok(true) } else { contains(&window) }
 }
 
 fn push_lossy_line(
@@ -163,6 +130,7 @@ fn push_lossy_line(
             boundary |= chunk.is_char_boundary(offset);
         }
         len += chunk.len();
+        Ok(())
     })?;
     boundary |= printed == len || printed == len + 1;
     len += 1;
@@ -185,8 +153,9 @@ fn push_lossy_line(
                     truncated = start + take < chunk.len();
                 }
                 offset = end;
+                Ok(())
             };
-            copy_chunk(prefix);
+            copy_chunk(prefix)?;
             lossy_for_each(line, reader, scan_bytes, &mut copy_chunk)?;
         }
         if !truncated && remaining > 0 && printed <= offset {
@@ -274,7 +243,7 @@ fn lossy_for_each(
     bytes: &[u8],
     reader: &ContainerReader,
     scan_bytes: usize,
-    mut emit: impl FnMut(&str),
+    mut emit: impl FnMut(&str) -> Result<()>,
 ) -> Result<()> {
     let quantum = scan_bytes.max(char::MAX.len_utf8());
     let mut offset = 0;
@@ -284,7 +253,7 @@ fn lossy_for_each(
         while offset < end {
             match std::str::from_utf8(&bytes[offset..end]) {
                 Ok(text) => {
-                    emit(text);
+                    emit(text)?;
                     offset = end;
                 }
                 Err(error) => {
@@ -292,15 +261,15 @@ fn lossy_for_each(
                     emit(
                         std::str::from_utf8(&bytes[offset..valid_end])
                             .expect("UTF-8 error prefix is valid"),
-                    );
+                    )?;
                     offset = valid_end;
                     match error.error_len() {
                         Some(len) => {
-                            emit("\u{fffd}");
+                            emit("\u{fffd}")?;
                             offset += len;
                         }
                         None if end == bytes.len() => {
-                            emit("\u{fffd}");
+                            emit("\u{fffd}")?;
                             offset = end;
                         }
                         // Keep the incomplete sequence in the source for the next quantum.
@@ -335,6 +304,7 @@ pub(super) fn text_counts(
                 in_word = true;
             }
         }
+        Ok(())
     })?;
     // A nonempty last line needs no newline; CR stripping never changes the count.
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
