@@ -10473,6 +10473,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.proposal_rereview",
+      "description": "Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands.",
+      "input": "crate::memory::code_doors::CodeProposalRereviewRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_rereview_as(&memory.embedded_owner(\"vault.code.proposal_rereview\")?, input.original, input.change)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.conflict_record",
       "description": "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves.",
       "input": "crate::memory::code_doors::CodeConflictRecordRequest",
@@ -10508,6 +10523,21 @@
       "input": "crate::memory::code_doors::CodeProposalResolveRequest",
       "output": "crate::memory::code_doors::CodeProposalSubmitted",
       "call": "memory.code_proposal_resolve_as(&memory.embedded_owner(\"vault.code.proposal_resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.proposal_resolve_rereview",
+      "description": "Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands.",
+      "input": "crate::memory::code_doors::CodeProposalResolveRereviewRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_resolve_rereview_as(&memory.embedded_owner(\"vault.code.proposal_resolve_rereview\")?, input.original, input.change)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

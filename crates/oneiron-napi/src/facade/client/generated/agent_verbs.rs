@@ -5878,6 +5878,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_proposal_rereview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.proposal_rereview", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_conflict_record(
         &self,
         input: serde_json::Value,
@@ -5902,6 +5911,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.proposal_resolve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_proposal_resolve_rereview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.proposal_resolve_rereview", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

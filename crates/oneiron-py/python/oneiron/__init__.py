@@ -4079,6 +4079,9 @@ class Oneiron:
         def proposal_submit(self, spec):
             """Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_submit(json.dumps(spec))))
+        def proposal_rereview(self, spec):
+            """Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_rereview(json.dumps(spec))))
         def conflict_record(self, spec):
             """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
             return json.loads(_translate(lambda: self._client.vault_code_conflict_record(json.dumps(spec))))
@@ -4088,6 +4091,9 @@ class Oneiron:
         def proposal_resolve(self, spec):
             """Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_resolve(json.dumps(spec))))
+        def proposal_resolve_rereview(self, spec):
+            """Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_resolve_rereview(json.dumps(spec))))
         def proposal_review(self, spec):
             """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_review(json.dumps(spec))))

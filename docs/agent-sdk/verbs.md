@@ -681,9 +681,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.renew`
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
+- `vault.code.proposal_rereview`
 - `vault.code.conflict_record`
 - `vault.code.conflict_view`
 - `vault.code.proposal_resolve`
+- `vault.code.proposal_resolve_rereview`
 - `vault.code.proposal_review`
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
