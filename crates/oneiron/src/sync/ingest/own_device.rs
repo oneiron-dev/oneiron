@@ -261,7 +261,11 @@ pub(super) fn lane_in_txn(
         slot.borrow()
             .as_ref()
             .filter(|span| span.vault == vault && span.window == ctx.window_key)
-            .and_then(|span| span.rows.get(&sent).map(|proof| (span.machine, proof.clone())))
+            .and_then(|span| {
+                span.rows
+                    .get(&sent)
+                    .map(|proof| (span.machine, proof.clone()))
+            })
     });
     let Some((relay, proof)) = relayed else {
         return Ok(None);
