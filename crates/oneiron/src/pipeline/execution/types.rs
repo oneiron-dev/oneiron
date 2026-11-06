@@ -39,6 +39,7 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,
     pub(super) read_suppressed: usize,
+    pub(super) read_suppressed_candidates: HashSet<EntityId>,
     pub(super) deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,
     pub(super) cosine_ghosts_dampened: usize,
     /// Scored rows the pack's disclosure clamp withheld before selection.

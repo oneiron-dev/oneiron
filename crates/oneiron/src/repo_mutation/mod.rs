@@ -16,6 +16,7 @@ mod oplog;
 pub mod proposal;
 mod queue;
 mod received_file;
+mod reviewed_composition;
 mod reviewed_file;
 mod reviewed_stack;
 mod secret_remediation;
