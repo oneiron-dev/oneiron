@@ -7,6 +7,7 @@ use crate::error::Result;
 pub(crate) struct CanonicalValidation {
     stage: ValidationStage,
     window_rows: validation::WindowRows,
+    document_rows: validation::DocumentRows,
     asset_body_refs: asset_body_refs::AssetBodyRefsValidation,
 }
 
@@ -50,7 +51,10 @@ impl CanonicalValidation {
                 ValidationStage::Documents
             }
             ValidationStage::Documents => {
-                validation::validate_documents(snapshot)?;
+                if !self.document_rows.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.document_rows = validation::DocumentRows::default();
                 ValidationStage::EntityDocuments
             }
             ValidationStage::EntityDocuments => {
@@ -74,6 +78,10 @@ impl CanonicalValidation {
         if matches!(self.stage, ValidationStage::WindowRows) {
             let (stage, next) = self.window_rows.position();
             return format!("window rows {stage} {next}");
+        }
+        if matches!(self.stage, ValidationStage::Documents) {
+            let (stage, next) = self.document_rows.position();
+            return format!("NOTE documents {stage} {next}");
         }
         if matches!(self.stage, ValidationStage::AssetBodyRefs) {
             return format!("asset body references {}", self.asset_body_refs.position());
