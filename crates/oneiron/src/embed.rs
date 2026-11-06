@@ -6,6 +6,10 @@ mod cold_attach;
 mod device;
 mod eligibility;
 mod evidence;
+#[cfg(feature = "sync")]
+pub(crate) mod home_vectors;
+#[cfg(feature = "sync")]
+pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
 #[cfg(feature = "sync")]
@@ -38,6 +42,8 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
@@ -48,6 +54,8 @@ pub(crate) use repo_projection::{
 };
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
+#[cfg(feature = "sync")]
+pub use space::MediaVectorReplica;
 pub(crate) use space::checkpoint;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
@@ -368,6 +376,15 @@ impl PendingEmbeddingReconciler {
         now_ms: u64,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
+        let work = self.prepare_reconcile_pass(now_ms, report)?;
+        self.reconcile_prepared_work(work, report)
+    }
+
+    fn prepare_reconcile_pass(
+        &self,
+        now_ms: u64,
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<Vec<LeasedPendingEmbedding>> {
         *report = PendingEmbeddingReconcileReport::default();
         self.validate_embedder_for_vault()?;
         let batch = self.lease_due_jobs(now_ms)?;
@@ -380,12 +397,19 @@ impl PendingEmbeddingReconciler {
             device_local: batch.device_local,
             ..PendingEmbeddingReconcileReport::default()
         };
-        if batch.work.is_empty() {
+        Ok(batch.work)
+    }
+
+    fn reconcile_prepared_work(
+        &self,
+        work: Vec<LeasedPendingEmbedding>,
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<()> {
+        if work.is_empty() {
             return Ok(());
         }
 
-        let (remote_work, local_work): (Vec<_>, Vec<_>) = batch
-            .work
+        let (remote_work, local_work): (Vec<_>, Vec<_>) = work
             .into_iter()
             .partition(|work| work.route == EmbedRoute::Remote);
 
@@ -514,7 +538,7 @@ impl PendingEmbeddingReconciler {
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
         for (item, entry) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, &entry.vector, locality, &entry.provenance)? {
+            if self.complete_leased_work(item, &entry.vector, locality, &entry.provenance, None)? {
                 report.filled += 1;
                 if let Some(input_tokens) = entry.input_tokens {
                     report.measured_fills.push(MeasuredEmbedFill {
@@ -688,9 +712,15 @@ impl PendingEmbeddingReconciler {
         vector: &[f32],
         locality: EmbedderLocality,
         provenance: &EmbeddingProvenance,
+        home_replica: Option<&home_vectors::ReceivedHomeClaimVector>,
     ) -> Result<bool> {
         let mut filled_current = false;
         self.vault.with_write_txn_grouped(|wtxn| {
+            if let Some(replica) = home_replica
+                && !home_vectors::replica_matches_in_txn(&self.vault, wtxn, &work.input, replica)?
+            {
+                return Ok(());
+            }
             let current_before = self
                 .vault
                 .store

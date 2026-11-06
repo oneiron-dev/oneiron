@@ -75,6 +75,26 @@ allocation message; a cancelled wait uses the existing body-not-whole response.
 No error code or field is added. For admitted decodes, JSON, hex, file, holder
 and native validation keep their existing order.
 
+## Other spool readers
+
+The whole-JSON owner reader, sealed custody object reader and raw training-checkpoint
+reader admit their existing 64 KiB reader buffer on the same process line before
+allocation. Each records the actual buffer capacity and retains the lease through
+the reader's last use and drop. The raw-spool piece has already released its lease
+before any of these readers starts. The large widen string readers retain their
+existing paired reader-and-writer lease; they do not take an additional reader lease.
+
+Checkpoint reader admission runs on the transfer worker before it returns the spool.
+The later native blocking callback owns both spool and lease, creates the reader
+before entering the native writer and never waits for memory under that writer.
+The completed transfer's cancellation flag is not reused for a later admission.
+
+A physical memory floor keeps the existing internal-server-error shape with a spool
+reader allocation message; cancellation keeps the body-not-whole response. Admitted
+reads retain the existing JSON-before-sink and native validation order. This accounts
+only for the fixed reader buffer, not generic DTOs, metadata heads, base64 text or
+native decoded rows.
+
 ## Native answers
 
 Native acceptance checks the holder credential before validating the reference's

@@ -2205,6 +2205,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.off_record.artifacts.save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordArtifactSaveRequest,
+                >(),
+            ),
+            (
                 "vault.off_record.claims.upsert",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::OffRecordClaimRequest,
@@ -5793,6 +5799,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.ingest.ag_ui.import",
+                crate::code_run::vault_read::request_schema::<crate::ingest::AgUiFileImport>(),
+            ),
+            (
+                "vault.ingest.ag_ui.read",
+                crate::code_run::vault_read::request_schema::<crate::ingest::AgUiFileReadInput>(),
+            ),
+            (
                 "vault.claims.admit",
                 crate::code_run::vault_read::request_schema::<crate::memory::AdmitImportedClaimInput>(
                 ),
@@ -6697,6 +6711,81 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.mail.pack.install",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.mail.sources.connect",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailSourceConnectRequest,
+                >(),
+            ),
+            (
+                "vault.mail.sources.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.mail.sources.settings.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailSourceSettingsRequest,
+                >(),
+            ),
+            (
+                "vault.mail.sources.members.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailSourceMembersRequest,
+                >(),
+            ),
+            (
+                "vault.mail.sources.audience_events",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
+            ),
+            (
+                "vault.mail.threads.share",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailThreadShareRequest,
+                >(),
+            ),
+            (
+                "vault.mail.threads.unshare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailThreadShareRequest,
+                >(),
+            ),
+            (
+                "vault.mail.compliance.setting",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.mail.compliance.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailComplianceSetRequest,
+                >(),
+            ),
+            (
+                "vault.mail.compliance.log",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.mail.sources.sync_status",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
+            ),
+            (
+                "vault.mail.inbox",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailInboxRequest>(),
+            ),
+            (
+                "vault.mail.threads.read",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailThreadRequest>(
+                ),
+            ),
+            (
+                "vault.mail.compliance.search",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailComplianceSearchRequest,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -7401,6 +7490,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.discard",
     "vault.off_record.recall",
     "vault.off_record.notes.create",
+    "vault.off_record.artifacts.save",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
     "self.off_record.results.list",
@@ -8882,6 +8972,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.off_record.notes.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
+        "vault.off_record.artifacts.save" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordArtifactSaved,
+        >(),
         "vault.off_record.claims.upsert" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
         }
@@ -10594,6 +10687,7 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.discard",
     "vault.off_record.recall",
     "vault.off_record.notes.create",
+    "vault.off_record.artifacts.save",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
     "self.off_record.results.list",
@@ -13605,6 +13699,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.off_record.notes.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.artifacts.save" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17886,6 +17987,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.ingest.ag_ui.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.ingest.ag_ui.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19014,6 +19129,111 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.custody.members.reenrol" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.pack.install" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.connect" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.settings.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.members.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.audience_events" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.threads.share" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.threads.unshare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.compliance.setting" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.compliance.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.compliance.log" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.sync_status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.inbox" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.threads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.compliance.search" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20664,6 +20884,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.off_record.notes.create" => {
             let _input: crate::task_verb::sdk::OffRecordNoteRequest = decode(value.clone())?;
+        }
+        "vault.off_record.artifacts.save" => {
+            let _input: crate::task_verb::sdk::OffRecordArtifactSaveRequest =
+                decode(value.clone())?;
         }
         "vault.off_record.claims.upsert" => {
             let _input: crate::task_verb::sdk::OffRecordClaimRequest = decode(value.clone())?;
@@ -22791,6 +23015,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.productivity.tree" => {
             let _input: crate::memory::ProductivityTreeRequest = decode(value.clone())?;
         }
+        "vault.ingest.ag_ui.import" => {
+            let _input: crate::ingest::AgUiFileImport = decode(value.clone())?;
+        }
+        "vault.ingest.ag_ui.read" => {
+            let _input: crate::ingest::AgUiFileReadInput = decode(value.clone())?;
+        }
         "vault.claims.admit" => {
             let _input: crate::memory::AdmitImportedClaimInput = decode(value.clone())?;
         }
@@ -23323,6 +23553,51 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.custody.members.reenrol" => {
             let _input: crate::task_verb::sdk::CustodyMemberReenrolRequest = decode(value.clone())?;
+        }
+        "vault.mail.pack.install" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.mail.sources.connect" => {
+            let _input: crate::mail_pack::MailSourceConnectRequest = decode(value.clone())?;
+        }
+        "vault.mail.sources.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.mail.sources.settings.set" => {
+            let _input: crate::mail_pack::MailSourceSettingsRequest = decode(value.clone())?;
+        }
+        "vault.mail.sources.members.set" => {
+            let _input: crate::mail_pack::MailSourceMembersRequest = decode(value.clone())?;
+        }
+        "vault.mail.sources.audience_events" => {
+            let _input: crate::mail_pack::MailSourceRef = decode(value.clone())?;
+        }
+        "vault.mail.threads.share" => {
+            let _input: crate::mail_pack::MailThreadShareRequest = decode(value.clone())?;
+        }
+        "vault.mail.threads.unshare" => {
+            let _input: crate::mail_pack::MailThreadShareRequest = decode(value.clone())?;
+        }
+        "vault.mail.compliance.setting" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.mail.compliance.set" => {
+            let _input: crate::mail_pack::MailComplianceSetRequest = decode(value.clone())?;
+        }
+        "vault.mail.compliance.log" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.mail.sources.sync_status" => {
+            let _input: crate::mail_pack::MailSourceRef = decode(value.clone())?;
+        }
+        "vault.mail.inbox" => {
+            let _input: crate::mail_pack::MailInboxRequest = decode(value.clone())?;
+        }
+        "vault.mail.threads.read" => {
+            let _input: crate::mail_pack::MailThreadRequest = decode(value.clone())?;
+        }
+        "vault.mail.compliance.search" => {
+            let _input: crate::mail_pack::MailComplianceSearchRequest = decode(value.clone())?;
         }
         "connector.answer" => {
             let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
@@ -24418,6 +24693,9 @@ pub fn invoke(
         "vault.off_record.recall" => encode(vault_off_record_recall(memory, decode(value)?)?),
         "vault.off_record.notes.create" => {
             encode(vault_off_record_notes_create(memory, decode(value)?)?)
+        }
+        "vault.off_record.artifacts.save" => {
+            encode(vault_off_record_artifacts_save(memory, decode(value)?)?)
         }
         "vault.off_record.claims.upsert" => {
             encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
@@ -25551,6 +25829,8 @@ pub fn invoke(
         "vault.habits.checkin" => encode(vault_habits_checkin(memory, decode(value)?)?),
         "vault.productivity.create" => encode(vault_productivity_create(memory, decode(value)?)?),
         "vault.productivity.tree" => encode(vault_productivity_tree(memory, decode(value)?)?),
+        "vault.ingest.ag_ui.import" => encode(vault_ingest_ag_ui_import(memory, decode(value)?)?),
+        "vault.ingest.ag_ui.read" => encode(vault_ingest_ag_ui_read(memory, decode(value)?)?),
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
         "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
@@ -25873,6 +26153,33 @@ pub fn invoke(
         }
         "vault.custody.members.reenrol" => {
             encode(vault_custody_members_reenrol(memory, decode(value)?)?)
+        }
+        "vault.mail.pack.install" => encode(vault_mail_pack_install(memory, decode(value)?)?),
+        "vault.mail.sources.connect" => encode(vault_mail_sources_connect(memory, decode(value)?)?),
+        "vault.mail.sources.list" => encode(vault_mail_sources_list(memory, decode(value)?)?),
+        "vault.mail.sources.settings.set" => {
+            encode(vault_mail_sources_settings_set(memory, decode(value)?)?)
+        }
+        "vault.mail.sources.members.set" => {
+            encode(vault_mail_sources_members_set(memory, decode(value)?)?)
+        }
+        "vault.mail.sources.audience_events" => {
+            encode(vault_mail_sources_audience_events(memory, decode(value)?)?)
+        }
+        "vault.mail.threads.share" => encode(vault_mail_threads_share(memory, decode(value)?)?),
+        "vault.mail.threads.unshare" => encode(vault_mail_threads_unshare(memory, decode(value)?)?),
+        "vault.mail.compliance.setting" => {
+            encode(vault_mail_compliance_setting(memory, decode(value)?)?)
+        }
+        "vault.mail.compliance.set" => encode(vault_mail_compliance_set(memory, decode(value)?)?),
+        "vault.mail.compliance.log" => encode(vault_mail_compliance_log(memory, decode(value)?)?),
+        "vault.mail.sources.sync_status" => {
+            encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
+        }
+        "vault.mail.inbox" => encode(vault_mail_inbox(memory, decode(value)?)?),
+        "vault.mail.threads.read" => encode(vault_mail_threads_read(memory, decode(value)?)?),
+        "vault.mail.compliance.search" => {
+            encode(vault_mail_compliance_search(memory, decode(value)?)?)
         }
         "connector.answer" => encode(connector_answer(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
@@ -27706,7 +28013,8 @@ pub fn vault_campaign_compliance_install(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceAmendRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_install_as(
+    memory.vault().store.record_hooks.compliance_install_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.install")?,
         &input,
     )
@@ -27715,13 +28023,18 @@ pub fn vault_campaign_compliance_amend(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceAmendRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_amend(&input)
+    memory
+        .vault()
+        .store
+        .record_hooks
+        .compliance_amend(memory, &input)
 }
 pub fn vault_campaign_compliance_approve(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceApprovalRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_approve_as(
+    memory.vault().store.record_hooks.compliance_approve_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.approve")?,
         &input,
     )
@@ -27730,7 +28043,8 @@ pub fn vault_campaign_compliance_reject(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceApprovalRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_reject_as(
+    memory.vault().store.record_hooks.compliance_reject_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.reject")?,
         &input,
     )
@@ -27739,7 +28053,8 @@ pub fn vault_campaign_compliance_verify(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceVerifyRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
-    memory.compliance_verify_as(
+    memory.vault().store.record_hooks.compliance_verify_as(
+        memory,
         &memory.embedded_owner("vault.campaign.compliance.verify")?,
         &input,
     )
@@ -27748,7 +28063,11 @@ pub fn vault_campaign_compliance_result(
     memory: &Memory<'_>,
     input: crate::campaign::compliance::ComplianceResultRequest,
 ) -> MemoryResult<crate::campaign::compliance::ComplianceResult> {
-    memory.compliance_result(&input)
+    memory
+        .vault()
+        .store
+        .record_hooks
+        .compliance_result(memory, &input)
 }
 pub fn vault_campaign_enroll(
     memory: &Memory<'_>,
@@ -29700,6 +30019,12 @@ pub fn vault_off_record_notes_create(
     input: crate::task_verb::sdk::OffRecordNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
     crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.notes.create", &input)
+}
+pub fn vault_off_record_artifacts_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordArtifactSaveRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordArtifactSaved> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.artifacts.save", &input)
 }
 pub fn vault_off_record_claims_upsert(
     memory: &Memory<'_>,
@@ -34851,6 +35176,27 @@ pub fn vault_productivity_tree(
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>> {
     memory.productivity_tree(&input)
 }
+pub fn vault_ingest_ag_ui_import(
+    memory: &Memory<'_>,
+    input: crate::ingest::AgUiFileImport,
+) -> MemoryResult<crate::ingest::AgUiFileReceipt> {
+    memory
+        .vault()
+        .ingest_ag_ui_file(&memory.embedded_owner("vault.ingest.ag_ui.import")?, &input)
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_ingest_ag_ui_read(
+    memory: &Memory<'_>,
+    input: crate::ingest::AgUiFileReadInput,
+) -> MemoryResult<crate::ingest::AgUiFileRead> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.ingest.ag_ui.read",
+        &input,
+        &["/claim_ref"],
+    )?;
+    memory.read_ag_ui_file(&input)
+}
 pub fn vault_claims_admit(
     memory: &Memory<'_>,
     input: crate::memory::AdmitImportedClaimInput,
@@ -36326,6 +36672,96 @@ pub fn vault_custody_members_reenrol(
         &memory.embedded_owner("vault.custody.members.reenrol")?,
         input,
     )
+}
+pub fn vault_mail_pack_install(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    crate::mail_pack::install_mail_calendar_pack_embedded(memory)
+}
+pub fn vault_mail_sources_connect(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceConnectRequest,
+) -> MemoryResult<crate::mail_pack::MailSourceConnectReceipt> {
+    memory.mail_sources_connect(&input)
+}
+pub fn vault_mail_sources_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::mail_pack::MailSourceView>> {
+    memory.mail_sources_list()
+}
+pub fn vault_mail_sources_settings_set(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceSettingsRequest,
+) -> MemoryResult<crate::mail_pack::MailSourceView> {
+    memory.mail_sources_settings_set(&input)
+}
+pub fn vault_mail_sources_members_set(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceMembersRequest,
+) -> MemoryResult<crate::mail_pack::MailSourceView> {
+    memory.mail_sources_members_set(&input)
+}
+pub fn vault_mail_sources_audience_events(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceRef,
+) -> MemoryResult<Vec<crate::mail_pack::SourceAudienceEventView>> {
+    memory.mail_sources_audience_events(&input)
+}
+pub fn vault_mail_threads_share(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailThreadShareRequest,
+) -> MemoryResult<crate::mail_pack::MailThreadShareReceipt> {
+    memory.mail_threads_share(&input)
+}
+pub fn vault_mail_threads_unshare(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailThreadShareRequest,
+) -> MemoryResult<crate::mail_pack::MailThreadShareReceipt> {
+    memory.mail_threads_unshare(&input)
+}
+pub fn vault_mail_compliance_setting(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::mail_pack::MailComplianceSettingView> {
+    memory.mail_compliance_setting()
+}
+pub fn vault_mail_compliance_set(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailComplianceSetRequest,
+) -> MemoryResult<crate::mail_pack::MailComplianceSettingView> {
+    memory.mail_compliance_set(&input)
+}
+pub fn vault_mail_compliance_log(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::mail_pack::MailComplianceEventView>> {
+    memory.mail_compliance_log()
+}
+pub fn vault_mail_sources_sync_status(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceRef,
+) -> MemoryResult<crate::mail_pack::MailSyncStatusView> {
+    memory.mail_sources_sync_status(&input)
+}
+pub fn vault_mail_inbox(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailInboxRequest,
+) -> MemoryResult<crate::mail_pack::MailInboxPage> {
+    memory.mail_inbox(&input)
+}
+pub fn vault_mail_threads_read(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailThreadRequest,
+) -> MemoryResult<crate::mail_pack::MailThreadView> {
+    memory.mail_thread(&input)
+}
+pub fn vault_mail_compliance_search(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailComplianceSearchRequest,
+) -> MemoryResult<crate::mail_pack::MailComplianceSearchReply> {
+    memory.mail_compliance_search(&input)
 }
 pub fn connector_answer(
     memory: &Memory<'_>,

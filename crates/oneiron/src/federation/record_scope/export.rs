@@ -11,7 +11,10 @@ use crate::{
 
 impl Vault {
     /// Export never has a debug mode and requires the export verb class, and
-    /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk.
+    /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk. Every
+    /// body it carries passes the export release filter: a credential the
+    /// write scan would refuse never leaves, whether the scan was on when
+    /// it was stored or not, nor a row secret exhaust tainted (FIX 8742).
     /// A row a device-only world keeps on this device is never exported, nor
     /// a text written from one, nor a row whose own words are withdrawn.
     /// The export goes to a recipient nobody proved; see
@@ -75,6 +78,13 @@ impl Vault {
             {
                 continue;
             }
+            // A row secret exhaust tainted stays home, as a whole-vault
+            // export nulls its body (FIX 8742).
+            if !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &txn, &id)?
+                .is_empty()
+            {
+                continue;
+            }
             if let Some(scope) = disclosure_scope_for_stored_row(
                 &self.store,
                 &txn,
@@ -100,8 +110,30 @@ impl Vault {
                     &withheld,
                 )?
             {
-                let (id, bytes) =
-                    copies.released(id, self.scoped_row_bytes_in_txn(&txn, &id, raw)?);
+                // A pad row is key material, never memory text: a reference
+                // leaves as the carrier the world-key door builds and a pad
+                // body that decodes leaves whole, since the memory filter
+                // would break its key. Every other body leaves as the release
+                // filter reads it, after its marked copy is chosen (FIX 8742).
+                let pad = h.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
+                    && raw.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
+                        oneiron_store::world_pad_codec::decode_pad_body(body).is_ok()
+                    });
+                let carrier = crate::world_keys::image_pad_row(&self.store, &raw);
+                let filtered = carrier.is_none() && !pad;
+                let bytes = match carrier {
+                    Some(carrier) => carrier,
+                    None => self.materialized_row_in_txn(&txn, &id, raw)?,
+                };
+                let (id, bytes) = copies.released(id, bytes);
+                let bytes = if filtered {
+                    match crate::batch::export::export_released_record(h.entity_type, bytes)? {
+                        Some(bytes) => bytes,
+                        None => continue,
+                    }
+                } else {
+                    bytes
+                };
                 out.push(ScopedRecord {
                     id,
                     bytes,
