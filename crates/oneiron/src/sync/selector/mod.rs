@@ -17,6 +17,7 @@ mod document_admission;
 mod epoch_egress;
 pub(in crate::sync) use document_admission::{
     admit_document_read_in_txn, admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
+    cache_worlds_admitted_in_txn,
 };
 #[cfg(feature = "sync")]
 mod edge;

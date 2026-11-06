@@ -574,6 +574,11 @@ fn read_touch(
                 AppError::internal_server_error("item document unavailable")
             }
         })?;
+        let cache_worlds = cache_worlds.filter(|worlds| {
+            admission
+                .covers_cache_worlds(worlds.worlds())
+                .unwrap_or(false)
+        });
         (Some(document), cache_worlds)
     };
     Ok((

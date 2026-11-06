@@ -102,8 +102,11 @@ matches a core row already proved all-Off and its native opened window, document
 touch row are valid. A cache can also qualify without a core row when the home's original
 document export recorded its complete source-world set, that nonempty set is now all sealed
 Off, and the recorded hashes match both cached payloads. Projected copies and unknown source
-worlds provide no such evidence. This provenance is not read authority; absent, malformed or
-mismatched evidence never refuses a working read.
+worlds provide no such evidence. The home records the complete set only when its live grant
+and selector cover every world. A reply also requires the original credential and destination
+to cover the complete set; it never trims a partial set into a completeness claim. This
+provenance is not read authority. Missing, unauthorized, malformed or mismatched evidence
+never refuses the working document read.
 
 The two payload rows, source provenance, opened marker and touch row leave together, so a
 later open can refetch rather than fail on a marker with no bytes. Unknown or mixed placement,

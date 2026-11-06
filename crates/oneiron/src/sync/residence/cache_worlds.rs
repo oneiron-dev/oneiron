@@ -53,6 +53,8 @@ pub(crate) fn capture_in_txn(
     blob: &[u8],
     document: &[u8],
     copied: bool,
+    scope: crate::FederationGrantScope,
+    selector: &super::super::selector::SyncSelector,
 ) -> Option<CachedItemWorlds> {
     if copied || source != requested {
         return None;
@@ -66,7 +68,16 @@ pub(crate) fn capture_in_txn(
         return None;
     }
     let carried = crate::settings::carried_worlds_in(&vault.store, txn, &source).ok()?;
-    if carried.unknown {
+    if carried.unknown
+        || !super::super::selector::cache_worlds_admitted_in_txn(
+            vault,
+            txn,
+            scope,
+            selector,
+            &carried.worlds,
+        )
+        .ok()?
+    {
         return None;
     }
     Some(CachedItemWorlds {

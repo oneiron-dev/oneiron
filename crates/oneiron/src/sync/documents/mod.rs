@@ -512,30 +512,35 @@ impl EntityDocument {
         withhold: super::window::Withhold<'_>,
         cache: Option<(EntityId, &[u8])>,
     ) -> Result<(Vec<u8>, Option<super::residence::CachedItemWorlds>)> {
-        self.export_admitted_with_cache(admission_key, remote_vv, cache, |txn| {
-            destination::admit_document_withhold_in_txn(&self.vault, txn, self.id, withhold)?;
-            let selector = super::selector::decode_sync_selector(admission_key)?;
-            super::selector::admit_document_read_in_txn(
-                &self.vault,
-                txn,
-                self.id,
-                scope,
-                &selector,
-            )?;
-            if self.vault.get_entity_type_in_txn(txn, &self.id)?
-                == Some(crate::registry::ENTITY_TYPE_NOTE)
-            {
-                crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
-            }
-            if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &self.id)?
-                .is_some()
-            {
-                return Err(Error::sync_protocol(
-                    SyncProtocolValidation::DocumentAdmissionDenied,
-                ));
-            }
-            Ok(())
-        })
+        self.export_admitted_with_cache(
+            admission_key,
+            remote_vv,
+            cache.map(|(requested, blob)| (requested, blob, scope)),
+            |txn| {
+                destination::admit_document_withhold_in_txn(&self.vault, txn, self.id, withhold)?;
+                let selector = super::selector::decode_sync_selector(admission_key)?;
+                super::selector::admit_document_read_in_txn(
+                    &self.vault,
+                    txn,
+                    self.id,
+                    scope,
+                    &selector,
+                )?;
+                if self.vault.get_entity_type_in_txn(txn, &self.id)?
+                    == Some(crate::registry::ENTITY_TYPE_NOTE)
+                {
+                    crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
+                }
+                if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &self.id)?
+                    .is_some()
+                {
+                    return Err(Error::sync_protocol(
+                        SyncProtocolValidation::DocumentAdmissionDenied,
+                    ));
+                }
+                Ok(())
+            },
+        )
     }
 
     /// The owner lane's export: NOTE documents only, under one owner admission
@@ -570,7 +575,7 @@ impl EntityDocument {
         &self,
         admission_key: &[u8],
         remote_vv: &[u8],
-        cache: Option<(EntityId, &[u8])>,
+        cache: Option<(EntityId, &[u8], crate::FederationGrantScope)>,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<(Vec<u8>, Option<super::residence::CachedItemWorlds>)> {
         let peer = storage::decode_vv(remote_vv)?;
@@ -656,7 +661,8 @@ impl EntityDocument {
             )
             .into_result()
             .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))?;
-            let worlds = cache.and_then(|(requested, blob)| {
+            let worlds = cache.and_then(|(requested, blob, scope)| {
+                let selector = super::selector::decode_sync_selector(admission_key).ok()?;
                 super::residence::cache_worlds::capture_in_txn(
                     &self.vault,
                     txn,
@@ -665,6 +671,8 @@ impl EntityDocument {
                     blob,
                     &frame,
                     copy.is_some(),
+                    scope,
+                    &selector,
                 )
             });
             Ok((frame, worlds))
