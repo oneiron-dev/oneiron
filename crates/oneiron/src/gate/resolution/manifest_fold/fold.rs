@@ -14,9 +14,6 @@ pub(super) fn fold_policy_manifest(
     let shipped = store.manifest_memo().shipped()?;
     resolution.sheet_answer_default_max_count = Some(shipped.sheet_answer_default_max_count);
     resolution.sheet_answer_precedence = Some(shipped.sheet_answer_precedence);
-    let mut untrusted_source_rows = Vec::new();
-    let mut untrusted_teacher_rows = Vec::new();
-    let mut untrusted_sheet_limits = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
     let mut default_retention = None;
     let mut owner_retention = None;
@@ -74,8 +71,7 @@ pub(super) fn fold_policy_manifest(
         let body = &raw.body;
         // Quarantine and trust are judged before a decode is kept (FIX 5987):
         // a signed project-depth carrier is told by its id or bytes and kept
-        // as before; a quarantined pack is never decoded; an untrusted one is
-        // decoded for this fold alone.
+        // as before; a quarantined or untrusted pack is never decoded.
         if crate::gate::project_depth::is_project_depth_id(&id)
             || crate::gate::project_depth::is_project_depth_contribution(body)
         {
@@ -92,25 +88,18 @@ pub(super) fn fold_policy_manifest(
         if crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)? {
             continue;
         }
-        let trusted =
-            crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
-        let decoded_row = if trusted {
-            store.manifest_memo().row(body)
-        } else {
-            store.manifest_memo().transient(body)
-        };
+        // An untrusted pack is a proposal (FIX 8780): it enters no value, no
+        // count and no diagnostic of the effective policy, tightening or not.
+        // A policy holder applies its values by authoring them through the
+        // manifest put, which checks their policy power in its writer.
+        if !crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)? {
+            continue;
+        }
+        let decoded_row = store.manifest_memo().row(body);
         match &decoded_row.carrier {
             Some(DecodedManifestCarrier::Pack(pack)) => {
                 let decoded = pack.clone();
                 resolution.diagnostics.manifest_count += 1;
-                if !trusted {
-                    untrusted_source_rows.push(decoded.source_trust);
-                    if let Some(row) = decoded.teacher_probe {
-                        untrusted_teacher_rows.push(row);
-                    }
-                    untrusted_sheet_limits.extend(decoded.sheet_answer_limits);
-                    continue;
-                }
                 // Authored vault values replace the shipped defaults; holder
                 // values narrow them (FIX 8783).
                 if let Some(row) = decoded.residence_operation_budgets {
@@ -664,8 +653,6 @@ pub(super) fn fold_policy_manifest(
         .or(seeded_confidence)
         .unwrap_or_default();
 
-    resolution.untrusted_sheet_answer_limits = untrusted_sheet_limits;
-
     let mut fanout_row_refs = std::collections::BTreeSet::new();
     if resolution
         .consult_fanout_scope_rows
@@ -673,15 +660,6 @@ pub(super) fn fold_policy_manifest(
         .any(|row| !fanout_row_refs.insert(&row.row_ref))
     {
         resolution.diagnostics.malformed_manifest_seen = true;
-    }
-
-    for contribution in untrusted_source_rows {
-        resolution.source_trust.restrict_only(contribution);
-    }
-    // Untrusted manifests may only RAISE a trusted vault floor, never seed
-    // the teacher policy by themselves or lower an existing holder floor.
-    for row in untrusted_teacher_rows {
-        merge_teacher_probe_row(&mut resolution, row);
     }
 
     // Two manifests carrying the identical row (a copy of the shipped defaults,
@@ -723,19 +701,9 @@ pub(super) fn fold_policy_manifest(
         resolution.owner_policy_rows_dropped = true;
     }
 
-    // A resolved table must stay addressable by a u16 row index: up to 65,536
-    // rows (indices 0..=65535) are valid; the 65,537th row marks the whole
-    // resolution malformed, fail-closing the write gate exactly like any
-    // malformed manifest and refusing the budget-policy accessor. Never wrap
-    // or silently truncate a row index.
-    if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
-        resolution.diagnostics.malformed_manifest_seen = true;
-    }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
-        || resolution.booking_conversion_rows.len() > 128
-    {
-        resolution.diagnostics.malformed_manifest_seen = true;
-    }
+    // No resolved table is refused for its length (FIX 8781): the budget
+    // meter addresses a row by its position, and the hosted-TTS and booking
+    // tables are folded whole. A row is refused only for what it says.
 
     match fold_delegated_grants(&delegated_rows) {
         Some(fold) => resolution.delegation_fold = fold,
