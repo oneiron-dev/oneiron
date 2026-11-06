@@ -40,7 +40,7 @@ pub(super) fn erase_residence_citations_in_txn(
         .store
         .sync_state
         .prefix_iter(txn, DOCUMENT_ROWS)?
-        .map(|row| row.map(|(key, value)| (key.to_owned(), value.to_vec())))
+        .map(|row| row.map(|(key, value)| (key.into_owned(), value.to_vec())))
         .collect::<std::result::Result<_, _>>()?;
     let mut gone = Vec::new();
     for (key, document) in rows {
