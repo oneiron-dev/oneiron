@@ -618,35 +618,131 @@ fn charset_of(content_type: &str) -> Option<String> {
     })
 }
 
-/// The addresses of an address-list header, split at the commas outside
-/// quotes and angle brackets.
+/// Where one character of an RFC 5322 address header value stands.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AddressPlace {
+    /// Outside every quoted string, comment, angle address and domain
+    /// literal. The delimiters that open and close one stand here too.
+    Top,
+    /// Inside a quoted string (`"Name, Jr."`).
+    Quoted,
+    /// Inside a comment (`(work)`), nested ones included.
+    Comment,
+    /// Inside an angle address (`<a@b>`), a quoted local part included.
+    Angle,
+    /// Inside a domain literal (`[192.0.2.1]`).
+    Literal,
+}
+
+/// Each character of the address header value `value`, with its byte
+/// offset and its [`AddressPlace`]; and whether a quoted string, comment,
+/// angle address or domain literal is still open at its end. A `\\`
+/// escape inside a quoted string, comment or domain literal takes the next
+/// character with it, so an escaped delimiter closes nothing.
+pub(super) fn address_places(value: &str) -> (Vec<(usize, char, AddressPlace)>, bool) {
+    let mut places = Vec::with_capacity(value.len());
+    let (mut comment, mut quoted, mut angled, mut literal, mut escaped) =
+        (0_usize, false, false, false, false);
+    for (at, character) in value.char_indices() {
+        let place = if comment > 0 {
+            if escaped {
+                escaped = false;
+            } else {
+                match character {
+                    '\\' => escaped = true,
+                    '(' => comment += 1,
+                    ')' => comment -= 1,
+                    _ => {}
+                }
+            }
+            if comment > 0 || character != ')' {
+                AddressPlace::Comment
+            } else {
+                AddressPlace::Top
+            }
+        } else if angled {
+            if escaped {
+                escaped = false;
+            } else if quoted {
+                match character {
+                    '\\' => escaped = true,
+                    '"' => quoted = false,
+                    _ => {}
+                }
+            } else {
+                match character {
+                    '"' => quoted = true,
+                    '>' => angled = false,
+                    _ => {}
+                }
+            }
+            if angled {
+                AddressPlace::Angle
+            } else {
+                AddressPlace::Top
+            }
+        } else if quoted {
+            if escaped {
+                escaped = false;
+                AddressPlace::Quoted
+            } else {
+                match character {
+                    '\\' => {
+                        escaped = true;
+                        AddressPlace::Quoted
+                    }
+                    '"' => {
+                        quoted = false;
+                        AddressPlace::Top
+                    }
+                    _ => AddressPlace::Quoted,
+                }
+            }
+        } else if literal {
+            if escaped {
+                escaped = false;
+                AddressPlace::Literal
+            } else {
+                match character {
+                    '\\' => {
+                        escaped = true;
+                        AddressPlace::Literal
+                    }
+                    ']' => {
+                        literal = false;
+                        AddressPlace::Top
+                    }
+                    _ => AddressPlace::Literal,
+                }
+            }
+        } else {
+            match character {
+                '(' => comment = 1,
+                '"' => quoted = true,
+                '<' => angled = true,
+                '[' => literal = true,
+                _ => {}
+            }
+            AddressPlace::Top
+        };
+        places.push((at, character, place));
+    }
+    (places, comment > 0 || quoted || angled || literal)
+}
+
+/// The addresses of an address-list header, split at its top-level commas:
+/// a comma inside a quoted string, a comment, an angle address or a domain
+/// literal never splits a mailbox.
 pub(super) fn address_list(value: &str) -> Vec<String> {
     let mut addresses = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut escaped = false;
-    let mut angle = 0_u32;
-    for ch in value.chars() {
-        if escaped {
-            escaped = false;
-            current.push(ch);
-            continue;
+    let mut start = 0;
+    for (at, character, place) in address_places(value).0 {
+        if character == ',' && place == AddressPlace::Top {
+            push_address(&mut addresses, &value[start..at]);
+            start = at + 1;
         }
-        match ch {
-            '\\' if quoted => escaped = true,
-            '"' => quoted = !quoted,
-            '<' if !quoted => angle += 1,
-            '>' if !quoted => angle = angle.saturating_sub(1),
-            ',' if !quoted && angle == 0 => {
-                push_address(&mut addresses, &current);
-                current.clear();
-                continue;
-            }
-            _ => {}
-        }
-        current.push(ch);
     }
-    push_address(&mut addresses, &current);
+    push_address(&mut addresses, &value[start..]);
     addresses
 }
 
