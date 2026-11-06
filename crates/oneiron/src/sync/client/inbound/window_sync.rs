@@ -11,7 +11,6 @@ use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
-use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
 use crate::sync::schema::create_window_doc;
 use crate::sync::transport;
@@ -619,13 +618,41 @@ impl SyncClient {
             // FIX 11709: the MESSAGE rows an own machine's proven connection sent
             // take the own-device lane in the doors this import and its retained
             // world pass run, and no others.
-            crate::sync::ingest::with_own_device_import(
+            let landed = crate::sync::ingest::with_record_document_import(
                 &self.vault,
                 own_device,
                 (&key, &window.doc),
                 payload,
-                || self.land_window_update(window, &key, payload),
-            )?;
+                || {
+                    crate::sync::ingest::with_own_device_import(
+                        &self.vault,
+                        own_device,
+                        (&key, &window.doc),
+                        payload,
+                        || self.land_window_update(window, &key, payload),
+                    )
+                },
+            );
+            let captured = match landed {
+                Ok((landed, captured)) => {
+                    landed?;
+                    captured
+                }
+                Err(error) => {
+                    self.manager.discard_window(&key);
+                    return Err(TransportError::Storage(format!(
+                        "materialize record document update: {error}"
+                    )));
+                }
+            };
+            let persist = |update: Option<&[u8]>| {
+                crate::sync::ingest::persist_record_document_update(
+                    &self.vault,
+                    &key,
+                    update,
+                    captured.as_ref(),
+                )
+            };
             if let Some(positions) = positions.as_ref()
                 && let Err(error) = positions.finish(&self.vault, &window.doc)
             {
@@ -658,6 +685,12 @@ impl SyncClient {
                 let live_vv = window.doc.oplog_vv();
                 let durable_vv = durable_doc.oplog_vv();
                 if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                    if let Err(error) = persist(None) {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "persist accepted record source: {error}"
+                        )));
+                    }
                     return Ok(());
                 }
                 let fr_key = format!("fr:w:{window_key}");
@@ -687,7 +720,7 @@ impl SyncClient {
                 // Its pads persist by reference where custody here holds them
                 // (FIX 7107).
                 let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
-                if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                if let Err(e) = persist(Some(&missing)) {
                     self.manager.discard_window(&key);
                     return Err(TransportError::Storage(format!(
                         "persist live durable delta: {e}"
@@ -701,7 +734,7 @@ impl SyncClient {
             // from the doc on restart. Its pads persist by reference where
             // custody here holds them (FIX 7107).
             let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
-            if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
+            if let Err(e) = persist(Some(&persisted)) {
                 // Never leave RAM ahead of durable state on a FAILED persist
                 // (client analog of the ONE-1129 server evict-on-persist-failure):
                 // the import advanced this doc's version vector, so keeping the

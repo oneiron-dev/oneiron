@@ -22,6 +22,16 @@ pub(super) fn apply_old_record(
     dispatch: &super::admission::Dispatch,
     portable_agent_source: &mut Option<(EntityId, Vec<u8>)>,
 ) -> Result<OldRecord> {
+    #[cfg(feature = "sync")]
+    if let Some(candidate) = fixed.record_document
+        && (candidate.entity()? != fixed.id
+            || candidate.logical_body() != data
+            || !candidate.recheck_in_txn(wtxn)?)
+    {
+        return Err(Error::InvariantViolation(
+            "record document candidate changed before staging",
+        ));
+    }
     let mut body_changed = true;
     let mut consolidation_dirty = true;
     let mut stored_before = false;
@@ -38,7 +48,22 @@ pub(super) fn apply_old_record(
     {
         stored_before = true;
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        previous_skill_record = super::super::decode_previous_skill_record(old_type, &old_record)?;
+        let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+        #[cfg(feature = "sync")]
+        let prior_body = match fixed.record_document {
+            Some(candidate) if old_type == ENTITY_TYPE_SKILL => candidate
+                .logical_prior_body()
+                .ok_or(Error::InvariantViolation(
+                    "record document prior body missing",
+                ))?,
+            _ => prior_body,
+        };
+        #[cfg(feature = "sync")]
+        let prior_body = match fixed.skill_state_write {
+            Some(request) => request.rechecked_prior_body(store, wtxn, &fixed.id, data)?,
+            None => prior_body,
+        };
+        previous_skill_record = super::super::decode_previous_skill_record(old_type, prior_body)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -50,7 +75,7 @@ pub(super) fn apply_old_record(
         // and is a no-op for never-indexed entities. Byte-compare guard:
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
-        body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
+        body_changed = prior_body != data;
         consolidation_dirty = body_changed || old_learned != fixed.learned_at;
         // Retaining an indexed text revision is not permission to retain a
         // withdrawn claim or a replicated LWW loser in the search index.
@@ -125,7 +150,7 @@ pub(super) fn apply_old_record(
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
             validate_skill_body_overwrite(
                 &fixed.id,
-                &old_record[ENTITY_METADATA_HEADER_LEN..],
+                prior_body,
                 updated,
                 fixed.hub_sync_imported,
                 fixed.replicated,
@@ -172,14 +197,15 @@ pub(super) fn apply_old_record(
             crate::store::text_index::deindex_text(store, wtxn, &fixed.id)?;
         }
 
+        let (stored_occurred, stored_learned_at, _, _) = fixed.storage_body_and_metadata(data)?;
         super::super::put_staging::remove_prior_temporal_index_rows(
             store,
             wtxn,
             &fixed.id,
             old_occurred,
             old_learned,
-            fixed.occurred,
-            fixed.learned_at,
+            stored_occurred,
+            stored_learned_at,
         )?;
     } else if fixed.entity_type == ENTITY_TYPE_AGENT_DEF && !fixed.replicated {
         // ONE-1890 mirror of the SKILL create gate below, one entity type

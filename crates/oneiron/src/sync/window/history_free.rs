@@ -661,6 +661,7 @@ fn scrub_for_export(
     // FIX 6870: and an erased repo's portable manifest.
     let repo_manifests_scrubbed =
         crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
+    let skill_docs_scrubbed = crate::sync::skill_docs::scrub_skill_docs(vault, doc, Some(key))?;
     // FIX 3877: and an origin claim carrier that names an erased actor.
     let origin_claims_scrubbed =
         crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
@@ -687,6 +688,7 @@ fn scrub_for_export(
         || document_pins_scrubbed
         || message_docs_scrubbed
         || repo_manifests_scrubbed
+        || skill_docs_scrubbed
         || origin_claims_scrubbed
         || section_fit_scrubbed
         || births_scrubbed

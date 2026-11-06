@@ -46,6 +46,74 @@ pub(super) fn materialize_entities_from_delta(
         .then(Vec::new)
 }
 
+/// Re-present a sidecar-only change through the original entity driver.
+/// An actual entity delta wins, including its deletes and non-binary values.
+/// These carrier bytes confer no native admission; the ingest ladder still
+/// selects the current import and runs every ordinary record phase.
+fn extend_skill_document_rows(
+    doc: &LoroDoc,
+    delta: &mut loro::event::MapDelta<'_>,
+    updated: &std::collections::BTreeSet<String>,
+) {
+    if updated.is_empty() {
+        return;
+    }
+    let carriers = doc.get_map("entities");
+    for entity in crate::sync::skill_docs::affected_rows(doc, updated) {
+        let key = entity.to_hex();
+        if delta.updated.contains_key(key.as_str()) {
+            continue;
+        }
+        if let Some(value @ loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))) =
+            carriers.get(&key)
+        {
+            delta
+                .updated
+                .insert(std::borrow::Cow::Owned(key), Some(value));
+        }
+    }
+}
+
+/// Coalesce one import's effective entity and native sidecar changes.
+/// Root container identities exclude nested maps and unrelated side families.
+pub(super) fn entity_event_delta(
+    doc: &LoroDoc,
+    event: &loro::event::DiffEvent<'_>,
+) -> loro::event::MapDelta<'static> {
+    let entities = loro::ContainerID::new_root("entities", loro::ContainerType::Map);
+    let skill_docs = loro::ContainerID::new_root(
+        crate::sync::skill_docs::SKILL_DOCS_MAP,
+        loro::ContainerType::Map,
+    );
+    let mut rows = loro::event::MapDelta {
+        updated: Default::default(),
+    };
+    let mut updated = std::collections::BTreeSet::new();
+    for change in &event.events {
+        let Some(delta) = change.diff.as_map() else {
+            continue;
+        };
+        if *change.target == entities {
+            rows.updated.extend(
+                delta
+                    .updated
+                    .iter()
+                    .map(|(key, value)| (std::borrow::Cow::Owned(key.to_string()), value.clone())),
+            );
+        } else if *change.target == skill_docs {
+            updated.extend(delta.updated.iter().filter_map(|(key, value)| {
+                matches!(
+                    value,
+                    Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
+                )
+                .then(|| key.to_string())
+            }));
+        }
+    }
+    extend_skill_document_rows(doc, &mut rows, &updated);
+    rows
+}
+
 /// Whether the doc's entities map now holds another binary carrier under
 /// `key` than the `blob` a delta brought.
 fn carrier_superseded(carriers: &loro::LoroMap, key: &str, blob: &[u8]) -> bool {
@@ -60,6 +128,7 @@ fn carrier_superseded(carriers: &loro::LoroMap, key: &str, blob: &[u8]) -> bool 
 pub(super) struct EntityMaterialization {
     // Retained outside the writer so its failure can flag each lost op for rematerialization.
     applied_ops: Vec<(EntityId, Vec<u8>)>,
+    native_records: Vec<(Vec<u8>, crate::batch::AppliedRecordDocument)>,
     revision_changes: Vec<crate::vault::EntityRevisionChange>,
     // Watched rows written where none existed, announced only after commit.
     born: Vec<(EntityId, Vec<u8>)>,
@@ -80,6 +149,7 @@ impl EntityMaterialization {
     ) -> crate::Result<()> {
         let Self {
             applied_ops,
+            native_records,
             revision_changes,
             born,
             floor_written,
@@ -184,11 +254,14 @@ impl EntityMaterialization {
             }
             let steps = ingest_rows_in_savepoint(ingest, wtxn, &rows)?;
             for ((&(_, value), step), (previous_revision, unborn)) in
-                rows.iter().zip(&steps).zip(before)
+                rows.iter().zip(steps).zip(before)
             {
                 let (Some(id), Some(blob)) = (step.written(), value) else {
                     continue;
                 };
+                if let crate::sync::ingest::EntityStep::NativeRecordApplied(applied) = step {
+                    native_records.push((blob.to_vec(), applied));
+                }
                 if unborn {
                     born.push((id, blob.to_vec()));
                 }
@@ -277,6 +350,7 @@ impl EntityImportEffects {
     ) -> Vec<crate::vault::EntityRevisionChange> {
         let EntityMaterialization {
             applied_ops,
+            native_records: _,
             revision_changes,
             born,
             floor_written,
@@ -330,6 +404,7 @@ pub(super) fn materialize_entities_with_changes(
     });
     let EntityMaterialization {
         applied_ops,
+        native_records,
         revision_changes,
         born,
         floor_written,
@@ -383,15 +458,14 @@ pub(super) fn materialize_entities_with_changes(
     }
     let committed = result.is_ok();
     if let Err(e) = result {
-        // ONE-1147: the whole batch txn aborted — every applied op's write
-        // (and any quarantine row staged alongside) is lost while the ops
-        // stay committed in the CRDT doc. Flag each affected id with the
-        // durable entity-scoped rm: marker so the drain re-runs forward
-        // remat for this window. Ids whose COMMITTED bytes already equal
-        // the op's bytes are skipped: nothing was lost for them, and an
-        // at-parity marker could never discharge (discharge requires the
-        // actual healing re-write to land — never mere byte-parity, which
-        // a failed GDPR purge also exhibits).
+        // ONE-1147: the grouped writer reported an error. A later callback
+        // may fail after commit, so compare the actual committed state.
+        // Native puts retain their real complete outputs: physical parity
+        // alone cannot prove that their HEAD and document rows survived.
+        // Ordinary puts keep their existing parity/echo comparison. Flag
+        // lost outputs with the same entity-scoped rm: marker so the drain
+        // re-runs forward remat; a marker clears only after a real healing
+        // write, never mere byte-parity (which a failed purge also exhibits).
         //
         // Layering: markers are BEST-EFFORT durability on an already-failing
         // env — a marker write that itself fails (env down hard) is logged
@@ -399,10 +473,31 @@ pub(super) fn materialize_entities_with_changes(
         // pinned open order remains the backstop.
         let mut seen = HashSet::new();
         let mut marked = 0usize;
+        let lost_native = {
+            let committed_view = vault.store.env.read_txn();
+            native_records
+                .iter()
+                .filter(|(_, record)| match &committed_view {
+                    Ok(txn) => !record.matches_stored_in_txn(&vault.store, txn).unwrap_or(false),
+                    Err(_) => true,
+                })
+                .map(|(_, record)| record.entity())
+                .collect::<Vec<_>>()
+        };
+        for id in lost_native {
+            if seen.insert(id) && set_remat_marker_logged(vault, window_key, &id) {
+                marked += 1;
+            }
+        }
         for (id, blob) in &applied_ops {
-            // Parity-check BEFORE dedupe: a src/id whose first op is at
-            // parity must not shadow a later diverged op for the same id.
-            if committed_entity_state_matches(vault, id, blob) || !seen.insert(*id) {
+            // Only this exact native put uses the complete-output comparison.
+            // Another ordinary put of the same entity keeps its own parity
+            // check before dedupe, even when an earlier native put matched.
+            if native_records.iter().any(|(native_raw, record)| {
+                record.entity() == *id && native_raw.as_slice() == blob.as_slice()
+            }) || committed_entity_state_matches(vault, id, blob)
+                || !seen.insert(*id)
+            {
                 continue;
             }
             if set_remat_marker_logged(vault, window_key, id) {
@@ -416,6 +511,7 @@ pub(super) fn materialize_entities_with_changes(
             marked,
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
+        crate::sync::ingest::record_document_materializer_failed(vault, window_key, delta, e);
     }
     (
         committed,

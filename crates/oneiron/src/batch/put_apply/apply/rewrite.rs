@@ -138,8 +138,14 @@ pub(super) fn rewrite_put_body(
     } else {
         store.short_id_prefix(fixed.entity_type).ok()
     };
-    // A short reference hashes the logical body: a file-plane ASSET's facts,
-    // never the manifest its row keeps (FIX 3677).
+    // A file-plane ASSET hashes its logical facts, not its manifest (FIX 3677).
+    // A selected native record keeps the original pointer's short identity.
+    #[cfg(feature = "sync")]
+    let short_id_data = fixed.record_document.map_or(data, |candidate| {
+        &candidate.physical_raw()[ENTITY_METADATA_HEADER_LEN..]
+    });
+    #[cfg(not(feature = "sync"))]
+    let short_id_data = data;
     let short_id_plan = if let Some(short_id_prefix) = short_id_prefix {
         Some(plan_short_id_update_hashed(
             store,
@@ -148,7 +154,7 @@ pub(super) fn rewrite_put_body(
             fixed.entity_type,
             &short_id_prefix,
             fixed.options.storage.asset_file.map_or_else(
-                || crate::batch::short_id_content_hash(data),
+                || crate::batch::short_id_content_hash(short_id_data),
                 |file| file.short_hash(),
             ),
         )?)
