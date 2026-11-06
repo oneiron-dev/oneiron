@@ -12,6 +12,7 @@ use crate::claim::ScopedRead;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::federation::record_scope::BirthPosition;
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
 
@@ -51,6 +52,9 @@ pub(super) fn validate_native_output(
     Ok(report)
 }
 
+/// The row a native output waits in. `producer_position` is frozen in its
+/// body as the producing run's host bound it (FIX 3171).
+#[expect(clippy::too_many_arguments)]
 pub(super) fn native_output_pending_row(
     output: &NativeOutput,
     (actor, kind): (WriteActor, Option<u8>),
@@ -59,6 +63,7 @@ pub(super) fn native_output_pending_row(
     explicit_fork: bool,
     deck: Option<DeckExportHold>,
     report: String,
+    producer_position: BirthPosition,
 ) -> PendingRow {
     PendingRow {
         proposal_ref: output.run_ref.clone(),
@@ -85,6 +90,8 @@ pub(super) fn native_output_pending_row(
             name: output.name.clone(),
             media_type: output.media_type.clone(),
             report,
+            producer_world: producer_position.world,
+            producer_facet: producer_position.facet,
         },
     }
 }
@@ -92,14 +99,15 @@ pub(super) fn native_output_pending_row(
 impl Vault {
     /// The direct append's default writer-only envelope needs no read lane
     /// or grant-clock preparation. All snapshots belong to the caller's writer.
+    /// The proposal keeps `producer_position` for its Keep (FIX 3171).
     pub(crate) fn propose_direct_append_output_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         output: &NativeOutput,
-        actor: WriteActor,
-        retained_at: u64,
+        (actor, retained_at): (WriteActor, u64),
         base_override: Option<(u64, [u8; 32])>,
+        producer_position: BirthPosition,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
@@ -119,6 +127,7 @@ impl Vault {
             base_override.is_some(),
             None,
             report,
+            producer_position,
         );
         // None cannot clock a lane. It still rejects an envelope naming
         // anything beyond its writer; no reader authority is invented here.

@@ -2,8 +2,8 @@
 //! as a version forked from the head it was made against, and a deck export
 //! binds the deck to it.
 
-use super::PendingRow;
 use super::output_settle::output_record;
+use super::{PendingBody, PendingRow};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::{
@@ -16,6 +16,7 @@ use crate::edit_settle::records::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::federation::record_scope::BirthPosition;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -50,31 +51,20 @@ impl Vault {
             let fork_parent = row.base_version.filter(|base| {
                 row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
             });
-            let version = match &row.made_by {
-                Some(made_by) => self.append_blob_artifact_version_kept_in_txn(
-                    wtxn,
-                    artifact_id,
-                    fork_parent,
-                    &row.new_bytes,
-                    &provenance,
-                    made_by,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.append_blob_artifact_version_with_engine_and_parent_in_txn(
-                    wtxn,
-                    artifact_id,
-                    &row.new_bytes,
-                    &provenance,
-                    None,
-                    actor,
-                    occurred,
-                    learned_at,
-                    fork_parent,
-                    None,
-                )?,
-            };
+            // The claim is born at the producer's frozen position, never at
+            // the keeper's (FIX 3171).
+            let version = self.append_blob_artifact_version_kept_in_txn(
+                wtxn,
+                artifact_id,
+                fork_parent,
+                &row.new_bytes,
+                &provenance,
+                row.made_by.as_ref(),
+                actor,
+                occurred,
+                learned_at,
+                row.producer_position(),
+            )?;
             if let Some(hold) = &row.deck {
                 self.keep_deck_export_in_txn(
                     wtxn,
@@ -107,5 +97,23 @@ impl Vault {
             reconciliation,
             review: SettledReview::of(record),
         })
+    }
+}
+
+impl PendingRow {
+    /// The position its producing run's host bound, frozen as the output was
+    /// retained (FIX 3171). An edit or an unbound producer has the default.
+    fn producer_position(&self) -> BirthPosition {
+        match &self.body {
+            PendingBody::Output {
+                producer_world,
+                producer_facet,
+                ..
+            } => BirthPosition {
+                world: *producer_world,
+                facet: *producer_facet,
+            },
+            PendingBody::Edit { .. } => BirthPosition::default(),
+        }
     }
 }

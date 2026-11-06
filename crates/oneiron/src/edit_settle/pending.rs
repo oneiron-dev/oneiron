@@ -118,6 +118,13 @@ enum PendingBody {
         name: String,
         media_type: String,
         report: String,
+        /// The world and facet its producing run's host bound, frozen as it
+        /// is retained (FIX 3171): Keep births the version's claim there,
+        /// never at the keeper's. Absent for an unbound producer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_world: Option<EntityId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_facet: Option<EntityId>,
     },
 }
 
@@ -446,6 +453,8 @@ impl Vault {
             base_override.is_some(),
             deck.map(|(_, hold)| hold),
             report,
+            // An organ's output binds no producing host position (FIX 3171).
+            crate::federation::record_scope::BirthPosition::default(),
         );
         row.read_rows.extend_from_slice(read_rows);
         row.read_rows.sort_unstable();
