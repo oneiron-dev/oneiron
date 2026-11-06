@@ -114,7 +114,17 @@ pub(super) async fn oauth_exchange(
         .and_then(|value| value.strip_prefix("Bearer "))
         .filter(|token| !token.starts_with("v2.slip."))
         .ok_or_else(ApiError::unauthorized)?;
-    let identity = crate::oauth_relay::verify_oauth_relay_identity(raw, &server.config)?;
+    // The token's key set may need an HTTPS fetch: verify on a blocking
+    // worker, never on the async request worker (FIX 9529).
+    let identity = {
+        let token = raw.to_owned();
+        let verifier = Arc::clone(&server);
+        tokio::task::spawn_blocking(move || {
+            crate::oauth_relay::verify_oauth_relay_identity(&token, &verifier.config)
+        })
+        .await
+        .map_err(|_| ApiError::unauthorized())??
+    };
     let actor =
         oneiron::EntityId::from_hex(&identity.subject).map_err(|_| ApiError::unauthorized())?;
     if server
