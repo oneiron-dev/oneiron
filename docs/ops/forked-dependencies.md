@@ -133,6 +133,10 @@ and every local source change.
   actual error-vector backing before its original push. Successful messages/order
   are retained; owned diagnostic payloads remain unadmitted. A failed diagnostic
   push can leave private work in the current parser step until its next checkpoint.
+  `CheckedParser::one_str` consumes borrowed UTF-8 through inline single-scalar
+  tendrils, avoiding the whole-input heap copy before the first checkpoint. The
+  caller-memory template path uses it; ordinary one-shot parsing is unchanged.
+  Retained tokenizer/lookahead payloads remain separate allocations.
 
 - `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):
   a fallible native node-arena reservation API admits whole replacement storage

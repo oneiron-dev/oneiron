@@ -33,6 +33,11 @@ Local production changes (FIX 9615):
   need an arena slot. An internal stopped result propagates through creation,
   reconstruction, adoption, foreign insertion and both table-text drain paths.
   The first typed refusal uses the same checked-driver error and partial-DOM drop.
+- `CheckedParser::one_str` feeds borrowed UTF-8 as inline, single-scalar
+  tendrils instead of copying the entire input into a heap tendril before the
+  first checkpoint. It stops producing input on the first failure and uses
+  the existing finish/error path. Tokenizer lookahead and retained payloads
+  can still allocate separately; this is not a bound on all parser memory.
 - The ordinary driver and checked driver share the existing feed loop. The
   ordinary `Parser`, `parse_document`, fragment APIs and `Document::from` keep
   their signatures and algorithms. The new checked API is re-exported at root.
@@ -59,7 +64,7 @@ the first typed error is retained; the current parser step, including private
 unadmitted work, may continue until the next checkpoint or guarded node operation.
 
 Callbacks use the caller's memory and work deadline, not a node-count/content
-limit or a new timer. Attribute, atom/tendril, parser-stack, input and owned
+limit or a new timer. Attribute, retained atom/tendril, parser-stack, lookahead and owned
 diagnostic payload allocations remain unadmitted. One tokenizer step, character-reference work,
 allocator surplus before settlement and opaque codec calls still prevent a
 global heap or hard wall-time bound. This snapshot does not complete FIX 9615.

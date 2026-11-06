@@ -72,6 +72,23 @@ where
         self
     }
 
+    /// Parse borrowed UTF-8 without copying the whole input into a heap tendril.
+    /// Each input tendril contains one Unicode scalar and fits in tendril's
+    /// inline storage. Tokenizer and sink allocations remain separate.
+    /// Character-token batching follows the scalar stream, not whole-input runs.
+    /// The first checkpoint failure stops further input production.
+    pub fn one_str(self, input: &str) -> Result<Sink::Output, E> {
+        for character in input.chars() {
+            if !self.tokenizer.checkpoint() {
+                break;
+            }
+            self.input_buffer
+                .push_back(StrTendril::from_char(character));
+            loop_until_done(&self.tokenizer, &self.input_buffer);
+        }
+        self.finish()
+    }
+
     /// Accept UTF-8 bytes with the ordinary parser's lossy decoder.
     #[allow(clippy::wrong_self_convention)]
     pub fn from_utf8(self) -> Utf8LossyDecoder<Self> {
