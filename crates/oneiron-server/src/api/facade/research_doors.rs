@@ -1,6 +1,6 @@
-//! Owner-authenticated child admission and sealed-cohort setup.
-//! The verb-table admission checks the owner before hooks; these handlers
-//! revalidate that same proof before entering the existing engine doors.
+//! Research and eval host doors, using the caller's original source reader.
+//! Owner writes revalidate the same proof checked before hooks; Repair recipe
+//! preparation uses the caller's ordinary scoped read without an owner grant.
 use std::sync::Arc;
 
 use oneiron::skill_optimize::{EvalAuthoringInventory, EvalAuthoringReport, EvalCohortSetup};
