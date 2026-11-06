@@ -556,8 +556,26 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
             if hold == Hold::Busy {
                 family_member = true;
                 match body.predicate.as_str() {
+                    // A held kind is busy: its free transparency frees
+                    // nothing. A held floating or all-day kind still places
+                    // its civil time, so with its zone held too the EVENT
+                    // keeps every zone's reach, never only the written
+                    // zone's days (fix list row 17868).
                     PREDICATE_CALENDAR_TIME_KIND => {
-                        replace_when_lower(&mut time_kind, claim_id, LaneFact::Absent);
+                        let value = decode_time_kind_value(&body.value)?;
+                        let fact = if matches!(
+                            value.kind,
+                            crate::calendar::claims::CalendarTimeKind::Floating
+                                | crate::calendar::claims::CalendarTimeKind::AllDay
+                        ) {
+                            LaneFact::Read(CalendarTimeKindValue {
+                                kind: value.kind,
+                                busy_transparency: CalendarBusyTransparency::Busy,
+                            })
+                        } else {
+                            LaneFact::Absent
+                        };
+                        replace_when_lower(&mut time_kind, claim_id, fact);
                     }
                     // A wall time only places occupancy; it frees nothing.
                     PREDICATE_CALENDAR_WALL_TIME => {
