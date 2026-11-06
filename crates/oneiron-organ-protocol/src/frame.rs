@@ -48,8 +48,8 @@ mod booked;
 
 use booked::Unbooked;
 pub use booked::{
-    FrameBooking, frame_body_len, frame_read_cost, recv_frame_polled_booked,
-    recv_frame_until_booked, recv_handshake, recv_handshake_until_booked,
+    FD_ROOM_PER_FD, FrameBooking, fd_read_cost, frame_body_len, frame_read_cost,
+    recv_frame_polled_booked, recv_frame_until_booked, recv_handshake, recv_handshake_until_booked,
 };
 
 /// `len: u32 LE | more: u8`.
@@ -548,16 +548,20 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     wait: Wait,
     mut booking: B,
 ) -> Result<(T, Vec<OwnedFd>, u64, B::Held), FrameError> {
+    // The holder first, before the first header: descriptors are booked as
+    // they arrive, and the first frame's length follows through `more`, so
+    // the end state is the same lease `body(len)` would have made.
+    let mut held = booking.body(0)?;
     let mut fds = Vec::new();
-    let (len, mut more) = recv_header(stream, wait, &mut fds)?;
+    let (len, mut more) = recv_header(stream, wait, &mut fds, &mut booking, &mut held)?;
     bound.check(len, 0)?;
     // The room first, then the bytes: nothing is allocated for a frame its
     // receiver has not made room for.
-    let mut held = booking.body(u64::from(len))?;
+    booking.more(&mut held, u64::from(len))?;
     let mut body = Vec::new();
     recv_body(stream, wait, &mut body, len)?;
     while more {
-        let (len, next) = recv_header(stream, wait, &mut fds)?;
+        let (len, next) = recv_header(stream, wait, &mut fds, &mut booking, &mut held)?;
         bound.check(len, body.len() as u64)?;
         // Scratch is a temporary full lease covering the old buffer
         // outliving its realloc, on floor and budget, released by drop;
@@ -568,7 +572,11 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
         } else {
             0
         };
-        let guard = if scratch > 0 { Some(booking.scratch(scratch)?) } else { None };
+        let guard = if scratch > 0 {
+            Some(booking.scratch(scratch)?)
+        } else {
+            None
+        };
         booking.more(&mut held, u64::from(len))?;
         recv_body(stream, wait, &mut body, len)?;
         drop(guard);
@@ -586,10 +594,16 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
 }
 
 /// One frame's header, and the descriptors that rode on its first byte.
-fn recv_header(
+/// Each control batch is booked before the heap grows to hold it
+/// ([`fd_read_cost`], cumulative difference), and the first nonzero batch
+/// reserves the batch descriptor capacity before the first extend, so
+/// small-N capacity is booked, not grown into (FIX 12434).
+fn recv_header<B: FrameBooking>(
     stream: &UnixStream,
     wait: Wait,
     fds: &mut Vec<OwnedFd>,
+    booking: &mut B,
+    held: &mut B::Held,
 ) -> Result<(u32, bool), FrameError> {
     let mut header = [0u8; HEADER];
     let mut got = 0;
@@ -608,13 +622,46 @@ fn recv_header(
             Err(errno) if wait.retry(errno) => continue,
             Err(errno) => return Err(io::Error::from(errno).into()),
         };
-        let before = fds.len();
+        // Onto the stack first (RAII: a drop closes whatever is held),
+        // so no heap grows before its room is made; everything past the
+        // batch capacity is the truncated case, closed as it comes.
+        let mut batch: [Option<OwnedFd>; MAX_FDS_PER_FRAME] = [const { None }; MAX_FDS_PER_FRAME];
+        let mut count = 0;
+        let mut truncated = false;
         for message in control.drain() {
             if let RecvAncillaryMessage::ScmRights(received) = message {
-                fds.extend(received);
+                for fd in received {
+                    if !truncated && count < MAX_FDS_PER_FRAME {
+                        batch[count] = Some(fd);
+                        count += 1;
+                    } else {
+                        drop(fd);
+                        truncated = true;
+                    }
+                }
             }
         }
-        mark_cloexec(&fds[before..])?;
+        if truncated {
+            return Err(FrameError::FdsTruncated);
+        }
+        if count > 0 {
+            // Close-on-exec before any room/floor wait: without an atomic
+            // receive flag, a process spawned meanwhile must not inherit
+            // these. The flags travel with the move into `fds` below.
+            for fd in batch.iter().flatten() {
+                mark_cloexec(std::slice::from_ref(fd))?;
+            }
+            let before = fds.len();
+            let after = before.saturating_add(count);
+            let cost = fd_read_cost(after).saturating_sub(fd_read_cost(before));
+            if cost > 0 {
+                booking.fds(held, cost)?;
+            }
+            if before == 0 {
+                fds.reserve_exact(MAX_FDS_PER_FRAME.saturating_sub(fds.capacity()));
+            }
+            fds.extend(batch.into_iter().flatten());
+        }
         if msg.flags.contains(ReturnFlags::CTRUNC) {
             return Err(FrameError::FdsTruncated);
         }

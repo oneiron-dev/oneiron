@@ -165,7 +165,15 @@ impl Vault {
                 "commit tree could not be read",
             ))
         })?;
-        let repo_path = std::fs::canonicalize(&config.repo_path).map_err(|_| {
+        // A run keeps the namespace its existing repository admission names.
+        let repo_path = if select.is_some() {
+            std::fs::canonicalize(&config.repo_path)
+        } else {
+            // Commit-only imports also work when the checkout is unavailable.
+            std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
+                .or_else(|_| std::fs::canonicalize(repo.path()))
+        }
+        .map_err(|_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "repo_path must be a canonicalizable local path",
             ))
@@ -269,7 +277,7 @@ impl Vault {
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
-        self.with_write_txn_grouped(|wtxn| {
+        let written = self.with_write_txn_grouped(|wtxn| {
             // A run's admission is judged again in this final writer, before
             // any row is put; a refusal writes nothing.
             if let Err(refused) = admit(wtxn)? {
@@ -368,22 +376,28 @@ impl Vault {
                     .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
             )?;
             // Each source names the file document its symbols are spans on,
-            // as this writer reads it (FIX 7809).
+            // as this writer reads it (FIX 7809), under the repository
+            // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
+            let identity = crate::codebase::resolve_repo_identity_in_txn(self, read, repo_ref)?;
             let symbol_sources = symbol_texts
                 .iter()
                 .map(|(path, text)| {
                     Ok(CodeSymbolSource::new(path, text).with_document(
-                        code_symbol_document_in_txn(&self.store, read, repo_ref, path)?,
+                        code_symbol_document_in_txn(&self.store, read, &identity, path)?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
-            let symbol_graph = prepare_code_symbol_graph(
+            let mut symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
+                identity,
                 Some(commit_hash.to_owned()),
                 symbol_sources,
             )?;
+            // Each symbol names the operations that wrote it, read from its
+            // file document when that holds these exact bytes (FIX 342).
+            symbol_graph.fill_producing_operations_in_txn(&self.store, read)?;
             self.put_prepared_code_symbol_graph_in_txn(
                 wtxn,
                 &code_artifact_id,
@@ -395,6 +409,12 @@ impl Vault {
                 code_artifact_id,
                 snapshot: filtered_snapshot,
             }))
-        })
+        })?;
+        // A file custody now withholds leaves the queue's source copies at
+        // once, after the commit; a failure only warns (FIX 7708).
+        if let Err(error) = self.erase_withheld_queue_sources() {
+            tracing::warn!(%error, "withheld queue sources were not erased after an ingest");
+        }
+        Ok(written)
     }
 }

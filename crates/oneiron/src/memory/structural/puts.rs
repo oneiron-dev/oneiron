@@ -18,8 +18,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
 
 use super::{
-    BlobArtifactInput, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralPutInput,
-    ensure_structural_create_in_txn, type_byte_for_kind,
+    BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, EntityRefReceipt,
+    HabitCheckinInput, StructuralPutInput, ensure_structural_create_in_txn, type_byte_for_kind,
 };
 
 mod guarded;
@@ -111,11 +111,6 @@ impl Memory<'_> {
     /// [`Self::append_blob_version`]).
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> MemoryResult<EntityRefReceipt> {
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
-        let body = crate::blob_artifact::BlobArtifactBody::new(
-            input.name.clone(),
-            input.media_type.clone(),
-        );
-        let data = crate::blob_artifact::encode_blob_artifact_body(&body)?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
@@ -130,6 +125,27 @@ impl Memory<'_> {
             {
                 return Ok(true);
             }
+            // FIX 9968: a metadata re-registration keeps the current
+            // BLOB_ARTIFACT body's `secret_taint_refs`; only a first
+            // registration writes the empty default.
+            let mut body = crate::blob_artifact::BlobArtifactBody::new(
+                input.name.clone(),
+                input.media_type.clone(),
+            );
+            if let Some(raw) = self.vault.get_raw_in(content.read(), &id)? {
+                let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+                    crate::error::Error::CorruptedIndex("blob artifact entity header"),
+                )?;
+                if header.entity_type == ENTITY_TYPE_BLOB_ARTIFACT {
+                    let current = crate::blob_artifact::decode_blob_artifact_body(
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                    )?;
+                    if !current.secret_taint_refs.is_empty() {
+                        body = body.with_secret_taint_refs(current.secret_taint_refs);
+                    }
+                }
+            }
+            let data = crate::blob_artifact::encode_blob_artifact_body(&body)?;
             content.apply_batch(self.vault.batch_in().put(
                 &id,
                 ENTITY_TYPE_BLOB_ARTIFACT,
@@ -145,9 +161,10 @@ impl Memory<'_> {
         self.entity_ref_receipt_of(&id, ENTITY_TYPE_BLOB_ARTIFACT)
     }
 
-    /// Appends one content-addressed version to a blob artifact. The whole
-    /// append (ASSET bytes + `blob.version` LEDGER claim + version chain)
-    /// is one engine transaction; re-appending head bytes is a dedupe no-op.
+    /// Appends a checked content-addressed version on one engine transaction.
+    /// Uploads, first versions and identical head bytes land immediately. A
+    /// later AgentRun output waits beside the live artifact as a proposal;
+    /// its authorized Keep appends the version and its ledger claim.
     ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: no
     /// caller-supplied id is written here — the ASSET id is content-derived
@@ -163,7 +180,7 @@ impl Memory<'_> {
         run_ref: Option<&str>,
         occurred_at: u64,
         learned_at: Option<u64>,
-    ) -> MemoryResult<BlobVersionView> {
+    ) -> MemoryResult<BlobVersionAppendOutcome> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -175,9 +192,9 @@ impl Memory<'_> {
             start: occurred_at,
             end: occurred_at,
         };
-        let record = self.with_actor_content_write_txn(|content| {
+        let outcome = self.with_actor_content_write_txn(|content| {
             Ok(content.update_artifact(artifact_id, |txn| {
-                self.vault.append_blob_artifact_version_in_txn(
+                self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
                     bytes,
@@ -188,22 +205,29 @@ impl Memory<'_> {
                 )
             })?)
         })?;
-        Ok(BlobVersionView {
-            artifact_ref: artifact_id.to_hex(),
-            version: record.version,
-            content_hash_hex: hex_string(&record.content_hash),
-            claim_ref: record.claim_id.to_hex(),
-            created_at: record.created_at,
-            artifact: Some(crate::lens::RecordRef::from_id(
-                ENTITY_TYPE_BLOB_ARTIFACT,
-                &artifact_id,
-                None,
-            )),
-            claim: Some(crate::lens::RecordRef::from_id(
-                crate::registry::ENTITY_TYPE_CLAIM,
-                &record.claim_id,
-                None,
-            )),
+        Ok(match outcome {
+            crate::blob_artifact::BlobArtifactAppendOutcome::Landed(record) => {
+                BlobVersionAppendOutcome::Landed(BlobVersionView {
+                    artifact_ref: artifact_id.to_hex(),
+                    version: record.version,
+                    content_hash_hex: hex_string(&record.content_hash),
+                    claim_ref: record.claim_id.to_hex(),
+                    created_at: record.created_at,
+                    artifact: Some(crate::lens::RecordRef::from_id(
+                        ENTITY_TYPE_BLOB_ARTIFACT,
+                        &artifact_id,
+                        None,
+                    )),
+                    claim: Some(crate::lens::RecordRef::from_id(
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        &record.claim_id,
+                        None,
+                    )),
+                })
+            }
+            crate::blob_artifact::BlobArtifactAppendOutcome::Proposed(proposal) => {
+                BlobVersionAppendOutcome::Proposed(proposal)
+            }
         })
     }
 
@@ -215,8 +239,32 @@ impl Memory<'_> {
         version: u64,
     ) -> MemoryResult<Option<Vec<u8>>> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
-        self.vault
-            .read_blob_artifact_version_as(&artifact_id, version, self.secret_sight()?)
-            .map_err(MemoryError::from)
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let result = lane.read_projected(
+            &[crate::claim::PointRead::id(artifact_id)],
+            None,
+            |txn, rows| {
+                let Some(row) = rows
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .filter(|row| row.body.is_some())
+                else {
+                    return Ok::<_, MemoryError>(None);
+                };
+                if row.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
+                    return Ok(None);
+                }
+                self.produced_from([artifact_id]);
+                let sight = self.secret_sight_in_txn(txn)?;
+                let bytes = self
+                    .vault
+                    .read_blob_artifact_version_sighted_in_txn(txn, &artifact_id, version, sight)?
+                    .map(|bytes| self.vault.resolve_docx_authors_in_txn(txn, bytes))
+                    .transpose()?;
+                Ok(bytes)
+            },
+        )?;
+        Ok(result.value)
     }
 }

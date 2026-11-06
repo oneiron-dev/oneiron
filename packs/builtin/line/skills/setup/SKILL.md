@@ -45,6 +45,12 @@ qualification passes.
    `monthly_push_allowance`). Past the allowance the agent asks whether
    everything is okay and still sends; LINE itself refuses a free plan's
    pushes past it.
+7. Once the check passes, offer to subscribe an agent to the channel's
+   messages. Each message LINE routes to the agent wakes it, and the served
+   responder answers it. `oneiron subscriptions put --agent <agent> --channel
+   line` subscribes one, served at
+   `POST /v1/owner/connectors/subscriptions`; `oneiron subscriptions list
+   --agent <agent>` shows what the agent holds.
 
 ## When the check fails
 

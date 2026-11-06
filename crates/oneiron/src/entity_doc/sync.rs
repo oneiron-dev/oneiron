@@ -14,9 +14,11 @@
 //! is carried here instead; one of another birth than the document held here
 //! stands apart, as a carried MESSAGE document of another incarnation does.
 //!
-//! A record of any other kind with no document has no birth here: its text
-//! stays in the sequence rows of its own slot (a snapshot and updates keyed
-//! by sequence), where the sync plane has always kept it, and is read there.
+//! A TURN whose body its field rule takes is born the same way (FIX 11794,
+//! `birth_fields`). A record of any other kind, or a body no rule takes, with
+//! no document has no birth here: its text stays in the sequence rows of its
+//! own slot (a snapshot and updates keyed by sequence), where the sync plane
+//! has always kept it, and is read there.
 //!
 //! A sync write is admitted whatever its text holds (FIX 8872, KEEP TODAY):
 //! the owner's scan runs as configured, a key the lift places goes to custody
@@ -32,7 +34,8 @@ use super::storage::{self, Head};
 use super::verbs::{Admitted, admitted_text_in_txn};
 use super::{EntityDoc, TextField, invalid};
 use crate::batch::secret_scan::{
-    CarrierText, Lifted, LiftedKeys, mark_carrier_text_in_txn, scan_content_in_txn,
+    CarrierText, Lifted, LiftedKeys, mark_carrier_text_in_txn, propose_sync_text_in_txn,
+    scan_content_in_txn,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, GateError, Result};
@@ -41,6 +44,8 @@ use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::sync::documents::storage as sequence_rows;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+
+mod birth_fields;
 
 /// The domain a lazy birth's peer is derived in.
 const BIRTH_PEER_CONTEXT: &str = "oneiron.sync-text.birth-peer.v1";
@@ -207,9 +212,14 @@ pub(crate) fn join_sync_update_in_txn(
     };
     let doc = storage::load(&vault.store, txn, &h)?;
     let before = doc.doc.oplog_vv();
-    // Operations after a birth build on it, so a whole document this one
-    // does not hold is another birth of the same text: it stands apart.
-    if whole.is_some_and(|whole| !before.includes_vv(&whole.oplog_vv())) {
+    // Operations after a birth build on it, so a whole document that does
+    // not hold this one's birth is another birth of the same text: it stands
+    // apart. One born where this one was joins, its unseen edits with it
+    // (FIX 11795).
+    if let Some(whole) = whole
+        && !before.includes_vv(&whole.oplog_vv())
+        && !born_alike(entity, &h, &before, &whole)?
+    {
         return Err(invalid("sync text of another document birth"));
     }
     import_whole(&doc.doc, update)?;
@@ -256,7 +266,7 @@ pub(crate) fn replace_sync_text_in_txn(
     }
     let mut h = match head {
         Some(h) => h,
-        None => carried_head_in_txn(vault, txn, entity)?,
+        None => carried_head_in_txn(vault, txn, entity, &doc.doc)?,
     };
     storage::persist_scanned(vault, txn, entity, &mut h, &doc, None, synced(None))?;
     if doc.doc.is_shallow() {
@@ -288,19 +298,39 @@ enum Plane {
 }
 
 /// The one routing rule of every sync reader and writer: a head means the
-/// document; no head means the MESSAGE birth for a MESSAGE, and the
-/// sequence rows for every other kind.
+/// document; no head means the MESSAGE birth for a MESSAGE, the kind's birth
+/// for another kind whose body its field rule takes while its slot holds no
+/// sequence rows (FIX 11794), the carried head for a row already naming its
+/// document, and the sequence rows for every other.
 fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
     if let Some(head) = head_in(vault, txn, entity)? {
         return Ok(Plane::Document(head));
     }
-    Ok(
-        if vault.get_entity_type_in_txn(txn, entity)? == Some(ENTITY_TYPE_MESSAGE) {
-            Plane::Unborn
-        } else {
-            Plane::SequenceRows
-        },
-    )
+    let unborn = match vault.get_entity_type_in_txn(txn, entity)? {
+        Some(ENTITY_TYPE_MESSAGE) => true,
+        // Text an earlier sync write kept in the slot's sequence rows stays
+        // there; a row still holding its text births here, and a row already
+        // naming its document adopts that carried head here.
+        Some(kind) if birth_fields::field(kind).is_some() => {
+            !vault
+                .store
+                .port_document_present(txn, DocumentSlot::of(*entity))?
+                && vault
+                    .store
+                    .port_entity_raw(txn, entity)?
+                    .is_some_and(|raw| {
+                        raw.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
+                            split_fields(kind, body, entity).is_some() || pointer_of(body).is_some()
+                        })
+                    })
+        }
+        _ => false,
+    };
+    Ok(if unborn {
+        Plane::Unborn
+    } else {
+        Plane::SequenceRows
+    })
 }
 
 /// [`edit_sync_text_in_txn`] on `entity`'s sequence rows: the prose is
@@ -406,11 +436,14 @@ struct Born {
     doc: EntityDoc,
     /// The row's body with its text replaced by the document pointer.
     pointer: Vec<u8>,
+    /// The field its text stood in.
+    field: TextField,
 }
 
 /// The birth `entity`'s text takes when no document stands for it: an atomic
-/// MESSAGE's canonical content at its own time, born as a stream or quote
-/// births it but naming no one. `None` for any other record.
+/// MESSAGE's canonical content, or another kind's text its field rule takes
+/// (FIX 11794), at its own time, born as a stream or quote births it but
+/// naming no one. `None` for any other record.
 fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<Born>> {
     let Some(raw) = vault.store.port_entity_raw(txn, entity)? else {
         return Ok(None);
@@ -418,20 +451,48 @@ fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<B
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
-        return Ok(None);
-    }
-    let Some((text, pointer)) = split_content(&raw[ENTITY_METADATA_HEADER_LEN..], entity) else {
+    let Some((text, pointer, field)) = split_fields(
+        header.entity_type,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        entity,
+    ) else {
         return Ok(None);
     };
     let doc = unattributed(seeded(entity)?, entity, &text, header.occurred_start)?;
-    Ok(Some(Born { doc, pointer }))
+    Ok(Some(Born {
+        doc,
+        pointer,
+        field,
+    }))
+}
+
+/// The one dispatch of the lazy birth's field rules (FIX 11794): `kind`'s
+/// text in `body`, the body with it replaced by the document pointer, and
+/// the field it stood in. MESSAGE's rule is [`split_content`]; every other
+/// kind's is in `birth_fields`.
+fn split_fields(kind: u8, body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>, TextField)> {
+    let (text, pointer) = if kind == ENTITY_TYPE_MESSAGE {
+        split_content(body, entity)?
+    } else {
+        birth_fields::split(kind, body, entity)?
+    };
+    Some((text, pointer, birth_field(kind)?))
+}
+
+/// The field `kind`'s lazy birth keeps its text in: a MESSAGE's content, or
+/// its rule's in `birth_fields`.
+fn birth_field(kind: u8) -> Option<TextField> {
+    if kind == ENTITY_TYPE_MESSAGE {
+        Some(content())
+    } else {
+        birth_fields::field(kind)
+    }
 }
 
 /// A canonical MESSAGE body's content, and the body with it replaced by the
 /// document pointer, as the MESSAGE birth writes it.
 fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
-    crate::gate::validate_canonical_witness_message_body(body).ok()?;
+    crate::store::witness_message_body::validate_canonical_witness_message_body(body).ok()?;
     let rmpv::Value::Map(mut fields) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(body)).ok()?
     else {
@@ -451,15 +512,60 @@ fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
     Some((text, pointer))
 }
 
-/// A fresh document whose peer is derived from `entity`.
-fn seeded(entity: &EntityId) -> Result<LoroDoc> {
+/// The peer `entity`'s lazy birth's operations take, the same on every
+/// machine.
+fn birth_peer(entity: &EntityId) -> u64 {
     let key = blake3::derive_key(BIRTH_PEER_CONTEXT, entity.as_bytes());
     let mut peer = [0u8; 8];
     peer.copy_from_slice(&key[..8]);
+    u64::from_be_bytes(peer) >> 1
+}
+
+/// A fresh document whose peer is derived from `entity`.
+fn seeded(entity: &EntityId) -> Result<LoroDoc> {
     let doc = LoroDoc::new();
-    doc.set_peer_id(u64::from_be_bytes(peer) >> 1)
+    doc.set_peer_id(birth_peer(entity))
         .map_err(|_| invalid("document birth peer"))?;
     Ok(doc)
+}
+
+/// The incarnation of `entity`'s lazy birth, the same on every machine as
+/// its operations are (FIX 11795): two machines' lazy births of one row are
+/// one document wherever their heads meet.
+fn lazy_incarnation(entity: &EntityId) -> Result<String> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::SYNC_TEXT_BIRTH_INCARNATION,
+        &[entity.as_bytes()],
+    )
+    .map(|id| id.to_hex())
+}
+
+/// Whether `doc` holds `entity`'s lazy birth: the operations of its derived
+/// birth peer, which nothing but that birth writes.
+fn holds_lazy_birth(entity: &EntityId, doc: &LoroDoc) -> bool {
+    doc.oplog_vv().get(&birth_peer(entity)).is_some()
+}
+
+/// Whether `whole`, a peer's whole document of `entity`, was born where the
+/// document `h` heads, holding `before`, was (FIX 11795): it holds every
+/// operation of that document's birth here, or both hold the one lazy birth
+/// of the row, at the same counter. Its later edits then build on the same
+/// birth and join.
+fn born_alike(
+    entity: &EntityId,
+    h: &Head,
+    before: &VersionVector,
+    whole: &LoroDoc,
+) -> Result<bool> {
+    let held = whole.oplog_vv();
+    if let Some(birth) = &h.birth_frontier {
+        let birth = super::document::decode_frontier(birth)?;
+        if !birth.is_empty() && birth.iter().all(|id| held.includes_id(id)) {
+            return Ok(true);
+        }
+    }
+    let peer = birth_peer(entity);
+    Ok(before.get(&peer).is_some() && before.get(&peer) == held.get(&peer))
 }
 
 /// A birth that names no one: no stamp, at the record's time. Its commit
@@ -493,14 +599,17 @@ fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<
 /// births' work.
 fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
     let born = born_in(vault, txn, entity)?.ok_or(invalid(NO_TEXT))?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &born.pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &born.pointer,
+    )?;
     let mut head = Head {
         entity: entity.to_hex(),
-        incarnation: EntityId::now().to_hex(),
+        incarnation: lazy_incarnation(entity)?,
         document: entity.to_hex(),
-        field: content(),
+        field: born.field,
         generation: 0,
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
@@ -509,34 +618,49 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     Ok(head)
 }
 
-/// The head a peer's document takes here for a MESSAGE that holds none:
-/// the document its row names, or, for a row still holding its text, its
-/// own id, its row then naming it.
-fn carried_head_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
+/// The head a peer's document `carried` takes here for a MESSAGE, or another
+/// kind with a field rule (FIX 11794), that holds none: the document its row
+/// names, or, for a row still holding its text, its own id, its row then
+/// naming it. A document holding the row's lazy birth takes that birth's
+/// incarnation, as every machine's lazy birth of it does (FIX 11795); any
+/// other takes a new one.
+fn carried_head_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    carried: &LoroDoc,
+) -> Result<Head> {
     let raw = vault
         .store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != ENTITY_TYPE_MESSAGE {
-        return Err(invalid(NO_TEXT));
-    }
+    let field = birth_field(header.entity_type).ok_or(invalid(NO_TEXT))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let document = match pointer_of(body) {
         Some(document) => document,
         None => {
-            let (_, pointer) = split_content(body, entity).ok_or(invalid(NO_TEXT))?;
-            vault
-                .store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            let (_, pointer, _) =
+                split_fields(header.entity_type, body, entity).ok_or(invalid(NO_TEXT))?;
+            vault.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                entity,
+                &pointer,
+            )?;
             entity.to_hex()
         }
     };
+    let incarnation = if holds_lazy_birth(entity, carried) {
+        lazy_incarnation(entity)?
+    } else {
+        EntityId::now().to_hex()
+    };
     Ok(Head {
         entity: entity.to_hex(),
-        incarnation: EntityId::now().to_hex(),
+        incarnation,
         document,
-        field: content(),
+        field,
         generation: 0,
         pending: 0,
         birth_frontier: None,
@@ -652,6 +776,14 @@ fn mark_hits_in_txn(
             reason,
             "sync: a document's text keeps a secret hit no rule places; the write stands"
         );
+        if let Err(error) = propose_sync_text_in_txn(vault, txn, entity, reason) {
+            tracing::warn!(
+                entity = %entity.to_hex(),
+                reason,
+                kind = ?error.kind(),
+                "sync: the unplaceable-hit proposal could not be recorded; the write stands"
+            );
+        }
     }
     Ok(())
 }

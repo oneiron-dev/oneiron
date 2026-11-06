@@ -4,9 +4,11 @@
 
 mod boundary;
 mod dispatch;
+mod live_cutoff;
 mod prompt;
 mod readers;
 mod receipts;
+mod replay_context;
 mod results;
 mod type_feedback;
 
@@ -16,8 +18,7 @@ use super::stack_floor::below_stack_floor;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
-    recoverable_output_path, result_handle_json, result_read_path, store_result_output_path,
-    write_json,
+    recoverable_output_path, result_handle_json, store_result_output_path, write_json,
 };
 use super::types::{
     CallableProgram, EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime,
@@ -30,8 +31,8 @@ use crate::code_run::{
     ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
     SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
     SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
-    SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot, result_card,
-    result_refusal, scoped_child_read_refusal, self_call_inputs,
+    SelfSummarizeCall, StepContextCapture, SummarizeReply, agent_verb_rows_of, result_cannot,
+    result_card, result_refusal, scoped_child_read_refusal, self_call_inputs,
 };
 use crate::code_run::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -69,11 +70,20 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
     streamed: StreamedOutputs,
-    /// The run's earlier results stored as bodies (bridge results and
-    /// stored values), which the guest may read back.
+    /// The run's earlier results stored as bodies (bridge results, stored
+    /// values, observations and runtime files), which the guest may read
+    /// back.
     results: Vec<CodeRunRawOutput>,
     /// This step's results stored as bodies, for the record.
     pub(super) captured: Vec<CodeRunRawOutput>,
+    /// The run's durable outputs when this step's host started: the base
+    /// its stores' ordinals count from.
+    output_ordinal_base: usize,
+    /// The recorded store paths this step's replayed stores already reused,
+    /// oldest first: a resumed entry replays each earlier store onto its
+    /// original ordinal, so the same bytes stored twice stay two outputs,
+    /// and only a store of new bytes allocates a fresh ordinal.
+    replayed_stores: Vec<String>,
     /// The run's result names, as its record holds them.
     bindings: Vec<CodeRunResultBinding>,
     /// The names this step bound or rebound, in order, for the record.
@@ -85,6 +95,10 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// when one kept no set (DEC-0005).
     recorded_rows: Option<Vec<EntityId>>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
+    /// What this step's guest read, for the step's replay context: each
+    /// response it handed out, at the position of the row that answers it
+    /// (FIX 6351), and what its result reads saw of reader state (FIX 6352).
+    pub(super) context_capture: StepContextCapture,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
     /// The guest received a typed `Denied`/`Failed` RESPONSE for it (budget
@@ -167,11 +181,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
             captured: Vec::new(),
+            output_ordinal_base: 0,
+            replayed_stores: Vec::new(),
             bindings: Vec::new(),
             bound: Vec::new(),
             receipts: Vec::new(),
             recorded_rows: Some(Vec::new()),
             bridge_calls: Vec::new(),
+            context_capture: StepContextCapture::new(replay_context::captured_reader_child(
+                gated_write,
+                run_id,
+            )),
             durable_wait: None,
             hard_failure: None,
             left_a_gap: false,
@@ -238,6 +258,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .filter(|output| is_result_output_path(&output.path))
             .cloned()
             .collect();
+        self.output_ordinal_base = super::store::store_ordinal_base(record);
         // Its steps' type diagnostics kept whole, read as its results are
         // (FIX 8277).
         if let ExecutorStorage::Canonical(vault) = storage {
@@ -267,17 +288,28 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// response — success, wait, or typed error outcome — leaves through
     /// here so the budget envelope can never be skipped. `view` is a verb
     /// hook's view of the outcome, which the guest reads in its place.
+    /// `call` is the call it answers, and `seq` the position of the row
+    /// that answers it, when one does: the step's replay context keeps the
+    /// view and the envelope at that position (FIX 6351).
     fn respond(
-        &self,
+        &mut self,
+        call: &SelfCall,
+        seq: Option<u64>,
         outcome: SelfDispatchOutcome,
         view: Option<serde_json::Value>,
     ) -> SelfDispatchResponse {
         // The run's read-world capture sees every answer first (FIX 6130).
         self.gated_write
             .read_worlds_answered(self.run_id, &outcome, view.is_some());
+        // One read of the envelope: the runtime is handed it, and the
+        // replay context keeps the same value, never a later read.
+        let budget = self.budget();
+        self.context_capture
+            .guest_responses
+            .keep(call, seq, view.as_ref(), budget);
         SelfDispatchResponse {
             outcome,
-            budget: self.budget(),
+            budget,
             view,
         }
     }
@@ -296,7 +328,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        self.streamed.write(storage, stream, frame)?;
+        self.streamed.write(storage, self.run_id, stream, frame)?;
         self.gated_write.activity_streamed(frame);
         Ok(true)
     }
@@ -343,6 +375,9 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             if output.output_ref() != *source {
                 return Err(Error::CorruptedIndex("recoverable output integrity"));
             }
+            // A scoped child reads the chunk only before its live cutoff,
+            // checked again before the chunk is released (FIX 8233).
+            self.check_live_cutoff("recorded output")?;
             let chunk = storage
                 .read_code_run_raw_output_range(
                     output,
@@ -350,6 +385,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
                     RECOVERABLE_OUTPUT_CHUNK_BYTES,
                 )?
                 .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            self.check_live_cutoff("recorded output")?;
             return Ok(Some(chunk));
         }
         Err(Error::InvalidConfig(

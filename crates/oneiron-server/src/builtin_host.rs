@@ -1,5 +1,6 @@
 //! The served host's side of the built-in connector packs (OF-519): the
-//! connection checks only a served host can run, the channel handles it
+//! connection checks only a served host can run, the isolated probes that
+//! qualify a built-in on them (FIX 710), the channel handles it
 //! keeps for every checked built-in channel, the provider webhooks those
 //! handles serve, the native mail pack's inbox reads, the transports its
 //! served sinks send through, and the Slack app's manifest and OAuth install.
@@ -7,6 +8,7 @@
 mod checks;
 mod handles;
 mod native_mail;
+mod probes;
 mod slack_app;
 mod webhooks;
 
@@ -22,6 +24,7 @@ pub(crate) use slack_app::{
 };
 pub(crate) use webhooks::{hmac_matches, routes};
 
+use crate::config::models::ModelsConfig;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// How often the handles are reconciled with the installed packs and
@@ -29,10 +32,10 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 
 /// Installs this host's served transports on its vault (FIX 4435, 2096):
-/// the `[channel_endpoints]` provider APIs and the `[native_mail]` server,
-/// which every served sink on the vault sends through. Call it before any
-/// worker sends; a second install does nothing.
-pub(crate) fn install_served_transports(server: &SyncServer) {
+/// the `[channel_endpoints]` provider APIs, the `[native_mail]` server and
+/// the `[apns]` applications, which every served sink on the vault sends
+/// through. Call it before any worker sends; a second install does nothing.
+pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&ModelsConfig>) {
     // Config validation refused a bad endpoint at load; this only keeps a
     // host that skipped it on the public APIs.
     let endpoints = server
@@ -49,6 +52,20 @@ pub(crate) fn install_served_transports(server: &SyncServer) {
             Ok(placement) => transports = transports.with_native_mail(placement),
             Err(error) => {
                 tracing::warn!(%error, "[native_mail] is invalid; email sends have no mail server");
+            }
+        }
+    }
+    if let (Some(broker), Some(models)) = (server.broker_context(), models) {
+        transports = transports.with_broker_model_listing(broker.secret_use_models(models));
+    }
+    // Config validation refused a bad application at load; this only keeps a
+    // host that skipped it without Apple push.
+    let apns_applications = server.config.apns.applications.clone();
+    if !apns_applications.is_empty() {
+        match transports.clone().with_apns_applications(apns_applications) {
+            Ok(with_apns) => transports = with_apns,
+            Err(error) => {
+                tracing::warn!(%error, "[apns] is invalid; Apple push sends have no applications");
             }
         }
     }

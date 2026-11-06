@@ -343,7 +343,10 @@ impl BlobStore for Memory {
     ) -> Result<bool> {
         let hard = matches!(
             reason,
-            DeleteReason::UserHardDelete | DeleteReason::GdprDelete | DeleteReason::PolicyDelete
+            DeleteReason::UserHardDelete
+                | DeleteReason::OwnerErase
+                | DeleteReason::GdprDelete
+                | DeleteReason::PolicyDelete
         );
         let Some((_, refs)) = txn.blobs.get_mut(hash) else {
             return Ok(false);
@@ -420,6 +423,7 @@ impl JobQueue for Memory {
             dedupe_key: input.dedupe_key,
             created_at: now,
             updated_at: now,
+            settled_at: None,
             events: Vec::new(),
             manifest: Vec::new(),
             executor_model: None,
@@ -543,6 +547,7 @@ impl JobQueue for Memory {
         record.state = AttemptState::Completed;
         record.lease_owner = None;
         record.updated_at = self.clock.now_recorded_at();
+        record.settled_at = Some(record.updated_at);
         record.last_error = None;
         record.backoff_until = None;
         Ok(CompleteOutcome::Completed(record.clone()))
@@ -564,6 +569,7 @@ impl JobQueue for Memory {
         record.state = AttemptState::Failed;
         record.lease_owner = None;
         record.updated_at = self.clock.now_recorded_at();
+        record.settled_at = Some(record.updated_at);
         record.last_error = Some(input.reason);
         record.backoff_until = None;
         Ok(FailOutcome::Failed(record.clone()))

@@ -127,7 +127,9 @@ impl SnapshotRegion {
     /// The snapshot's bytes, read whole.
     pub(in crate::models) fn read(&self) -> io::Result<Vec<u8>> {
         let len = usize::try_from(self.len).map_err(|_| invalid("the snapshot is too long"))?;
-        let mut bytes = vec![0_u8; len];
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(len).map_err(io::Error::from)?;
+        bytes.resize(len, 0_u8);
         self.file.read_exact_at(&mut bytes, 0)?;
         Ok(bytes)
     }
@@ -135,7 +137,11 @@ impl SnapshotRegion {
     /// The SHA-256 of the snapshot's bytes, read a chunk at a time.
     pub(super) fn sha256(&self) -> io::Result<[u8; 32]> {
         let mut hasher = Sha256::new();
-        let mut chunk = vec![0_u8; READ_CHUNK];
+        let mut chunk = Vec::new();
+        chunk
+            .try_reserve_exact(READ_CHUNK)
+            .map_err(io::Error::from)?;
+        chunk.resize(READ_CHUNK, 0_u8);
         let mut offset = 0_u64;
         while offset < self.len {
             let left = usize::try_from(self.len - offset).unwrap_or(usize::MAX);

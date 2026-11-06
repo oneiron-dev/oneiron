@@ -36,6 +36,35 @@ impl Memory<'_> {
         Ok(best)
     }
 
+    /// [`Self::find_prior_claim`] read in `rtxn` (FIX 9403): an atomic
+    /// batch's writer sees the heads its own earlier elements staged there.
+    pub(super) fn find_prior_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        key: &MemoryKey<'_>,
+        exclude: &EntityId,
+        beside_stated: bool,
+    ) -> crate::Result<Option<EntityId>> {
+        let mut best: Option<EntityId> = None;
+        for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
+            if id == *exclude {
+                continue;
+            }
+            let Some(body) = self.vault.get_claim_in_txn(rtxn, &id)? else {
+                continue;
+            };
+            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            {
+                continue;
+            }
+            best = match best {
+                Some(current) if current.to_hex() >= id.to_hex() => Some(current),
+                _ => Some(id),
+            };
+        }
+        Ok(best)
+    }
+
     /// OF-023: the standing `UserStated` peers on `key` whose answer differs
     /// from the observed `value`, read in the write transaction. Every peer
     /// counts, not one advisory newest prior. An incoming id that already
@@ -73,8 +102,9 @@ impl Memory<'_> {
 
     /// OF-023: one `core.conflict.open` marker per disagreeing stated peer,
     /// naming `[observed, stated]` under the pair's deterministic id, so a
-    /// replay finds its marker and writes nothing. The marker is signed on
-    /// its own and lands through this actor's content transaction.
+    /// replay finds its marker and writes nothing. Peers must currently be
+    /// valid and share the landed observation's facet and project. The marker
+    /// is signed on its own and lands through this actor's content transaction.
     pub(super) fn open_preference_conflicts_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
@@ -87,7 +117,18 @@ impl Memory<'_> {
             .vault
             .get_claim_in_txn(content.read(), &observed)?
             .ok_or(Error::EntityNotFound)?;
+        let standing_at = self.vault.store.clock.now_recorded_at();
         for old in stated {
+            let Some(peer) = self.vault.get_claim_in_txn(content.read(), old)? else {
+                continue;
+            };
+            if peer.scope_facet != body.scope_facet
+                || peer.scope_project != body.scope_project
+                || peer.valid_from.is_some_and(|start| start > standing_at)
+                || peer.valid_to.is_some_and(|end| end <= standing_at)
+            {
+                continue;
+            }
             let marker = crate::claim::conflict_marker(&observed, old, &body, envelope)?;
             if marker.landed_in_txn(self.vault, content.read())? {
                 continue;

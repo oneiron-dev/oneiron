@@ -142,7 +142,7 @@ impl Vault {
         let context = DeletionGateContext::new(
             owner,
             EdgeActorClass::Human,
-            crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
         );
         Ok(Some((context, owner)))
@@ -259,11 +259,16 @@ impl Vault {
     ) -> Result<()> {
         if matches!(
             reason,
-            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
-            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
+            self.store.delete_guards.precheck_goal_delete(
+                &self.store,
+                &txn,
+                *id,
+                gate.is_some(),
+            )?;
             if !crate::share::active_brief_shares_for(
                 &self.store,
                 &txn,

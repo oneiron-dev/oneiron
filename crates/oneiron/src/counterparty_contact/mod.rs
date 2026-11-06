@@ -14,6 +14,7 @@ mod identity_index;
 mod lifecycle;
 mod storage;
 mod trusted_contact;
+mod trusted_contact_credential;
 mod trusted_contact_notice;
 mod types;
 
@@ -24,6 +25,7 @@ pub use self::codec::{
 pub(crate) use self::codec::{
     validate_counterparty_contact_body_bytes, validate_counterparty_contact_claim_structure,
 };
+pub(crate) use self::lifecycle::fold_party_opt_out_heads_for_store_in_txn;
 #[cfg(test)]
 pub(crate) use self::lifecycle::rematerialize_contact_cache_in_txn;
 pub(crate) use self::lifecycle::{
@@ -40,12 +42,12 @@ pub(crate) use self::storage::{
     counterparty_contacts_for_send_in_claims_in_txn, counterparty_contacts_in_claims_in_txn,
     party_has_contact_on_class_in_claims_in_txn,
 };
-pub(crate) use self::trusted_contact::TrustedContactFire;
 pub use self::trusted_contact::{
     TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk,
     TrustedContactAskOutcome, TrustedContactDial, TrustedContactParty, TrustedContactReach,
     TrustedContactRevocation, TrustedContactTier,
 };
+pub(crate) use self::trusted_contact::{TrustedContactFire, erase_trusted_contact_rows_in_txn};
 pub use self::trusted_contact_notice::{
     TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TRUSTED_CONTACT_NOTICE_CONTENT_REF, TrustedContactNotice,
     TrustedContactNoticeAuthorization,

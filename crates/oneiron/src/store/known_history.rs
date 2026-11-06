@@ -92,6 +92,11 @@ impl HistoryRefs {
     fn slots(&self) -> impl Iterator<Item = u64> + '_ {
         self.0.iter().map(|held| held.slot)
     }
+
+    /// Each reference's record generation and slot, in write order.
+    fn tagged(&self) -> impl Iterator<Item = (u32, u64)> + '_ {
+        self.0.iter().map(|held| (held.generation, held.slot))
+    }
 }
 
 impl RawValue for HistoryRefs {
@@ -209,9 +214,22 @@ fn read_entries(
     holder: &EntityId,
     slots: impl Iterator<Item = u64>,
 ) -> Result<Vec<KnownEntry>> {
+    let tagged = read_entries_tagged(custody, holder, slots.map(|slot| (0, slot)))?;
+    Ok(tagged.into_iter().map(|(_, entry)| entry).collect())
+}
+
+/// `holder`'s live entries at the `(generation, slot)` references in
+/// `custody`, each with the record generation it was written at, as its
+/// committed reference names it: the read a per-generation matcher builds
+/// from (FIX 10550). Skips and failures as [`read_entries`].
+fn read_entries_tagged(
+    custody: LocalCustody<'_>,
+    holder: &EntityId,
+    refs: impl Iterator<Item = (u32, u64)>,
+) -> Result<Vec<(u32, KnownEntry)>> {
     let subject = holder_subject(custody.binding(), holder)?;
     let mut entries = Vec::new();
-    for slot in slots {
+    for (generation, slot) in refs {
         let id = subject.at(slot);
         match custody.state(&id)? {
             EntryState::Retired => continue,
@@ -219,15 +237,60 @@ fn read_entries(
             EntryState::Live => {}
         }
         let secret = custody.read(&id)?;
-        entries.push(
-            KnownEntry::from_secret(&secret)
-                .ok_or_else(|| CustodyKind::KnownValueEntry.corrupt())?,
-        );
+        let entry = KnownEntry::from_secret(&secret)
+            .ok_or_else(|| CustodyKind::KnownValueEntry.corrupt())?;
+        entries.push((generation, entry));
     }
     Ok(entries)
 }
 
+fn master_or_mint(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    custody: LocalCustody<'_>,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let master = index_subject(custody.binding())?;
+    let master = match INDEX.get(store, wtxn, &())? {
+        Some(at) => custody.read(&master.at(at))?,
+        None => {
+            let secret = custody.get_or_create(&master.at(0))?;
+            INDEX.put(store, wtxn, &(), &0)?;
+            secret
+        }
+    };
+    let key = copy_master(&master)?;
+    drop(master);
+    Ok(key)
+}
+
+/// The committed master, in a snapshot the caller holds under the custody
+/// read guard. Empty HISTORY does not hide a master used by PERSON prints.
+pub(super) fn master_in_snapshot(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    custody: LocalCustody<'_>,
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    INDEX
+        .get(dbs, txn, &())?
+        .map(|at| copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?))
+        .transpose()
+}
+
 impl Store {
+    /// The native index master for a run-only print, without a global
+    /// history holder. It obeys the custody writer's existing mint policy.
+    pub(crate) fn known_master_or_mint_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        if self.core.gate_custody_archived() {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        self.core.key_custody.pin_in_txn(self, wtxn)?;
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        master_or_mint(self, wtxn, custody)
+    }
+
     /// Records one value of the custody record `holder`, at record
     /// generation `generation`, in `wtxn`, the custody write's own
     /// transaction (KS-3). `entry` computes its entry under the master key,
@@ -254,28 +317,31 @@ impl Store {
         }
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
-        let master = index_subject(custody.binding())?;
-        let master = match INDEX.get(self, wtxn, &())? {
-            Some(at) => custody.read(&master.at(at))?,
-            None => {
-                let secret = custody.get_or_create(&master.at(0))?;
-                INDEX.put(self, wtxn, &(), &0)?;
-                secret
-            }
-        };
-        let key = copy_master(&master)?;
-        drop(master);
+        let key = master_or_mint(self, wtxn, custody)?;
         let secret = entry(&*key).to_secret();
         drop(key);
         let subject = holder_subject(custody.binding(), holder)?;
         let mut refs = HISTORY.get(self, wtxn, holder)?.unwrap_or_default();
+        let mut live_slot = None;
         for slot in refs.slots() {
             let id = subject.at(slot);
             if custody.state(&id)? == EntryState::Live
                 && custody.read(&id)?.expose() == secret.expose()
             {
-                return Ok(false);
+                live_slot = Some(slot);
+                break;
             }
+        }
+        if let Some(slot) = live_slot {
+            // The bytes are already indexed under this holder, so no entry
+            // is written twice; the calling generation still gets its own
+            // reference to the live slot, or a per-generation read finds
+            // nothing at it (REVIEW-4461 P1, FIX 10550).
+            if !refs.0.iter().any(|held| held.generation == generation) {
+                refs.0.push(HistoryRef { generation, slot });
+                HISTORY.put(self, wtxn, holder, &refs)?;
+            }
+            return Ok(false);
         }
         let slot = match refs.slots().max().max(custody.newest_generation(&subject)?) {
             None => 0,
@@ -312,6 +378,34 @@ impl Store {
             }
         }
         Ok(Some(KnownHistory { master, holders }))
+    }
+
+    /// The index master and `holder`'s live entries, each with the record
+    /// generation it was written at, as the writer `wtxn` reads them (FIX
+    /// 10550): the read a matcher over one custody record's named
+    /// generations builds from, touching that holder's slots alone. `None`
+    /// while the index keys no value or the holder has no committed
+    /// history. The writer contract is [`Self::known_history_in_writer`]'s.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn known_entries_for_in_writer(
+        &self,
+        wtxn: &RwTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<(Zeroizing<[u8; 32]>, Vec<(u32, KnownEntry)>)>> {
+        let Some(at) = INDEX.get(self, wtxn, &())? else {
+            return Ok(None);
+        };
+        let Some(refs) = HISTORY.get(self, wtxn, holder)? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
+        let entries = read_entries_tagged(custody, holder, refs.tagged())?;
+        Ok(Some((master, entries)))
     }
 
     /// The keyed fingerprint of a run-tree steer intent (FIX 10066): `input`
@@ -511,6 +605,28 @@ pub(crate) struct KnownHistoryIds {
 }
 
 impl KnownHistoryIds {
+    /// These fixed history ids read inside the caller's guard-held snapshot.
+    pub(super) fn read_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+        vault_meta: &OverlayDb,
+    ) -> Result<KnownHistory> {
+        let custody = LocalCustody::at(&self.binding);
+        let master = copy_master(&custody.read(&index_subject(&self.binding)?.at(self.index))?)?;
+        let mut holders = Vec::new();
+        for (holder, slots) in &self.holders {
+            let subject = holder_subject(&self.binding, holder)?;
+            if retirement_in_txn(vault_meta, txn, &subject)?.is_some() {
+                continue;
+            }
+            let entries = read_entries(custody, holder, slots.iter().copied())?;
+            if !entries.is_empty() {
+                holders.push((*holder, entries));
+            }
+        }
+        Ok(KnownHistory { master, holders })
+    }
+
     /// Each holder these ids name, in id order.
     pub(crate) fn holders(&self) -> impl Iterator<Item = &EntityId> {
         self.holders.iter().map(|(holder, _)| holder)
@@ -537,21 +653,7 @@ impl KnownHistoryIds {
         let history = {
             let txn = core.env.read_txn()?;
             let vault_meta = OverlayDb::canonical(core.raw.vault_meta);
-            let custody = LocalCustody::at(&self.binding);
-            let master =
-                copy_master(&custody.read(&index_subject(&self.binding)?.at(self.index))?)?;
-            let mut holders = Vec::new();
-            for (holder, slots) in &self.holders {
-                let subject = holder_subject(&self.binding, holder)?;
-                if retirement_in_txn(&vault_meta, &txn, &subject)?.is_some() {
-                    continue;
-                }
-                let entries = read_entries(custody, holder, slots.iter().copied())?;
-                if !entries.is_empty() {
-                    holders.push((*holder, entries));
-                }
-            }
-            KnownHistory { master, holders }
+            self.read_in_snapshot(&txn, &vault_meta)?
         };
         pass((!history.holders.is_empty()).then_some(&history))
     }

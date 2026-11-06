@@ -47,6 +47,70 @@ pub struct CalendarConnectorRegistration {
     pub last_sync: Option<CalendarSyncOutcome>,
 }
 
+/// The live authenticated owner and exact installed seat of one calendar operation.
+/// It authorizes continuation of that seat's own preconditions, not secret disclosure.
+#[derive(Clone)]
+pub struct CalendarConnectorOperation {
+    owner: AuthenticatedOwner,
+    row: CalendarConnectorRegistration,
+}
+
+impl CalendarConnectorOperation {
+    pub fn new(
+        vault: &Vault,
+        owner: AuthenticatedOwner,
+        row: CalendarConnectorRegistration,
+    ) -> crate::Result<Self> {
+        let operation = Self { owner, row };
+        let txn = vault.store.env.read_txn()?;
+        operation.check_registration_in_txn(vault, &txn)?;
+        Ok(operation)
+    }
+
+    #[must_use]
+    pub fn registration(&self) -> &CalendarConnectorRegistration {
+        &self.row
+    }
+
+    pub fn revalidate(&self, vault: &Vault) -> crate::Result<()> {
+        let txn = vault.store.env.read_txn()?;
+        self.revalidate_in_txn(vault, &txn)
+    }
+
+    pub(super) fn revalidate_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<()> {
+        self.check_registration_in_txn(vault, txn)?;
+        if self.row.seat.kill_switch_engaged() {
+            return Err(crate::Error::InvalidConfig(
+                "calendar seat is stopped or moved".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn check_registration_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<()> {
+        self.owner.revalidate_in_txn(vault, txn)?;
+        let current = SEATS.get(&vault.store, txn, &self.row.seat.config.seat_ref)?;
+        if current.as_ref() != Some(&self.row) {
+            return Err(crate::Error::InvalidConfig(
+                "calendar seat is stopped or moved".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn literal_scope(&self) -> crate::Result<[u8; 32]> {
+        let mut config = self.row.seat.config.clone();
+        // Only the installed-seat label differs for the same logical operation.
+        // Live admission above still uses this operation's unmodified registration.
+        config.seat_ref.clear();
+        super::literal::digest(&(&self.row.endpoint, &config))
+    }
+}
+
 /// An HTTP mail submission service installed by the host's owner. It accepts
 /// one RFC 5322 MIME message per POST; a 2xx means accepted for delivery.
 /// The credential must have a read binding for `calendar.imip`.

@@ -80,10 +80,15 @@ impl EngineNativeExecutor<'_> {
         let output = publish_output(&self.storage, record, path.clone(), sink)?;
         let name = format!("wait{seq}");
         match record.bindings.iter_mut().find(|held| held.name == name) {
-            Some(held) => held.handle = output.handle,
-            None => record
-                .bindings
-                .push(CodeRunResultBinding::new(name, output.handle)),
+            Some(held) => {
+                held.handle = output.handle.clone();
+                held.path = output.path.clone();
+            }
+            None => record.bindings.push(CodeRunResultBinding::new(
+                name,
+                output.handle.clone(),
+                output.path.clone(),
+            )),
         }
         let generation = self
             .storage
@@ -108,6 +113,7 @@ impl EngineNativeExecutor<'_> {
         captured: Vec<CodeRunRawOutput>,
         bound: Vec<CodeRunResultBinding>,
         receipts: Vec<ReaderFoldReceipt>,
+        context_capture: StepContextCapture,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -132,7 +138,7 @@ impl EngineNativeExecutor<'_> {
         // bodies, as on the success path (FIX 833), and are hashed into
         // its checkpoint below; the fold receipts its stores computed land
         // in the same commit, beside the bindings they describe.
-        let bindings: Vec<_> = bound
+        let mut bindings: Vec<_> = bound
             .iter()
             .map(|binding| (binding.name.clone(), binding.handle.clone()))
             .collect();
@@ -152,12 +158,29 @@ impl EngineNativeExecutor<'_> {
             observation_output_path(completed_steps),
             &observation,
         )?;
+        // The failed step's observation is a result by path (FIX 828), so it
+        // takes its fresh `r<n>` here like the success path's, or no card
+        // would name it.
+        {
+            let path = observation_output_path(completed_steps);
+            if let Some(output) = record
+                .outputs
+                .iter()
+                .find(|output| output.path == path)
+                .cloned()
+            {
+                bind_published_output(record, &mut bindings, &output);
+            }
+        }
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
         if let Some(status) = &terminal_status {
             record_terminal_output(&self.storage, record, completed_steps, status)?;
         }
         let mut digests = StepResultDigests::of(&observation, false);
         digests.bindings = bindings;
+        // Where the failed step's calls end, and what its guest read before
+        // it failed (FIX 6354, FIX 6351, FIX 6352).
+        let (end, context) = self.step_context(config, record, bridge_start, context_capture)?;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
@@ -173,23 +196,49 @@ impl EngineNativeExecutor<'_> {
                 &digests,
                 None,
                 &record.bridge_calls[bridge_start..],
+                end,
             )?,
             config
                 .determinism
                 .frozen_unix_ms
                 .saturating_add(completed_steps),
-        )?;
-        record.step_checkpoints.push(checkpoint);
+        )?
+        .ending_at(end.bridge_end);
+        let bridge_end = record.bridge_calls.len();
+        record
+            .step_checkpoints
+            .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
         // A wait seen on a failed step is sealed with it too (DOOR-079 1b).
         let parked = parked_wait(record, terminal_status.as_ref(), bridge_start);
-        self.storage
+        // A flaky commit converts to success on one identical retry (FIX
+        // 1443); a first commit that actually landed fails the retry closed
+        // on its generation mismatch instead.
+        let _ = match self
+            .storage
             .put_code_run_replay_record_with_receipts_if_generation(
                 record,
                 expected_generation,
                 healed.then_some(&config.model),
                 &receipts,
                 parked.as_ref(),
-            )?;
+                &context,
+            ) {
+            Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                tracing::warn!(
+                    "{error:?}: step checkpoint commit hit a storage error; retrying once"
+                );
+                self.storage
+                    .put_code_run_replay_record_with_receipts_if_generation(
+                        record,
+                        expected_generation,
+                        healed.then_some(&config.model),
+                        &receipts,
+                        parked.as_ref(),
+                        &context,
+                    )?
+            }
+            result => result?,
+        };
         // The run parks on the step's wait; a reply already delivered
         // resumes it at its next entry.
         if let Some(EngineExecutorStatus::Waiting(wait)) = &terminal_status {
@@ -221,7 +270,10 @@ impl EngineNativeExecutor<'_> {
     ) -> EngineExecutorResult<LoadedReplayRecord> {
         let continuation_digest = continuation.map(|note| &note.digest);
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
-            if record.determinism != config.determinism {
+            let determinism = record.determinism.ok_or_else(|| {
+                Error::InvalidConfig("engine executor code run has unknown determinism".to_owned())
+            })?;
+            if determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "engine executor determinism changed for existing run".to_owned(),
                 )

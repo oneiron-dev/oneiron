@@ -28,6 +28,7 @@ mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
+mod shared_merge_queue;
 mod site;
 pub use site::SITE_SEED_DIGEST_MISMATCH;
 mod site_folder;
@@ -41,15 +42,12 @@ pub use claim_refinement::{
     ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
     LocalClaimRefinement,
 };
-pub(crate) use claim_refinement::{
-    claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
-};
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
+pub(crate) use default_hub::MODEL_PACK_SUBTREE;
 pub use default_hub::{
     DefaultSkillHub, MODEL_PACK_NAME, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
     default_skill_hub_commit, default_skill_hub_id,
 };
-pub(crate) use default_hub::{MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
@@ -58,14 +56,12 @@ pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
 pub(crate) use ref_sync::{RefFetch, pinned_tracking};
 pub(crate) use refinement_admission::{
-    RefinementAdmissionProof, skill_refinement_origin_in_txn, stage_refinement_origin,
-    validate_refinement_admission,
+    RefinementAdmissionProof, skill_refinement_origin_in_txn, validate_refinement_admission,
 };
 #[cfg(test)]
 pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;
 pub(crate) use refinement_custody::{
-    erase_refinement_custody_in_txn, refinement_carrier_payload, refinement_custody_exists_in_txn,
-    remove_refinement_carrier_in_txn, retire_refinement_holder_in_txn,
+    erase_refinement_custody_in_txn, refinement_carrier_payload, retire_refinement_holder_in_txn,
     stage_refinement_carrier_put, validate_refinement_carrier_put,
 };
 #[cfg(feature = "sync")]
@@ -74,6 +70,7 @@ pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback,
 };
+pub use shared_merge_queue::{SharedSkillMergeEntry, SharedSkillMergeState};
 
 #[cfg(test)]
 mod admission_tests;
@@ -194,10 +191,7 @@ pub(crate) use source_carrier::encode_source_carrier;
 pub(crate) use source_carrier::{decode_source_carrier, validate_hub_source_carrier_put};
 #[cfg(feature = "sync")]
 pub(crate) use source_carrier::{source_carrier_holder, source_carrier_matches_id};
-pub(crate) use source_custody::{
-    retire_source_holder_in_txn, source_carriers_for_holder_in_txn, source_custody_exists_in_txn,
-    stage_source_custody_put,
-};
+pub(crate) use source_custody::{retire_source_holder_in_txn, stage_source_custody_put};
 #[cfg(test)]
 mod source_replication_tests;
 

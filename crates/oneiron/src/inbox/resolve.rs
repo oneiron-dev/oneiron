@@ -6,15 +6,18 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::batch::BatchOp;
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
-    attach_amendment_deltas, capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
+    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd,
+    OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
+    capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
-use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
+use crate::edit_distance::miner::CompilationTargetValidation;
+use crate::edit_distance::miner::record_inbox_learning_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::receipt::gate_decision_receipt;
+use crate::inbox::compilation_target::CompilationTarget;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::gate_receipt::gate_decision_receipt;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -493,6 +496,7 @@ fn accept_member_with_amendment_in_txn(
                 end: raw.occurred.end,
             },
             learned_at: raw.learned_at,
+            row_version: None,
             data: approved,
             allow_maintenance: false,
             allow_reserved_predicate: false,
@@ -534,6 +538,11 @@ fn accept_member_with_amendment_in_txn(
         }
         None => (None, Vec::new()),
     };
+    // A Δ the door could not measure counts here (FIX 11542):
+    // `captured_amendment_delta` is read-only, so the bump rides this write.
+    if !delta_reasons.is_empty() {
+        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
+    }
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
@@ -551,6 +560,10 @@ fn accept_member_with_amendment_in_txn(
     let landed = amended.as_ref().unwrap_or(&reviewed);
     let context = crate::store::GateDecisionContext {
         read: crate::store::GateDecisionReadContext::claim(id, landed)
+            .map(|read| {
+                let anchors = crate::conversation::gate_claim_anchors_in(vault, &*wtxn, id, landed);
+                read.with_anchors(anchors)
+            })
             .into_iter()
             .collect(),
         ..crate::store::GateDecisionContext::answering(&original)

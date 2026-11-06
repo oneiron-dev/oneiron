@@ -14,6 +14,8 @@ pub(crate) struct TextQuery<'a> {
     pub matches_scope: &'a mut dyn FnMut(&EntityId) -> Result<bool>,
     /// Authenticated private diary ids from this query's read snapshot only.
     pub private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
+    /// Caller-carried recency blend (FIX 9096); None preserves today's scores.
+    pub recency: Option<crate::config::bm25::Bm25RecencyConfig>,
 }
 pub(crate) trait RetrievalIndexExecution: Transactions {
     fn port_retrieval_text_scoped(

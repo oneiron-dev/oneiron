@@ -108,6 +108,11 @@ pub struct EngineExecutorConfig {
     pub global_tier: ModelTierRef,
     pub determinism: CodeRunDeterminism,
     pub limits: EngineExecutorLimits,
+    /// What started this run when its dispatch was an event (FIX 15011):
+    /// its opening model request closes with the wake opener. `None` for a
+    /// run no event started, and for a continuation, which goes on from its
+    /// fork. Not part of the run's replay identity.
+    pub wake: Option<crate::context_board::TurnWake>,
 }
 
 impl EngineExecutorConfig {
@@ -270,8 +275,9 @@ pub enum JsResultRef {
 }
 
 /// A result reference, and the byte range of its body it is narrowed to:
-/// `<name-or-handle>#<start>-<end>`, as a chunk names one. A range persists
-/// nothing; every read of it is a read of its parent, checked as one.
+/// `<name-or-handle-or-occurrence>#<start>-<end>`, as a chunk names one. A
+/// range persists nothing; every read of it is a read of its parent, checked
+/// as one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsResultTarget {
     pub reference: JsResultRef,

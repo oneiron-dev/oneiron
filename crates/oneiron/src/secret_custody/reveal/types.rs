@@ -279,8 +279,10 @@ impl fmt::Debug for OwnerSecretReveal {
 pub struct SecretHandleCard {
     /// The handle.
     pub handle: String,
-    /// The custody name.
+    /// The owner's display-label override, or the custody name when none is set.
     pub label: String,
+    /// The value-free suggestion derived from the scan kind.
+    pub suggested_label: Option<String>,
     /// The custody class.
     pub class: CustodyClass,
     /// The record's status.

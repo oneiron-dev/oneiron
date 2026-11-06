@@ -29,6 +29,21 @@ pub(super) const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
 /// Durable NOTE fork/proposal-basis row. Key: id16(fork id).
 pub(super) const NOTE_FORK: SideTable<EntityId, NoteFork, Named> =
     SideTable::new(&side_table::NOTE_FORK);
+
+/// Whether the stored fork already decided (accepted or rejected): a folder
+/// row holding its proposal open re-checks this on every rescan, so a
+/// decided fork's row settles instead of preserving a stale landed hash
+/// (REVIEW-4381 P1). A missing fork reads as still open.
+pub(crate) fn note_fork_decided(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(NOTE_FORK
+        .get(&vault.store, txn, id)?
+        .is_some_and(|fork| fork.decided))
+}
+
 /// Durable NOTE proposal bundle. Key: id16(bundle id).
 pub(super) const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
@@ -184,26 +199,30 @@ pub(super) fn capture(
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
             let (DocKey(_, head), bytes) = row?;
-            // A retained parent goes in below, from its own document; the
-            // value of a decided fork no pending fork needs stays out.
+            // Only pending forks' own values go here. Their retained parents
+            // go in below; unneeded retired heads stay out.
             if head == live_head
                 || required.contains(&(note, head))
                 || NOTE_FORK
                     .get(&vault.store, txn, &head)?
-                    .is_some_and(|fork| fork.decided)
+                    .is_none_or(|fork| fork.decided)
             {
                 continue;
             }
             let head = *head.as_bytes();
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
-            let row = from_doc(
-                entity.id,
+            // This row comes from the host's own admitted proposal store.
+            // Canonical recovery carries its value, never its operation authority.
+            let (text, title) = crate::note::documents::stored_proposal_values(note, &doc)?;
+            let row = CanonicalDocument {
+                entity_id: entity.id,
                 head,
-                &doc,
-                false,
-                core.author_ref.id().map(|author| *author.as_bytes()),
-                header.learned_at,
-            )?;
+                text,
+                title,
+                birth_actor: core.author_ref.id().map(|author| *author.as_bytes()),
+                birth_at: header.learned_at,
+                authorship: Vec::new(),
+            };
             take_document(budget, &row, &mut overrun)?;
             snapshot.doc_snapshots.push(row);
         }
@@ -279,7 +298,22 @@ pub(super) fn from_doc(
     birth_actor: Option<[u8; 16]>,
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
-    let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    let (text, title, mut authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    if live {
+        let author = birth_actor.map(id).transpose()?.map_or(
+            crate::note::NoteActor::Erased,
+            crate::note::NoteActor::Actor,
+        );
+        // Canonical values bind only an existing birth to this actual core.
+        // Rebuilding native history removes its author literal again.
+        for record in &mut authorship {
+            if record.operation.as_bytes() == &entity_id
+                && record.actor == crate::note::NoteActor::Erased
+            {
+                record.actor = author;
+            }
+        }
+    }
     if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }
@@ -313,7 +347,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         schema_manifest: super::CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 2,
+            container_schema_version: 3,
             analyzer_manifest_blake3: [0; 32],
         },
         suppressed_tasks: Vec::new(),

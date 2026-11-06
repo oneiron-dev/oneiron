@@ -151,7 +151,13 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
                 .ok_or(Error::InvalidClaimBody("executor role has no token"))?;
             receipt.fields.insert(FIELD_EXECUTOR_ROLE.to_owned(), token);
         }
-        append_pack_manifest_fields(&mut receipt, record.manifest())?;
+        let mut manifest = record.manifest().to_vec();
+        crate::store::attempt_manifest::scrub_hard_erased_manifest_revisions_in_txn(
+            store,
+            wtxn,
+            &mut manifest,
+        );
+        append_pack_manifest_fields(&mut receipt, &manifest)?;
         if attributed {
             let attribution = super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
             if record.executor_model.as_deref() != Some(attribution.executor.as_str()) {
@@ -381,6 +387,25 @@ pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<(Vec<ReceiptRecord>
         }
     }
     Ok((records, undecodable))
+}
+
+/// Every durable send receipt that decodes, each with its TASK id, and the
+/// TASK id of each row that does not, so one bad row never hides the
+/// receipts beside it. Only a store failure fails the scan.
+pub(crate) fn durable_send_receipts_lenient(
+    vault: &Vault,
+) -> Result<(Vec<(EntityId, ReceiptRecord)>, Vec<EntityId>)> {
+    let mut receipts = Vec::new();
+    let mut undecodable = Vec::new();
+    for (task_id, raw) in vault.store.send_receipt_rows()? {
+        // The row's key is the TASK id the ledger stored it under.
+        let task_ref = EntityId::from_bytes_unchecked(task_id);
+        match decode_durable_send_receipt(&task_id, &raw) {
+            Ok(durable) => receipts.push((task_ref, durable.receipt)),
+            Err(_) => undecodable.push(task_ref),
+        }
+    }
+    Ok((receipts, undecodable))
 }
 
 /// Builds an outbound receipt row from the OF-327 intent spine.

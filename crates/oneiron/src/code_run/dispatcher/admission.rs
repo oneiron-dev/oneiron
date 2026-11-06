@@ -71,7 +71,7 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
         // This call's own frame of the seats it resolves (FIX 9180): it
         // closes on every exit, and an outer call's frame stays as it was.
         let _seats = self.spawn_capture.open();
@@ -104,16 +104,19 @@ impl HostSelfDispatcher<'_> {
                 .reader_child_refusal(call.effect())
                 .or_else(|| self.scoped_child_refusal(&call))
             {
-                return Ok(refused);
+                return Ok((refused, None));
             }
             // A step that can no longer close commits nothing more.
             if let Some(site) = site
                 && let Some(refused) = self.refusal_past_an_unmet_write(site, Some(&call))?
             {
-                return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                    effect: call.effect(),
-                    ..refused
-                }));
+                return Ok((
+                    SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect: call.effect(),
+                        ..refused
+                    }),
+                    None,
+                ));
             }
             // A bound door rules on every call the run serves itself, not only
             // on the verb calls it runs, so its ceiling and credential hold at
@@ -125,11 +128,14 @@ impl HostSelfDispatcher<'_> {
                 match self.admit_run_call(RunCall::Bridge(call.effect()))? {
                     Ok(read_as) => read_as,
                     Err(refusal) => {
-                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                            effect: call.effect(),
-                            outcome: refusal.code,
-                            reason_codes: Vec::new(),
-                        }));
+                        return Ok((
+                            SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                effect: call.effect(),
+                                outcome: refusal.code,
+                                reason_codes: Vec::new(),
+                            }),
+                            None,
+                        ));
                     }
                 }
             };

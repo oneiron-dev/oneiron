@@ -2,7 +2,9 @@
 
 use std::ffi::CString;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 
 pub(crate) const CONTINUE: u32 = 1;
 const NOTIF_RECV: libc::c_ulong = 0xc050_2100;
@@ -203,6 +205,112 @@ pub(crate) fn landlock() -> io::Result<i32> {
         return Err(io::Error::last_os_error());
     }
     Ok(abi)
+}
+
+/// The kernel's Landlock ABI version; below 1 where it has none.
+pub fn landlock_abi() -> i32 {
+    // SAFETY: version query takes null attributes and zero size.
+    unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, 0, 0, 1) as i32 }
+}
+
+/// A Landlock ruleset of its arguments alone, for a process the engine
+/// starts on the host (an organ, FIX 7885): `read` may be read and run,
+/// `write` also written, and nothing else. The caller names every path, the
+/// system's own among them; the container's `PATHS` play no part. A path
+/// that does not exist is skipped. Built before a fork, so the child only
+/// restricts itself with it ([`landlock_restrict`]).
+///
+/// # Errors
+/// The kernel's Landlock ABI is below 3, or a rule could not be made.
+pub fn landlock_ruleset<R: AsRef<Path>, W: AsRef<Path>>(
+    read: &[R],
+    write: &[W],
+) -> io::Result<OwnedFd> {
+    #[repr(C)]
+    struct Ruleset {
+        handled_access_fs: u64,
+    }
+    #[repr(C, packed)]
+    struct PathRule {
+        allowed_access: u64,
+        parent_fd: i32,
+    }
+    if landlock_abi() < 3 {
+        return Err(io::Error::other("Landlock ABI 3 is required"));
+    }
+    let attr = Ruleset {
+        handled_access_fs: READ | WRITE,
+    };
+    // SAFETY: attr has the ABI-3 landlock_ruleset_attr prefix and exact size.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_landlock_create_ruleset,
+            &attr,
+            std::mem::size_of_val(&attr),
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful create_ruleset returns an owned descriptor.
+    let ruleset = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+    let read = read.iter().map(|path| (path.as_ref(), false));
+    let write = write.iter().map(|path| (path.as_ref(), true));
+    for (path, writable) in read.chain(write) {
+        let name = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
+        // SAFETY: name is NUL terminated; O_PATH obtains only a path handle.
+        let fd = unsafe { libc::open(name.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+        if fd < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::NotFound {
+                continue;
+            }
+            return Err(error);
+        }
+        // SAFETY: open returned a new owned descriptor.
+        let parent = unsafe { OwnedFd::from_raw_fd(fd) };
+        let metadata = std::fs::metadata(path)?;
+        let mut rights = if writable { READ | WRITE } else { READ };
+        if !metadata.is_dir() {
+            rights &= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14);
+        }
+        let rule = PathRule {
+            allowed_access: rights,
+            parent_fd: parent.as_raw_fd(),
+        };
+        // SAFETY: rule has the packed landlock_path_beneath_attr layout.
+        if unsafe {
+            libc::syscall(
+                libc::SYS_landlock_add_rule,
+                ruleset.as_raw_fd(),
+                1,
+                &rule,
+                0,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(ruleset)
+}
+
+/// Confines this process and what it starts to `ruleset`
+/// ([`landlock_ruleset`]): no new privileges, then Landlock's
+/// `restrict_self`. Two system calls on a descriptor made before the fork,
+/// and no allocation, so a child may run it between fork and exec.
+///
+/// # Errors
+/// The kernel refused either call.
+pub fn landlock_restrict(ruleset: BorrowedFd<'_>) -> io::Result<()> {
+    // SAFETY: these syscalls restrict only this process and its descendants.
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0
+        || unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset.as_raw_fd(), 0) } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn stmt(code: u16, k: u32) -> libc::sock_filter {

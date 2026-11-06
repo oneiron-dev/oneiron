@@ -235,11 +235,6 @@ side_tables! {
     /// Durable cleanup-scan result for one attempt, closing the job-commit-to-queue-settlement crash
     /// gap. Key: id16 (AttemptId).
     VAULT_CLEANUP_RUN: VaultMeta b"vault_cleanup.run.v1:" Raw;
-    /// Rotating per-arm scan cursor (one row per CLEANUP_CHECKS entity type, plus one literal
-    /// "attempt" row for the completed-queue-record arm); both suffix shapes share this one prefix by
-    /// design and cannot collide (1 byte vs 7 ASCII bytes). Key: u8 (entity-type byte) OR literal
-    /// string "attempt".
-    VAULT_CLEANUP_SCAN_CURSOR: VaultMeta b"vault_cleanup.scan.v1:" Raw;
     /// Index of archived attempts under one TASK, used to restore them together when the task is
     /// touched. Key: BLAKE3 derive_key of the task reference (32) then id16 (AttemptId).
     VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.task_attempt_archive.v1/" Raw;
@@ -307,6 +302,13 @@ side_tables! {
     /// rule (FIX 5495): when its due notice reached him and when he first opened it, no digest
     /// text. Key: id16 (owner) + u64be (scheduled_for).
     WEAVE_DIGEST_BEHAVIOUR: VaultMeta b"weave:digest_behaviour:v1:" Named;
+    /// The owner's override of where one reader's weave digest is sent (FIX 1262): off, or
+    /// another of the vault's channel identities the reader has a live contact on. Absent means
+    /// the send is on, to the reader's primary route. Key: id16 (reader).
+    WEAVE_DIGEST_CHANNEL_OVERRIDE: VaultMeta b"weave:digest_channel_override:v1:" Named Engine
+        => crate::outbound::erase_weave_digest_channel_override_actor_in_txn;
+    /// Empty lens-rerender intent after erasure. Key: the full saved digest key.
+    WEAVE_DIGEST_RERENDER: VaultMeta b"weave:digest_rerender:v1:" Raw;
     /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
     /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
     /// (owner) + id16 (change).
@@ -316,6 +318,8 @@ side_tables! {
     WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named;
     /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
     WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
+    /// The newest live lens of one reader. Key: reader kind byte + id16.
+    WEAVE_LIVE: VaultMeta b"weave:live:v1:" Raw;
     /// Weave digest schedule of one reader. Key: reader kind byte + id16.
     WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
     /// One immutable wrong-item label (a claim, project or budget row) filed from a live weave
@@ -330,18 +334,25 @@ side_tables! {
     /// One usage row per web connector call: provider, tool, key source, latency, cost and the
     /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
     WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
+    /// A workflow leaf's custodied tool transcript pointer and exact settled state. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT: VaultMeta b"workflow:tool_checkpoint:v1:" Named Authored
+        [refs: &[&[Field("content")], &[Field("retained")]]]
+        [accepts: crate::agent_dispatch::workflow_tool_checkpoint_accepts_masked]
+        => crate::agent_dispatch::erase_workflow_tool_actor_in_txn;
+    /// Content-free saved-tool fence, retained even when its payload cannot open. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT_FENCE: VaultMeta b"workflow:tool_checkpoint_fence:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw
-        => crate::workspace_roster::erase_companion_principal_actor_in_txn;
+        => crate::store::actor_scrubs::erase_companion_principal_actor_in_txn;
     /// One onboarded member's roster row (actor, optional companion person/actor/facet, identity).
     /// Key: string (workspace_ref) "\x00" hex32 (person id).
     WORKSPACE_ROSTER_MEMBER: VaultMeta b"workspace_roster:member:v1:" Raw
-        => crate::workspace_roster::erase_member_actor_in_txn;
+        => crate::store::actor_scrubs::erase_member_actor_in_txn;
     /// Guards one member's workspace-onboarding slot against a second onboarding with different
     /// inputs. Key: string (workspace_ref) "\x00" id16 (person id).
     WORKSPACE_ROSTER_MEMBER_INTENT: VaultMeta b"workspace_roster:member_intent:v1:" Raw
-        => crate::workspace_roster::erase_member_intent_actor_in_txn;
+        => crate::store::actor_scrubs::erase_member_intent_actor_in_txn;
     /// Idempotency journal tracking one member-onboarding request's progress through the pinned step
     /// ladder. Key: string (caller-supplied onboarding_id).
     WORKSPACE_ONBOARDING: VaultMeta b"workspace_roster:onboarding:v1:" Raw;

@@ -42,6 +42,8 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
+pub use self::media_step::{MediaStepOutcome, call_media_as_step};
+
 pub(crate) use self::execute::ExecutedModelWitness;
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
@@ -51,7 +53,10 @@ pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
 };
-pub(crate) use self::trap::wake_trap_in_txn;
+pub(crate) use self::trap::{
+    TrapBrokenPark, TrapConsumePrecheck, retire_peer_wait_binding_for_trap_in_txn,
+    trap_consume_precheck_in_txn, wake_trap_in_txn,
+};
 pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
@@ -79,16 +84,15 @@ pub(crate) use self::step_claim::{
     index_dreamer_step_claim_for_put, terminal_step_identity,
 };
 // KS-2B1: row-held step responses under body custody.
-pub(crate) use self::response_bodies::{
-    retire_step_claim_in_rows, retire_step_claim_in_txn, step_claim_carriage,
-};
+pub(crate) use self::response_bodies::{retire_step_claim_in_rows, retire_step_claim_in_txn};
 // FIX 6225: a claim's teardown, a restore and an activation take its pins.
 pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
     retire_erased_step_responses_in_rows,
 };
 pub(crate) use self::step_state::{
-    erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
+    step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
@@ -136,4 +140,3 @@ pub(crate) use types::StepEffectBinding;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
-pub(crate) use self::submission_custody::model_step_submission_accepts_masked;

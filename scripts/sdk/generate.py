@@ -27,10 +27,10 @@ BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'brows
 for row in HOST_ROWS:
     host = row['host']
     if (row.get('context') not in ('run', 'browser', 'board') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'openapi'}
+            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi'}
             or ('output' in host and row.get('context') != 'board')
-            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'openapi') if key in host)):
-        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists and OpenAPI flags')
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'host_door_precheck', 'openapi') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists, pre-check and OpenAPI flags')
 def host_synthetic(row):
     return {'name': row['name'], 'input': row['host']['input'],
      'output': row['host'].get('output', row['output']),
@@ -42,6 +42,7 @@ def host_synthetic(row):
      # object says so (FIX 4709), its door then answering `Listed` or
      # `MaybeListed` as an explicit host row does.
      'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
+     'host_door_precheck': row['host'].get('host_door_precheck', True),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
@@ -135,6 +136,12 @@ for row in ROWS:
     # an empty list standing in for it, and the call's answer goes unlisted.
     if row.get('host_door_lists') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door lists its rows')
+    # `host_door_precheck: false` marks a host door whose door checks no
+    # caller before the row's hooks run (FIX 1763). Every other host door is
+    # a `HostDoorRow` that `host_doors::door_admits` matches with no
+    # catch-all, so a new host door names its check or fails to compile.
+    if row.get('host_door_precheck', True) is not True and (row['host_door_precheck'] is not False or not row.get('host_door')):
+        raise ValueError(f'{row["name"]}: host_door_precheck is only a host door\'s, and only false')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
     # for (OF-181, FIX 2612), never a field of its input: the facade call's
     # host-bound creating run and subscription (`FacadeCall::lens_owner`), or
@@ -339,7 +346,7 @@ ARGUMENTS = {
     'effort': {'rust': 'oneiron::memory::RecallEffort', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str', 'stub': 'Effort', 'native_py': 'Option<&str>',
         'napi_convert': 'let {name} = oneiron_remote::parse_effort({name}.as_deref().unwrap_or({default})).map_err(facade_error)?;', 'py_convert': 'let {name} = oneiron_remote::parse_effort({name}.unwrap_or({default})).map_err(raise)?;', 'field': 'Some({name})'},
     'scope': {'rust': '&oneiron::memory::RecallScope', 'napi': 'Option<NapiRecallScope>', 'native_ts': 'RecallScope | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallScope | None', 'native_py': 'Option<&str>', 'json': True,
-        'napi_convert': 'let {name} = recall_scope_to_engine({name});', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
+        'napi_convert': 'let {name} = recall_scope_to_engine({name}).map_err(facade_error)?;', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
     'limit': {'rust': 'usize', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int', 'stub': 'int', 'native_py': 'Option<usize>',
         'napi_convert': 'let {name} = {name}.map(limit_to_engine).transpose().map_err(facade_error)?.unwrap_or({default});', 'py_convert': 'let {name} = {name}.unwrap_or({default});', 'field': 'Some({name})'},
     'format': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'PackFormat | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
@@ -871,7 +878,8 @@ def mcp_input_dispatch(row):
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
-        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input)).await'
+        fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         # A source door's failure keeps its program's feedback beside its
@@ -898,6 +906,12 @@ def mcp_input_dispatch(row):
                  'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
+        if name in ('vault.artifacts.view', 'vault.artifacts.export'):
+            body += ('let owner = actor.auth.as_ref().and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());\n'
+                     'let memory = match owner {\n'
+                     '    Some(owner) => memory.with_owner_authorship(&owner),\n'
+                     '    None => memory,\n'
+                     '};\n')
         if name == 'describe':
             # describe(card key) expands a board card, under the board's own
             # scope and frame-epoch checks.
@@ -987,7 +1001,7 @@ pub(super) async fn execute_mcp_agent_verb(
         actor: &McpCallContext,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
         execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
@@ -1021,7 +1035,7 @@ pub(crate) async fn execute_agent_verb_input(
         run: Option<McpCodeRun>,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
         // An owner's erase or revoke reads the restriction-only clock through
         // its hooks and door, as the engine classifies it (FIX 11201).
@@ -1048,7 +1062,7 @@ async fn execute_agent_verb_listing(
         producers: &oneiron::memory::ProducerRows,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
@@ -1099,7 +1113,8 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
-    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await;
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
+    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold).await;
     // A row that fails after its pre chain ran keeps a session-only call's
     // pre hook records and runs no post chain (FIX 5527).
     let (output, source, carrier, epoch) = match ran {
@@ -1109,10 +1124,12 @@ async fn execute_agent_verb_listing(
             return Err(error);
         }
     };
-    let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
+    let output = crate::api::facade::row_hooks_post(server, hooks, output).await
+        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
-    Ok((output, source, carrier, epoch))
+    Ok((output, source, carrier, epoch, hook_notice))
     }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
@@ -1129,9 +1146,10 @@ async fn execute_agent_verb_row(
         surface: McpRowSurface,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
-        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
-        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
+        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
+        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold)).await
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
@@ -1145,6 +1163,7 @@ async fn execute_agent_verb_row_on(
         surface: McpRowSurface,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
@@ -1526,7 +1545,9 @@ def facade_dispatch(facade_rows):
             # A caller door keeps the invocation its call hands it in its own
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
+            # Only the public fold's Mark action repeats this same hook name.
+            fold_hooks_arg = ', oneiron::code_run::actions::PreHookedFold::from_pre(&hooks)' if name == 'self.fold' else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
@@ -1743,6 +1764,40 @@ match verb {{
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
 
+HOST_DOOR_ROWS_DOC = '''//! The host-door rows whose door checks its caller before the row's verb
+//! hooks run (FIX 1763), one variant each, named as `AgentVerb` names it.
+//! `host_doors::door_admits` matches every one with no catch-all arm, so a
+//! new host door fails to compile until it names its check there. A row
+//! whose table entry says `"host_door_precheck": false` checks nothing
+//! before its hooks; those rows:
+'''
+
+def host_door_rows(facade_rows):
+    'The `HostDoorRow` enum `door_admits` matches, and the host doors it leaves out.'
+    variant = lambda r: ''.join(part.title() for part in r['name'].replace('.', '_').split('_'))
+    doors = [r for r in facade_rows if r.get('host_door')]
+    checked = [r for r in doors if r.get('host_door_precheck', True)]
+    out = HEADER + HOST_DOOR_ROWS_DOC + ''.join(f'//! - `{r["name"]}`\n' for r in doors if r not in checked)
+    out += '/// A host-door row whose door checks its caller first.\n'
+    out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(in crate::api::facade) enum HostDoorRow {\n'
+    out += ''.join(f'    {variant(r)},\n' for r in checked) + '}\n'
+    out += 'impl HostDoorRow {\n    /// The row `verb` names, when it is one.\n'
+    out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
+    out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
+    out += '            _ => return None,\n        })\n    }\n}\n'
+    return out
+
+# FIX 10471: `rust_feature` gates one CORE Rust typed emission behind a Cargo
+# feature, so a featureless build keeps no reference to the gated
+# implementation. The field is the one source: every CORE emitter in
+# `outputs()` reads it through this helper, and every other surface (SERVER
+# MCP input/args, routes/dispatch, remote/native, TS/HTTP/catalog) stays
+# unconditional.
+def core_cfg(row):
+    'The cfg attribute gating one CORE Rust typed emission of this row, or empty.'
+    feature = row.get('rust_feature')
+    return f'#[cfg(feature = "{feature}")] ' if feature else ''
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
     core = HEADER
@@ -1759,7 +1814,7 @@ def outputs():
     core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
     for r in SCHEMA_ROWS:
-        core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
+        core += f'{core_cfg(r)}({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
     # DOOR-115: the rows the OpenAPI document publishes, and each one's answer
     # schema, read from its `output` type as `input_schema` reads its input.
@@ -1769,7 +1824,7 @@ def outputs():
     core += "/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.\n"
     core += "pub fn output_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
     for r in openapi_rows:
-        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
     core += "_ => return None, }) }\n"
     # A board row's facade door takes its host projection, not the board
     # shape `input_schema` states for MCP and code mode: the OpenAPI
@@ -1785,7 +1840,7 @@ def outputs():
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
     core += "pub fn mcp_arguments_schema_from_input(verb: &str, schema: &serde_json::Value) -> Option<serde_json::Value> { let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
     for r in mcp_rows():
-        core += f'{json.dumps(r["name"])} => {{\n'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{\n'
         for field, path in r['mcp_fields'].items():
             pointer = '' if path == '$' else ''.join('/properties/' + part for part in path.removeprefix('=').split('.'))
             if path == '$':
@@ -1802,9 +1857,9 @@ def outputs():
             # One verb, two served shapes: the board/MCP shape and the
             # facade's host projection. Either admits; each door decodes
             # its own shape after this check.
-            core += f'{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
         else:
-            core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
     # Code mode binds its own guest, so a rewrite there validates the original
     # browser input, never the public live-run attachment wrapper.
@@ -1826,9 +1881,9 @@ def outputs():
         if r.get('board_host'):
             # No memory fn of this name: it is the board fn's. An embedded
             # handle answers the host-only refusal, as other host rows do.
-            core += f'{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
-            core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
@@ -1847,11 +1902,11 @@ def outputs():
         result = record_refs_check(r) + result
         result = prose_links_check(r) + result
         if r.get('context') == 'browser':
-            core += f"pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
         elif r.get('context') == 'board':
-            core += f"pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
-            core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
+            core += f"{core_cfg(r)}pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
     # FIX 1210: the record-ref check a row's engine fn runs before its call,
     # alone, for a door that refuses a ref its caller cannot read before that
     # fn runs: the refusal is receipted as the fn's would be, and no call runs.
@@ -1990,6 +2045,7 @@ def outputs():
         'crates/oneiron/src/verbs/generated/verb_catalog.rs':catalog,
         'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs':server,
         'crates/oneiron-server/src/api/facade/generated/dispatch.rs':dispatch,
+        'crates/oneiron-server/src/api/facade/generated/host_door_rows.rs':host_door_rows(facade_rows),
         'crates/oneiron-remote/src/generated/agent_verbs.rs':remote,
         'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs':napi,
         # FIX 8907: the MCP dispatch is a whole-file child of tasks_response.
@@ -2114,6 +2170,33 @@ UNIFFI_RESULTS = {
     'crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>': 'LexicalHits',
     'crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>': 'NeighborHits',
 }
+# Generated records with an owned codec for a nested opaque JSON result.
+# `types.root()` still emits their public records before this codec is selected.
+UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
+    'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+    'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
+    'crate::memory::KeyValueItem': 'KeyValueItem',
+    'crate::memory::KeyValuePutReceipt': 'KeyValuePutReceipt',
+    'crate::skill::helper::CallableCardView': 'CallableCardView',
+    'crate::task_verb::sdk::AiOptions': 'AiOptions',
+    'crate::core_write::CoreEntityWriteReceipt': 'CoreEntityWriteReceipt',
+    'crate::engine_executor::checkpoint_read::CheckpointView': 'CheckpointView',
+    'crate::policy_setting_doors::PolicyActionOutcome': 'PolicyActionOutcome',
+    'crate::lens::LensResultSetActionResult': 'LensResultSetActionResult',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>': 'ScopedReadResultDiagnosticEventViewList',
+    'crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>': 'ScopedReadResultOptionalDiagnosticEventView',
+    'crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>': 'ScopedReadResultCoachInspectionView',
+    'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
+    'crate::office_body::DeckExportView': 'DeckExportView',
+    'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
+    'crate::task_verb::sdk::ConnectorCallReply': 'ConnectorCallReply',
+    'crate::task_verb::sdk::ConnectorCallStatus': 'ConnectorCallStatus',
+    'crate::task_verb::sdk::ConnectorSchemaReply': 'ConnectorSchemaReply',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
+}
+
 # A typed binding argument the client takes as is: its foreign type and how it
 # is passed. Any other binding argument is lowered into its `ARGUMENTS` type.
 UNIFFI_ARGUMENTS = {
@@ -2221,10 +2304,51 @@ def uniffi_export(row, types, census):
             output, result = record, 'Lift::lift(output)'
             sides.append('typed')
         elif mirror := types.root(row['output']):
-            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            owned = uniffi_record(row['output'], UNIFFI_GENERATED_RESULT_LIFTS)
+            if owned and owned != mirror:
+                raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
+            output = mirror
+            if owned:
+                result = 'Lift::lift(output)'
+            elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
+                nested_voice = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    nested_voice = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), '
+                    )
+                owned_done = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(reply) => '
+                        f'Ok({mirror}::Done(crate::ConnectorCallReply::lift(reply)?)), '
+                    )
+                elif row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), '
+                    )
+                # Other variants keep the existing whole-record conversion.
+                result = (
+                    f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
+                    f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
+                    f'{nested_voice}{owned_done}'
+                    f'other => crate::codec::lift_record({name}, &other) }}'
+                )
+            else:
+                result = f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
-            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            output = 'WireJson'
+            result = 'Lift::lift(output)' if row['output'] == 'serde_json::Value' else f'crate::codec::encode({name}, &output)'
             sides.append('wire')
         census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())
@@ -2279,7 +2403,7 @@ def main():
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
-        # FIX 11534: docs/agent-sdk mirrors the generated facade types, so it follows every regeneration.
-        docs=subprocess.run([sys.executable,str(ROOT/'packages/oneiron/scripts/agent-docs.py')])
-        if docs.returncode: print(f'  agent-docs.py exited {docs.returncode}: run it by hand')
+    # The mirror follows the generated SDK files and checks its authored text too.
+    docs_args = ['--check'] if args.check else []
+    subprocess.run([sys.executable, str(ROOT/'packages/oneiron/scripts/agent-docs.py'), *docs_args], check=True)
 if __name__=='__main__': main()

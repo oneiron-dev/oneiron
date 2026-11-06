@@ -25,6 +25,11 @@ impl VerifiedOwnDeviceLane {
     pub(in crate::batch) fn machine_for(&self, _id: &EntityId, _data: &[u8]) -> Option<EntityId> {
         match *self {}
     }
+
+    /// Never answers: there is no lane to ask.
+    pub(in crate::batch) fn authored_by(&self) -> Option<EntityId> {
+        match *self {}
+    }
 }
 
 /// One entity put through the `apply_put` chokepoint.
@@ -41,6 +46,7 @@ pub(in crate::batch) struct PutRow<'a> {
     pub(in crate::batch) occurred: TimeRange,
     pub(in crate::batch) learned_at: u64,
     pub(in crate::batch) data: &'a [u8],
+    pub(in crate::batch) row_version: Option<u64>,
 }
 
 /// Every flag a put is admitted under, grouped by what it governs.
@@ -100,6 +106,8 @@ pub(in crate::batch) struct DecisionRecording {
     pub(in crate::batch) internal_lexical_query_hint: bool,
     /// The receipt a same-transaction preflight already recorded for it.
     pub(in crate::batch) preflight: Option<GateDecisionId>,
+    /// This exact Pending-Auto occurrence belongs to a rollback-only bound probe.
+    pub(in crate::batch) pending_auto_probe: Option<crate::batch::gate_mode::PendingAutoProbe>,
 }
 
 /// How the claim gate treats a pending consent.
@@ -210,6 +218,9 @@ pub(in crate::batch) struct PutContext<'a> {
     pub(in crate::batch) posture: crate::HostingPrivacyPosture,
     /// The vault owner's in-person authorship of a claim candidate's put.
     pub(in crate::batch) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    /// Pending-birth prompt sources for FIX 11000 anchors: `Some` proven
+    /// from batch state (possibly empty), `None` unknown (incomplete).
+    pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its
@@ -227,4 +238,7 @@ pub(in crate::batch) struct ClaimCandidateRequest<'a> {
     pub(in crate::batch) indexing: TextIndexing,
     pub(in crate::batch) write_policy: Option<&'a crate::gate::PolicyManifestResolution>,
     pub(in crate::batch) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    /// Pending-birth prompt sources for FIX 11000 anchors, owned from batch
+    /// state: `Some` proven (possibly empty), `None` unknown (incomplete).
+    pub(in crate::batch) pending_prompt: Option<Vec<EntityId>>,
 }

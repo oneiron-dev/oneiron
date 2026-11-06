@@ -11,7 +11,8 @@
 //! it, never takes an empty success and never runs a fresh effect. Under a
 //! live instance the exact record lands, and replay checks it as before.
 //! Its owners are the run, the actor its live run binding names, the actor
-//! a turn program's run runs as, and the source rows its verb calls served.
+//! a turn program's run runs as, the source rows its verb calls served, and
+//! the input rows its output occurrences keep.
 //! The live record's erase scrub is L11-B's (FIX 5718, [`erase_replies`]);
 //! this retires every image's copy beside it.
 
@@ -22,7 +23,7 @@ use crate::code_run::wait_rows::keep_erased_answer_rows;
 use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
 use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
-use crate::error::{CodeError, Error, Result};
+use crate::error::Result;
 use crate::side_table::{ErasedForm, SideTableDbs};
 use crate::store::{ResponseCarriage, ResponseScan};
 use crate::task_verb::TaskAskStatus;
@@ -30,13 +31,7 @@ use crate::task_verb::TaskAskStatus;
 /// The error a call whose outcome an erase took replays with.
 pub(crate) const RESPONSE_ERASED: &str = "response_erased";
 
-/// The typed unavailable a run's read of reply content an erase of its actor
-/// took answers with (FIX 5718; `ErrorKind::ResponseErased`): a replayed
-/// call's, a wait's delivered or settled reply, a consent wait's resume.
-/// `what` names the read. Nothing is sent again.
-pub(crate) fn response_erased_error(what: &'static str) -> Error {
-    Error::Code(CodeError::ResponseErased(what))
-}
+pub(crate) use crate::store::result_body_erasure::response_erased_error;
 
 /// The preview text of a result whose record an erase retired.
 pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
@@ -66,6 +61,8 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
+                code: None,
+                disk_floor: None,
             }))
         else {
             return ResponseScan::opaque_row();
@@ -91,8 +88,9 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
 /// Who owns the replay record `value`'s outcomes: its run, the actor its
 /// live run binding names, the actor a turn program's run runs as, the run
 /// and actor its owner row names (a write receipt's among them, FIX 5718),
-/// and the source rows its verb calls listed as served. None for a record
-/// that does not decode.
+/// the source rows its verb calls listed as served, and each output's known
+/// input rows. These own this checkpoint response, not the live run's body
+/// occurrences. None for a record that does not decode.
 ///
 /// # Errors
 ///
@@ -108,6 +106,9 @@ pub(crate) fn replay_owners(
     let mut owners = vec![record.run_id];
     owners.extend(record.live_run.as_ref().map(|live| live.actor));
     owners.extend(record.agent_verb_rows().into_iter().flatten());
+    for output in &record.outputs {
+        owners.extend(output.input_rows.iter().flatten().copied());
+    }
     owners.extend(crate::dreamer_runner::program_run_actor_in_txn(
         dbs,
         txn,
@@ -137,7 +138,22 @@ pub(crate) fn replay_owners(
 ///
 /// An outcome that does not encode.
 pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
-    for call in &mut record.bridge_calls {
+    let retained_calls: std::collections::BTreeSet<usize> = record
+        .bridge_calls
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| {
+            record
+                .outputs
+                .iter()
+                .any(|output| record.call_retains_output(call, output))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    for (index, call) in record.bridge_calls.iter_mut().enumerate() {
+        if retained_calls.contains(&index) {
+            continue;
+        }
         // A verb's answer keeps the rows it was served from; one that does
         // not decode names none it is known to be served from.
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
@@ -150,13 +166,21 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
+                code: None,
+                disk_floor: None,
             }))?;
         if let Some(rows) = rows {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
     }
+    let retained: std::collections::BTreeSet<String> = record
+        .outputs
+        .iter()
+        .filter(|output| record.output_is_retained_receipt(output))
+        .map(|output| output.path.clone())
+        .collect();
     for output in &mut record.outputs {
-        if holds_reply_content(&output.path) {
+        if holds_reply_content(&output.path) && !retained.contains(&output.path) {
             output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
         }
     }
@@ -191,7 +215,8 @@ fn outcome_holds_reply(outcome: &SelfDispatchOutcome) -> bool {
         | SelfDispatchOutcome::InferenceDefaults(_)
         | SelfDispatchOutcome::TaskWaitSet(_)
         | SelfDispatchOutcome::Summarize(_)
-        | SelfDispatchOutcome::Leader(_) => true,
+        | SelfDispatchOutcome::Leader(_)
+        | SelfDispatchOutcome::StoredReply(_) => true,
         SelfDispatchOutcome::TaskAskStatus(status) => matches!(
             status,
             TaskAskStatus::Settled(_) | TaskAskStatus::WorldPrivacy(_)

@@ -18,6 +18,19 @@ use crate::write_envelope::provenance::made_by::{
 
 use super::provenance::BlobVersionProvenance;
 
+/// The class the authenticated writer and the version's own provenance imply.
+/// Queue-check exhaust concludes its run (like an agent run), even though
+/// its author data is the original Human approver (FIX 7227).
+fn version_process_class(actor: &WriteActor, provenance: &BlobVersionProvenance) -> MadeByClass {
+    match provenance {
+        BlobVersionProvenance::AgentRun { .. } | BlobVersionProvenance::QueueCheck { .. } => {
+            MadeByClass::Concluded
+        }
+        _ if actor.actor_class() == EdgeActorClass::Human => MadeByClass::Stated,
+        _ => MadeByClass::Concluded,
+    }
+}
+
 /// The writer's own envelope for a version that names none.
 pub(super) fn default_version_made_by(
     actor: &WriteActor,
@@ -35,11 +48,7 @@ pub(super) fn default_version_made_by(
             .collect(),
         process: MadeByProcess {
             actor: actor.entity_ref(),
-            class: match provenance {
-                BlobVersionProvenance::AgentRun { .. } => MadeByClass::Concluded,
-                _ if actor.actor_class() == EdgeActorClass::Human => MadeByClass::Stated,
-                _ => MadeByClass::Concluded,
-            },
+            class: version_process_class(actor, provenance),
             identity: provenance.as_str().to_owned(),
             version: "1".into(),
             params_hash: format!("{:x}", Sha256::digest([])),
@@ -47,6 +56,33 @@ pub(super) fn default_version_made_by(
         at,
         trigger: None,
     }
+}
+
+/// Binds a supplied envelope to the authenticated writer while retaining the
+/// supplied actor only as input provenance (FIX 9618).
+pub(super) fn bind_version_made_by(
+    actor: &WriteActor,
+    provenance: &BlobVersionProvenance,
+    supplied: &MadeBy,
+    at: u64,
+) -> MadeBy {
+    let mut bound = supplied.clone();
+    let supplied_actor = bound.process.actor;
+    if supplied_actor != actor.entity_ref()
+        && !bound
+            .inputs
+            .iter()
+            .any(|input| input.row == supplied_actor && input.role == MadeByInputRole::Input)
+    {
+        bound.inputs.push(MadeByInput {
+            row: supplied_actor,
+            role: MadeByInputRole::Input,
+        });
+    }
+    bound.process.actor = actor.entity_ref();
+    bound.process.class = version_process_class(actor, provenance);
+    bound.at = at;
+    bound
 }
 
 /// Checks a named envelope before it lands on a version: a valid process,
@@ -70,7 +106,7 @@ pub(super) fn validate_version_made_by_in_txn(
         secret_scan::scan_metadata_field(text)?;
     }
     if let Some(trigger) = &made_by.trigger
-        && !crate::provenance::birth::trigger_is_live_in_txn(&vault.store, rtxn, trigger)?
+        && !crate::store::birth_record::trigger_is_live_in_txn(&vault.store, rtxn, trigger)?
     {
         return Err(invalid(
             "made_by trigger must name a live task, ask, run or skill",

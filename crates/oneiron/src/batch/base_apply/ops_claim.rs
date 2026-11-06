@@ -2,7 +2,7 @@
 
 use super::validation::consume_preflight_decisions;
 use super::*;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
@@ -35,10 +35,15 @@ pub(super) fn apply_claim_candidate_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    put_options.decision.pending_auto_probe = preflight_decision_id
+        .and_then(|decision| state.pending_auto_probes.get(&decision))
+        .copied()
+        .filter(|probe| probe.matches(&id, preflight_decision_id));
     let pre_mask = state
         .masked_claims
         .get_mut(&id)
         .and_then(VecDeque::pop_front);
+    let pending_prompt = super::pending_prompt_for(&state.births, &id);
     let applied = apply_claim_candidate(
         store,
         config,
@@ -55,6 +60,7 @@ pub(super) fn apply_claim_candidate_arm(
             indexing: put_options.indexing,
             write_policy: state.write_policy.as_ref(),
             owner_authored: gate_mode.owner_authored.as_ref(),
+            pending_prompt,
         },
         pre_mask,
     )?;
@@ -86,14 +92,15 @@ pub(super) fn apply_claim_candidate_arm(
 }
 
 pub(super) fn apply_reconcile_lexical_arm(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     state: &mut BatchApplyState,
     source: EntityId,
     keep: Vec<EntityId>,
 ) -> Result<()> {
+    let store = write.store;
     let keep: HashSet<EntityId> = keep.into_iter().collect();
-    let deleted = delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
+    let deleted = delete_lexical_query_hint_claims_for_target(write, wtxn, &source, &keep)?;
     for (deleted_id, neighbors) in &deleted.deleted {
         state.pending_embedding_tokens_written.remove(deleted_id);
         #[cfg(feature = "sync")]

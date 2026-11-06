@@ -23,9 +23,10 @@
 //! removal of the carrier by the one removal race: a removal that saw the
 //! seal keeps it standing, one in its signed past or one that never saw it
 //! retires it ([`crate::authority::ExternalAct`]). A seal whose heads this
-//! replica does not hold is pending. Known limit (FIX-LIST, Phase 2): an
-//! agent's Grant is still judged on the row this replica holds now, so a
-//! later Grant revocation retires the agent's earlier seals.
+//! replica does not hold is pending. A NOW-refused agent Grant preserves an
+//! earlier seal only with its exact token acknowledged by every counted
+//! signed revoke, a matching prior signed Mint and original-at-heads proof.
+//! Missing proof keeps the NOW judgment (FIX 5114).
 
 use std::collections::BTreeSet;
 
@@ -485,27 +486,29 @@ impl SealStanding {
     }
 }
 
-/// A decision seal's standing (mesh PR2-topology): `causal`, its carrier
-/// under the one carrier rule (any role, no chain removed, never a roster
-/// key) and its owner live, both at its signed heads, with every later
-/// removal of the carrier having seen it (FIX 4649); and an agent's Grant
-/// naming the act at `at`, the decided event's time, on the Grant row this
-/// replica holds now (FIX 4649's Grant half is Phase 2). A replica without
-/// the Grant row trusts the carrier.
+/// A decision seal's original causal standing, then its Grant. Only a NOW
+/// refusal with positive signed lifecycle proof for this exact bound seal
+/// is preserved; absent Grants and all original causal outcomes stay as before.
 pub(super) fn decision_standing_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     causal: ExternalActStanding,
-    act: &OwnerAct,
-    at: u64,
+    fold: &AuthorityFold,
+    fact: &super::admission_disposition::AdmissionDisposition,
+    core: &super::stored_event::StoredIdentityOpEvent,
 ) -> Result<SealStanding> {
     match causal {
         ExternalActStanding::Pending => return Ok(SealStanding::Pending),
         ExternalActStanding::Refused => return Ok(SealStanding::Refused),
         ExternalActStanding::Stands => {}
     }
+    let SealAuthority::Decision(act) = &fact.authority else {
+        return Err(Error::InvariantViolation("decision seal authority"));
+    };
     if let ActBy::Agent { agent, grant } = act.by
-        && grant_standing_in_txn(store, txn, grant, agent, act.act, at)? == GrantStanding::Refused
+        && grant_standing_in_txn(store, txn, grant, agent, act.act, core.at)?
+            == GrantStanding::Refused
+        && !super::seal_standing::grant_preserves_seal_in_txn(store, txn, fold, fact, core)
     {
         return Ok(SealStanding::Refused);
     }
@@ -547,6 +550,7 @@ pub(crate) fn topology_seal_revision_for_store_in_txn(
         StoredIdentityOpAction::AdmissionDisposition(_)
             | StoredIdentityOpAction::AuthorAttribution { .. }
             | StoredIdentityOpAction::AuthorRedaction { .. }
+            | StoredIdentityOpAction::OperationPart { .. }
     ) {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "a topology seal revision names a decision event, never a sidecar",
@@ -613,8 +617,11 @@ pub(crate) fn topology_seal_revision_for_store_in_txn(
 /// decision seal's token, whether every head it signed is held (FIX 4649)
 /// and how it stands by the full removal race here (FIX 5248,
 /// `seal_standing::decision_seal_standings_in_txn`), and the row state of
-/// every Grant a decision seal names. A change in any of them, a Grant delete
-/// included (FIX 4652), runs the standing pass again.
+/// every Grant a decision seal names. Each token also binds its exact
+/// core-matching historical Grant-proof result (FIX 5114): a late signed
+/// revoke or newly available original-at-heads proof can change standing
+/// after a Grant row is already deleted. A change in any of them, a Grant
+/// delete included (FIX 4652), runs the standing pass again.
 pub(super) fn decision_standing_digest_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -671,9 +678,9 @@ pub(super) fn decision_standing_digest_in_txn(
     }
     let seals = super::seal_standing::decision_seal_standings_in_txn(store, txn, fold, &facts)?;
     hasher.update(&(seals.len() as u64).to_be_bytes());
-    for (token, held, standing) in &seals {
+    for (token, held, standing, grant_preserved) in &seals {
         hasher.update(token);
-        hasher.update(&[u8::from(*held), *standing]);
+        hasher.update(&[u8::from(*held), *standing, u8::from(*grant_preserved)]);
     }
     hasher.update(&(grants.len() as u64).to_be_bytes());
     for grant in &grants {

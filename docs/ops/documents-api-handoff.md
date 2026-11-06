@@ -13,7 +13,7 @@ Documents edit in-engine through docedit and the formula engine. They need no or
 
 | The crate (`oneiron_docedit::contract`) | The cloud service (oneiron-cloud) |
 |---|---|
-| The op table, its version (`CONTRACT_SCHEMA = 1`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
+| The op table, its version (`CONTRACT_SCHEMA = 2`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
 | Every native read, edit, check and projection | Metering and billing units |
 | Refusals with a closed code and bounded detail | Hosting, scaling, timeouts, queues and async jobs |
 | The checks that every op runs against the caller's limits | Per-plan limits: the values it passes in each call |
@@ -36,7 +36,7 @@ let done = execute_json(call_json, &[&docx_bytes], Ports { recalc: Some(&engine)
 let manifest = done.manifest(); // name, media type, size and BLAKE3 of each output
 ```
 
-- **A call** is `{"schema": 1, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
+- **A call** is `{"schema": 2, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
   args name each input by its index in that list. The hosted API maps its multipart parts or
   upload handles to that list, in order.
 - **A reply** is `Done { reply, outputs }`. `reply` is a typed `Reply`, tagged by `"reply"`.
@@ -48,17 +48,17 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
   and port. It also returns `call_schema`, `reply_schema` and `error_schema`, generated with
   schemars 0.8. The hosted API serves this reply as its discovery document.
 
-## Ops, schema 1
+## Ops, schema 2
 
 | Op | Inputs | Args besides inputs | Reply | Output | Native door |
 |---|---|---|---|---|---|
 | `contract.describe` | none | none | `described` | none | `contract::describe` |
-| `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: id, kind, role, text, runs (text, marks), cells, lock | none | `read_docx_blocks` |
+| `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: body `blocks` (id, kind, role, text, runs, cells, lock) and scoped `stories` | none | `read_docx_body` |
 | `docx.revise` | `document` | `transaction` (stemma tracked-change grammar), `limits` | `docx_revised`: the transaction with its date pinned, notes | `document` | `prepare_revision_transaction`, `revise_with_notes` |
 | `docx.validate` | `document` | optional `transaction`, `limits` | `checked` | none | `validate_revision_transaction`, `validate_blocking_with_limits` |
 | `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; a mark change on kept text lands as a tracked formatting change), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
 | `xlsx.read` | `workbook` | `limits` (package) | `xlsx_book`: sheets, cells, names, styles, locks | none | `read_xlsx_cells` |
-| `xlsx.project` | `source` | `changes` (cell, set_name, delete_name), `limits` | `written` | `workbook` | `project_xlsx` |
+| `xlsx.project` | `source` | `changes` (cell, set_name, delete_name, conditional_formats: a range, a cell-value or formula rule, and the differential look written to `dxfs`), `limits`, optional `location` (directory, file_name: an external link naming it is the workbook's own and follows a sheet rename or deletion) | `written` | `workbook` | `project_xlsx` |
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
 | `xlsx.recalc` | `workbook` | `clock` (now_ms, utc_offset_minutes, seed), optional `location` (directory, file_name), `limits` | `recalculated`: engine, version, formula count | `workbook` | the host's `RecalcPort`; `FormualizerEngine::recalculate_xlsx` |
 | `deck.read` | `deck` | `limits` | `deck`: editability, id marks, slides, shapes (id, kind, slide-space position, extent, text, fingerprint), ambiguities | none | `Package::open`, `DeckView::read` |
@@ -66,6 +66,17 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `deck.create` | `brief.input`, `template`, `fonts`, `assets.*.input` | `brief` (version, optional kept hash), `assets` keyed by brief asset id, `names`, `limits` | `deck_ask` (pages no layout could hold) or `deck_created` (hash, slides, write set, omitted, fit-unverified units) | `deck` | `compile_with_fonts`, `emit` |
 | `pptx.comments` | `deck` | `edits` (author, thread and comment GUIDs, time, and an add with its slide or shape target, a reply, or a resolve), optional `slide_creation_ids`, `seed`, `limits` (comments) | `pptx_comments`: touched parts, the slide creation IDs minted, each new thread's anchor | `deck` | `pptx_comments::comment_patch` |
 | `pptx.comments.inspect` | `deck` | `limits` (comments) | `pptx_comments_inspected`: slides (number, part, id, creation ID, fingerprint, shapes with creation GUID, fingerprint and slide-space position), signature parts, threads with an unknown anchor | none | `pptx_comments::inspect_pptx`, `unknown_anchor_threads` |
+
+`docx.read` returns authored header/footer parts, footnotes, endnotes and comment stories
+beside the main body. Each story carries its native scope and its own ordered local blocks;
+`p_1` in a header is not the body's `p_1`. Header/footer scopes include the source band
+(default, first or even). Synthetic render-time blank bands are not authored package parts
+and are not listed. Story roles are absent: body role tokens cannot be looked up by colliding
+story-local ids. The same text/run/cell/lock projection is used for both.
+
+This is a native read surface, not shared Loro story editing. The vault's existing
+`read_docx_blocks` remains body-only. Story import into the shared body and faithful story
+edit/export operations remain open under FIX 594; `docx.project` still addresses body blocks.
 
 A deck step targets a shape by its slide part, its `p:cNvPr` id and its content fingerprint. All
 three come from `deck.read`. A transaction's `base` is the BLAKE3 hash of the deck input.
@@ -151,7 +162,22 @@ where work moves to another runtime, and that runtime (the session image) is the
   the reply lists it. Passing those back as `slide_creation_ids` replays the same bytes; a mint the
   edits do not need, or one they need and the list lacks, refuses as `bad_request`.
 
-## Not on schema 1
+## Vault DOCX revision attribution
+
+A shared DOCX body's default-author export keeps one native revision per consecutive actor group
+when the package can represent it. A terminal group that only deletes the final paragraph can
+keep those revisions when the native view proves the exact live text and order, with one empty
+physical final-mark carrier. This slice requires unmoved, unsplit text-only paragraphs, no
+literal prefixes, and exactly one deleted break on the carrier's immediate physical predecessor.
+Earlier groups' text revisions keep their own marks and authors. This is a read-only witness;
+it does not resolve revisions or rewrite the package's identities.
+
+Every unproved final-deletion shape keeps the existing whole-window default-author projection.
+This includes nonterminal or mixed-operation groups, moves, inserted blocks, nontext content,
+labels, and an empty live body. The stateless `docx.project` call and all contract schemas are
+unchanged.
+
+## Not on schema 2
 
 - **Live office bodies:** the shared Loro bodies, forks, landing and export projection (OF-505,
   OF-510). They are vault state, not a stateless file op.

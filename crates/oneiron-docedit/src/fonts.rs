@@ -1,13 +1,16 @@
 //! Real font metrics for fit estimates (ARCH-0077, "Fit estimate"): a
 //! bounded sfnt reader for TrueType and CFF OpenType faces, collections
-//! included. It maps characters to glyph advances through `cmap` (formats 4
-//! and 12) and `hmtx`, and reads the line metrics from `OS/2` or `hhea`.
+//! included. Harfrust shapes directional script runs for glyph substitution,
+//! positioning and kerning; line metrics come from `OS/2` or `hhea`.
 //!
-//! It shapes nothing. Text in a script that needs shaping, or with a
-//! character the face does not map, has no measured width: the estimate
-//! falls back to the em rule and says so. Estimates choose candidates; they
-//! never certify fit.
+//! If the selected face cannot shape the text, its `cmap` and `hmtx` retain
+//! the unshaped measurements they support. Otherwise the estimate falls back
+//! to the em rule and says so. Estimates choose candidates; they never
+//! certify fit.
+use harfrust::{Buffer, Direction, ShapeOptions, ShaperFont, Tag};
 use std::sync::Arc;
+use unicode_bidi::BidiInfo;
+use unicode_script::{Script, UnicodeScript};
 
 /// Bytes in one font file.
 pub const MAX_FONT_BYTES: usize = 64 << 20;
@@ -41,7 +44,7 @@ impl FontBook {
         if bytes.len() > MAX_FONT_BYTES {
             return Err(FontError::TooLarge);
         }
-        let data: Arc<[u8]> = bytes.into();
+        let data = Arc::new(bytes);
         let offsets = if data.get(0..4) == Some(&b"ttcf"[..]) {
             let count = u32_at(&data, 8).ok_or(FontError::Invalid("collection header"))?;
             let count = usize::try_from(count)
@@ -58,9 +61,9 @@ impl FontBook {
             vec![0]
         };
         let mut added = 0;
-        for offset in offsets {
+        for (face_index, offset) in offsets.into_iter().enumerate() {
             self.faces
-                .push(Arc::new(Face::parse(data.clone(), offset)?));
+                .push(Arc::new(Face::parse(data.clone(), offset, face_index)?));
             added += 1;
         }
         Ok(added)
@@ -93,7 +96,8 @@ impl FontBook {
 /// One parsed face. Lookups read the retained file bytes.
 #[derive(Debug)]
 pub struct Face {
-    data: Arc<[u8]>,
+    data: Arc<Vec<u8>>,
+    face_index: usize,
     family: String,
     bold: bool,
     italic: bool,
@@ -115,7 +119,7 @@ enum CharMap {
 }
 
 impl Face {
-    fn parse(data: Arc<[u8]>, base: usize) -> Result<Self, FontError> {
+    fn parse(data: Arc<Vec<u8>>, base: usize, face_index: usize) -> Result<Self, FontError> {
         let version = u32_at(&data, base).ok_or(FontError::Invalid("offset table"))?;
         if !matches!(version, 0x0001_0000 | 0x4F54_544F | 0x7472_7565) {
             return Err(FontError::Invalid("sfnt version"));
@@ -170,6 +174,7 @@ impl Face {
         let cmap = char_map(&data, cmap).ok_or(FontError::Missing("unicode cmap"))?;
         Ok(Self {
             data,
+            face_index,
             family,
             bold,
             italic,
@@ -197,11 +202,70 @@ impl Face {
         self.italic
     }
 
-    /// The width of `text` at `size` (both in EMU), or `None` when a
-    /// character is unmapped or needs shaping.
+    /// The width of `text` at `size` (both in EMU), or `None` when the
+    /// face cannot shape it and the unshaped measurement is unavailable.
     #[must_use]
     pub fn advance(&self, text: &str, size: i64) -> Option<i64> {
-        let mut units: i64 = 0;
+        let units = self
+            .shaped_units(text)
+            .or_else(|| self.unshaped_units(text))?;
+        Some(units * size / i64::from(self.units_per_em))
+    }
+
+    fn shaped_units(&self, text: &str) -> Option<i64> {
+        if text.is_empty() {
+            return Some(0);
+        }
+        // Preserve the existing control-character measurement rather than
+        // joining shaping context across a skipped control.
+        if text.chars().any(char::is_control) {
+            return None;
+        }
+        let blob: Arc<dyn AsRef<[u8]> + Send + Sync> = self.data.clone();
+        let font = harfrust::Font::new(blob, self.face_index.try_into().ok()?)?;
+        let shaper = ShaperFont::new(&font);
+        let bidi = BidiInfo::new(text, None);
+        let mut units = 0;
+        for paragraph in &bidi.paragraphs {
+            let paragraph_text = &text[paragraph.range.clone()];
+            let mut script = paragraph_text
+                .chars()
+                .map(|ch| ch.script())
+                .find(|&script| strong_script(script))
+                .unwrap_or(Script::Common);
+            let mut run_start = paragraph.range.start;
+            let mut run_script = script;
+            let mut run_level = bidi.levels[run_start];
+            for (offset, ch) in paragraph_text.char_indices() {
+                let at = paragraph.range.start + offset;
+                if strong_script(ch.script()) {
+                    script = ch.script();
+                }
+                let level = bidi.levels[at];
+                if script != run_script || level != run_level {
+                    units += shape_run(
+                        &shaper,
+                        &text[run_start..at],
+                        run_script,
+                        run_level.is_rtl(),
+                    )?;
+                    run_start = at;
+                    run_script = script;
+                    run_level = level;
+                }
+            }
+            units += shape_run(
+                &shaper,
+                &text[run_start..paragraph.range.end],
+                run_script,
+                run_level.is_rtl(),
+            )?;
+        }
+        Some(units)
+    }
+
+    fn unshaped_units(&self, text: &str) -> Option<i64> {
+        let mut units = 0;
         for ch in text.chars() {
             if needs_shaping(ch) {
                 return None;
@@ -212,7 +276,7 @@ impl Face {
             let glyph = self.glyph(ch)?;
             units += i64::from(self.advance_units(glyph)?);
         }
-        Some(units * size / i64::from(self.units_per_em))
+        Some(units)
     }
 
     /// One single-spaced line at `size`, in EMU.
@@ -272,6 +336,39 @@ impl Face {
         };
         (glyph != 0).then_some(glyph)
     }
+}
+
+fn strong_script(script: Script) -> bool {
+    !matches!(script, Script::Common | Script::Inherited | Script::Unknown)
+}
+
+fn shape_run(font: &ShaperFont<'_, '_>, text: &str, script: Script, rtl: bool) -> Option<i64> {
+    let mut buffer = Buffer::new();
+    buffer.push_str(text);
+    if !buffer.allocation_successful() {
+        return None;
+    }
+    buffer.set_direction(if rtl {
+        Direction::RightToLeft
+    } else {
+        Direction::LeftToRight
+    });
+    buffer.set_script(harfrust::Script::from_iso15924_tag(Tag::from_be_bytes(
+        script.as_iso15924_tag().to_be_bytes(),
+    )));
+    harfrust::shape(font, &mut buffer, ShapeOptions::new()).ok()?;
+    if !buffer.allocation_successful()
+        || buffer.glyph_infos().iter().any(|glyph| glyph.glyph_id == 0)
+    {
+        return None;
+    }
+    Some(
+        buffer
+            .glyph_positions()
+            .iter()
+            .map(|position| i64::from(position.x_advance))
+            .sum(),
+    )
 }
 
 /// Characters of scripts whose widths depend on shaping: joining, reordering

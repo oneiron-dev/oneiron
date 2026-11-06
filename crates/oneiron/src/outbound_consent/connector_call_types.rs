@@ -11,6 +11,7 @@ use crate::entity_id::EntityId;
 use crate::secret_custody::{RunSecretHolder, SentPresentation};
 use crate::secret_lease::SecretGrantRef;
 
+use super::connector_call_input_resume::ConnectorResumeState;
 use super::result_scrub::OutboundResultSender;
 use super::tool_call::MutationIntent;
 
@@ -213,10 +214,24 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// host that keeps no questions ignores it.
     fn abandon_awaiting_input(&mut self, _handle: &str) {}
 
-    /// The live questions `handle` names are kept on the call `call_ref`'s
-    /// row (FIX 3837): the host keeps that row current as the exchange goes
-    /// on. A host that keeps no questions ignores it.
+    /// Binds live questions to the row the engine is about to keep, before
+    /// that writer can publish their reply. This is in-memory only: no vault
+    /// writer or durable resume persistence. A failed commit abandons them.
     fn bind_awaiting_call(&mut self, _handle: &str, _call_ref: EntityId) {}
+
+    /// Takes the bound round's opaque resume state before the row writer opens.
+    /// The engine seals it in that writer; a host without resume state returns none.
+    fn take_awaiting_resume(
+        &mut self,
+        _handle: &str,
+        _call_ref: EntityId,
+    ) -> Option<ConnectorResumeState> {
+        None
+    }
+
+    /// The row and its reply committed. The host can mark an exchange that
+    /// already ended uncertain. A host without live questions ignores it.
+    fn awaiting_call_committed(&mut self, _handle: &str, _call_ref: EntityId) {}
 
     /// Takes the custody record the last `send` presented, as its door
     /// resolved it (FIX 5455): an empty list when it presented none, `None`
@@ -240,6 +255,15 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// policy (FIX 7646). `None` when it presented none, or this host cannot
     /// say. Ids and generation only, never a value.
     fn take_sent_presentation(&mut self) -> Option<SentPresentation> {
+        None
+    }
+
+    /// Takes the hold the last `send` met at its door (FIX 9303): the call's
+    /// durable issuer binding, read again as its credential would leave,
+    /// held its row, so nothing was presented or sent, and its outcome is a
+    /// certain non-delivery. `None` when it met none, or this host does not
+    /// read it there.
+    fn take_send_hold(&mut self) -> Option<&'static str> {
         None
     }
 }

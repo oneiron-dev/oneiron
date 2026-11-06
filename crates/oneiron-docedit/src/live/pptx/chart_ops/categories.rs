@@ -1,6 +1,7 @@
 //! Category edits applied by point identity, a whole set written over the
 //! one a chart or series holds lowered to the edits that make it, and the
-//! identities a writer gives the points a settlement adds (FIX 3493). A
+//! identities a writer gives the points a settlement adds (FIX 3493), a
+//! live-born chart's drawn from its node (FIX 9164). A
 //! point moved, inserted or deleted takes its value in every series that
 //! draws its set with it, so a move never gives a value another label.
 
@@ -289,5 +290,47 @@ impl NodePayload {
             .filter_map(|line| line.categories.as_ref())
             .map(ChartCategories::unnamed)
             .fold(categories.unnamed(), u64::saturating_add)
+    }
+}
+
+impl NodePayload {
+    /// Every category identity a chart's sets name.
+    pub(crate) fn category_ids(&self) -> BTreeSet<NodeId> {
+        let Self::Chart {
+            categories, series, ..
+        } = self
+        else {
+            return BTreeSet::new();
+        };
+        series
+            .iter()
+            .filter_map(|line| line.categories.as_ref())
+            .chain([categories])
+            .flat_map(ChartCategories::ids)
+            .collect()
+    }
+}
+
+/// The identities the settlement of a live-born chart's write (its node's
+/// creation, or a payload over no held chart) gives the category points it
+/// adds (FIX 9164): each the hash of the chart node `node` and its ordinal,
+/// top bit set, past every identity in `taken`, so every replay of the
+/// operation, a fork's onto the head and a concurrent writer's alike, makes
+/// the same points, and the deck mints only what the operation names
+/// ([`super::super::DeckOp::unnamed`]).
+pub(crate) fn born_points(node: NodeId, taken: BTreeSet<NodeId>) -> impl FnMut() -> NodeId {
+    let mut next = 0_u64;
+    move || loop {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"oneiron:chart-category:");
+        hasher.update(&node.0.to_le_bytes());
+        hasher.update(&next.to_le_bytes());
+        next += 1;
+        let mut word = [0_u8; 8];
+        word.copy_from_slice(&hasher.finalize().as_bytes()[..8]);
+        let id = NodeId(u64::from_le_bytes(word) | 1 << 63);
+        if !taken.contains(&id) {
+            return id;
+        }
     }
 }

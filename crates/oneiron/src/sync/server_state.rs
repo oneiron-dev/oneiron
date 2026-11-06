@@ -52,17 +52,25 @@ pub fn persist_imported_window_update(
     key: &WindowKey,
     update_bytes: &[u8],
 ) -> Result<u64> {
-    persist_admitted_window_update(vault, key, update_bytes, |_| true)
+    persist_admitted_window_update(
+        vault,
+        key,
+        update_bytes,
+        &super::selector::RepoSyncLandings::default(),
+        |_| true,
+    )
 }
 
 /// [`persist_imported_window_update`] for a peer's write: `session_is_live`
 /// rechecks the writer's credential in the committing transaction, before a
-/// sequence number is taken (FIX 5999). A refusal writes nothing and is
-/// `DocumentAdmissionDenied`.
+/// sequence number is taken (FIX 5999), and `landings`, the new bytes its
+/// translated copy edits land, are marked in it (FIX 10732). A refusal
+/// writes nothing and is `DocumentAdmissionDenied`.
 pub fn persist_admitted_window_update(
     vault: &Vault,
     key: &WindowKey,
     update_bytes: &[u8],
+    landings: &super::selector::RepoSyncLandings,
     session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
 ) -> Result<u64> {
     vault.with_write_txn_grouped(|wtxn| {
@@ -71,6 +79,10 @@ pub fn persist_admitted_window_update(
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
+        // FIX 7608 slice 4 (FIX 10732, L04 05:5x): the new bytes a translated
+        // copy edit lands carry its mark in this writer, never committed
+        // unmarked.
+        landings.mark_in_txn(vault, wtxn)?;
         let seq_key = key.as_str().to_owned();
         let seq: u64 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
             None => 0,

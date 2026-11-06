@@ -20,7 +20,7 @@ use super::{
 };
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::git_push::GitPushRefChange;
+use crate::origin::git_ref_change::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::origin::secret_marks::{admitted_marks, record_receive_secret_marks_in_txn};
 use crate::store::code_snapshot::RepoRef;
@@ -79,8 +79,12 @@ impl Vault {
                 .iter()
                 .enumerate()
                 .map(|(index, update)| {
-                    let pointers = door.ref_lfs_pointers.get(index).cloned();
-                    held_by_ref(&door.lfs_pointers, pointers.as_deref())
+                    let pointers = door
+                        .ref_lfs_pointers
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| (0..door.lfs_pointers.len()).collect());
+                    held_by_ref(&door.lfs_pointers, Some(pointers.as_slice()))
                         .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
                     Ok(ReceivePackIntentRef {
                         name: update.name.clone(),

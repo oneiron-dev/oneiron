@@ -90,7 +90,7 @@ impl Vault {
     /// elsewhere opens through an escrow wrap ([`Self::add_vault_key_escrow`]).
     /// True when the vault took it as new.
     pub fn admit_vault_key(&self, delivered: &[u8; 32]) -> Result<bool> {
-        let key = VaultDataKey(Zeroizing::new(*delivered));
+        let key = VaultDataKey::from_guarded(Zeroizing::new(*delivered));
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let created = self.with_write_txn(|txn| {
@@ -268,6 +268,9 @@ impl Vault {
     /// at once.
     pub async fn lock_vault_key(&self) -> crate::store::snapshot_lock_result::SnapshotLockReceipt {
         let receipt = self.release_inference_snapshots_for_lock().await;
+        // FIX 14976: no private drafter serves a locked vault; its plaintext
+        // goes before the key does.
+        self.drafter_serving_locking();
         *self
             .world_keys
             .vault_key

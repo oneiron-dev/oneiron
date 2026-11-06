@@ -1,24 +1,24 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
 use super::{DocsExport, DocsPage, DocsSegment, docs_extraction_id, docs_semantic_segments};
-use crate::batch::{
-    ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
-    apply_ops_with_gate_mode,
-};
+use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
-    GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectDigest,
+    EffectFacts, GrantBound,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::store::StagedAssetBody;
 use crate::workspace_roster::ProjectRole;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
+use std::time::{Duration, Instant};
 
 /// One page's prepared segments, summaries, annotation and predicted birth.
 type PreparedDocsPage = (
@@ -27,6 +27,20 @@ type PreparedDocsPage = (
     Option<Value>,
     super::BlobBirthDecision,
 );
+
+/// A page beside its preparation, ready for its batch's writer.
+type PreparedPage<'a> = (
+    &'a DocsPage,
+    Vec<DocsSegment>,
+    Vec<Option<String>>,
+    Option<Value>,
+    super::BlobBirthDecision,
+);
+
+/// How long one docs import call keeps starting page batches. Past it the
+/// call returns with the consent unspent and the first page it has not
+/// written; the same request called again resumes there.
+const DOCS_IMPORT_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Stable durable-entity binding for one docs derivation slot. Key: the
 /// extraction id string.
@@ -69,6 +83,45 @@ pub struct DocsImportReceipt {
     pub summary_refs: Vec<String>,
     pub annotation_refs: Vec<String>,
     pub fingerprints: Vec<(String, super::BlobBirthDecision)>,
+    /// The first page this call did not write when its deadline passed;
+    /// `None` once every page is written and the consent is spent. The refs
+    /// above name what this call wrote.
+    pub resume_page: Option<usize>,
+}
+
+/// One approved import's fixed inputs, carried to each page batch's writer.
+struct DocsImportRun<'a> {
+    owner: &'a AuthenticatedOwner,
+    request_id: EntityId,
+    docs: &'a DocsExport,
+    allow_derivations: bool,
+    summary: Option<&'a dyn DocsSummaryModel>,
+    classifier: Option<&'a dyn DocsInjectionClassifier>,
+    digest: EffectDigest,
+    now: u64,
+}
+
+/// The import's pages in batches under the consent ceiling's own bounds: at
+/// most `max_pages` pages and `max_bytes` of page text each, a page over
+/// `max_bytes` alone. An export with no pages is one empty batch.
+fn page_batches(pages: &[DocsPage], ceiling: DocsImportCeiling) -> Vec<Range<usize>> {
+    let max_pages = ceiling.max_pages.max(1);
+    let mut batches = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0usize;
+    for (index, page) in pages.iter().enumerate() {
+        if index > start
+            && (index - start >= max_pages
+                || bytes.saturating_add(page.text.len()) > ceiling.max_bytes)
+        {
+            batches.push(start..index);
+            start = index;
+            bytes = 0;
+        }
+        bytes = bytes.saturating_add(page.text.len());
+    }
+    batches.push(start..pages.len());
+    batches
 }
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
@@ -109,6 +162,11 @@ pub(super) fn require_docs_corpus_project(
 fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
 }
+/// The record one imported page's ASSET holds: its text beside the corpus,
+/// project and registry, and a blob reference to the exact source bytes.
+fn docs_asset_record(docs: &DocsExport, page: &DocsPage) -> Value {
+    json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported","blake3":blake3::hash(page.text.as_bytes()).to_hex().to_string(),"mime_type":"text/plain","byte_size":page.text.len() as u64})
+}
 fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
     Ok(BatchOp::Put {
         id,
@@ -118,6 +176,7 @@ fn put(id: EntityId, kind: u8, body: Value, now: u64) -> Result<BatchOp> {
             end: now,
         },
         learned_at: now,
+        row_version: None,
         data: encoded(&body)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -161,10 +220,8 @@ impl Vault {
         docs.validate()
             .map_err(|_| invalid("invalid docs export"))?;
         require_docs_corpus_project(self, &self.store.env.read_txn()?, docs.project_id)?;
+        // The ceiling schedules the import's page batches; it refuses no size.
         let bytes = serde_json::to_vec(docs).map_err(|_| invalid("docs export encoding"))?;
-        if docs.pages.len() > ceiling.max_pages || bytes.len() > ceiling.max_bytes {
-            return Err(invalid("docs import exceeds consent ceiling"));
-        }
         let hash = blake3::hash(&bytes).to_hex().to_string();
         let bound = GrantBound::action(
             ActorBound::new(owner.revalidate(self)?.to_hex())?,
@@ -182,7 +239,12 @@ impl Vault {
         ComposedEffect::new(EffectFacts::new("docs.import")?).with_action_requirement(bound)
     }
 
-    /// One exact approve-once covers the entire batch and its explicit derivation ceiling.
+    /// One exact approve-once covers the entire import and its explicit
+    /// derivation ceiling. The ceiling's page and byte bounds size the page
+    /// batches, each written in its own writer transaction; the last batch
+    /// spends the consent. Once [`DOCS_IMPORT_DEADLINE`] has passed no
+    /// further batch starts, and the same request called again skips the
+    /// pages this approval already wrote.
     /// Classifier is off by default (`None`); it produces an annotation, never a wall or edit.
     #[expect(
         clippy::too_many_arguments,
@@ -212,19 +274,17 @@ impl Vault {
                 return Err(invalid("docs import requires bulk consent"));
             }
         }
-        // Optional model calls never hold the LMDB writer slot. Consent is rechecked at commit.
-        let mut prepared = Vec::new();
-        for page in &docs.pages {
-            let (segments, summaries, annotation, predicted) =
-                self.prepare_docs_page(docs, page, summary, classifier)?;
-            prepared.push((page, segments, summaries, annotation, predicted));
-        }
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &txn)?;
-        require_docs_corpus_project(self, &txn, docs.project_id)?;
-        let authorization =
-            crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &digest)?
-                .ok_or_else(|| invalid("docs consent already consumed"))?;
+        let run = DocsImportRun {
+            owner,
+            request_id,
+            docs,
+            allow_derivations: ceiling.allow_derivations,
+            summary,
+            classifier,
+            digest,
+            now,
+        };
+        let started = Instant::now();
         let mut receipt = DocsImportReceipt {
             approval_digest: digest.to_hex(),
             asset_refs: Vec::new(),
@@ -232,17 +292,79 @@ impl Vault {
             summary_refs: Vec::new(),
             annotation_refs: Vec::new(),
             fingerprints: Vec::new(),
+            resume_page: None,
         };
+        let batches = page_batches(&docs.pages, ceiling);
+        for (index, pages) in batches.iter().enumerate() {
+            let last = index + 1 == batches.len();
+            // Optional model calls never hold the LMDB writer slot. Consent is rechecked at commit.
+            let mut prepared = Vec::new();
+            for page in docs.pages.get(pages.clone()).unwrap_or_default() {
+                if self.docs_page_written_by(docs, page, &receipt.approval_digest)? {
+                    continue;
+                }
+                let (segments, summaries, annotation, predicted) =
+                    self.prepare_docs_page(docs, page, summary, classifier)?;
+                prepared.push((page, segments, summaries, annotation, predicted));
+            }
+            self.write_docs_batch(&run, prepared, last, &mut receipt)?;
+            if !last && started.elapsed() >= DOCS_IMPORT_DEADLINE {
+                receipt.resume_page = Some(pages.end);
+                return Ok(receipt);
+            }
+        }
+        Ok(receipt)
+    }
+
+    /// Whether a batch of the import approved as `digest` already wrote this
+    /// revision of `page`: a resumed import skips it.
+    fn docs_page_written_by(
+        &self,
+        docs: &DocsExport,
+        page: &DocsPage,
+        digest: &str,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let extraction = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
+        let Some(asset) = existing_ref(self, &txn, &extraction)? else {
+            return Ok(false);
+        };
+        super::docs_deep::deep_ceiling_names(self, &txn, asset, digest, &page.text)
+    }
+
+    /// Writes one page batch in a writer transaction of its own, under the
+    /// import's unspent approve-once. The last batch spends it and records
+    /// the import's notification over every page's asset.
+    fn write_docs_batch(
+        &self,
+        run: &DocsImportRun<'_>,
+        prepared: Vec<PreparedPage<'_>>,
+        last: bool,
+        receipt: &mut DocsImportReceipt,
+    ) -> Result<()> {
+        let (docs, summary, classifier, now) = (run.docs, run.summary, run.classifier, run.now);
+        let digest_hex = run.digest.to_hex();
+        // Held until the writer below commits or aborts.
+        let staged = self.stage_docs_assets(docs, &prepared)?;
+        let mut txn = self.store.env.write_txn()?;
+        let actor = run.owner.revalidate_in_txn(self, &txn)?;
+        require_docs_corpus_project(self, &txn, docs.project_id)?;
+        let authorization =
+            crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &run.digest)?
+                .ok_or_else(|| invalid("docs consent already consumed"))?;
         let mut ops = Vec::new();
         // Each new chunk is born under its page's facet (facet rule C).
         let mut text_births = HashMap::new();
+        let mut changed_sources = BTreeSet::new();
         // Rule A: the owner states each page and its verbatim chunks; a model
         // summary is concluded from its chunk. Stamped once the ops land.
         let writer = WriteActor::new(actor, EdgeActorClass::Human);
         let mut births = Vec::new();
         let mut fingerprint_updates = Vec::new();
         let mut membership_updates = Vec::new();
-        for (page, segments, summaries, annotation, predicted) in prepared {
+        for ((page, segments, summaries, annotation, predicted), staged) in
+            prepared.into_iter().zip(&staged)
+        {
             let asset = stable_ref(
                 self,
                 &mut txn,
@@ -267,6 +389,10 @@ impl Vault {
                 .fingerprints
                 .push((asset.to_hex(), fingerprint.decision.clone()));
             let unchanged = matches!(fingerprint.decision, super::BlobBirthDecision::Unchanged(_));
+            let source_bytes_unchanged = matches!(
+                fingerprint.decision,
+                super::BlobBirthDecision::Unchanged(super::FingerprintRung::Asset)
+            );
             fingerprint_updates.push((asset, fingerprint));
             // The approve-once ceiling applies to this source revision, not to a
             // later replacement of the same stable page id.
@@ -275,15 +401,50 @@ impl Vault {
                 &mut txn,
                 asset,
                 &page.text,
-                ceiling.allow_derivations,
+                run.allow_derivations,
                 super::docs_deep::DeepApproval {
                     owner: actor,
-                    digest: &digest.to_hex(),
+                    digest: &digest_hex,
                     project_id: docs.project_id,
                 },
                 now,
             )?;
-            ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
+            // The page's ASSET goes in through the asset body plane, ahead of
+            // the chunks derived from it.
+            self.require_docs_put_kind(&txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
+            if !source_bytes_unchanged {
+                let write = crate::secret_custody::CustodyWrite::of(self);
+                crate::memory::release_asset_blob_in_txn(
+                    &self.store,
+                    &mut txn,
+                    &asset,
+                    &|txn, id| crate::batch::deindex_entity(&write, txn, id),
+                )?;
+            }
+            self.put_asset_body_in_txn(
+                &mut txn,
+                &asset,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                staged,
+            )?;
+            crate::memory::land_asset_blob_in_txn(
+                self,
+                &mut txn,
+                &asset,
+                page.text.as_bytes(),
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )?;
+            if !source_bytes_unchanged {
+                changed_sources.insert(asset);
+            }
             births.extend(
                 RowBirth::written(writer, MadeByClass::Stated, "docs.import", &[], &[], now)
                     .map(|birth| (asset, birth)),
@@ -322,7 +483,7 @@ impl Vault {
                     continue;
                 }
                 receipt.chunk_refs.push(chunk.to_hex());
-                ops.push(put(chunk,crate::registry::ENTITY_TYPE_ASSET_TEXT,json!({"text":segment.text,"source":"imported","asset_ref":asset.to_hex(),"section":segment.section}),now)?);
+                ops.push(put(chunk,crate::registry::ENTITY_TYPE_ASSET_TEXT,json!({"text":segment.text,"source":"imported","asset_ref":asset.to_hex(),"section":segment.section,"block":segment.block}),now)?);
                 births.extend(
                     RowBirth::written(
                         writer,
@@ -405,18 +566,16 @@ impl Vault {
                 if crate::batch::export::redact_credentials(&mut data) {
                     return Err(invalid("credential-shaped classifier annotation"));
                 }
-                let key = format!("{}:{}", asset.to_hex(), request_id.to_hex());
+                let key = format!("{}:{}", asset.to_hex(), run.request_id.to_hex());
                 ANNOTATION.put(&self.store, &mut txn, &key, &data)?;
                 receipt.annotation_refs.push(annotation_reference(&key));
             }
         }
         self.validate_docs_put_kinds(&txn, &ops)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_with_derived_copies(
             &mut txn,
             ops,
+            &changed_sources,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, true).with_text_births(text_births),
@@ -429,10 +588,19 @@ impl Vault {
         for (key, members) in membership_updates {
             MEMBERSHIP.put(&self.store, &mut txn, &key, &members)?;
         }
-        crate::consent::spend_approve_once_in_txn(&self.store, &mut txn, &authorization)?;
-        self.record_import_notification_in_txn(&mut txn, request_id, &receipt.asset_refs, now)?;
+        if last {
+            crate::consent::spend_approve_once_in_txn(&self.store, &mut txn, &authorization)?;
+            let mut assets = Vec::with_capacity(docs.pages.len());
+            for page in &docs.pages {
+                let extraction = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
+                if let Some(asset) = existing_ref(self, &txn, &extraction)? {
+                    assets.push(asset.to_hex());
+                }
+            }
+            self.record_import_notification_in_txn(&mut txn, run.request_id, &assets, now)?;
+        }
         txn.commit()?;
-        Ok(receipt)
+        Ok(())
     }
     /// One page's model-side preparation, outside the writer: its predicted
     /// blob birth, its semantic segments, the summaries of its changed
@@ -489,20 +657,53 @@ impl Vault {
         Ok((segments, summaries, annotation, predicted))
     }
 
+    /// Stages each prepared page's ASSET record before its batch's writer
+    /// opens, in page order, for the writer to put through the asset body
+    /// plane: a record past the inline bound spills as it streams, and is a
+    /// body file only when the plane files it. Drop them once that writer
+    /// has committed or aborted.
+    fn stage_docs_assets(
+        &self,
+        docs: &DocsExport,
+        prepared: &[PreparedPage<'_>],
+    ) -> Result<Vec<StagedAssetBody>> {
+        // A body instance is minted outside every writer (KS-2A), and only
+        // while the plane files bodies.
+        let mint = if crate::store::ASSET_FILE_PLANE {
+            Some(self.store.body_mint()?)
+        } else {
+            None
+        };
+        prepared
+            .iter()
+            .map(|(page, ..)| {
+                let record = encoded(&docs_asset_record(docs, page))?;
+                // The values custody holds load only inside a writer, and
+                // this stages before one: none is passed.
+                self.stage_asset_body(record.as_slice(), None, None, mint.as_ref())
+            })
+            .collect()
+    }
+
     /// Refuses a docs extraction id another entity kind already occupies.
     fn validate_docs_put_kinds(&self, txn: &heed::RoTxn<'_>, ops: &[BatchOp]) -> Result<()> {
         for op in ops {
             if let BatchOp::Put {
                 id, entity_type, ..
             } = op
-                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
-                    .is_some_and(|raw| {
-                        crate::batch::EntityMetadataHeader::parse(&raw)
-                            .is_none_or(|header| header.entity_type != *entity_type)
-                    })
             {
-                return Err(invalid("docs extraction id occupied by another kind"));
+                self.require_docs_put_kind(txn, id, *entity_type)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Refuses `id` when an entity of another kind than `kind` holds it.
+    fn require_docs_put_kind(&self, txn: &heed::RoTxn<'_>, id: &EntityId, kind: u8) -> Result<()> {
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?.is_some_and(
+            |raw| EntityMetadataHeader::parse(&raw).is_none_or(|header| header.entity_type != kind),
+        ) {
+            return Err(invalid("docs extraction id occupied by another kind"));
         }
         Ok(())
     }

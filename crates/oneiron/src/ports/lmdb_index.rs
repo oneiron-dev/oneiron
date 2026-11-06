@@ -125,7 +125,7 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("staged vector key"))?;
             ids.insert(id);
             let Some(raw) = value else { continue };
-            let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+            let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
             if live_in(store, txn, &id)? && admits(txn, &id)? {
                 scored.push(ScoredEntity {
                     id,
@@ -155,7 +155,7 @@ impl Vault {
         let Some(raw) = store.vectors().get(txn, id.as_bytes())? else {
             return Ok(None);
         };
-        let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
+        let vector = crate::store::decode_vector_row(&raw, self.config.dimensions)?;
         if vector.len() != self.config.dimensions {
             return Err(Error::CorruptedIndex("vector value"));
         }
@@ -215,8 +215,10 @@ impl RetrievalIndex for Vault {
         batch.apply(txn)
     }
     fn port_retrieval_mark_stale(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
-        super::integrity::mark_stale_in_txn(&self.store, txn, id)
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
+        super::integrity::mark_stale_in_txn(&crate::secret_custody::CustodyWrite::of(self), txn, id)
     }
     fn port_retrieval_vector_search(
         &self,
@@ -399,17 +401,19 @@ impl TombstoneStore for Vault {
     ) -> Result<()> {
         // Standalone tombstone carries deletion intent even after active row removal.
         // Publishing to peers and historical erasure remain the deletion facade's job.
-        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
+        self.store
+            .delete_guards
+            .reject_audience_edit_delete(&self.store, txn, id)?;
         self.store
             .vault_meta
             .put(txn, &super::integrity::tombstone_key(id), &value.encode())?;
         super::integrity::invalidate_source_in_txn(
-            &self.store,
+            &crate::secret_custody::CustodyWrite::of(self),
             txn,
             id,
             super::DependentWalkDoor::Tombstone,
         )?;
-        super::integrity::mark_stale_in_txn(&self.store, txn, id)
+        super::integrity::mark_stale_in_txn(&crate::secret_custody::CustodyWrite::of(self), txn, id)
     }
     fn port_tombstone_is_deleted(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
         Ok(self.port_deletion_state(txn, id)?.deleted)
@@ -450,8 +454,10 @@ impl super::RetrievalIndexMaintenance for Vault {
     ) -> Result<bool> {
         let had_vector = self.store.vectors.delete(txn, id.as_bytes())?;
         crate::embed::record_embedding_device_in_txn(&self.store, txn, id, None)?;
-        // FIX 8983: its media vectors and their device marks go in the same write.
+        // FIX 8983: its media vectors and their device marks go in the same write,
+        // and every room's staged copies of them (FIX 9398).
         crate::embed::delete_media_vectors_in_txn(&self.store, txn, id)?;
+        crate::embed::drop_room_media_copies_in_txn(&self.store, txn, id);
         crate::hnsw::hnsw_deindex(&self.store, txn, id)?;
         Ok(had_vector)
     }
@@ -474,7 +480,7 @@ impl super::RetrievalIndexMaintenance for Vault {
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;
-            crate::maintain::validate_rebuild_vector(self, &id, &value)?;
+            crate::store::vector_index::rebuild::validate_rebuild_vector(self, &id, &value)?;
         }
         Ok(())
     }

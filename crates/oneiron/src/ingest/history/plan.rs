@@ -13,7 +13,9 @@ use heed::{Database, Env, EnvFlags, EnvOpenOptions};
 use super::land::{HistoryImportReport, conversation_body, imported_message, runs};
 use super::ledger::{self, LedgerRow, content_hash};
 use super::{HistoryConversation, HistoryMessage, HistorySource};
-use crate::batch::secret_scan::{SecretScanMode, scan_write_payload, secret_scan_mode_in_txn};
+use crate::batch::secret_scan::{
+    SecretScanMode, predict_masked_body, predict_masked_text, secret_scan_mode_in_txn,
+};
 use crate::error::{Error, GateError, Result};
 use crate::memory::witness_message_body;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
@@ -134,9 +136,11 @@ impl HistoryLedgerSnapshot {
     }
 
     /// What importing `conversation` would do. The write door's secret scan
-    /// is predicted, over the same bytes the import would stage, when the
-    /// vault's switch has it on; a refusal from a policy gate is only seen by
-    /// the import itself.
+    /// and its mask on write are predicted, over the same bytes the import
+    /// would stage, when the vault's switch has it on: a secret the mask
+    /// places lands as its handle, and only a hit no span places counts as
+    /// refused. A refusal from a policy gate is only seen by the import
+    /// itself.
     ///
     /// # Errors
     ///
@@ -169,7 +173,7 @@ impl HistoryLedgerSnapshot {
             let body = conversation_body(source, conversation).map_err(|error| {
                 Error::InvalidConfig(format!("imported conversation body: {error}"))
             })?;
-            secret_refusal(&body)
+            secret_refusal(predict_masked_body(&body))
         } else {
             None
         };
@@ -180,9 +184,18 @@ impl HistoryLedgerSnapshot {
                 let landed = dry_run.landed(self, &txn, source, message)?;
                 if ledger::holds(landed, message) {
                     report.skipped += 1;
-                } else {
-                    pending.push((message, hash, !landed.is_empty()));
+                    continue;
                 }
+                // A text erased since it landed is not landed again; any row
+                // makes the next text a revision.
+                let row = ledger::find(self, &txn, source, message)?;
+                if let Some(row) = &row
+                    && row.held_erased(source, message)?
+                {
+                    report.skipped += 1;
+                    continue;
+                }
+                pending.push((message, hash, !landed.is_empty() || row.is_some()));
             }
             // A changed message's metadata names what it revises, as the
             // import's would.
@@ -210,8 +223,10 @@ impl HistoryLedgerSnapshot {
                     let body = witness_message_body(&staged).map_err(|error| {
                         Error::InvalidConfig(format!("imported message body: {error}"))
                     })?;
-                    reasons.extend(secret_refusal(&body).unwrap_or_default());
-                    reasons.extend(secret_refusal(message.text.as_bytes()).unwrap_or_default());
+                    reasons.extend(secret_refusal(predict_masked_body(&body)).unwrap_or_default());
+                    reasons.extend(
+                        secret_refusal(predict_masked_text(&message.text)).unwrap_or_default(),
+                    );
                 }
             }
             if !reasons.is_empty() {
@@ -236,9 +251,11 @@ impl HistoryLedgerSnapshot {
     }
 }
 
-/// The write door's secret-scan reasons for `payload`, when it would refuse it.
-fn secret_refusal(payload: &[u8]) -> Option<Vec<String>> {
-    match scan_write_payload(payload) {
+/// The write door's secret-scan reasons from its predicted verdict on one
+/// part, when it would refuse it: a hit its mask on write places is no
+/// refusal.
+fn secret_refusal(verdict: Result<()>) -> Option<Vec<String>> {
+    match verdict {
         Ok(()) => None,
         Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
             Some(reason_codes.iter().map(|code| (*code).to_owned()).collect())

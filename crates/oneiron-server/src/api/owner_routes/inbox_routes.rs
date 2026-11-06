@@ -22,6 +22,7 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/inbox",
             summary: "One page of the lens, filtered to an identity or to one agent's slice when asked.",
             row: None,
+            shape: None,
         },
         get(read),
     )]

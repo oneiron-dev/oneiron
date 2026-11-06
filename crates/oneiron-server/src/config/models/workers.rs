@@ -74,9 +74,17 @@ pub(super) struct WorkerFile {
     hub_token_env: Option<String>,
     python: Option<PathBuf>,
     env_lock: Option<PathBuf>,
+    /// A VoxCPM2 row's serving-policy file, named directly (FIX 11377):
+    /// the vault's resolved ceiling, as the worker reads it.
+    policy_file: Option<PathBuf>,
     server: Option<PathBuf>,
     server_sha256: Option<String>,
     endpoint: Option<String>,
+    /// The SHA-256 of the exact bytes of the `--launch-manifest` file an
+    /// external EXL3 worker was started with (FIX 9296): the manifest
+    /// file's digest, never the `expected.runtime` build digest it names.
+    /// Only an external EXL3 row's answers are checked against it.
+    launch_manifest_sha256: Option<String>,
     device: Option<String>,
     #[serde(default)]
     args: Vec<String>,
@@ -126,6 +134,11 @@ pub struct WorkerConfig {
     /// Where an external worker's probe goes; `None` is its provider's
     /// `base_url`.
     pub endpoint: Option<String>,
+    /// The operator-pinned SHA-256 of the `--launch-manifest` file's exact
+    /// bytes (FIX 9296): the manifest file's digest, never the
+    /// `expected.runtime` build digest it names. Only an external EXL3
+    /// row's answers are checked against it.
+    pub launch_manifest_sha256: Option<CacheDigest>,
 }
 
 /// What a managed worker's supervisor installs and runs.
@@ -187,6 +200,10 @@ pub enum ArtifactSource {
     Catalog(String),
     /// An operator's manifest file, an absolute path.
     Manifest(PathBuf),
+    /// A vault's own drafter version, materialised in the vault's private
+    /// directory and verified there (FIX 14976). Only the drafter serving
+    /// seam sets it, on a draft; no config file names one.
+    VaultLoadSet(std::sync::Arc<crate::models::VaultLoadSet>),
 }
 
 /// A native server binary and the SHA-256 it must hash to.
@@ -285,6 +302,15 @@ impl WorkerFile {
             );
         }
         let expected = self.expected.resolve(&field("expected"))?;
+        let launch_manifest_sha256 = self
+            .launch_manifest_sha256
+            .clone()
+            .map(|hex| {
+                CacheDigest::new(hex).map_err(|error| {
+                    anyhow::anyhow!("{}: {error}", field("launch_manifest_sha256"))
+                })
+            })
+            .transpose()?;
         let launch = match mode {
             WorkerMode::Managed => {
                 anyhow::ensure!(
@@ -321,6 +347,7 @@ impl WorkerFile {
             expected,
             launch,
             endpoint: self.endpoint,
+            launch_manifest_sha256,
         })
     }
 
@@ -345,6 +372,7 @@ impl WorkerFile {
             ("env", !self.env.is_empty()),
             ("envelope_mib", self.envelope_mib != EnvelopeFile::default()),
             ("idle_stop_secs", self.idle_stop_secs.is_some()),
+            ("policy_file", self.policy_file.is_some()),
         ];
         if let Some((name, _)) = fields.iter().find(|(_, set)| *set) {
             anyhow::bail!(
@@ -426,6 +454,11 @@ impl WorkerFile {
         let (credential_env, policy_file) = if media {
             self.media_launch(id, kind, provider, base)?
         } else {
+            anyhow::ensure!(
+                self.policy_file.is_none(),
+                "{}: only a media worker takes a serving-policy file",
+                field("policy_file")
+            );
             (None, None)
         };
         if let Some(env) = &self.hub_token_env {
@@ -532,15 +565,37 @@ impl WorkerFile {
                 field("env")
             );
         }
-        let policy_file = match (kind, policy) {
-            (WorkerKind::VoxCpm2, Some(path)) => Some(absolute(
+        // A directly named file wins over the row's variable (FIX 11377);
+        // naming both at once is contradictory, never a fallback.
+        let named = match (&self.policy_file, policy) {
+            (Some(path), None) => Some(absolute(
+                &format!("models.workers.{id}.policy_file"),
+                path,
+                base,
+            )?),
+            (Some(_), Some(_)) => anyhow::bail!(
+                "{}.policy_file and {}.{} name two serving-policy files: keep one",
+                field("policy_file"),
+                field("env"),
+                VOICE_POLICY_ENV
+            ),
+            (None, Some(path)) => Some(absolute(
                 &format!("{}.{VOICE_POLICY_ENV}", field("env")),
                 Path::new(path),
                 base,
             )?),
+            (None, None) => None,
+        };
+        let policy_file = match (kind, named) {
+            (WorkerKind::VoxCpm2, Some(path)) => Some(path),
             (WorkerKind::VoxCpm2, None) => anyhow::bail!(
-                "{}.{VOICE_POLICY_ENV} is required: the serving-policy file with the vault's ceiling",
-                field("env")
+                "{}.{VOICE_POLICY_ENV} or {}.policy_file is required: the serving-policy file with the vault's ceiling",
+                field("env"),
+                field("policy_file")
+            ),
+            (_, Some(_)) => anyhow::bail!(
+                "{}.policy_file: only a VoxCPM2 row names a serving-policy file",
+                field("policy_file")
             ),
             _ => None,
         };

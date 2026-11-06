@@ -356,8 +356,9 @@ impl Memory<'_> {
     /// The launch under `launch_ref`, with its plan recomputed from the
     /// frozen payload and bound to the digest the owner saw: never a
     /// comparison of two caller-supplied hashes. The original actor must
-    /// still bind; its launch runs as it. A retired width check (FIX 4699)
-    /// ignores the frozen digest and re-proves the scrubbed state; a marked
+    /// still bind; its launch runs as it. A scrubbed dispatched width check
+    /// (FIX 4699 retired, FIX 12731 answered) ignores the frozen digest and
+    /// re-proves the scrubbed state before its recorded ack replays; a marked
     /// held launch binds the new scrubbed digest.
     pub(super) fn frozen_launch_in(
         &self,
@@ -371,10 +372,18 @@ impl Memory<'_> {
         verify_actor_binding_in_txn(self.vault(), txn, actor, launch.class()?)?;
         // FIX 4699: a retired check has no re-read path; erasure wins over
         // the old digest. Live launcher only (checked above).
-        if launch
-            .recipient_scrub
-            .as_ref()
-            .is_some_and(|marker| marker.retired_check_row.is_some())
+        // FIX 12731: a dispatched check acked before its scrub keeps no
+        // retirement marker; re-prove every scrubbed dispatched check before
+        // its recorded ack replays, regardless of retirement. Held scrubbed
+        // launches still bind the new digest below.
+        let scrubbed_dispatched_check = launch.recipient_scrub.is_some()
+            && launch.dispatched_at.is_some()
+            && launch.check_row.is_some();
+        if scrubbed_dispatched_check
+            || launch
+                .recipient_scrub
+                .as_ref()
+                .is_some_and(|marker| marker.retired_check_row.is_some())
         {
             let plan = verify_scrubbed_launch(&launch)?;
             return Ok((launch, plan));

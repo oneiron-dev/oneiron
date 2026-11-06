@@ -1,6 +1,9 @@
 //! Strict CMS ContentInfo/SignerInfo parsing with version gating.
 
+use std::mem::size_of;
+
 use crate::error::SealError;
+use crate::memory::{Held, MemoryLedger, SealMemoryRefusal};
 
 use super::cms_err;
 use super::der::{DerReader, Tlv, tlv};
@@ -50,8 +53,9 @@ fn parse_signer_info(tlv_bytes: &[u8]) -> Result<ParsedSignerInfo, SealError> {
     }
     let sid = r.expect(0x30)?;
     let mut sid_r = DerReader::new(sid.content);
-    let sid_issuer = sid_r.expect(0x30)?.full.to_vec(); // issuer Name TLV
-    let sid_serial = sid_r.expect(0x02)?.full.to_vec(); // serialNumber TLV
+    // Read in place, never copied (FIX 12260).
+    let sid_issuer = sid_r.expect(0x30)?.full; // issuer Name TLV
+    let sid_serial = sid_r.expect(0x02)?.full; // serialNumber TLV
     let digest_alg = r.expect(0x30)?;
     let digest_oid = parse_oid(DerReader::new(digest_alg.content).expect(0x06)?)?;
     let attrs_field = r.expect(0xA0)?;
@@ -188,7 +192,7 @@ pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
                 if !sr.is_done() {
                     return Err(cms_err()); // exactly one SignerInfo
                 }
-                signer_info_der = Some(first.full.to_vec());
+                signer_info_der = Some(first.full);
             }
             _ => return Err(cms_err()), // crls/other fields not used in v1
         }
@@ -200,8 +204,75 @@ pub(crate) fn parse_cms(der: &[u8]) -> Result<ParsedCms, SealError> {
         econtent_oid,
         econtent,
         certificates,
-        signer: parse_signer_info(&signer_info_der)?,
+        signer: parse_signer_info(signer_info_der)?,
     })
+}
+
+impl ParsedCms {
+    /// What the parse keeps: each copied field's bytes and its lists'
+    /// slots (FIX 12260).
+    pub(crate) fn held_bytes(&self) -> usize {
+        // A list of copied DER items: its slots and each item's bytes.
+        let list = |items: &Vec<Vec<u8>>| {
+            items.iter().fold(
+                items.capacity().saturating_mul(size_of::<Vec<u8>>()),
+                |sum, item| sum.saturating_add(item.capacity()),
+            )
+        };
+        let signer = &self.signer;
+        [
+            self.content_oid.capacity(),
+            list(&self.digest_algs),
+            self.econtent_oid.capacity(),
+            self.econtent.as_ref().map_or(0, Vec::capacity),
+            list(&self.certificates),
+            signer.digest_alg_oid.capacity(),
+            list(&signer.signed_attrs),
+            signer.signed_attrs_content.capacity(),
+            signer.signature_alg_oid.capacity(),
+            signer.signature.capacity(),
+            list(&signer.unsigned_attrs),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+
+    /// The parse, held on `memory` as soon as it is built and until it
+    /// drops (FIX 12260): [`parse_cms`] takes no handle.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(crate) fn held(self, memory: &MemoryLedger) -> Result<Held<Self>, SealMemoryRefusal> {
+        let hold = memory.hold(self.held_bytes())?;
+        Ok(Held::new(self, hold))
+    }
+}
+
+/// A copy of `certificates` as a chain, the one at `first` first and the
+/// others in their order, held on `memory` before it is made (FIX 12260).
+///
+/// # Errors
+/// The ledger's refusal.
+pub(crate) fn chain_copy(
+    certificates: &[Vec<u8>],
+    first: usize,
+    memory: &MemoryLedger,
+) -> Result<Held<Vec<Vec<u8>>>, SealMemoryRefusal> {
+    let bytes = certificates.iter().fold(
+        certificates.len().saturating_mul(size_of::<Vec<u8>>()),
+        |sum, der| sum.saturating_add(der.len()),
+    );
+    let hold = memory.hold(bytes)?;
+    let mut chain = Vec::with_capacity(certificates.len());
+    chain.extend(certificates.get(first).cloned());
+    chain.extend(
+        certificates
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != first)
+            .map(|(_, der)| der.clone()),
+    );
+    Ok(Held::new(chain, hold))
 }
 
 /// Rebuild the RFC 5652 §5.4 signature input from parsed signed attributes:

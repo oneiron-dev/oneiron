@@ -51,10 +51,12 @@ pub use failure_policy::{
 };
 pub mod image;
 mod label_read;
+mod logprobs;
 pub mod media;
 pub use label_read::{
     LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
 };
+pub use logprobs::{TokenScore, first_token_alternatives};
 mod model_id;
 mod protocol;
 mod reply_assertions;
@@ -63,6 +65,7 @@ mod scheduling;
 mod segments;
 mod session;
 
+pub use budget::BudgetCheckpoint;
 pub use budget::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
@@ -111,7 +114,7 @@ pub use self::catalog::{
 };
 pub use self::error::{
     BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError,
-    RetryableLlmError, SpentKind, UnsupportedCapability,
+    RetryableLlmError, SpentKind, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 // Public so `oneiron`'s auto-checker names a dynamic model the same way the safeguard
 // binding does, across the crate line.
@@ -121,8 +124,9 @@ pub use self::model_id::{ModelId, ModelIdError};
 // JSON bytes across the crate line.
 pub use self::protocol::canonical_json_bytes;
 pub use self::protocol::{
-    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
+    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor,
+    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
+    LlmStreamEvent, LlmToolSpec, LlmUsage, ReasoningPartKind,
 };
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use self::reply_assertions::{ReplyAssertionRecord, ReplyAssertions};
@@ -152,10 +156,13 @@ pub use self::session::{
     SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
     SnapshotDigest, SnapshotMiss,
 };
+// I1 = C: the prepared tail of the worker session wire.
+pub use self::session::{PreparedUse, SessionPrepare, SessionPrepared};
 // DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
 pub use self::scheduling::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
     SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
     SchedulingCapability, SchedulingReceipt, WorkCancel, WorkClass, WorkContext, WorkId,
-    WorkPhysical, WorkPriority,
+    WorkPhysical, WorkPriority, forget_work_parent, lookup_work_parent, record_work_parent,
+    take_work_parent,
 };

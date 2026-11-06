@@ -11,6 +11,8 @@ use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 pub enum DeleteReason {
     UserDelete,
     UserHardDelete,
+    /// An explicit owner's erase: active bytes and checkpoint payloads retire together.
+    OwnerErase,
     GdprDelete,
     PolicyDelete,
     /// ARCH-0073 vault auto-cleanup ARCHIVE (ONE-1931). The SOFT-reversible
@@ -35,7 +37,7 @@ pub enum DeleteReason {
 //   [reason:1][deleted_at:8 LE][request_id:16]            (25 bytes)
 //
 // reason ∈ {user_delete=1, user_hard_delete=2, gdpr_delete=3,
-// policy_delete=4, archived_by_cleanup=5}; byte 0 is RESERVED and decodes as
+// policy_delete=4, archived_by_cleanup=5, owner_erase=6}; byte 0 is RESERVED and decodes as
 // hard. Decode rule: a legacy 8-byte value (bare `deleted_at` u64 LE) or an
 // unknown reason byte decodes as HARD — over-purge, never under-delete.
 // `request_id` is the deletion request UUID (16 raw bytes) used for receipt
@@ -43,8 +45,8 @@ pub enum DeleteReason {
 //
 // ONE-1931 (ARCH-0073) took byte 5 for `archived_by_cleanup`. It joins the
 // KNOWN set — the layout is unchanged at 25 bytes, and the fail-closed law is
-// intact: byte 0, byte 6 and every byte above still decode to `reason: None`
-// and therefore HARD.
+// intact: byte 0 and every byte above the known table decode to `reason: None`
+// and therefore HARD. Explicit owner erase uses byte 6 without changing the layout.
 
 /// Total length of a v2 tombstone wire value.
 pub const TOMBSTONE_VALUE_V2_LEN: usize = 25;
@@ -65,6 +67,8 @@ pub enum TombstoneReason {
     /// ARCH-0073 vault auto-cleanup ARCHIVE (ONE-1931) — SOFT, like
     /// `user_delete`. Wire byte 5.
     ArchivedByCleanup = 5,
+    /// An explicit owner's erase, including checkpoint payloads. Wire byte 6.
+    OwnerErase = 6,
 }
 
 impl TombstoneReason {
@@ -84,6 +88,7 @@ impl TombstoneReason {
             3 => Some(Self::GdprDelete),
             4 => Some(Self::PolicyDelete),
             5 => Some(Self::ArchivedByCleanup),
+            6 => Some(Self::OwnerErase),
             // UNCHANGED fail-closed arm: byte 0 (RESERVED) and every byte
             // above the table stay unknown, and an unknown byte is HARD.
             _ => None,
@@ -100,11 +105,11 @@ impl TombstoneReason {
 
     /// KS-7 (FIX 5688): whether a delete under this reason erases its
     /// owner's checkpoint payload compartments, so that no old checkpoint
-    /// opens the owner's bytes again. The privacy erase does. An ordinary
+    /// opens the owner's bytes again. Privacy and explicit owner erases do. An ordinary
     /// hard delete and a policy delete keep them for the restore window, as
     /// a soft delete and an archive do (Engine 10-20 08:4x, ruling 1).
     pub(crate) const fn erases_checkpoint_payloads(self) -> bool {
-        matches!(self, Self::GdprDelete)
+        matches!(self, Self::GdprDelete | Self::OwnerErase)
     }
 }
 
@@ -113,6 +118,7 @@ impl From<DeleteReason> for TombstoneReason {
         match reason {
             DeleteReason::UserDelete => Self::UserDelete,
             DeleteReason::UserHardDelete => Self::UserHardDelete,
+            DeleteReason::OwnerErase => Self::OwnerErase,
             DeleteReason::GdprDelete => Self::GdprDelete,
             DeleteReason::PolicyDelete => Self::PolicyDelete,
             DeleteReason::ArchivedByCleanup => Self::ArchivedByCleanup,
@@ -191,6 +197,7 @@ impl DecodedTombstoneValue {
     pub(super) fn receipt_hard_reason(&self) -> DeleteReason {
         match self.reason {
             Some(TombstoneReason::GdprDelete) => DeleteReason::GdprDelete,
+            Some(TombstoneReason::OwnerErase) => DeleteReason::OwnerErase,
             Some(TombstoneReason::PolicyDelete) => DeleteReason::PolicyDelete,
             Some(
                 TombstoneReason::UserHardDelete
@@ -474,100 +481,9 @@ pub(crate) fn archive_tombstone_key(id: &EntityId) -> String {
 pub(super) const ARCHIVE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_ARCHIVE_MARKER);
 
-/// Formats the ARCH-0023b `YYYY-MM` window label for a unix-seconds
-/// timestamp, clamping timestamps at or beyond year 10000 to the last
-/// representable window `"9999-12"` (a larger year would produce a key the
-/// validated sync readers reject, stranding rows written under it).
-///
-/// Lives in this always-compiled module because the deletion path needs the
-/// window address for the `pt:` marker even in builds WITHOUT the `sync`
-/// feature; `sync::types::WindowKey::from_timestamp` delegates here so the
-/// two can never drift.
-/// Canonical base/world monthly address grammar shared by sync and
-/// feature-independent recovery/deletion. World IDs use lowercase hex only.
-pub(crate) fn parse_window_label(key: &str) -> Option<(i32, u32)> {
-    let bytes = key.as_bytes();
-    if bytes.len() != 7 && bytes.len() != 40 {
-        return None;
-    }
-    if bytes[4] != b'-'
-        || !bytes[..4].iter().all(u8::is_ascii_digit)
-        || !bytes[5..7].iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-    if bytes.len() == 40 {
-        if bytes[7] != b'@'
-            || !bytes[8..]
-                .iter()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
-        {
-            return None;
-        }
-        let world = crate::EntityId::from_hex(&key[8..]).ok()?;
-        if world.to_hex() != key[8..] {
-            return None;
-        }
-    }
-    let year: i32 = key[..4].parse().ok()?;
-    let month: u32 = key[5..7].parse().ok()?;
-    if year < 1970 || !(1..=12).contains(&month) {
-        return None;
-    }
-    Some((year, month))
-}
-
-pub(crate) fn window_label_from_timestamp(ts: u64) -> String {
-    // Stay in u64: an `as i64` cast would wrap negative for ts > i64::MAX
-    // and silently yield "1970-01".
-    let days = ts / 86_400;
-    let mut year = 1970_i32;
-    let mut remaining_days = days;
-
-    loop {
-        let days_in_year: u64 = if is_leap_year(year) { 366 } else { 365 };
-        if remaining_days < days_in_year {
-            break;
-        }
-        if year == 9999 {
-            // Clamp instead of walking one year per iteration toward an
-            // astronomically large target (and emitting a >4-digit year
-            // that breaks the YYYY-MM key format).
-            return "9999-12".to_owned();
-        }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-
-    let mut month = 1_u32;
-    let month_days = [
-        31,
-        if is_leap_year(year) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    for &md in &month_days {
-        if remaining_days < md {
-            break;
-        }
-        remaining_days -= md;
-        month += 1;
-    }
-
-    format!("{year:04}-{month:02}")
-}
-
-pub(crate) const fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
+pub(crate) use oneiron_store::window_key::{
+    is_leap_year, parse_window_label, window_label_from_timestamp,
+};
 
 impl DeleteReason {
     #[must_use]
@@ -575,6 +491,7 @@ impl DeleteReason {
         match self {
             Self::UserDelete => "user_delete",
             Self::UserHardDelete => "user_hard_delete",
+            Self::OwnerErase => "owner_erase",
             Self::GdprDelete => "gdpr_delete",
             Self::PolicyDelete => "policy_delete",
             Self::ArchivedByCleanup => "archived_by_cleanup",
@@ -584,21 +501,21 @@ impl DeleteReason {
     pub(crate) const fn writes_receipt(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
-            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserHardDelete | Self::OwnerErase | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
     pub(super) const fn active_store_hard_purge_v1(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
-            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserHardDelete | Self::OwnerErase | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
     pub(super) const fn queues_historical_sweep(self) -> bool {
         match self {
             Self::UserDelete | Self::ArchivedByCleanup => false,
-            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserHardDelete | Self::OwnerErase | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
@@ -622,7 +539,11 @@ impl DeleteReason {
     pub(crate) const fn publishes_crdt_tombstone(self) -> bool {
         match self {
             Self::ArchivedByCleanup => false,
-            Self::UserDelete | Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+            Self::UserDelete
+            | Self::UserHardDelete
+            | Self::OwnerErase
+            | Self::GdprDelete
+            | Self::PolicyDelete => true,
         }
     }
 }

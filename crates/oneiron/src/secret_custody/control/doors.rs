@@ -18,7 +18,9 @@ use zeroize::Zeroize;
 use super::super::doors::{register_generation_in_txn, resolve_secret_ref_in_txn};
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{custody_portable, transition_named_in_txn};
-use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
+use super::super::types::{
+    CustodyClass, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+};
 use super::input::{SealedFrame, SealedInput, attach_manifest};
 use super::manifest::unstated_input;
 use super::permits::candidate_for;
@@ -75,6 +77,10 @@ pub struct SecretCustodyView {
     pub candidates: Vec<CustodyCandidate>,
     /// Never known here (CALLS CUSTODY_REPLICATION_WITHOUT_ACK).
     pub delivery: CustodyDelivery,
+    /// The live custody floor, whole: a sealing surface asks against this
+    /// instead of guessing a band, so its change is not refused as
+    /// WiderThanFloor.
+    pub floor: SecretCustodyFloor,
 }
 
 /// A register or rotate whose protected input the owner's surface sealed to
@@ -234,10 +240,12 @@ impl Vault {
                 })
             })
             .collect();
+        let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
         Ok(SecretCustodyView {
             vault_id,
             secret_id,
             name: name.to_owned(),
+            floor,
             known: known.is_some(),
             held_here: known.as_ref().is_some_and(|known| known.held_here),
             portable: known

@@ -8,45 +8,18 @@
 //! skill proposal: evidence handed to the optimizer, never an applied edit.
 //! The optimizer's held-out gate decides whether the change lands.
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::positive_skill_proposals::POSITIVE_PROPOSAL;
+pub use crate::store::positive_skill_proposals::{PositiveFinding, PositiveSkillProposal};
 
 use super::codec::{EVIDENCE, evidence_after};
 use super::types::{AttemptOutcome, FollowedState, OutcomeEvidence};
 
-/// Positive proposals. Key: the attribution evidence sequence.
-const POSITIVE_PROPOSAL: SideTable<u64, PositiveSkillProposal, Named> =
-    SideTable::new(&side_table::SKILL_ATTRIBUTION_POSITIVE_PROPOSAL);
-
 /// The highest evidence sequence the positive lane has read. Key: ().
 const POSITIVE_CURSOR: SideTable<(), u64, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_POSITIVE_CURSOR);
-
-/// What a succeeded attempt taught its skill.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum PositiveFinding {
-    /// The actor departed from the skill for `reason`, and the attempt won.
-    DeviationWorked { reason: String },
-    /// The actor performed a step the skill did not cover, and the attempt won.
-    UncoveredStepWorked,
-}
-
-/// One positive skill proposal, cited to the receipt that earned it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PositiveSkillProposal {
-    pub evidence_sequence: u64,
-    pub skill: EntityId,
-    /// The executing actor whose departure or extra step worked.
-    pub actor: EntityId,
-    pub finding: PositiveFinding,
-    pub evidence_receipts: Vec<String>,
-    pub at: u64,
-}
 
 /// The finding a succeeded attempt carries, if any.
 #[must_use]
@@ -145,26 +118,4 @@ pub fn retire_positive_proposal(vault: &Vault, evidence_sequence: u64) -> Result
     vault.with_write_txn_grouped(|wtxn| {
         POSITIVE_PROPOSAL.delete(&vault.store, wtxn, &evidence_sequence)
     })
-}
-
-/// Deletes every pending positive proposal that names erased `entity` as
-/// its skill or its actor (FIX 8988): pending work whose authority ended
-/// with it. A row that no longer decodes is deleted and counted.
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn erase_positive_proposals_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    entity: &EntityId,
-) -> Result<()> {
-    for (sequence, proposal) in
-        super::skill_erase::erase_scan_in_txn(vault, wtxn, POSITIVE_PROPOSAL)?
-    {
-        if proposal.skill == *entity || proposal.actor == *entity {
-            POSITIVE_PROPOSAL.delete(&vault.store, wtxn, &sequence)?;
-        }
-    }
-    Ok(())
 }

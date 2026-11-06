@@ -514,7 +514,7 @@ impl Vault {
             return Ok(None);
         };
         let record = Held(record);
-        if let Some(refusal) = self.held_refusal_in_txn(txn, id, &record.0)? {
+        if let Some(refusal) = self.held_refusal_in_txn(txn, id, &record.0, false)? {
             return Ok(Some(Enacted::refused(refusal)));
         }
         if record.0.status != SecretCustodyStatus::Active {
@@ -564,7 +564,17 @@ impl Vault {
             return Ok(None);
         };
         let mut record = Held(record);
-        if let Some(refusal) = self.held_refusal_in_txn(txn, id, &record.0)? {
+        // A bind that only withdraws bindings (a strict subset of what the
+        // record holds now, FIX 11393): the OLD set's floor refusal must not
+        // block removing the floor-forbidden binding; the NEW reduced set is
+        // still floor-checked below.
+        let subset_withdrawal = bindings.as_ref().is_some_and(|bindings| {
+            bindings.len() < record.0.bindings.len()
+                && bindings
+                    .iter()
+                    .all(|binding| record.0.bindings.contains(binding))
+        });
+        if let Some(refusal) = self.held_refusal_in_txn(txn, id, &record.0, subset_withdrawal)? {
             return Ok(Some(Enacted::refused(refusal)));
         }
         if record.0.status == SecretCustodyStatus::Revoked {
@@ -600,18 +610,23 @@ impl Vault {
 
     /// Why a record this install holds cannot take a change: it may not
     /// leave its device, another record holds its name, or the live floor no
-    /// longer admits its bindings.
+    /// longer admits its bindings. `skip_floor` (a bind's strict-subset
+    /// withdrawal, FIX 11393) skips only the floor arm; the caller's NEW-set
+    /// floor check still runs.
     fn held_refusal_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
         record: &SecretCustodyRecord,
+        skip_floor: bool,
     ) -> Result<Option<OwnerWorkRefusal>> {
         Ok(if !custody_portable(record) {
             Some(OwnerWorkRefusal::SecretNotPortable)
         } else if resolve_secret_ref_in_txn(&self.store, txn, &record.name)? != Some(id) {
             Some(OwnerWorkRefusal::CustodyConflict)
-        } else if refuse_bindings_wider_than_live_floor(&self.store, txn, record).is_err() {
+        } else if !skip_floor
+            && refuse_bindings_wider_than_live_floor(&self.store, txn, record).is_err()
+        {
             Some(OwnerWorkRefusal::WiderThanFloor)
         } else {
             None
@@ -631,7 +646,7 @@ impl Vault {
         put_output_in_txn(self, txn, &enactment.request, binding, check)?;
         if let Some(digest) = enactment.input {
             if let Some(carrier) = input_carrier_in_txn(&self.store, txn, &digest)? {
-                retire_input_carriers_in_txn(self, txn, &[carrier]);
+                retire_input_carriers_in_txn(&self.store, txn, &[carrier]);
             }
             drop_input_in_txn(self, txn, &digest)?;
         }

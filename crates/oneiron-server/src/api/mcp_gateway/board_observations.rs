@@ -13,11 +13,13 @@ use tokio::sync::{MappedMutexGuard, MutexGuard};
 
 /// A tagged connector key cannot alias Core's two-element session key,
 /// even if a Core principal deliberately chooses an MCP-looking name.
-/// Both namespaces share the server-owned store and its eviction policy.
+/// Both namespaces share the server-owned store. MCP entries close when
+/// their connector credential is pruned; a late in-flight call retains no
+/// state after its connection is detached.
 pub(super) async fn read_set<'a>(
     server: &'a SyncServer,
     actor: &McpResolvedActor,
-) -> MappedMutexGuard<'a, SessionReadSet> {
+) -> Option<MappedMutexGuard<'a, SessionReadSet>> {
     let key = serde_json::to_string(&(
         "mcp",
         actor.gate_actor_class,
@@ -28,8 +30,20 @@ pub(super) async fn read_set<'a>(
     ))
     .expect("string tuple serializes");
     let mut store = server.memories_cursors.lock().await;
+    if server
+        .mcp_registry
+        .lock()
+        .await
+        .streams_mut()
+        .connection_state(&actor.stream_connection)
+        .is_none()
+    {
+        return None;
+    }
     store.current(key.clone(), &actor.stream_connection.0);
-    MutexGuard::map(store, |store| store.read_sets.entry(key).or_default())
+    Some(MutexGuard::map(store, |store| {
+        store.read_sets.entry(key).or_default()
+    }))
 }
 
 /// The session's read state, the changed line with this session's own
@@ -40,7 +54,10 @@ pub(super) async fn state(
     actor: &McpResolvedActor,
 ) -> Result<(SessionReadSet, ChangedLine, ChangedLine), McpGatewayError> {
     let packs = super::board_setup::mcp_visible_pack_inventory(server, actor)?;
-    let observations = read_set(server, actor).await.clone();
+    let observations = match read_set(server, actor).await {
+        Some(reads) => reads.clone(),
+        None => SessionReadSet::default(),
+    };
     let read = mcp_scoped_read(&server.vault, actor)?;
     let mut changed = observations
         .refresh(&read, 4096)
@@ -85,7 +102,9 @@ pub(super) async fn delivered(
     keyframe: bool,
     epoch: u64,
 ) {
-    let mut reads = read_set(server, actor).await;
+    let Some(mut reads) = read_set(server, actor).await else {
+        return;
+    };
     let superseded = server
         .mcp_registry
         .lock()

@@ -205,6 +205,7 @@ impl OffRecordSession<'_> {
                 author: crate::memory::WitnessAuthor::Companion,
                 message_type: kind.as_message_type().to_owned(),
                 content: text.to_owned(),
+                parts: None,
                 metadata: result.map(|result| result.metadata()).transpose()?,
                 is_visible: kind.is_visible(),
                 order,
@@ -394,14 +395,14 @@ impl OffRecordSession<'_> {
         envelope: &crate::WriteEnvelope,
         occurred: crate::TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<EntityId> {
         if route.target() == RouteTarget::Overlay {
             return self
                 .stage_session_claim(route, *id, candidate, envelope, occurred, learned_at)
-                .map(drop);
+                .map(|_| *id);
         }
         let (vault, landing) = self.base_write_vault(route)?;
-        vault.put_claim_candidate_with_landing(
+        vault.put_claim_candidate_with_landing_returning_actual(
             id,
             candidate,
             envelope,

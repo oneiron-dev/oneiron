@@ -237,6 +237,10 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The adopted checkpoint image, verified once per stored rows, with its
+    /// carried bodies decoded once (FIX 2987/3006/3415/3449). Keyed by the
+    /// exact stored rows, never by generation; dies with the handle.
+    pub(crate) adopted_image_cache: Mutex<Option<crate::authority::AdoptedImageCacheEntry>>,
     /// The causal standing of the topology decision seals one committed
     /// authority generation judged (FIX 4649). Never persisted.
     pub(crate) act_causal_points: Mutex<Option<std::sync::Arc<crate::authority::CausalPoints>>>,
@@ -246,6 +250,38 @@ pub struct StoreCore {
     /// Forks the project folds over committed snapshots found (decision 10
     /// evidence). Never persisted.
     pub(crate) project_forks: crate::workspace_roster::ProjectForks,
+    /// The engine's delete guards, supplied by the open door: a store never
+    /// exists without them.
+    pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The engine's record-scope stamp hooks, supplied by the open door with
+    /// the delete guards.
+    pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
+    /// The engine's project write hooks, supplied by the open door with the
+    /// delete guards.
+    pub(crate) project_writes: &'static dyn crate::store::StoreProjectWrites,
+    /// The engine's record hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) record_hooks: &'static dyn crate::store::StoreRecordHooks,
+    /// The engine's side-table actor scrubs, supplied by the open door with
+    /// the delete guards.
+    pub(crate) actor_scrubs: &'static dyn crate::store::StoreActorScrubs,
+    /// The engine's gate hooks, supplied by the open door with the delete
+    /// guards.
+    pub(crate) gate_hooks: &'static dyn crate::store::StoreGateHooks,
+    /// The engine's sync hooks, supplied by the open door with the delete
+    /// guards.
+    #[cfg(feature = "sync")]
+    pub(crate) sync_hooks: &'static dyn crate::store::StoreSyncHooks,
+    /// The engine's attempt queue operations, supplied by the open door with
+    /// the delete guards.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's voice bank response operations, supplied by the open door with
+    /// the delete guards.
+    #[cfg(unix)]
+    pub(crate) voice_bank_response: &'static dyn crate::store::StoreVoiceBankResponse,
+    /// The engine's core write operations, supplied by the open door with the
+    /// delete guards.
+    pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -282,6 +318,10 @@ pub struct StoreCore {
     /// Where this vault's queued code-run reader children are woken, none
     /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
     pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
+    /// The host that serves this vault's drafter bindings on its own managed
+    /// worker, none until one attaches (FIX 14976,
+    /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
+    pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -290,7 +330,7 @@ pub struct StoreCore {
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
     /// key goes. Never persisted.
-    pub(crate) inference_snapshots: crate::inference_snapshot::SnapshotLifecycle,
+    pub(crate) inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.
@@ -299,7 +339,9 @@ pub struct StoreCore {
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
-    pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
+    pub(in crate::store) ppr_cache_invalidation:
+        &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
@@ -320,6 +362,9 @@ pub struct StoreCore {
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// Committed consent answers wake this vault's connector-call settler.
+    /// Content-free and in memory only; the durable answer is re-read.
+    pub(crate) consent_answers: tokio::sync::Notify,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -327,11 +372,11 @@ pub struct StoreCore {
     pub(crate) credential_revocations: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
-    pub(crate) container_output: crate::conversation::ContainerOutputGuard,
+    pub(crate) container_output: crate::store::container_output::ContainerOutputGuard,
     /// The voice calls live in each room, by host token (FIX 1388/1389 C1).
     /// Per vault, in memory, never persisted: hosts register again after a
     /// restart.
-    pub(crate) live_speakers: crate::conversation::LiveSpeakers,
+    pub(crate) live_speakers: crate::store::live_speaker_calls::LiveSpeakers,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
@@ -397,6 +442,9 @@ pub struct StoreOwner {
 /// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
 /// `store.env`/`store.kind_registry` field access is preserved.
 pub struct Store {
+    /// This handle's live carrier leaves, asks and refusals. Kept outside the
+    /// shared core and wiped before the environment's owner drops.
+    pub(crate) custody_leaves: Mutex<crate::secret_custody::CustodyLeafSession>,
     // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
     // reference drops first; `owner` then closes the environment (its
     // `OwnedEnv` holds the last remaining `Env` clone) and finally releases
@@ -663,7 +711,9 @@ macro_rules! manifest_dbs {
                       attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
                       after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
         )]
-        pub(crate) trait ManifestDbs: policy_fold::PolicyFoldSource {
+        pub(crate) trait ManifestDbs:
+            policy_fold::PolicyFoldSource + oneiron_store::vector_index::VectorIndexDbs
+        {
             $(fn $name(&self) -> &$ty;)+
 
             /// The diagnostic counters of the vault this write target belongs
@@ -672,7 +722,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             /// The scan checks this vault holds until its next write
-            /// ([`crate::scan_check::ScanCount::defer`]).
+            /// ([`crate::store::scan_count::ScanCount::defer`]).
             fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
@@ -740,7 +790,7 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
-            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+            fn pending_scan_checks(&self) -> &crate::store::PendingScanChecks {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
@@ -825,6 +875,8 @@ impl Drop for StoreOwner {
 }
 
 pub(super) fn seed_default_policy_manifest_in_txn(
+    gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     entities: &OverlayDb,
     sync_state: &OverlayStrDb,
     type_index: &OverlayDb,
@@ -838,23 +890,27 @@ pub(super) fn seed_default_policy_manifest_in_txn(
     if entities.get(wtxn, id.as_bytes())?.is_some() {
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
-    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest()?;
+    let timestamp = crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let body = gate_hooks.default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
     payload.extend_from_slice(&timestamp.to_be_bytes());
+    payload.extend_from_slice(&0u64.to_be_bytes());
     payload.extend_from_slice(&body);
     entities.put(wtxn, id.as_bytes(), &payload)?;
+    let hash = blake3::hash(&body);
+    let mut trusted_origin = hash.as_bytes().to_vec();
+    trusted_origin.extend_from_slice(&clock.peek_recorded_at().to_be_bytes());
     sync_state.put(
         wtxn,
-        &crate::gate::trusted_manifest_key(id),
-        blake3::hash(&body).as_bytes(),
+        &oneiron_store::manifest_origin_keys::trusted_manifest_key(id),
+        &trusted_origin,
     )?;
     sync_state.put(
         wtxn,
-        &crate::gate::seeded_manifest_key(id),
+        &oneiron_store::manifest_origin_keys::seeded_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
     type_index.put(
@@ -868,6 +924,26 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
+    /// The vault directory's identity from the descriptor the open bound,
+    /// never a fresh pathname lookup: a rename after open cannot redirect
+    /// it (REVIEW-4381 P1). None where the open retained no descriptor.
+    pub(crate) fn bound_root_identity(&self) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            self.owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .and_then(|dir| dir.metadata().ok())
+                .map(|meta| (meta.dev(), meta.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     /// Upload staging is anchored to the root held by this environment.
     pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
         #[cfg(unix)]

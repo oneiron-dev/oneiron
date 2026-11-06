@@ -584,6 +584,21 @@ impl Vault {
         share: &Share,
         travel: &crate::share_travel::TravelChoice,
     ) -> Result<()> {
+        self.create_share_travelling_then(share_id, issuer, share, travel, &|_| Ok(()))
+    }
+
+    /// [`Self::create_share_travelling`], running `then` in the write that
+    /// admits the share, after its grant is written: a paced call's turn
+    /// marks its held call landed there, so the share and the mark commit
+    /// together (FIX 8753). A refused or paced share runs no `then`.
+    pub(crate) fn create_share_travelling_then(
+        &self,
+        share_id: &EntityId,
+        issuer: &WriteActor,
+        share: &Share,
+        travel: &crate::share_travel::TravelChoice,
+        then: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         let grant = share.grant();
         let data = encode_access_grant_body(&grant)?;
         if share.status != AccessGrantStatus::Active {
@@ -623,14 +638,25 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::IdentityUnsettled { name }));
         }
-        let (gate_id, decision) = crate::gate::check_share_create_policy(
+        let (gate_id, decision) = match crate::gate::check_share_create_policy(
             &self.store,
             &mut txn,
             share_id,
             issuer,
             share,
             travel,
-        )?;
+        )? {
+            crate::gate::ExternalEffectCheck::Decided(id, decision, _) => (id, decision),
+            // FIX 12155: a full count-bound window paces the share: nothing
+            // was recorded or charged, so drop the writer and wait for the
+            // window instead of committing a budget-exhausted denial.
+            crate::gate::ExternalEffectCheck::Paced { next_eligible_at } => {
+                drop(txn);
+                return Err(Error::Gate(GateError::ShareCreatePaced {
+                    next_eligible_at,
+                }));
+            }
+        };
         if decision.outcome() != GateOutcome::Allow {
             let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),
@@ -654,6 +680,7 @@ impl Vault {
         self.apply_access_grant_body(&mut txn, share_id, share.created_at, data)?;
         ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
         crate::share_travel::put_brief_travel_in_txn(self, &mut txn, share_id, travel)?;
+        then(&mut txn)?;
         txn.commit()?;
         Ok(())
     }

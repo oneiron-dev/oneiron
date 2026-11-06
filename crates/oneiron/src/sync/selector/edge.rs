@@ -404,8 +404,22 @@ fn release_update(key: &WindowKey, released: &[(String, Vec<u8>)]) -> Result<Vec
         .map_err(|e| Error::sync_engine(crate::error::SyncEngineContext::LoroExportAllUpdates, e))
 }
 
+/// The stamps of `stamps` on each of `rows`.
+#[cfg(feature = "sync")]
+pub(super) fn stamps_on(
+    stamps: &[HeldStamp],
+    rows: &std::collections::BTreeSet<EntityId>,
+) -> Vec<HeldStamp> {
+    stamps
+        .iter()
+        .filter(|stamp| rows.contains(&stamp.src))
+        .cloned()
+        .collect()
+}
+
 /// A `FacetOf` stamp an update sent onto a row this vault does not store.
 #[cfg(feature = "sync")]
+#[derive(Clone)]
 pub(super) struct HeldStamp {
     src: EntityId,
     tgt: EntityId,
@@ -416,6 +430,11 @@ pub(super) struct HeldStamp {
 impl HeldStamp {
     fn key(&self) -> String {
         super::bridge::format_edge_key(&self.src, EdgeKind::FacetOf, &self.tgt)
+    }
+
+    /// Whether the stamp's row or its facet is one of `rows`.
+    pub(super) fn names_any(&self, rows: &std::collections::BTreeSet<EntityId>) -> bool {
+        rows.contains(&self.src) || rows.contains(&self.tgt)
     }
 
     /// The stamps of each of `groups` as the record a staged receipt keeps of

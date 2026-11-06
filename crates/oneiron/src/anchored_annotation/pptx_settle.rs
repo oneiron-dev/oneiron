@@ -77,6 +77,7 @@ impl crate::Vault {
                             state: ThreadState::Open,
                             locator,
                             drift: None,
+                            body: None,
                         };
                         let id = self.write_thread_head_in_txn(
                             txn,
@@ -140,6 +141,7 @@ impl crate::Vault {
                             state,
                             locator: thread.anchor.locator.clone(),
                             drift: thread.drift,
+                            body: thread.anchor.body.clone(),
                         };
                         let id = self.write_thread_head_in_txn(
                             txn,

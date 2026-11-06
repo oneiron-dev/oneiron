@@ -8,6 +8,7 @@ use super::{
     Vault, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, WITNESS_ROW, WitnessTurn, json,
     sources, verb_hook_boundary,
 };
+use oneiron::runtime_hooks::VerbCallScope;
 
 /// The call of a turn's `host.turn.generate`. A write a host verb causes
 /// stamps the System class. Its invocation derives from the turn's own, so a
@@ -30,7 +31,7 @@ pub(in crate::api::ai::chat) fn turn_generate_call(
         }),
         actor,
         class: HookActorClass::System,
-        scope: room.map(|room| format!("room:{}", room.to_hex())),
+        scope: room.map(|room| VerbCallScope::Named(format!("room:{}", room.to_hex()))),
         board_epoch: None,
         turn: None,
         domain: VerbDomain::Write,
@@ -119,6 +120,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
         },
+        &oneiron::runtime_hooks::verb::run_failed_transient,
     )?;
     // A turn that resumes a settled ask never runs the witness closure above:
     // its sources come from the stored receipt instead.

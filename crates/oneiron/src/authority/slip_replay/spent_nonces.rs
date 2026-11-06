@@ -60,8 +60,7 @@ use crate::self_heal::{
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body,
 };
 use crate::store::{
-    AfterCommit, DetachedWrite, active_write_txn_guard, release_vault_handle,
-    with_idempotency_intent,
+    AfterCommit, DetachedWrite, LeaderHolds, active_write_txn_guard, with_idempotency_intent,
 };
 use crate::{VAULT_WRITER_LEASE_HELD, Vault, VaultWriterLease};
 
@@ -303,8 +302,12 @@ impl Nonces {
                 if self.journal_len > 0
                     && let Ok(bytes) = std::fs::read(root.join(SPEND_JOURNAL_FILE))
                 {
-                    for record in bytes.chunks_exact(JOURNAL_RECORD_LEN).filter_map(parse_journal_record) {
-                        self.journal_high = self.journal_high.max(record.proof_now).max(record.high);
+                    for record in bytes
+                        .chunks_exact(JOURNAL_RECORD_LEN)
+                        .filter_map(parse_journal_record)
+                    {
+                        self.journal_high =
+                            self.journal_high.max(record.proof_now).max(record.high);
                     }
                 }
                 self.journal = Some(file);
@@ -532,6 +535,10 @@ pub(in crate::authority) struct SpendGuard {
 /// spend it answered is a row this writer reads; an absent or empty
 /// journal, the common path, costs one stat.
 pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<SpendGuard> {
+    // Inherited turn locks may be held by a thread that does not exist here.
+    if !vault.spent_nonces.in_own_process() {
+        return Err(Error::VaultServedElsewhere);
+    }
     let turn = spend_lock(vault.store.canonical_root())
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
@@ -707,7 +714,8 @@ impl SpentNonces {
                 let now = floor.max(vault.store.clock.wall_now()).max(live_high);
                 if floor > clock.now
                     || now < clock.now
-                    || PROOF_NOT_BEFORE.get(&vault.store, &txn, &())?.unwrap_or(0) > clock.not_before
+                    || PROOF_NOT_BEFORE.get(&vault.store, &txn, &())?.unwrap_or(0)
+                        > clock.not_before
                 {
                     return Ok(true);
                 }
@@ -927,8 +935,14 @@ impl SpentNonces {
         // it back makes the slip live again (review #4484 Astra P1, 11-04
         // 16:2x). The retention rule lets the extra rows go later.
         if let Ok(now) = vault.capability_slip_now() {
-            let ended = records.iter().filter(|record| record.window_end < now).count();
-            tracing::debug!(ended, "slip-spend journal records whose replay window ended land too");
+            let ended = records
+                .iter()
+                .filter(|record| record.window_end < now)
+                .count();
+            tracing::debug!(
+                ended,
+                "slip-spend journal records whose replay window ended land too"
+            );
             if records
                 .iter()
                 .any(|record| record.proof_now > now.saturating_add(WINDOW_SECS))
@@ -1175,6 +1189,7 @@ impl SpendDoor {
         }
         NonceSpend {
             vault: Arc::downgrade(served),
+            holds: served.store.leader_holds(),
             key,
             admitted_at: now,
             proof_now,
@@ -1223,6 +1238,9 @@ fn put_spend_rows_in_txn(
 /// One in-memory spend's rows, on their way through the detached door.
 struct NonceSpend {
     vault: Weak<Vault>,
+    /// The handles its vault's store leader holds, which its callbacks take
+    /// theirs through (FIX 12316).
+    holds: LeaderHolds,
     key: SpentKey,
     /// The authority second its admission took.
     admitted_at: u64,
@@ -1263,14 +1281,14 @@ impl NonceSpend {
 
     /// Lets go of its entry in its vault's set ([`SpentNonces::landed`]),
     /// its rows committed and visible. A vault already closing takes its set
-    /// with it. This runs on the store's leader, so it lets go of the handle
-    /// it took as the door lets go of its own, since it may be the last.
+    /// with it. This runs on the store's leader, so it takes its handle as
+    /// the door takes its own, since it may be the last.
     fn leave(&self) {
-        let Some(vault) = self.vault.upgrade() else {
+        let Some(vault) = self.holds.take(&self.vault) else {
             return;
         };
         vault.spent_nonces.landed(&self.key);
-        release_vault_handle(vault);
+        drop(vault);
     }
 
     /// Queues its rows again after a try whose rows did not land, or, once
@@ -1278,11 +1296,10 @@ impl NonceSpend {
     /// stays spent in memory either way, until its slip's replay window
     /// ends. This runs in the after-commit callback, on the store's leader,
     /// which drains the queue: it queues without waiting for the drain, and
-    /// lets go of the handle it took as the door lets go of its own, since it
-    /// may be the last.
+    /// takes its handle as the door takes its own, since it may be the last.
     fn retry(mut self) {
         self.failures += 1;
-        let Some(vault) = self.vault.upgrade() else {
+        let Some(vault) = self.holds.take(&self.vault) else {
             tracing::warn!(
                 failures = self.failures,
                 "a nonce spend's rows did not land as its vault closed; its nonce stayed spent while the vault was open"
@@ -1295,16 +1312,16 @@ impl NonceSpend {
                 failures = self.failures,
                 "a nonce spend's rows did not land; they are queued again"
             );
-            self.queue(&vault);
+            self.queue(vault.handle());
         } else {
             tracing::warn!(
                 failures = self.failures,
                 "a nonce spend's rows did not land in any try; its healer item is queued, and its nonce stays spent in memory"
             );
-            self.queue_healer_item(&vault);
+            self.queue_healer_item(vault.handle());
         }
         drop(leader);
-        release_vault_handle(vault);
+        drop(vault);
     }
 
     /// Queues its healer item on `served`'s detached door, counted on no

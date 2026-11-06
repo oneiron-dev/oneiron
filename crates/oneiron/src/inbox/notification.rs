@@ -19,14 +19,18 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, BUDGET_HOLD_ACTOR,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
+use crate::deletion::ActorErasureWriter;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTIFICATION};
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::attempt_hold::BUDGET_HOLD_ACTOR;
+use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::AttemptInterventionKind;
+use crate::store::attempt_state::AttemptState;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -73,7 +77,7 @@ pub enum NotificationKind {
     Finding,
     EventReceived,
     ImportFinished,
-    /// A built proactivity digest; `source.result` names its id.
+    /// A built digest, including proactivity and weave; `source.result` names its id.
     Digest,
     /// A decision waiting on its recipient; `source.producer` names what
     /// asks, `source.result` the thing to answer and `source.detail`, when
@@ -201,6 +205,76 @@ pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
         NOTIFICATION_ID_DOMAIN,
         &[source.producer.as_bytes(), source.event.as_bytes()],
     )
+}
+
+/// Removes the hard-erased target from existing Finding subjects in its own
+/// writer. Held notices stay untouched; only changed, unheld rows retire
+/// their old revisions and capture the record that materialization stored.
+pub(crate) fn scrub_finding_notification_subjects_in_txn(
+    erase: &mut ActorErasureWriter<'_, '_>,
+) -> Result<()> {
+    let (vault, txn, actor) = erase.parts();
+    let erased = actor.to_hex();
+    let mut count = ScanCount::start(
+        &vault.store,
+        &*txn,
+        EngineScan::TypeIndexRows,
+        &[ENTITY_TYPE_NOTIFICATION],
+    )?;
+    let mut ids = Vec::new();
+    for row in vault
+        .store
+        .port_entity_ids_by_type(&*txn, ENTITY_TYPE_NOTIFICATION, None)?
+    {
+        count.row();
+        ids.push(row?);
+    }
+    count.finish(vault);
+    for id in ids {
+        let LiveEntityRow::Live { entity_type, body } =
+            live_entity_row_in_txn(&vault.store, &*txn, &id)?
+        else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_NOTIFICATION {
+            continue;
+        }
+        let Ok(mut body) = decode_notification_body(&body) else {
+            continue;
+        };
+        if body.kind != NotificationKind::Finding
+            || body.source.producer != NOTIFICATION_PRODUCER_FINDING
+        {
+            continue;
+        }
+        let before = body.subject_refs.len();
+        body.subject_refs.retain(|subject| subject != &erased);
+        if body.subject_refs.len() == before
+            || crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())?
+        {
+            continue;
+        }
+        vault.put_notification_in_txn(txn, &id, &body)?;
+        let stored = vault
+            .store
+            .port_entity_record(&*txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        if stored.entity_type != ENTITY_TYPE_NOTIFICATION
+            || decode_notification_body(&stored.body)? != body
+        {
+            return Err(Error::InvariantViolation(
+                "notification actor erasure did not materialize",
+            ));
+        }
+        crate::vault::entity_revision::remove_entity_revisions(&vault.store, txn, &id)?;
+        crate::vault::entity_revision::capture_entity_revision(
+            &vault.store,
+            txn,
+            &id,
+            &stored.encode(),
+        )?;
+    }
+    Ok(())
 }
 
 impl Vault {

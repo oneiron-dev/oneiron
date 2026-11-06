@@ -1,6 +1,7 @@
-//! The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run
-//! as its own process behind the organ host (ARCH-0064 section 7, ARCH-0075
-//! `#organ-host-design-seal-move` and `#organ-host-design-seal-binding`).
+//! The seal organ: `seal.pdf` (schema 2) and `seal.verify`, `seal.inspect`
+//! and `seal.prepare` (schema 1), run as its own process behind the organ
+//! host (ARCH-0064 section 7, ARCH-0075 `#organ-host-design-seal-move` and
+//! `#organ-host-design-seal-binding`).
 //!
 //! The engine prepares the PDF, writes its ordinary signature revision for
 //! each contents capacity, and lends both; it keeps the signing key. The
@@ -8,8 +9,8 @@
 //! data and document timestamp after it. It asks the engine back, protocol
 //! 1.1, for the signing identity (`seal.identity`), for the signature over
 //! the revision's signed attributes (`seal.sign`), and for every timestamp
-//! and CRL fetch (`net.fetch`, inside the allowlist the install grant
-//! names). Both verbs ask it for the memory their PDF decodes and their
+//! and CRL/OCSP fetch (`net.fetch`, inside the allowlist the install grant
+//! names). Each verb asks it for the memory its PDF decodes and its
 //! fetched bytes take, before they allocate it (`memory.grow`, FIX 7654):
 //! the engine's host leases it from the machine's memory floor and holds it
 //! until the call ends. Its clock is the engine's `now_ms` plus the time
@@ -23,13 +24,24 @@
 //!   `id` is the PDF followed by its suffix.
 //! - `seal.verify`: `{now_ms, config}`, one `application/pdf` input. It
 //!   asks only for memory: never a signature or a fetch.
+//! - `seal.inspect`: `{}`, one `application/pdf` input. It asks only for
+//!   memory: never a signature or a fetch.
+//! - `seal.prepare`: `{document_ref, item, canonical_url, artifact_ref,
+//!   original_version, title, audit_rows, rejection?, recipients,
+//!   signatures, fields, values, raster_index, chain, trail}`, two inputs:
+//!   the `application/pdf` original, then the signature rasters one after
+//!   another as `application/octet-stream`. It asks only for memory: never
+//!   a signature or a fetch.
 //! - `config`: `{trust_anchors: [bin], timestamp_authorities: [{url,
 //!   policy_oid?}]}`. The seal's only size limits are format bounds, its
 //!   own (`SealResourceLimits::default`); nothing on size is configured.
 //!
 //! Reports: `{sealed: {evidence_sha256, requested, achieved, degraded,
-//! self_verify}}` with the output `sealed.pdf`, `{verified: verdict}`, or
-//! `{failed: <seal error>}`. A verdict is `{verdict, reasons, achieved,
+//! self_verify}}` with the output `sealed.pdf`, `{verified: verdict}`,
+//! `{inspected: {pages}}`, `{prepared: {original_sha256,
+//! audit_chain_sha256, original_pages, appendix_pages}}` with the output
+//! `prepared.pdf`, or `{failed: <seal error>}`. A verdict is `{verdict,
+//! reasons, achieved,
 //! self_verify_ok, report_json, classification}`, the classification the
 //! native verification's revision chain (the `report` child); the error
 //! names the seal's own stage and code.
@@ -61,8 +73,14 @@ use crate::api::{
     SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
-use crate::memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal};
+use crate::memory::{
+    AdmittedBytes, AdmittedStr, MemoryLedger, SealMemory, SealMemoryProvider, SealMemoryRefusal,
+};
 use crate::native::NativeSealEngine;
+use crate::native::pdf::{
+    BurnField, BurnValue, FieldGeometry, WorkError, WorkLimits, WorkPrepareRequest, WorkRaster,
+    WorkRecipient, WorkSignature, inspect_in, prepare_in,
+};
 
 mod report;
 
@@ -70,8 +88,12 @@ use self::report::Verdict;
 
 pub const VERB_SEAL: &str = "seal.pdf";
 pub const VERB_VERIFY: &str = "seal.verify";
+pub const VERB_INSPECT: &str = "seal.inspect";
+pub const VERB_PREPARE: &str = "seal.prepare";
 /// `seal.pdf`'s schema: the engine's revisions, lent beside the PDF.
 pub const SEAL_SCHEMA: u32 = 2;
+pub const INSPECT_SCHEMA: u32 = 1;
+pub const PREPARE_SCHEMA: u32 = 1;
 /// Ask: the signing identity, `{}` → `{algorithm, signer_certificate,
 /// chain}`.
 pub const ASK_IDENTITY: &str = "seal.identity";
@@ -103,14 +125,19 @@ impl Organ for SealOrgan {
     }
 
     fn verbs(&self) -> Vec<VerbSpec> {
-        [(VERB_SEAL, SEAL_SCHEMA), (VERB_VERIFY, 1)]
-            .into_iter()
-            .map(|(name, schema)| VerbSpec {
-                name: name.to_owned(),
-                schema,
-                kinds: Vec::new(),
-            })
-            .collect()
+        [
+            (VERB_SEAL, SEAL_SCHEMA),
+            (VERB_VERIFY, 1),
+            (VERB_INSPECT, INSPECT_SCHEMA),
+            (VERB_PREPARE, PREPARE_SCHEMA),
+        ]
+        .into_iter()
+        .map(|(name, schema)| VerbSpec {
+            name: name.to_owned(),
+            schema,
+            kinds: Vec::new(),
+        })
+        .collect()
     }
 
     fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
@@ -118,6 +145,8 @@ impl Organ for SealOrgan {
         match call.verb {
             VERB_SEAL => seal(call, began),
             VERB_VERIFY => verify(call, began),
+            VERB_INSPECT => inspect(call, began),
+            VERB_PREPARE => prepare(call, began),
             other => Err(OrganError::new(
                 ErrorCode::UnknownVerb,
                 format!("no verb {other}"),
@@ -164,6 +193,86 @@ struct TsaArgs {
     policy_oid: Option<String>,
 }
 
+/// `seal.inspect` carries the caller's existing per-stream codec bound.
+/// PDF work needs no trust anchors.
+#[derive(Deserialize)]
+struct InspectArgs {
+    stream_decode_bytes: u64,
+}
+
+/// `seal.prepare` args (schema 1): the host's projection of the engine's
+/// preparation, lent scalars the ported pipeline takes as-is. The organ's
+/// own mirror of the host's `PrepareArgs`: no `H/` type crosses the
+/// process boundary.
+#[derive(Deserialize)]
+struct PrepareArgs {
+    document_ref: String,
+    item: u32,
+    canonical_url: String,
+    artifact_ref: String,
+    original_version: u64,
+    title: String,
+    audit_rows: usize,
+    rejection: Option<String>,
+    recipients: Vec<WireRecipient>,
+    signatures: Vec<WireSignature>,
+    fields: Vec<WireField>,
+    values: std::collections::BTreeMap<String, WireValue>,
+    raster_index: Vec<RasterEntry>,
+    chain: ByteBuf,
+    trail: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct WireRecipient {
+    id: String,
+    name: String,
+    email: String,
+    natural_person: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WireSignature {
+    field: String,
+    recipient: String,
+    at: u64,
+}
+
+#[derive(Deserialize)]
+struct WireField {
+    id: String,
+    geometry: WireGeometry,
+}
+
+#[derive(Deserialize)]
+struct WireGeometry {
+    page: u32,
+    x_percent: f64,
+    y_percent: f64,
+    width_percent: f64,
+    height_percent: f64,
+}
+
+/// The engine's `FieldValue` row, adjacently tagged exactly like it, as the
+/// host sent it.
+#[derive(Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+enum WireValue {
+    Text(String),
+    Checked(bool),
+    Signature { image_ref: String },
+}
+
+/// One raster's slice of the lent rasters blob: offsets into it.
+#[derive(Deserialize)]
+struct RasterEntry {
+    image_ref: String,
+    width: u32,
+    height: u32,
+    offset: u64,
+    len: u64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SealReport {
@@ -181,6 +290,33 @@ enum SealReport {
 #[serde(rename_all = "snake_case")]
 enum VerifyReply {
     Verified(Verdict),
+    Failed(Failure),
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum InspectReply {
+    Inspected { pages: Vec<WirePage> },
+    Failed(Failure),
+}
+
+/// One page's geometry, as the port's `PageGeometry`.
+#[derive(Serialize)]
+struct WirePage {
+    crop: [f64; 4],
+    rotation: u16,
+    user_unit: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PrepareReply {
+    Prepared {
+        original_sha256: ByteBuf,
+        audit_chain_sha256: ByteBuf,
+        original_pages: u32,
+        appendix_pages: u32,
+    },
     Failed(Failure),
 }
 
@@ -212,6 +348,11 @@ enum Failure {
     },
     InputInvalid {
         code: InputInvalidCode,
+    },
+    /// The engine's revisions held too little: the CMS needed `needed` DER
+    /// bytes, for the engine to write a larger revision (FIX 6270).
+    ContentsShort {
+        needed: u64,
     },
 }
 
@@ -271,8 +412,18 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         .collect::<Result<Vec<_>, OrganError>>()?;
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let failed = |err: SealError| -> Result<Answer, OrganError> {
-        let failure = SealReport::Failed(Failure::of(err, None, &memory)?);
-        report(&failure, &observed, &memory)
+        let failure = match err {
+            // Past the largest revision the engine wrote, the DER bytes the
+            // CMS needed are the call's own count (FIX 6270).
+            SealError::Fatal {
+                stage: SealStage::PdfIncrementalUpdate,
+                code: FatalCode::ContentsCapacityExceeded,
+            } => Failure::ContentsShort {
+                needed: observed.observed().contents_bytes,
+            },
+            err => Failure::of(err, None, &memory)?,
+        };
+        report(&SealReport::Failed(failure), &observed, &memory)
     };
     let engine = match engine {
         Ok(engine) => engine,
@@ -301,6 +452,12 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             },
         })
         .collect();
+    // A shared output buffer is copied for the reply, so its bytes ride
+    // this call's reply reservation first; a sole owner's buffer moves
+    // without copying (FIX 8452).
+    if Arc::strong_count(&sealed.bytes) != 1 {
+        memory.reserve(sealed.bytes.len() as u64)?;
+    }
     let mut answer = report(
         &SealReport::Sealed {
             evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
@@ -317,7 +474,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
         media_type: PDF.to_owned(),
-        bytes: sealed.bytes,
+        bytes: crate::memory::AdmittedBytes::into_vec(sealed.bytes),
     });
     Ok(answer)
 }
@@ -342,6 +499,260 @@ fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> 
             &observed,
             &memory,
         ),
+    }
+}
+
+/// The ported pipeline's limits: this call's operation ledger, which bills
+/// `asker` through `memory.grow` like seal/verify, and its counts. The
+/// ledger was opened from this asker; the parameter pins the call site to
+/// it.
+fn work_limits<'a>(
+    asker: &Asker,
+    observed: &'a SealObservations,
+    ledger: &'a Arc<MemoryLedger>,
+) -> WorkLimits<'a> {
+    let _ = asker;
+    WorkLimits {
+        ledger,
+        observed,
+        stream_decode_bytes: None,
+    }
+}
+
+/// The call's operation ledger and counts for the ported pipeline: the
+/// same `AskedMemory`/`CallAsks` ask path as seal/verify, so the pdf
+/// decodes reserve via `memory.grow`; a fresh count sink per call, read by
+/// the report.
+fn pdf_work_operation(asker: Asker) -> Result<(SealResourceLimits, Arc<MemoryLedger>), OrganError> {
+    let asks = Arc::new(CallAsks { asker });
+    let provider = SealMemoryProvider::new(Arc::new(AskedMemory { asks }));
+    let mut resource = SealResourceLimits::default();
+    resource.memory = provider;
+    let operation = resource
+        .operation(SealStage::InputValidation)
+        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("pdf work memory: {err}")))?;
+    let ledger = operation.memory.ledger().map_err(|refusal| {
+        OrganError::new(ErrorCode::Internal, format!("pdf work ledger: {refusal}"))
+    })?;
+    Ok((operation, ledger))
+}
+
+fn inspect(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
+    let _ = began;
+    if call.schema != INSPECT_SCHEMA {
+        return Err(bad("seal.inspect is schema 1"));
+    }
+    let memory = ReplyMemory(call.asker());
+    let args: InspectArgs = memory.args(call.args, "inspect args")?;
+    let pdf = the_pdf(call)?;
+    let asker = call.asker();
+    let (operation, ledger) = pdf_work_operation(asker.clone())?;
+    let mut limits = work_limits(&asker, &operation.observed, &ledger);
+    limits.stream_decode_bytes =
+        Some(usize::try_from(args.stream_decode_bytes).unwrap_or(usize::MAX));
+    let failed = |err: SealError| -> Result<Answer, OrganError> {
+        let failure = InspectReply::Failed(Failure::of(err, Some(pdf), &memory)?);
+        report(&failure, &operation.observed, &memory)
+    };
+    match inspect_in(pdf, &limits) {
+        Ok(pages) => {
+            if let Err(refusal) = ledger.admit_len::<WirePage>(pages.len()) {
+                return failed(refusal.seal_error(SealStage::InputValidation));
+            }
+            let pages = pages
+                .into_iter()
+                .map(|page| WirePage {
+                    crop: page.crop,
+                    rotation: page.rotation,
+                    user_unit: page.user_unit,
+                })
+                .collect::<Vec<_>>();
+            report(
+                &InspectReply::Inspected { pages },
+                &operation.observed,
+                &memory,
+            )
+        }
+        Err(err) => failed(err.seal_error(SealStage::InputValidation)),
+    }
+}
+
+fn prepare(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
+    let _ = began;
+    if call.schema != PREPARE_SCHEMA {
+        return Err(bad("seal.prepare is schema 1"));
+    }
+    let memory = ReplyMemory(call.asker());
+    let args: PrepareArgs = memory.args(call.args, "prepare args")?;
+    let (pdf, raster_blob) = match call.inputs {
+        [pdf, rasters] if pdf.media_type == PDF && rasters.media_type == REVISIONS => {
+            (&pdf[..], &rasters[..])
+        }
+        _ => return Err(bad("an application/pdf input, then the rasters")),
+    };
+    let asker = call.asker();
+    let (operation, ledger) = pdf_work_operation(asker.clone())?;
+    let limits = work_limits(&asker, &operation.observed, &ledger);
+    let failed = |err: SealError| -> Result<Answer, OrganError> {
+        let failure = PrepareReply::Failed(Failure::of(err, Some(pdf), &memory)?);
+        report(&failure, &operation.observed, &memory)
+    };
+    // A ledger refusal as the seal's error, at the write-phase stage, like
+    // the pipeline's own.
+    let admit = |result: Result<(), SealMemoryRefusal>| -> Result<(), SealError> {
+        result.map_err(|refusal| refusal.seal_error(SealStage::PdfIncrementalUpdate))
+    };
+    // The wire scalars projected onto the port's lent request: borrowed
+    // where the args already own the bytes, cloned and admitted where the
+    // port owns them. One map entry's share plus the cloned key's heap
+    // bytes each (pattern `work_burn.rs:465-467`).
+    let entry_share = |key: usize, value: usize| {
+        (11 * (key + value) + 12 * std::mem::size_of::<usize>() + 64).div_ceil(5)
+    };
+    let value_share = entry_share(
+        std::mem::size_of::<String>(),
+        std::mem::size_of::<BurnValue>(),
+    );
+    let mut values = std::collections::BTreeMap::new();
+    for (id, value) in &args.values {
+        let heap = match value {
+            WireValue::Text(text) => text.len(),
+            WireValue::Checked(_) => 0,
+            WireValue::Signature { image_ref } => image_ref.len(),
+        };
+        if let Err(err) =
+            admit(ledger.admit_len::<u8>(value_share.saturating_add(id.len()).saturating_add(heap)))
+        {
+            return failed(err);
+        }
+        let burned = match value {
+            WireValue::Text(text) => BurnValue::Text(text.clone()),
+            WireValue::Checked(checked) => BurnValue::Checked(*checked),
+            WireValue::Signature { image_ref } => BurnValue::Signature {
+                image_ref: image_ref.clone(),
+            },
+        };
+        values.insert(id.clone(), burned);
+    }
+    let raster_share = entry_share(
+        std::mem::size_of::<String>(),
+        std::mem::size_of::<WorkRaster>(),
+    );
+    let mut rasters = std::collections::BTreeMap::new();
+    for entry in &args.raster_index {
+        let start = usize::try_from(entry.offset).ok();
+        let len = usize::try_from(entry.len).ok();
+        let rgba = start
+            .zip(len)
+            .and_then(|(start, len)| raster_blob.get(start..start.checked_add(len)?))
+            .ok_or_else(|| bad("a raster outside its input"))?;
+        if let Err(err) =
+            admit(ledger.admit_len::<u8>(raster_share.saturating_add(entry.image_ref.len())))
+        {
+            return failed(err);
+        }
+        rasters.insert(
+            entry.image_ref.clone(),
+            WorkRaster {
+                width: entry.width,
+                height: entry.height,
+                rgba,
+            },
+        );
+    }
+    if let Err(err) = admit(ledger.admit_len::<BurnField>(args.fields.len())) {
+        return failed(err);
+    }
+    let mut fields = Vec::with_capacity(args.fields.len());
+    for field in &args.fields {
+        if let Err(err) = admit(ledger.admit_len::<u8>(field.id.len())) {
+            return failed(err);
+        }
+        fields.push(BurnField {
+            id: field.id.clone(),
+            geometry: FieldGeometry {
+                page: field.geometry.page,
+                x_percent: field.geometry.x_percent,
+                y_percent: field.geometry.y_percent,
+                width_percent: field.geometry.width_percent,
+                height_percent: field.geometry.height_percent,
+            },
+        });
+    }
+    if let Err(err) = admit(ledger.admit_len::<WorkRecipient>(args.recipients.len())) {
+        return failed(err);
+    }
+    let recipients: Vec<WorkRecipient<'_>> = args
+        .recipients
+        .iter()
+        .map(|recipient| WorkRecipient {
+            id: &recipient.id,
+            name: &recipient.name,
+            email: &recipient.email,
+            natural_person: recipient.natural_person.as_deref(),
+        })
+        .collect();
+    if let Err(err) = admit(ledger.admit_len::<WorkSignature>(args.signatures.len())) {
+        return failed(err);
+    }
+    let signatures: Vec<WorkSignature<'_>> = args
+        .signatures
+        .iter()
+        .map(|signature| WorkSignature {
+            field: &signature.field,
+            recipient: &signature.recipient,
+            at: signature.at,
+        })
+        .collect();
+    let chain: [u8; 32] = args
+        .chain
+        .as_slice()
+        .try_into()
+        .map_err(|_| bad("a 32-byte prepare chain"))?;
+    let request = WorkPrepareRequest {
+        document_ref: &args.document_ref,
+        item: args.item,
+        canonical_url: &args.canonical_url,
+        artifact_ref: &args.artifact_ref,
+        original_version: args.original_version,
+        title: &args.title,
+        audit_rows: args.audit_rows,
+        rejection: args.rejection.as_deref(),
+        recipients: &recipients,
+        signatures: &signatures,
+        fields: &fields,
+        values: &values,
+        rasters: &rasters,
+        chain,
+        trail: &args.trail,
+    };
+    match prepare_in(pdf, &request, &limits) {
+        Ok(prepared) => {
+            memory.reserve(prepared.bytes.len() as u64)?;
+            let mut answer = report(
+                &PrepareReply::Prepared {
+                    original_sha256: ByteBuf::from(prepared.original_sha256.to_vec()),
+                    audit_chain_sha256: ByteBuf::from(prepared.audit_chain_sha256.to_vec()),
+                    original_pages: prepared.original_pages,
+                    appendix_pages: prepared.appendix_pages,
+                },
+                &operation.observed,
+                &memory,
+            )?;
+            answer.outputs.push(OutputBytes {
+                name: "prepared.pdf".to_owned(),
+                media_type: PDF.to_owned(),
+                bytes: prepared.bytes,
+            });
+            Ok(answer)
+        }
+        Err(err) => {
+            let stage = match err {
+                WorkError::Invalid(_) => SealStage::InputValidation,
+                WorkError::Memory(_) => SealStage::PdfIncrementalUpdate,
+            };
+            failed(err.seal_error(stage))
+        }
     }
 }
 
@@ -609,7 +1020,7 @@ impl SealBackend for AskedBackend {
 }
 
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
-/// allowlist. The seal fetches only timestamps and CRLs. A body comes back
+/// allowlist. The seal fetches timestamps, CRLs and OCSP replies. A body comes back
 /// whole: the engine measures its size against its `[limits]` rows, and the
 /// seal's own copy of it is reserved before it is made (`memory.grow`), as
 /// admitted bytes.
@@ -625,7 +1036,8 @@ impl SealFetcher for AskedFetcher {
         let purpose = match request.purpose {
             FetchPurpose::Timestamp => "tsa",
             FetchPurpose::Crl => "crl",
-            FetchPurpose::Ocsp | FetchPurpose::AuthorityInformationAccess => {
+            FetchPurpose::Ocsp => "ocsp",
+            FetchPurpose::AuthorityInformationAccess => {
                 return Err(FetchError::Denied);
             }
         };
@@ -666,11 +1078,19 @@ impl SealFetcher for AskedFetcher {
                     .then(|| Box::new(memory) as Box<dyn Send>);
                 AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }
-            None => AdmittedBytes::empty(),
+            None => AdmittedBytes::shared_empty(&self.memory).map_err(FetchError::Memory)?,
+        };
+        // The answer's text is admitted before it is copied, and shared
+        // (FIX 8455): the reservation is the copy's own.
+        let content_type = match answer.content_type {
+            None => None,
+            Some(text) => Some(Arc::new(
+                AdmittedStr::copy_from(&self.memory, &text).map_err(FetchError::Memory)?,
+            )),
         };
         Ok(FetchResponse {
             body: Arc::new(body),
-            content_type: answer.content_type,
+            content_type,
         })
     }
 }

@@ -40,8 +40,8 @@ pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRoot
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
 pub use self::sync::{
-    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
-    SyncRollbackError, SyncSelectorValidation,
+    FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncProtocolPruneScope,
+    SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation,
 };
 
 /// Result type used throughout the crate.
@@ -176,8 +176,12 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    /// The Gate allowed a share creation but a full budget window paces
+    /// it; the error names the instant to bring it back.
+    ShareCreatePaced,
     FamilyRequiresAutoGrant,
     ActorLacksClaimAuthority,
+    GuestClaimWithheld,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
@@ -217,6 +221,8 @@ pub enum ErrorKind {
     RetrievalStageCut,
     /// No provider answered a model call that may be sent again later.
     ProviderUnavailable,
+    /// A durable step's committed trap already parked its attempt.
+    DurableStepTrapped,
     /// A refusal that names its bound; its message is the whole answer.
     Refused,
     /// A legal order binding the host keeps the record, or keeps it from
@@ -234,8 +240,6 @@ pub enum ErrorKind {
     SyncProtocolError,
     #[cfg(feature = "sync")]
     SyncEngineError,
-    #[cfg(feature = "sync")]
-    MaintenanceIngestQuotaExceeded,
     #[cfg(feature = "sync")]
     HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
@@ -511,6 +515,10 @@ pub enum Error {
     /// so the run parks on the outage rather than its guest handling it.
     #[error("no provider answered; retry in {retry_after} s")]
     ProviderUnavailable { retry_after: u64 },
+    /// The caller's durable step committed its trap and parked its attempt.
+    /// Native execution must unwind without completing or failing that attempt.
+    #[error("the durable step is parked behind its trap")]
+    DurableStepTrapped,
     /// A refusal that names its bound: what the caller funds, configures or
     /// changes before asking again. Its message is caller-safe and is the
     /// whole answer.
@@ -688,6 +696,7 @@ impl Error {
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
+            Self::DurableStepTrapped => ErrorKind::DurableStepTrapped,
             Self::Refused(_) => ErrorKind::Refused,
             Self::LegalHold(_) => ErrorKind::LegalHold,
             Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,

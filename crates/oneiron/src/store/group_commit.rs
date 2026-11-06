@@ -78,7 +78,7 @@ use super::{Store, StoreCore, active_write_txn_depth};
 
 mod detached;
 
-pub(crate) use detached::{AfterCommit, DetachedWrite, release_vault_handle};
+pub(crate) use detached::{AfterCommit, DetachedWrite, LeaderHolds};
 use detached::{DetachedGroup, DetachedWrites};
 
 /// Whose closure a write runs, which decides whether its group may go on
@@ -914,7 +914,7 @@ impl Store {
     {
         let mut txn = self.env.write_txn()?;
         let rows = {
-            let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
+            let _known_index = crate::store::known_value_index::known_index_scope(); // (FIX 12210)
             write(&mut txn)
         };
         match rows {
@@ -1112,7 +1112,7 @@ impl Store {
         E: From<Error>,
     {
         let attempt = self.begin_refusal_attempt();
-        let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
+        let _known_index = crate::store::known_value_index::known_index_scope(); // (FIX 12210)
         let staged = match self.env.nested_write_txn(parent) {
             Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
             Ok(mut child) => match catch_unwind(AssertUnwindSafe(|| write(&mut child))) {

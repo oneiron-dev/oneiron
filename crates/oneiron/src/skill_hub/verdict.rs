@@ -23,8 +23,7 @@ use super::package::HubPackage;
 use super::support::{MAX_HUB_TEXT_BYTES, map_text, map_value, validate_text};
 use crate::error::ArtifactError;
 
-/// Claim predicate for scanner receipts attached to a canonical content hash.
-pub const PREDICATE_SKILL_SCAN_VERDICT: &str = "skill.scan_verdict";
+pub use crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT;
 
 /// Domain separator for the deterministic content-anchor entity-id
 /// derivation (ONE-1741). Bumping this string re-keys every anchor, so it is
@@ -327,6 +326,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(ClaimSource::Observed);
+        body.scope_facet = self.default_facet_in_txn(wtxn)?;
         self.put_reserved_claim_in_txn(wtxn, &claim_id, &body, occurred, learned_at)?;
 
         // F5 newest-wins (ONE-1892): the ACTIVE verdict for a
@@ -536,6 +536,7 @@ impl Vault {
                     end: learned_at,
                 },
                 learned_at,
+                row_version: None,
                 data: content_hash.as_bytes().to_vec(),
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

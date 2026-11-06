@@ -324,6 +324,70 @@ pub(super) fn col_to_letters(mut col: u32) -> String {
 }
 
 impl Vault {
+    /// Direct HTML appends move only HTML anchors from the previous HEAD.
+    /// Keep and edit settlement keep their existing behavior and results.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn reanchor_html_append_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        media_type: &str,
+        from_version: u64,
+        to_version: u64,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        if !matches!(
+            super::anchor_text::UnitFormat::from_media_type(media_type),
+            Some(super::anchor_text::UnitFormat::Html)
+        ) {
+            return Ok(());
+        }
+        self.require_anchor_version_in_txn(wtxn, artifact_id, to_version)?;
+        let threads = self.effect_annotation_threads_for_artifact_in_txn(wtxn, artifact_id)?;
+        let html = super::recovery::HtmlReanchor::load(
+            self,
+            wtxn,
+            artifact_id,
+            from_version,
+            to_version,
+            &threads,
+        )?;
+        for thread in threads {
+            if thread.is_drifted()
+                || thread.anchor.version != from_version
+                || !matches!(thread.anchor.locator, Locator::Html { .. })
+            {
+                continue;
+            }
+            let (head, drifted) = plan_reanchored_head(
+                &thread,
+                from_version,
+                to_version,
+                &[],
+                None,
+                None,
+                html.as_ref(),
+            );
+            if drifted {
+                self.record_detached_in_txn(wtxn, artifact_id, &thread, to_version, learned_at)?;
+            } else {
+                self.record_prior_anchor_in_txn(wtxn, artifact_id, &thread, to_version)?;
+            }
+            self.apply_reanchor_head_in_txn(
+                wtxn,
+                artifact_id,
+                &thread,
+                &head,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Re-anchors every live, non-drifted thread on the artifact whose anchor
     /// resolves against `from_version`, replaying `ops` (the edit-manifest for
     /// the `from_version → to_version` bump).
@@ -351,7 +415,7 @@ impl Vault {
     ) -> Result<ReanchorSummary> {
         self.require_anchor_version(artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
-        let (threads, pptx, docx) = {
+        let (threads, pptx, docx, html) = {
             let rtxn = self.store.env.read_txn()?;
             let threads = self.effect_annotation_threads_for_artifact_in_txn(&rtxn, artifact_id)?;
             let pptx = super::pptx_reanchor::PptxReanchor::load(
@@ -371,7 +435,15 @@ impl Vault {
                 to_version,
                 &threads,
             )?;
-            (threads, pptx, docx)
+            let html = super::recovery::HtmlReanchor::load(
+                self,
+                &rtxn,
+                artifact_id,
+                from_version,
+                to_version,
+                &threads,
+            )?;
+            (threads, pptx, docx, html)
         };
         for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
@@ -384,6 +456,7 @@ impl Vault {
                 ops,
                 pptx.as_ref(),
                 docx.as_ref(),
+                html.as_ref(),
             );
             // Each thread's head write + old-head supersede share ONE txn, so a
             // rejected supersede leaves that thread's original head live.
@@ -468,6 +541,14 @@ impl Vault {
             to_version,
             &threads,
         )?;
+        let html = super::recovery::HtmlReanchor::load(
+            self,
+            wtxn,
+            artifact_id,
+            from_version,
+            to_version,
+            &threads,
+        )?;
         for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
@@ -479,6 +560,7 @@ impl Vault {
                 ops,
                 pptx.as_ref(),
                 docx.as_ref(),
+                html.as_ref(),
             );
             // A detached comment joins the Unattached list with its words; a
             // moved one keeps the anchor it left, for an exact restore.
@@ -543,12 +625,16 @@ fn plan_reanchored_head(
     ops: &[ReanchorOp],
     pptx: Option<&super::pptx_reanchor::PptxReanchor>,
     docx: Option<&super::recovery::DocxReanchor>,
+    html: Option<&super::recovery::HtmlReanchor>,
 ) -> (ThreadHead, bool) {
     let outcome = match &thread.anchor.locator {
         Locator::Pptx { .. } => {
             pptx.map_or(ReanchorOutcome::Drifted, |context| context.rebind(thread))
         }
         Locator::Docx { .. } => docx.map_or(ReanchorOutcome::Drifted, |context| {
+            context.rebind(&thread.anchor.locator)
+        }),
+        Locator::Html { .. } => html.map_or(ReanchorOutcome::Drifted, |context| {
             context.rebind(&thread.anchor.locator)
         }),
         _ => replay_locator(&thread.anchor.locator, ops),
@@ -562,6 +648,7 @@ fn plan_reanchored_head(
                 state: thread.state,
                 locator,
                 drift: None,
+                body: thread.anchor.body.clone(),
             },
             false,
         ),
@@ -576,6 +663,7 @@ fn plan_reanchored_head(
                     drifted_at_version: to_version,
                     pinned_version: from_version,
                 }),
+                body: thread.anchor.body.clone(),
             },
             true,
         ),

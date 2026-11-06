@@ -25,7 +25,8 @@ use oneiron::training_pack::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::super::{ByteBody, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::schema::{CHECKPOINT_HEADER, checkpoint_manifest_schema, pinned_checkpoint_schema};
 use super::{hex_id, now_secs};
 use crate::ai_host::training_pack::{trainer_binding, training_declaration};
 use crate::api::body_spool::OwnerJsonBody;
@@ -43,6 +44,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/coach/training-offers/prepare",
                 summary: "The owner's run for a Train offer's seat and base on a trainer connector this host names; nothing runs.",
                 row: None,
+                shape: None,
             },
             post(prepare),
         ),
@@ -52,6 +54,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/coach/training-offers/authorize",
                 summary: "The owner's yes on a prepared run after their train approval, at the exact spec they saw.",
                 row: None,
+                shape: None,
             },
             post(authorize),
         ),
@@ -61,6 +64,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/coach/training-offers/training",
                 summary: "A Train offer's handed-off run: its state, why it waits, the owner's authorization, its held-out summary and the plan the recipe suggests.",
                 row: None,
+                shape: None,
             },
             post(training),
         ),
@@ -70,6 +74,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/coach/training-runs/prepare",
                 summary: "The owner's run for one detector question's head, on their adjudicated target rows in custody and a trainer connector this host names; nothing runs.",
                 row: None,
+                shape: None,
             },
             post(prepare_question),
         ),
@@ -79,6 +84,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/coach/training-runs/authorize",
                 summary: "The owner's own yes on a prepared run at the exact spec they saw; the host's Coach queues it.",
                 row: None,
+                shape: None,
             },
             post(authorize_run),
         ),
@@ -88,6 +94,27 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/coach/training-checkpoints",
                 summary: "The owner's starting checkpoint into custody: the body is its files' raw bytes back to back, in the order the x-oneiron-checkpoint header's JSON manifest names them, spooled to disk as it arrives; the answer is the pinned checkpoint a training draft names.",
                 row: None,
+                shape: Some(
+                    RestShape::bytes(
+                        ByteBody {
+                            description: "The checkpoint's files as raw bytes, back to back, in the manifest's order.",
+                            header: CHECKPOINT_HEADER,
+                            header_description: "The checkpoint's manifest as JSON: its model, and each file's name, kind, source, BLAKE3 (64 hex) and length in body order.",
+                            header_schema: checkpoint_manifest_schema,
+                        },
+                        pinned_checkpoint_schema,
+                    )
+                    .refusing(&[
+                        (
+                            "400",
+                            "The manifest header is missing or malformed, a file name or source is refused, the body ended before its files or ran past them, or a file's BLAKE3 differs from the manifest's: nothing was kept.",
+                        ),
+                        (
+                            "409",
+                            "The vault's disk has no room for the body past the free-space reserve uploads keep (`disk_capacity`): nothing was kept.",
+                        ),
+                    ]),
+                ),
             },
             put(checkpoints::keep_checkpoint),
         ),

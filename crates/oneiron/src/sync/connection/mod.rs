@@ -6,7 +6,9 @@
 //! 3. Drain offline queue: each queued update is imported into the LOCAL
 //!    window doc, then replayed to the server via WindowSync
 //! 4. Convergence protocol (ARCH-0023b Fig. 2) over the replayed windows
-//! 5. Steady state: read WS messages + write debounced local updates
+//! 5. Steady state: read WS messages + write debounced local updates, each
+//!    batch under the host's admission, paused with the socket open while
+//!    the host is frozen (FIX 12036, [`SyncBatchAdmission`])
 //! 6. On disconnect: queue updates, reconnect with exponential backoff
 //!
 //! Convergence protocol after queue replay (ONE-1128):
@@ -30,6 +32,7 @@
 //!   docs dropped + queue cleared between reconnect attempts, so the next
 //!   connection re-runs Phase 1-3 from scratch.
 
+mod batch_admission;
 mod converge;
 mod directives;
 mod handshake;
@@ -50,6 +53,9 @@ use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
+pub use batch_admission::{
+    SyncBatchAdmission, SyncBatchAdmit, SyncBatchGuard, SyncBatchThaw, SyncBatchVerdict,
+};
 pub(crate) use home_search::HomeSearchSlot;
 pub use home_search::{DeviceResidence, HomeSearch};
 pub use topology::{HomeNodeTopology, HomeRoute};
@@ -91,6 +97,18 @@ pub struct SyncConnection {
     left: tokio::sync::watch::Sender<bool>,
     /// Whether the run loop is going; a leave waits for it to stop.
     running: tokio::sync::watch::Sender<bool>,
+    /// Valid run-buffer updates an explicit leave discarded unqueued (OF-158):
+    /// published by the leave arms after their single try and before any
+    /// `Close`/cleanup await, consumed once in the first-confirm receipt txn.
+    /// Additive and un-reset, never cleared; re-confirm ignores it. 0 when
+    /// every flush was admitted.
+    leave_unqueued: std::sync::atomic::AtomicU64,
+    /// The one verified notice whose receipt owns the discarded run-buffer
+    /// count. Bound after quiescence; never reset on failure/retry.
+    leave_unqueued_receipt: std::sync::OnceLock<String>,
+    /// The host asked before each batch the loop applies or sends (FIX
+    /// 12036); `None` admits every batch at once.
+    batch_admission: Option<Arc<dyn SyncBatchAdmission>>,
     /// Held so this device's query doors reach the home while the
     /// connection lives (OF-534); a federation lane lends none.
     _home_search: Option<Arc<HomeSearch>>,
@@ -134,7 +152,6 @@ impl SyncConnection {
             )?
         };
         let left = crate::sync::shared_leave::has_left(manager.vault())?;
-        crate::sync::shared_leave::collect_left_env_bodies_at_open(manager.vault());
         // The topology moves residence reads to the elected home when the
         // host names the candidates' endpoints.
         if config.client_config.home_node_topology.is_some()
@@ -160,6 +177,9 @@ impl SyncConnection {
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
+            leave_unqueued: std::sync::atomic::AtomicU64::new(0),
+            leave_unqueued_receipt: std::sync::OnceLock::new(),
+            batch_admission: None,
             _home_search: home_search,
         })
     }
@@ -177,14 +197,43 @@ impl SyncConnection {
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
     }
 
+    /// Publishes the count of valid run-buffer updates an explicit leave arm
+    /// discards unqueued (OF-158), then clears that buffer as the explicit
+    /// owner discard. After an arm's single-try `queue_on_exit`, a Pause
+    /// writes nothing; an admitted flush leaves only failed queue writes.
+    /// A leave that interrupts a send publishes its owned buffer directly,
+    /// without another queue admission. Additive (`fetch_add`, never a
+    /// storing overwrite) plus the
+    /// synchronous clear means a later arm seeing the emptied buffer adds 0
+    /// without touching the earlier publication. Non-waiting; runs BEFORE any
+    /// `Close`/cleanup await. Leave arms only; non-leave shutdown never
+    /// calls it.
+    fn publish_leave_unqueued(&self, buffer: &mut Vec<LocalUpdate>) {
+        let unqueued = buffer
+            .iter()
+            .filter(|update| parse_window_key_str(&update.window_key).is_some())
+            .count();
+        let unqueued = u64::try_from(unqueued).unwrap_or(u64::MAX);
+        self.leave_unqueued
+            .fetch_add(unqueued, std::sync::atomic::Ordering::Release);
+        buffer.clear();
+    }
+
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
-    async fn stop_for_leave(&self) {
+    /// Stops the lane for a confirmed leave: no new connect starts once
+    /// `left` is set, and this waits for the running loop to end. Returns
+    /// whether the lane actually stopped: a loop still importing past the
+    /// quiesce timeout must refuse confirmation and retry, never purge
+    /// under a live writer.
+    async fn stop_for_leave(&self) -> bool {
         self.left.send_replace(true);
         let mut running = self.running.subscribe();
         // A loop that does not stop in time may queue its last buffer after
         // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running))
+            .await
+            .is_ok()
     }
 
     /// Asks the sync server for this member's own leave notices with the
@@ -306,10 +355,35 @@ impl SyncConnection {
         let Some(notice) = confirmed else {
             return Ok(None);
         };
-        self.stop_for_leave().await;
-        crate::sync::shared_leave::confirm_verified_shared_leave(self.manager.vault(), &notice)
-            .map(Some)
-            .map_err(|e| TransportError::Storage(e.to_string()))
+        if !self.stop_for_leave().await {
+            return Err(TransportError::Storage(
+                "the sync lane did not quiesce for the leave; retry next round".to_owned(),
+            ));
+        }
+        // Bind after the wait, with no await before confirmation: cancellation
+        // while waiting must not strand this count on an unconfirmed notice.
+        // Keep this owner on a failed transaction so its retry keeps the count.
+        let owns_unqueued = self
+            .leave_unqueued_receipt
+            .get_or_init(|| notice.outcome().receipt_id.clone())
+            == &notice.outcome().receipt_id;
+        // Published before `running=false`: the leave arms publish before any
+        // `Close`/cleanup await, and the final slot before `running=false`.
+        // A failed quiesce returned above, before binding or confirmation.
+        // 0 when every flush was admitted.
+        let unqueued = if owns_unqueued {
+            self.leave_unqueued
+                .load(std::sync::atomic::Ordering::Acquire)
+        } else {
+            0
+        };
+        crate::sync::shared_leave::confirm_verified_shared_leave(
+            self.manager.vault(),
+            &notice,
+            unqueued,
+        )
+        .map(Some)
+        .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
     /// The residence mode this machine runs now.
@@ -595,11 +669,23 @@ impl SyncConnection {
         client.search_resident(query, limit).await
     }
 
+    /// One page of a home search, the first with no `cursor` (FIX 9258):
+    /// [`crate::sync::SyncClient::search_resident_page`].
+    pub async fn search_resident_page(
+        &self,
+        query: &str,
+        limit: usize,
+        cursor: Option<&crate::sync::residence::ResidenceSearchCursor>,
+    ) -> Result<crate::sync::ResidenceSearchPage, crate::sync::TransportError> {
+        let client = self.client()?;
+        client.search_resident_page(query, limit, cursor).await
+    }
+
     /// Clear the queued updates whose bytes the home has durably
     /// acknowledged, window by window. In each window only the contiguous
     /// acknowledged rows clear: a different digest fails the clear, and a
-    /// missing earlier ACK retains the rest of that window's rows, delete
-    /// markers included. Windows are separate documents, so a row the home
+    /// missing earlier ACK or a Held reply retains the rest of that window's
+    /// rows, delete markers included. Windows are separate documents, so a row the home
     /// never acknowledged (a window it refused to grant again, say) holds
     /// back only its own window. A row a device-only world keeps here is
     /// never sent, so never acknowledged: it clears, and its operations stay
@@ -626,8 +712,16 @@ impl SyncConnection {
                 held_back.insert(queued.window_key);
                 continue;
             };
-            if *ack != *blake3::hash(&queued.encoded).as_bytes() {
+            if ack.digest() != blake3::hash(&queued.encoded).as_bytes() {
                 return Err("home residence acknowledgment digest mismatch".into());
+            }
+            if !ack.is_durable()
+                && client.update_verdict(&queued.window_key, &queued.encoded)
+                    != crate::sync::window::UpdateVerdict::Withheld
+            {
+                retained.insert(queued.seq);
+                held_back.insert(queued.window_key);
+                continue;
             }
             confirmed.push(queued.seq);
         }
@@ -648,22 +742,25 @@ impl SyncConnection {
     }
 }
 
-/// Flush all buffered local updates to the persistent offline queue.
-/// Logs errors but does not fail — best-effort during disconnect/shutdown.
+/// Flush buffered local updates to the persistent offline queue.
+/// Logs errors and keeps failed updates in the buffer; shutdown stays best-effort.
 fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
-    for local_update in buffer.drain(..) {
+    buffer.retain(|local_update| {
         if parse_window_key_str(&local_update.window_key).is_none() {
             tracing::error!(
                 "Rejected invalid local update window key during queue flush: {}",
                 local_update.window_key
             );
-            continue;
+            return false;
         }
-        let queue_result = queue.push(&local_update.window_key, &local_update.update_bytes);
-        if let Err(e) = queue_result {
-            tracing::error!("Failed to persist update to offline queue: {e}");
+        match queue.push(&local_update.window_key, &local_update.update_bytes) {
+            Ok(_) => false,
+            Err(e) => {
+                tracing::error!("Failed to persist update to offline queue: {e}");
+                true
+            }
         }
-    }
+    });
 }
 
 /// Reason the steady-state loop exited.

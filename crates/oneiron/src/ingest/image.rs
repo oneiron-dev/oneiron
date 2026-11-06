@@ -208,17 +208,27 @@ impl IngestSource for ImageIngestSource {
     }
 
     fn normalize_binary(&self, bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {
-        let recognizer = if let Some(recognizer) = RECOGNIZER.get().copied() {
-            recognizer
-        } else {
-            // The built-in OCR cannot run without its models: say so before
-            // any decode, not after decoding the image to find out.
-            #[cfg(feature = "image-station-ocr")]
-            ocr_model_paths()?;
-            &DEFAULT_RECOGNIZER
-        };
-        normalize_image(bytes, recognizer, CAPTION_RECOGNIZER.get().copied())
+        normalize_image(
+            bytes,
+            image_text_recognizer()?,
+            CAPTION_RECOGNIZER.get().copied(),
+        )
     }
+}
+
+/// The OCR the ingest station reads image text with: the host's once one is
+/// registered, else the built-in one.
+///
+/// # Errors
+/// The built-in OCR cannot run without its models: it says so before any
+/// decode, not after decoding an image to find out.
+pub(crate) fn image_text_recognizer() -> IngestResult<&'static dyn ImageTextRecognizer> {
+    if let Some(recognizer) = RECOGNIZER.get().copied() {
+        return Ok(recognizer);
+    }
+    #[cfg(feature = "image-station-ocr")]
+    ocr_model_paths()?;
+    Ok(&DEFAULT_RECOGNIZER)
 }
 
 fn normalize_image(

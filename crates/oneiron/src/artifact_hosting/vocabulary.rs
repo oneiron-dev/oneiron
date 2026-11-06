@@ -1,14 +1,13 @@
-//! Value types for artifact pointers, immutable exports, and publication.
-//! Keeps the existing public type and constructor paths through the parent.
-//! Row codecs, the private channel decoder, and publication state stay there.
+//! Core half of `artifact_hosting::vocabulary`: its store-layer items live in `oneiron_store::artifact_hosting::vocabulary` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::artifact_hosting::vocabulary::*;
 
 use super::{
     ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHANNEL_PUBLISHED, ArtifactServeTier, CodeError,
     CodebaseForkHash, CodebaseSnapshot, EntityId, Error, ReceiptRecord, Result, WriteActor,
 };
 use serde::{Deserialize, Serialize};
-
-pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
 
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
@@ -63,14 +62,6 @@ impl Default for ArtifactSnapshotSelector {
     }
 }
 
-/// Exactly one immutable export, owned by the artifact in the route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[non_exhaustive]
-pub enum ArtifactExportRef {
-    ForkHash(CodebaseForkHash),
-    BlobVersion { artifact_id: EntityId, version: u64 },
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
 pub struct ArtifactPointer {
@@ -81,15 +72,6 @@ pub struct ArtifactPointer {
     pub stale_taint_override: bool,
     /// The serve tier of this live pointer.
     pub serve_tier: ArtifactServeTier,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactSnapshotRef {
-    pub artifact: String,
-    pub fork_hash: CodebaseForkHash,
-    pub code_artifact_id: EntityId,
-    pub snapshot: CodebaseSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,14 +145,6 @@ impl ArtifactPublishVerbRequest {
             occurred_at,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ArtifactPublishVerbStatus {
-    Proposed,
-    Published,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,8 +1,7 @@
-//! Canonicalization of invariant field values for stable comparison.
+//! Core half of `store::diagnostic_record::invariant_canonical`: its store-layer items live in `oneiron_store::diagnostic_record::invariant_canonical` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-
-use rmpv::{Integer, Value};
+pub(crate) use oneiron_store::diagnostic_record::invariant_canonical::*;
 
 use super::diagnostic_codec::decode_str;
 use super::event::{
@@ -10,26 +9,8 @@ use super::event::{
 };
 use super::untrusted_text::is_forbidden_text_scalar;
 use crate::error::Result;
-
-/// Longest string leaf the grammar before the owner ruling of 2026-10-14
-/// accepted inside `expected` / `actual` / `delta`.
-const EARLIER_INVARIANT_STRING_LEN: usize = 1024;
-
-// ── invariant-value canonicalization ────────────────────────────────────────
-
-/// Node and depth budget for one `expected` / `actual` / `delta` value, and
-/// the grammar the walk reads.
-#[derive(Default)]
-struct InvariantBudget {
-    depth: usize,
-    nodes: usize,
-    /// Also read the strings and string-keyed maps the grammar before the
-    /// owner ruling of 2026-10-14 allowed. Only a stored body is read so.
-    earlier_grammar: bool,
-    /// The walk met a string or a map, even an empty one: a value only that
-    /// grammar allows.
-    earlier_only: bool,
-}
+use rmpv::{Integer, Value};
+use std::collections::BTreeMap;
 
 /// Reads one stored invariant input, and requires it to have arrived
 /// canonical.

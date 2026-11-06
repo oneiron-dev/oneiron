@@ -45,15 +45,19 @@ pub(super) fn connector_dispatch_request(
     // Ledger identity is the logical-send id (derived from the task
     // idempotency key) so fresh retry attempts stay the same paid intent.
     request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
-    // Local wall-clock time is derived from the FROZEN offset at THIS
+    // Local wall-clock time is seeded from the FROZEN offset at THIS
     // attempt's `now`, never from schedule time. No offset ⇒ no local
     // minute ⇒ the door fails closed instead of guessing midnight. The door
     // reads the clock again for this send, so the time an earlier send in
-    // the drain spent moves this minute on (FIX 8817).
+    // the drain spent moves this minute on (FIX 8817); the frozen IANA label
+    // rides alongside for delivery-time resolution.
     if let Some(offset) = task.utc_offset_minutes {
         request = request
             .delivery_window_local_minute_of_day(local_minute_of_day_at(now, offset))
             .delivery_window_clock(offset, drain_clock);
+        if let Some(zone) = task.iana_timezone.as_ref() {
+            request = request.delivery_window_iana_timezone(zone.clone());
+        }
     }
     if let Some(level) = task.apns_interruption_level {
         request = request.delivery_window_apns_interruption_level(level);
@@ -83,6 +87,16 @@ pub(super) fn connector_dispatch_request(
     if let Some(alternative) = task.ambient_alternative.clone() {
         request = request.ambient_alternative(alternative);
     }
+    // FIX 12100's replay: the schedule chokepoint froze the selection on
+    // the TASK, so the executor selects by the same rules instead of
+    // rebuilding execution without it.
+    if let Some(selection) = &task.selection {
+        request = request.send_autonomy_context(
+            selection
+                .request
+                .send_autonomy(selection.counterparty_class.as_deref()),
+        );
+    }
     request
 }
 
@@ -97,6 +111,10 @@ pub(super) fn settle_held_connector_task(
     mut result: OutboundDispatchResult,
     now: u64,
 ) -> Result<(), ConnectorTaskExecutorError> {
+    // FIX 10955: the transport already ran inside dispatch, so the drain's
+    // `now` is stale here; read the clock again for this settlement's retry
+    // edge and stamps, as the window door does (FIX 8817).
+    let now = vault.now_recorded_at();
     // The door supplies a window-edge retry_at when it knows one;
     // a hostless `local_minute_unavailable` hold knows none. Either
     // way the CONCRETE next instant is computed HERE, before the
@@ -153,6 +171,10 @@ pub(super) fn settle_failed_connector_task(
     mut result: OutboundDispatchResult,
     now: u64,
 ) -> Result<(), ConnectorTaskExecutorError> {
+    // FIX 10955: the transport already ran inside dispatch, so the drain's
+    // `now` is stale here; read the clock again for this settlement's retry
+    // edge and stamps, as the window door does (FIX 8817).
+    let now = vault.now_recorded_at();
     let ambiguous = result.outcome == OutboundDispatchOutcome::Ambiguous;
     // A recovered non-idempotent Pending intent may be ambiguous
     // even though this attempt never reached the transport.

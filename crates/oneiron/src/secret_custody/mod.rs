@@ -27,7 +27,7 @@
 //! # The value never leaves the body (S1 plane discipline)
 //!
 //! At rest the value is **sealed under its own erasable custody key**, one
-//! per credential generation (KS-6, stored schema 2, `storage_seal`), inside
+//! per credential generation (KS-6, stored schema 4, `storage_seal`), inside
 //! the vault DEK plane every entity body gets; `SecretCustodyRecord` is the
 //! opened, in-memory form. The custody discipline is about planes too: the
 //! value NEVER leaves this body into claims (secrets are never claims),
@@ -74,6 +74,9 @@ mod doors;
 mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
+mod handle_labels;
+mod handle_purpose;
+pub use self::handle_purpose::{SecretHandlePurposeSet, SecretPurposeQuestion};
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -81,6 +84,7 @@ mod masked_files;
 mod owner_door;
 mod pending_restore;
 mod reveal;
+pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
 mod sighted_file;
 mod storage_seal;
@@ -95,12 +99,12 @@ mod floor_keys {
 
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 pub use self::cloud_registration::{
-    CloudRegistrationBinding, CloudRegistrationErased, CloudRegistrationFence,
-    CloudRegistrationLink, CloudRegistrationLinked, CloudRegistrationPhase,
-    CloudRegistrationTokenUse,
+    CloudRegistrationBinding, CloudRegistrationEraseRevoke, CloudRegistrationEraseRevoker,
+    CloudRegistrationErased, CloudRegistrationFence, CloudRegistrationLink,
+    CloudRegistrationLinked, CloudRegistrationPhase, CloudRegistrationTokenUse,
 };
 pub(crate) use self::cloud_registration::{
-    cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
+    EraseRevokes, cloud_registration_erased_with, erase_cloud_registration_actor_in_txn,
     is_cloud_registration_slot,
 };
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
@@ -112,7 +116,8 @@ pub(crate) use self::control::input::{
     keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, EraseOwnerAct, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    ActiveChange, EraseOwnerAct, Material, custody_work_executor,
+    drop_revoked_copies_for_store_in_txn, drop_revoked_copies_in_txn,
     erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
@@ -120,21 +125,34 @@ pub use self::control::{
     SealedCustodyChange, SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
 };
 pub(crate) use self::doors::{
-    CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
-    read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
+    CustodyWrite, SecretCustodyAdmission, message_part_original_matches_in_txn,
+    put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
-    restore_secret_custody_in_txn, revoke_side_row_custody_in_txn,
+    restore_secret_custody_in_txn, revoke_message_part_custody_in_txn,
+    revoke_side_row_custody_in_txn, revoke_side_row_custody_with_context_in_txn,
+    revoke_side_row_prefix_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
-// KS-6: the stored schema-2 form, its value sealed under its custody key.
+// KS-6: the stored form, its value sealed under its custody key.
+pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub use self::found_keys::{
-    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyCursor, FoundKeyNotice,
-    FoundKeyNoticePage, FoundKeySettled, NOTIFICATION_PRODUCER_FOUND_KEY,
+    FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
+    FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
+    NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    found_key_notices_due_in_txn, note_found_keys_in_txn, raise_found_key_notices_in_txn,
-    raise_found_key_notices_page, ruled_no_secret_in_txn, settle_found_key_in_txn,
+    found_key_notices_due_in_txn, kept_as_text_in_txn, move_side_row_custody_in_txn,
+    note_found_keys_in_txn, raise_found_key_notices_in_txn, raise_found_key_notices_page,
+    ruled_no_secret_in_txn, settle_found_key_in_txn,
+};
+pub use self::handle_labels::{
+    SecretHandleLabel, SecretHandleLabelSet, suggest_secret_handle_label_for_kind,
+    suggest_secret_handle_label_for_prefix,
+};
+pub(crate) use self::handle_labels::{
+    erase_secret_handle_label_in_txn, secret_handle_label_in_txn,
+    suggested_secret_handle_label_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
@@ -151,7 +169,7 @@ pub(crate) use self::masked_files::{
     put_masked_file_in_txn, sighted_bytes_in_txn,
 };
 pub use self::owner_door::{
-    ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
+    ManifestSource, OwnerSecretRegistration, PrivateCopySecret, RequestedBinding, SecretRegistered,
 };
 // FIX-LIST 10671: a restore's credentials pending on their source's evidence.
 pub use self::pending_restore::{
@@ -173,17 +191,19 @@ pub(crate) use self::reveal::{
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
-pub(crate) use self::run_bound::run_secret_effector;
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
+pub(crate) use self::run_bound::{actor_class_byte, run_secret_effector};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
     StoredValue, archive_custody_body, archive_custody_guard, archive_same_custody_in_txn,
     credentials_eligible_for_heads, image_credential_row, plan_archived_credentials,
-    put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
-    stored_value_held_in_txn, stored_value_opens_in_txn, withheld_credential_row,
+    put_stored_custody_in_txn, put_stored_custody_with_context_in_txn,
+    read_secret_custody_meta_in_txn, read_stored_custody_in_txn, stored_value_held_in_txn,
+    stored_value_opens_in_txn, withheld_credential_row,
 };
 pub(crate) use self::storage_seal::{
-    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+    open_connector_resume_in_txn, read_back_connector_resume_for_activation,
+    retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;
@@ -193,7 +213,8 @@ pub(crate) use self::transition::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::{
-    completed_custody_groups_in_txn, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
+    CustodyPieces, completed_custody_groups_in_txn, holds_custody_carrier_in_txn,
+    keep_custody_piece_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
@@ -201,7 +222,8 @@ pub use self::types::{
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 pub use self::use_handle::{
-    KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
+    BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply, KeptSentValue,
+    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_BROKER_MODELS, SECRET_USE_CLEAR_VALUE_SOURCE,
     SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
     SECRET_USE_SEAL_SIGN, SECRET_USE_T1_LEASE_TTL_SECS, SecretBindRequest, SecretBound,
     SecretClearValueSource, SecretReleasePolicy, SecretUseCallback, SecretUseDecision,

@@ -27,6 +27,7 @@ mod session_verbs;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
+mod team_submit_entity;
 mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
@@ -61,7 +62,9 @@ pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
-pub(crate) use self::reader_spawn::ReaderChildBinding;
+pub(crate) use self::reader_spawn::{
+    ReaderChildBinding, delegated_input, delegated_occurrence_input,
+};
 
 /// Host-bound dispatcher for one first-party code run.
 ///
@@ -117,6 +120,8 @@ pub struct HostSelfDispatcher<'a> {
     /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// The public fold boundary's completed pre chain, for its exact Mark only.
+    pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
     /// with the invocation each ask waits under and the ask's handle, which
     /// the same call names as the pause it resumes (FIX 5526).
@@ -183,6 +188,11 @@ pub struct HostSelfDispatcher<'a> {
     /// reaches it.
     pub(super) repo_review_policy:
         Option<std::sync::Arc<dyn crate::memory::repo_doors::RepoReviewPolicy>>,
+    /// The host's own Git door base for this run's checkouts (FIX 7181),
+    /// ending in `/git`: the operator's setting, which wins over the base a
+    /// run names. Only [`Self::with_git_door_base`] binds it; `None` keeps
+    /// the run's own base.
+    pub(super) git_door_base: Option<String>,
     /// The seats each open spawn call resolved (FIX 9180): host-only, one
     /// frame per call, taken by the recorder of the call's row.
     spawn_capture: spawn_capture::SpawnCapture,

@@ -7,10 +7,8 @@ use std::time::{Duration, Instant};
 
 use loro::{ExportMode, VersionVector};
 use oneiron::SyncEngineContext;
-use oneiron::attempt_queue::AttemptQueue;
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::{self, WindowKey};
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use super::core::{SyncServer, unix_seconds_now};
@@ -69,18 +67,19 @@ pub(super) enum LifecycleJobKind {
 }
 
 /// The lifecycle loop and the housekeeping pass it last started, beside the
-/// claim VAD payment worker's loop. Dropping it stops both loops;
-/// [`Self::stop`] also waits out the pass and the payment run in flight.
+/// claim VAD payment and cloud-registration revoke loops. Dropping it stops
+/// the loops; [`Self::stop`] also waits out their blocking runs in flight.
 pub(crate) struct LifecycleScheduler {
     tick: JoinHandle<()>,
     /// The claim VAD payment worker (FIX 11702): while it runs, the vault's
     /// write door answers before the consolidations its write owes.
     claim_vad_payment: JoinHandle<()>,
+    cloud_registration_revokes: Option<JoinHandle<()>>,
     server: Arc<SyncServer>,
 }
 
 impl LifecycleScheduler {
-    /// Stops both loops, then asks every housekeeping pass in flight, the
+    /// Stops the loops, then asks every housekeeping pass in flight, the
     /// owner's included, to start no further sweep or page, and waits for
     /// each, so nothing a pass or a payment run writes lands after this
     /// returns.
@@ -89,6 +88,10 @@ impl LifecycleScheduler {
         self.claim_vad_payment.abort();
         let _ = (&mut self.tick).await;
         let _ = (&mut self.claim_vad_payment).await;
+        if let Some(worker) = &mut self.cloud_registration_revokes {
+            worker.abort();
+            let _ = worker.await;
+        }
         self.server.housekeeping_passes.stop().await;
     }
 }
@@ -97,6 +100,9 @@ impl Drop for LifecycleScheduler {
     fn drop(&mut self) {
         self.tick.abort();
         self.claim_vad_payment.abort();
+        if let Some(worker) = &self.cloud_registration_revokes {
+            worker.abort();
+        }
     }
 }
 
@@ -128,6 +134,7 @@ impl SyncServer {
         admit: HousekeepingAdmission,
     ) -> LifecycleScheduler {
         let claim_vad_payment = self.spawn_claim_vad_payment_worker(Arc::clone(&admit));
+        let cloud_registration_revokes = self.spawn_cloud_registration_erase_revoker();
         let server = Arc::clone(self);
         let tick = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
@@ -135,10 +142,6 @@ impl SyncServer {
             // The served repositories' maintenance runs on the first tick and
             // then once an interval.
             let mut repositories_due = Instant::now();
-            // A committed queue write wakes the merge queue checker alone
-            // (FIX 6868, G2 PR2): subscribed before its first snapshot.
-            let mut queue_writes = AttemptQueue::new(server.vault()).subscribe();
-            let mut queue_writes_open = true;
             loop {
                 // A published-ref move or a green landing wakes the mirror
                 // pushes alone, at once (FIX 6866); every other job keeps
@@ -146,12 +149,11 @@ impl SyncServer {
                 let woken = tokio::select! {
                     _ = interval.tick() => false,
                     () = server.vault().origin_mirror_wake().notified() => true,
-                    written = queue_writes.recv(), if queue_writes_open => {
-                        if matches!(written, Err(broadcast::error::RecvError::Closed)) {
-                            queue_writes_open = false;
-                        } else {
-                            server.wake_merge_queue_checker(&admit).await;
-                        }
+                    // A committed queue write wakes the merge queue checker
+                    // alone (FIX 6868, G2 PR2), on its own wake, never on
+                    // another attempt commit (FIX 7306).
+                    () = server.vault().merge_queue_wake().notified() => {
+                        server.wake_merge_queue_checker(&admit).await;
                         continue;
                     }
                 };
@@ -165,6 +167,23 @@ impl SyncServer {
                 // neither holds back the next tick's lease expiry, nor one
                 // the other.
                 server.start_housekeeping_pass(&admit).await;
+                // Leave checks use the existing public engine door, but their
+                // writes are host work too: acquire the same admission before
+                // spawning any and hold it until the whole round finishes.
+                if !server.housekeeping_passes.stopping()
+                    && let Some(registry) = server.shared_envs.get()
+                    && let Some(admission) = admit()
+                {
+                    let checks = registry.leave_check_round(unix_seconds_now());
+                    if !checks.is_empty() {
+                        server.housekeeping_passes.hold(tokio::spawn(async move {
+                            let _admission = admission;
+                            for check in checks {
+                                let _ = check.await;
+                            }
+                        }));
+                    }
+                }
                 if Instant::now() >= repositories_due
                     && server.start_repository_maintenance(&admit).await
                 {
@@ -185,6 +204,7 @@ impl SyncServer {
         LifecycleScheduler {
             tick,
             claim_vad_payment,
+            cloud_registration_revokes,
             server: Arc::clone(self),
         }
     }

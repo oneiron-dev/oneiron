@@ -220,7 +220,7 @@ fn run_people(
     })?;
     let applied = read.read_receipt(None, 0)?.applied;
     let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
-    people.set_about(&mut |person| server.vault.person_about(person, ceiling))?;
+    people.set_about(&mut |person| server.vault.person_about_sourced(person, ceiling))?;
     people.disclose_names(&server.vault, read.actor_key())?;
     Ok(people)
 }

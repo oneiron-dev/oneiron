@@ -72,9 +72,10 @@ pub(crate) fn read_sealed<T>(
         return read();
     };
     let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let _restore = Restore(
-        READING.with(|reading| reading.replace(Some((canonical, Arc::clone(&seal.page_key))))),
-    );
+    let _restore =
+        Restore(READING.with(|reading| {
+            reading.replace(Some((canonical, Arc::clone(seal.shared_page_key()))))
+        }));
     read()
 }
 

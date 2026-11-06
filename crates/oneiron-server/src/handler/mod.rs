@@ -6,10 +6,12 @@
 //! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
+mod admitted_windows;
 mod app_tier;
 mod asset_bodies;
 mod conn_state;
 mod connection;
+mod document_copy;
 mod documents;
 mod ephemeral;
 mod federation;
@@ -26,6 +28,7 @@ mod note_socket_tests;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+mod sealed_updates;
 pub(crate) mod selector_scope;
 mod socket_stop;
 mod transport;

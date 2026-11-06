@@ -112,7 +112,7 @@ impl AskLine {
             }
             Err(refusal) => return Err(refusal),
         };
-        match codec::from_value::<MemoryAnswer>(&value) {
+        match MemoryAnswer::from_value(&value) {
             Ok(MemoryAnswer::Granted) => Ok(AnswerMemory::Reserved { bytes }),
             Ok(MemoryAnswer::Floor { needed, available }) => Err(failed(format!(
                 "the machine cannot hold the answer's {bytes} bytes: {needed} needed, \

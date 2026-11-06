@@ -74,19 +74,27 @@ mod answer;
 mod assertions;
 mod compaction;
 mod delivery;
+mod drafter_example;
 mod hook_ask;
 mod hooks;
+mod model_call;
+mod next_turn;
 mod recall;
 mod segments;
+mod session_invocation;
+pub(crate) use segments::ActionSession;
 mod sitting;
 mod sources;
+pub(crate) use sources::TurnSources;
 
-pub(crate) use answer::{begin_answer, chat_request};
+pub(crate) use answer::{begin_answer, begin_sourced_answer_with_fallback, chat_request};
 pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
-    AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
+    AnswerBreakpoint, ChatReuse, action_breakpoint, live_fork_unavailable, reuse_chat_breakpoint,
 };
 pub(crate) use hooks::{after_turn, turn_generate_pre};
+pub(crate) use model_call::model_call_keeps_no_record;
+pub(crate) use recall::{turn_opener, turn_tail};
 
 use admission::start_turn;
 use answer::begin_sourced_answer;
@@ -418,6 +426,7 @@ pub(crate) fn witness_turn(
             author,
             message_type: MESSAGE_TYPE.to_owned(),
             content,
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
@@ -445,8 +454,12 @@ pub(super) async fn chat_turn(
     let claim = match (invocation(&headers), &payload) {
         (Ok(Some(named)), Ok(Json(request))) => {
             let body = turn_invocation_body(&auth, locality, request);
-            match facade::claim_door_invocation(&server, named, body, auth.principal_entity()).await
-            {
+            let (claimed, binding) =
+                match session_invocation::claim(&server, &auth, locality, named, body).await {
+                    Ok(claimed) => claimed,
+                    Err(refused) => return *refused,
+                };
+            match claimed {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
                     // The waiter's credential is judged again once the wait
@@ -462,7 +475,12 @@ pub(super) async fn chat_turn(
                     // The first call's reply, released again for this
                     // waiter through the same release record as a facade
                     // waiter's (FIX 10499).
-                    return facade::door_replay_for(server.vault(), &auth, "chat", outcome);
+                    return session_invocation::replay(
+                        server.vault(),
+                        &auth,
+                        binding.as_ref(),
+                        outcome,
+                    );
                 }
                 DoorClaim::InFlight => {
                     return refusal(
@@ -505,19 +523,16 @@ pub(super) async fn chat_turn(
         }
         _ => None,
     };
-    // FIX 6794: the turn reads the vault's memory through the context board,
-    // before anything is written. FIX 8133: the reply's newcomer barrier is
-    // marked before that read, so an attendee who entered once the board was
-    // read stops the reply as one who entered later does.
+    // FIX 8133: the reply's newcomer barrier is marked before the turn's
+    // reads, so an attendee who entered once the board below was read stops
+    // the reply as one who entered later does. FIX 6794: the turn reads the
+    // vault's memory through the context board inside `start_turn`, after
+    // its funding/hook/keepalive refusals (FIX 6924), so those refusals
+    // consume no board.
     let mark = server.vault().container_output_mark();
-    let board = match &payload {
-        Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
-        Err(_) => Ok(None),
-    };
-    let read = recall::TurnRead { mark, board };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, mark).await {
         Ok(started) if started.stream => return streamed(started, claim),
-        Ok(started) => whole(started).await,
+        Ok(started) => return whole(started, claim).await,
         Err(refused) => *refused,
     };
     match claim {
@@ -537,7 +552,11 @@ fn turn_invocation_body(
     facade::invocation_body(
         Some(auth),
         locality,
-        &[b"chat".as_slice(), request.as_slice()],
+        &[
+            b"chat".as_slice(),
+            auth.off_record_session().unwrap_or_default().as_bytes(),
+            request.as_slice(),
+        ],
     )
 }
 
@@ -550,6 +569,9 @@ struct Started {
     turn: EntityId,
     answering: Answering,
     credential: TurnCredential,
+    /// The caller's proved connection and known rows for the cached reply.
+    peer: oneiron::authority::PeerMachine,
+    reply_rows: Vec<EntityId>,
     /// Why the call goes without the context board the turn read (FIX
     /// 8136).
     board_omitted: Option<recall::BoardOmission>,
@@ -613,6 +635,11 @@ pub(crate) struct Answer {
     pub(crate) funding: Option<PayerPerson>,
     pub(crate) budget_units: u64,
     pub(crate) credential: TurnCredential,
+    /// The actual admitted requester, independent of the answer's author and payer.
+    pub(crate) model_call_caller: EntityId,
+    /// The native room the request or queued action resolved before generation.
+    pub(crate) model_call_room: Option<EntityId>,
+    pub(crate) model_call_no_record_at_arrival: bool,
     pub(crate) keepalive: Duration,
     /// The newcomer barrier (OF-365 P5, FIX 1389): the container output mark
     /// the caller took before the first read its request was assembled from,
@@ -806,4 +833,5 @@ struct Producer {
     wakes: EntryWakes,
     /// The reply's host-side records, stamped on its terminal.
     assertions: ReplyAssertionCollector,
+    model_call: model_call::Capture,
 }

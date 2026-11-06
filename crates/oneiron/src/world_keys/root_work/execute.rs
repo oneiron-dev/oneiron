@@ -331,6 +331,7 @@ impl Vault {
                 activated,
                 replaced,
                 escrow,
+                mirror_pending: false,
             })
         })?;
         // A kit the answer made current: its piece leaves its pending key
@@ -352,10 +353,13 @@ impl Vault {
             }
         };
         Ok(match confirmed.done() {
-            Ok(kit) => RootWorkDone::KitConfirmed {
-                kit: Box::new(kit),
-                mirror_pending,
-            },
+            Ok(mut kit) => {
+                kit.mirror_pending = mirror_pending;
+                RootWorkDone::KitConfirmed {
+                    kit: Box::new(kit),
+                    mirror_pending,
+                }
+            }
             Err(report) => report,
         })
     }

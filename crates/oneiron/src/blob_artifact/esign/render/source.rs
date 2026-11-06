@@ -141,6 +141,10 @@ pub(super) struct VisualCopy<'a> {
     pub(super) ids: BTreeMap<ObjectId, ObjectId>,
     pub(super) active: BTreeSet<ObjectId>,
     pub(super) bound: StreamBound,
+    /// Each source resource dictionary copied so far, by its address in the
+    /// source this preparation borrows (FIX 3810): pages that share one copy
+    /// it once, and each takes its own top-level map naming the same members.
+    pub(super) copied_resources: BTreeMap<*const Dictionary, Dictionary>,
 }
 impl VisualCopy<'_> {
     pub(super) fn copy(
@@ -200,6 +204,10 @@ impl VisualCopy<'_> {
             _ => value.clone(),
         })
     }
+    /// A resource dictionary's copy. A member the source holds directly (a
+    /// font dictionary, a colour-space array) is written once as an indirect
+    /// object, so every page that shares the dictionary names it and none
+    /// copies it again.
     pub(super) fn resources(
         &mut self,
         out: &mut Document,
@@ -210,6 +218,10 @@ impl VisualCopy<'_> {
             return Err(PdfPreparationError::Limit);
         }
         let resources = resolved(self.source, value)?.as_dict()?;
+        let address: *const Dictionary = resources;
+        if let Some(copied) = self.copied_resources.get(&address) {
+            return Ok(copied.clone());
+        }
         let mut copied = Dictionary::new();
         for (kind, members) in resources {
             if kind == b"ProcSet" {
@@ -239,10 +251,17 @@ impl VisualCopy<'_> {
                         return Err(PdfPreparationError::UnsupportedPdf);
                     }
                 }
-                map.set(key.clone(), self.copy(out, object, depth + 1)?);
+                let member = match self.copy(out, object, depth + 1)? {
+                    member @ (Object::Dictionary(_) | Object::Array(_) | Object::Stream(_)) => {
+                        out.add_object(member).into()
+                    }
+                    member => member,
+                };
+                map.set(key.clone(), member);
             }
             copied.set(kind.clone(), map);
         }
+        self.copied_resources.insert(address, copied.clone());
         Ok(copied)
     }
     fn dictionary(

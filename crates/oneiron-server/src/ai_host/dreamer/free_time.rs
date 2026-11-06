@@ -13,7 +13,7 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::dreamer_runner::{DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, FreeTimeItemBinding};
 use oneiron::llm::run_admission::RunAttribution;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext, WorkClass, WorkContext};
+use oneiron::llm::{HostInferenceContext, WorkClass, WorkContext};
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
 
 use super::super::policy::extraction_egress;
@@ -48,11 +48,7 @@ impl ResidentLend<'_> {
         let (model, host_binding, ladder, role) = match own {
             Some((model, locality, ladder)) => (
                 model.clone(),
-                HostInferenceBinding::Advertised {
-                    model,
-                    locality,
-                    keyless: ladder.all_keyless_own_server(),
-                },
+                ladder.host_binding(model, locality, ladder.all_keyless_own_server()),
                 ladder,
                 None,
             ),
@@ -102,6 +98,10 @@ impl ResidentLend<'_> {
             .with_work_context(WorkContext {
                 class: WorkClass::Background,
                 deadline,
+                // Free-time runs admit under the pass's device-work
+                // cancellation (FIX 11963): tripping it beside the wake flag
+                // aborts their in-flight device work with the pass.
+                cancel: ctx.device_cancel.clone().unwrap_or_default(),
                 ..Default::default()
             });
         let backend = SourcedRunBackend::new(ladder, run);

@@ -135,6 +135,20 @@ pub enum LlmMessageRole {
     Tool,
 }
 
+/// Provider-neutral identity of one reasoning part. Old serialized parts default
+/// to `Full`; opaque bytes travel in `data`, never in `text`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningPartKind {
+    #[default]
+    Full,
+    Summary,
+    Encrypted,
+    Count,
+}
+
 /// Bidirectional content representation shared by history-in and generation-out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -146,6 +160,10 @@ pub enum ContentPart {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
+        #[serde(default)]
+        reasoning_kind: ReasoningPartKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
     },
     ToolCall {
         call_id: String,
@@ -200,6 +218,10 @@ pub enum LlmStreamEvent {
         part_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
+        #[serde(default)]
+        reasoning_kind: ReasoningPartKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
     },
     ReasoningDelta {
         part_id: String,
@@ -207,6 +229,8 @@ pub enum LlmStreamEvent {
     },
     ReasoningEnd {
         part_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ToolCallStart {
         part_id: String,
@@ -262,11 +286,35 @@ pub enum LlmStreamEvent {
     },
 }
 
+/// The actual wire that served one call, not a credential or a replay grant.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmEndpointFlavor {
+    OpenAiResponsesHttp,
+    OpenAiResponsesSocket,
+    OpenAiChatCompletions,
+}
+
+/// Call-local evidence. It never appears in a response or usage wire shape.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmCallMetadata {
+    pub endpoint: LlmEndpointFlavor,
+    pub response_id: Option<String>,
+    pub previous_response_id: Option<String>,
+    pub store: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
     pub raw_provider: JsonValue,
+    #[doc(hidden)]
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub call_metadata: Option<LlmCallMetadata>,
 }
 
 impl LlmUsage {
@@ -280,6 +328,7 @@ impl LlmUsage {
             input: LlmInputUsage::default(),
             output: LlmOutputUsage::default(),
             raw_provider: JsonValue::Null,
+            call_metadata: None,
         }
     }
 

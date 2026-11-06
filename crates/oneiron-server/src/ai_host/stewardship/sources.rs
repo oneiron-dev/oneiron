@@ -10,12 +10,14 @@
 use std::sync::{Mutex, PoisonError};
 
 use oneiron::dreamer_runner::maintenance::representation::{
-    DestinationContext, RepresentationContext,
+    DestinationContext, PrematerializedDraft, RepresentationContext, RepresentationDraft,
+    RepresentationPlanner,
 };
 use oneiron::dreamer_runner::maintenance::stewardship::StewardshipDraftRequest;
 use oneiron::settings::{ReadDestination, ReleaseHold};
-use oneiron::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest, Vault};
+use oneiron::{ContentPart, Error, LlmMessage, LlmMessageRole, LlmRequest, Vault};
 
+use super::draft::GeneratedDraft;
 use crate::models::{SourceAdmission, SourceOffer};
 
 /// The messages a draft's call carries: the owner's own instruction as the
@@ -66,33 +68,59 @@ fn sources_text(draft: &StewardshipDraftRequest, context: &RepresentationContext
 pub(super) struct DraftSources<'a> {
     vault: &'a Vault,
     draft: &'a StewardshipDraftRequest,
+    parts: &'a [GeneratedDraft],
     /// What the offer last admitted was sent, kept before any byte went to
     /// it: its read bound to that destination, receipt included.
     sent: Mutex<Option<DestinationContext>>,
 }
 
 impl<'a> DraftSources<'a> {
-    pub(super) const fn new(vault: &'a Vault, draft: &'a StewardshipDraftRequest) -> Self {
+    pub(super) const fn new(
+        vault: &'a Vault,
+        draft: &'a StewardshipDraftRequest,
+        parts: &'a [GeneratedDraft],
+    ) -> Self {
         Self {
             vault,
             draft,
+            parts,
             sent: Mutex::new(None),
         }
+    }
+
+    pub(super) fn messages(&self, context: &RepresentationContext) -> Vec<LlmMessage> {
+        if self.parts.is_empty() {
+            return draft_messages(self.draft, context);
+        }
+        vec![
+            message(LlmMessageRole::System, self.draft.instruction.clone()),
+            message(LlmMessageRole::User, serde_json::json!({
+                "kind": "follow_up",
+                "channel": self.draft.request.channel,
+                "target": self.draft.request.target,
+                "evidence_drafts": self.parts.iter().map(|part| serde_json::json!({
+                    "cites": part.snapshot.context.evidence.iter()
+                        .map(|source| source.cite(String::new()).marker()).collect::<Vec<_>>(),
+                    "text": part.text,
+                })).collect::<Vec<_>>(),
+                "voice": context.voice.iter().map(|source| source.text.as_str()).collect::<Vec<_>>(),
+            }).to_string()),
+        ]
     }
 
     /// The draft as the offer that answered read it: its evidence and its
     /// voice narrowed to what that offer was sent, so its voice provenance
     /// names only the samples it received (FIX 9447). `None` when no offer
     /// was sent anything.
-    pub(super) fn served(self) -> Option<StewardshipDraftRequest> {
+    pub(super) fn served(self) -> Option<(StewardshipDraftRequest, DestinationContext)> {
         let sent = self
             .sent
             .into_inner()
             .unwrap_or_else(PoisonError::into_inner)?;
         let mut served = self.draft.clone();
-        served.request.evidence = sent.context.request.evidence;
-        served.request.voice = sent.context.request.voice;
-        Some(served)
+        served.request.evidence = sent.context.request.evidence.clone();
+        served.request.voice = sent.context.request.voice.clone();
+        Some((served, sent))
     }
 
     /// The draft's sources `destination` may receive, read now; a read
@@ -120,6 +148,14 @@ impl SourceAdmission for DraftSources<'_> {
         if admitted.context.evidence.is_empty() || admitted.context.voice.is_empty() {
             return SourceOffer::Held(admitted.held.unwrap_or(ReleaseHold::Placement).reason());
         }
+        // A derived draft cannot be narrowed by dropping some of its inputs.
+        if self
+            .parts
+            .iter()
+            .any(|part| !contains_sources(&admitted.context, &part.snapshot.context))
+        {
+            return SourceOffer::Held(admitted.held.unwrap_or(ReleaseHold::Placement).reason());
+        }
         let mut offered = request.clone();
         let Some(data) = offered
             .messages
@@ -129,10 +165,10 @@ impl SourceAdmission for DraftSources<'_> {
         else {
             return SourceOffer::Held(ReleaseHold::Placement.reason());
         };
-        *data = message(
-            LlmMessageRole::User,
-            sources_text(self.draft, &admitted.context),
-        );
+        *data = self
+            .messages(&admitted.context)
+            .pop()
+            .expect("draft data message");
         // Kept before any byte goes to the destination.
         *self.sent.lock().unwrap_or_else(PoisonError::into_inner) = Some(admitted);
         SourceOffer::Send(offered)
@@ -152,16 +188,56 @@ impl SourceAdmission for DraftSources<'_> {
             Err(reason) => return Some(reason),
         };
         // Every source sent still reads for it, at the revision sent.
-        let holds = sent
-            .context
+        let holds = contains_sources(&now.context, &sent.context);
+        (!holds).then(|| now.held.unwrap_or(ReleaseHold::Placement).reason())
+    }
+}
+
+/// Compare the actual bytes and revisions, not just claim references.
+pub(super) fn contains_sources(
+    context: &RepresentationContext,
+    expected: &RepresentationContext,
+) -> bool {
+    expected
+        .evidence
+        .iter()
+        .all(|source| context.evidence.contains(source))
+        && expected
+            .voice
+            .iter()
+            .all(|source| context.voice.contains(source))
+}
+
+/// Cites only the source revisions the answering offer actually received.
+pub(super) struct SourcedDraft {
+    expected: RepresentationContext,
+    inner: PrematerializedDraft,
+}
+
+impl SourcedDraft {
+    pub(super) fn new(text: String, expected: RepresentationContext) -> Self {
+        Self {
+            expected,
+            inner: PrematerializedDraft { text },
+        }
+    }
+}
+
+impl RepresentationPlanner for SourcedDraft {
+    fn plan(&mut self, context: &RepresentationContext) -> oneiron::Result<RepresentationDraft> {
+        let unchanged = self
+            .expected
             .evidence
             .iter()
-            .all(|source| now.context.evidence.contains(source))
-            && sent
-                .context
+            .all(|source| context.evidence.contains(source))
+            && self
+                .expected
                 .voice
                 .iter()
-                .all(|source| now.context.voice.contains(source));
-        (!holds).then(|| now.held.unwrap_or(ReleaseHold::Placement).reason())
+                .all(|source| context.voice.contains(source));
+        if !unchanged {
+            return Err(Error::InvalidClaimBody("stewardship draft sources changed"));
+        }
+        self.inner.plan(context)
     }
 }

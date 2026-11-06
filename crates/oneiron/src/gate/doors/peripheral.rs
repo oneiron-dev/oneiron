@@ -42,6 +42,11 @@ pub(crate) struct ClaimGateWrite<'a> {
     /// its transaction. Only a fresh write the owner made directly carries
     /// one; every other door passes `None`.
     pub(crate) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    /// Pending-birth prompt sources for FIX 11000 anchors: `Some` (possibly
+    /// empty) when the caller proved the claim's pending birth inputs from
+    /// its batch state, `None` when unknown. `None` captures incomplete
+    /// anchors; it never refuses the write.
+    pub(crate) pending_prompt: Option<&'a [EntityId]>,
 }
 
 impl<'a> ClaimGateWrite<'a> {
@@ -58,6 +63,7 @@ impl<'a> ClaimGateWrite<'a> {
             defer_metrics_until_commit: false,
             transition: None,
             owner_authored: None,
+            pending_prompt: None,
         }
     }
 
@@ -74,6 +80,11 @@ impl<'a> ClaimGateWrite<'a> {
         transition: Option<&'a crate::batch::VerifiedClaimTransition>,
     ) -> Self {
         self.transition = transition;
+        self
+    }
+
+    pub(crate) fn with_pending_prompt(mut self, pending_prompt: Option<&'a [EntityId]>) -> Self {
+        self.pending_prompt = pending_prompt;
         self
     }
 }
