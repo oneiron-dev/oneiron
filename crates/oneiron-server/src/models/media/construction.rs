@@ -246,6 +246,7 @@ impl MediaRuntime {
                 wire: Wire::Media(*operation),
                 stays_on_device: false,
                 configured: seat.rungs.len(),
+                locality_ceiling: None,
             };
             let alone = rungs
                 .iter()
