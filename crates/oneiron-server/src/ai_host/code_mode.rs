@@ -222,6 +222,7 @@ pub(super) async fn bind(
         global_tier: ModelTierRef(ENGINE_EXECUTOR_PURPOSE_NAME.to_owned()),
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
+        wake: None,
     };
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
