@@ -66,6 +66,7 @@ mod reservoir_sources;
 mod residence;
 mod retrieval;
 mod root_requests;
+mod saved_query_output;
 mod scratchpad;
 mod secret;
 mod secret_custody;

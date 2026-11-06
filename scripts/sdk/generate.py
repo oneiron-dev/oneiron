@@ -1889,6 +1889,10 @@ def outputs():
                 'vault.kv.get': 'key_value_output::get',
                 'vault.kv.put': 'key_value_output::put',
                 'vault.kv.search': 'key_value_output::search',
+                'self.saved_query.create': 'saved_query_output::record',
+                'self.saved_query.read': 'saved_query_output::read',
+                'self.saved_query.update': 'saved_query_output::record',
+                'self.saved_query.archive': 'saved_query_output::record',
             }.get(r['name'], 'encode')
             core += f'{core_cfg(r)}{json.dumps(r["name"])} => {encoder}({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
