@@ -135,12 +135,19 @@ fn discard_window_rows(
                     mark_discarded_in_txn(&vault.store, txn, *id, world)?;
                 }
                 // The window's persisted copy still holds them: its
-                // projection is owed (part E).
+                // projection is owed, and a Pending staged import that holds
+                // them goes, to be staged again (part E, E4 = A).
                 if !step.removed.is_empty() {
                     crate::sync::window::mark_projection_owed_in_txn(
                         &vault.store,
                         txn,
                         window.as_str(),
+                    )?;
+                    let removed: BTreeSet<EntityId> = step.removed.iter().copied().collect();
+                    crate::batch::export::cancel_staged_imports_holding_in_txn(
+                        &vault.store,
+                        txn,
+                        &removed,
                     )?;
                 }
                 Ok(Some(step))

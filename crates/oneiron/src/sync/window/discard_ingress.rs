@@ -20,7 +20,10 @@ use heed::RwTxn;
 use loro::{LoroDoc, VersionVector};
 
 use super::super::bridge::{persist_window_update, persist_window_update_in_txn};
-use super::super::loro_support::{doc_from_snapshot, export_updates_from};
+use super::super::loro_support::{
+    doc_from_snapshot, export_all_updates, export_updates_from, import_doc,
+};
+use super::super::schema::create_window_doc;
 use super::super::types::WindowKey;
 use super::discard_projection::{
     Projected, discard_touched_in, mark_projection_owed_in_txn, project_window_doc,
@@ -29,7 +32,7 @@ use super::discard_projection::{
 use super::pad_custody::persisted_window_pads;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::store::Store;
 
 /// The rows that the owner's discard marks, when `key` is a BASE window it
@@ -139,6 +142,51 @@ pub(crate) fn persist_window_arrival(
             projected.as_deref().unwrap_or(update),
         )
     })
+}
+
+/// Whether `update`, a self-contained update of window `key`, holds a value
+/// the rows in `discarded` own, or cannot be shown not to.
+pub(crate) fn update_holds_discarded(
+    key: &WindowKey,
+    update: &[u8],
+    discarded: &BTreeSet<EntityId>,
+) -> bool {
+    let doc = create_window_doc("discard-census", key);
+    import_doc(&doc, update).is_err()
+        || !matches!(
+            project_window_doc(&doc, discarded, None),
+            Ok(Projected::Unchanged)
+        )
+}
+
+/// `update`, a self-contained update of window `key` that no peer holds,
+/// with every value the rows in `discarded` own erased at its own operation
+/// (E3 = A); `None` when it holds none. A staged foreign import is projected
+/// so before its content persists (E4 = A).
+///
+/// # Errors
+///
+/// An update that does not open; one the projection cannot place, refused
+/// retryably as configuration.
+pub(crate) fn project_unsent_update(
+    key: &WindowKey,
+    update: &[u8],
+    discarded: &BTreeSet<EntityId>,
+) -> Result<Option<Vec<u8>>> {
+    if discarded.is_empty() {
+        return Ok(None);
+    }
+    let doc = create_window_doc("discard-stage", key);
+    import_doc(&doc, update)?;
+    match project_window_doc(&doc, discarded, None)? {
+        Projected::Unchanged => Ok(None),
+        Projected::Deferred(why) => Err(Error::InvalidConfig(format!(
+            "an update that holds discarded rows the projection cannot place: {why}"
+        ))),
+        Projected::Joined { bytes, .. } => {
+            Ok(Some(export_all_updates(&doc_from_snapshot(&bytes)?)?))
+        }
+    }
 }
 
 /// `doc` as the projection for `discarded` leaves it, with only the

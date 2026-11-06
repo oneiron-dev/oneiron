@@ -59,6 +59,7 @@ pub use self::device_only::{
 };
 pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for};
 pub(in crate::sync) use self::discard_ingress::persist_window_arrival;
+pub(crate) use self::discard_ingress::{project_unsent_update, update_holds_discarded};
 pub(in crate::sync) use self::discard_projection::{
     DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
     projection_floor_in, settle_projection_in_txn,
