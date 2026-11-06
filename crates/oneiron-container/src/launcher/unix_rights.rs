@@ -542,7 +542,7 @@ fn descriptors(pid: u32, header: &libc::msghdr) -> Option<(Vec<u8>, Vec<RawFd>)>
     if header.msg_control.is_null() || header.msg_controllen == 0 {
         return Some((Vec::new(), Vec::new()));
     }
-    let length = header.msg_controllen as usize;
+    let length = header.msg_controllen;
     if length > MESSAGE_BOUND {
         return None;
     }
@@ -614,7 +614,7 @@ fn controls(buffer: &[u8]) -> (Vec<Control<'_>>, bool) {
         // read_unaligned takes them at any alignment.
         let control: libc::cmsghdr =
             unsafe { std::ptr::read_unaligned(buffer[at..].as_ptr().cast::<libc::cmsghdr>()) };
-        let length = control.cmsg_len as usize;
+        let length = control.cmsg_len;
         if length < header || length > buffer.len() - at {
             return (found, false);
         }
@@ -661,7 +661,7 @@ fn aligned(length: usize) -> usize {
 
 /// The buffers of the guest's message header, and their total length.
 fn vectors(pid: u32, header: &libc::msghdr) -> io::Result<(Vec<libc::iovec>, usize)> {
-    let count = header.msg_iovlen as usize;
+    let count = header.msg_iovlen;
     if count > VECTOR_BOUND {
         return Err(io::Error::from_raw_os_error(libc::EMSGSIZE));
     }
@@ -727,11 +727,7 @@ fn identity(fd: &impl AsRawFd) -> io::Result<(u64, u64, libc::mode_t)> {
         if libc::fstat(fd.as_raw_fd(), &mut stat) != 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok((
-            stat.st_dev as u64,
-            stat.st_ino as u64,
-            stat.st_mode & libc::S_IFMT,
-        ))
+        Ok((stat.st_dev, stat.st_ino, stat.st_mode & libc::S_IFMT))
     }
 }
 

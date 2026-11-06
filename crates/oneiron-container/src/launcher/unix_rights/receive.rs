@@ -107,7 +107,7 @@ impl Call<'_> {
         let capacity = if header.msg_control.is_null() {
             0
         } else {
-            (header.msg_controllen as usize).min(MESSAGE_BOUND)
+            header.msg_controllen.min(MESSAGE_BOUND)
         };
         let mut incoming = Incoming::new(&header, total, capacity);
         loop {
@@ -250,7 +250,7 @@ impl Incoming {
             return Err(io::Error::last_os_error());
         }
         self.namelen = message.msg_namelen;
-        self.used = message.msg_controllen as usize;
+        self.used = message.msg_controllen;
         self.flags = message.msg_flags;
         Ok(received as usize)
     }
