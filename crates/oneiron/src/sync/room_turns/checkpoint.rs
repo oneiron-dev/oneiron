@@ -5,13 +5,15 @@
 //! and addressing no one, and each actor is a field of its own. An actor
 //! that does not open leaves the erased spelling, and an agent that does not
 //! open is no longer addressed. A row naming an actor by anything but its
-//! id stays unclassified.
+//! id stays unclassified. A row in parts is read joined (FIX 12153):
+//! [`entry_joined`] places the joined row as a whole one, whatever its size,
+//! and [`fill_joined`] puts its actors back.
 #![allow(
     dead_code,
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use super::{decode, encode};
+use super::{decode, decode_held, encode};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -31,7 +33,7 @@ const PARTED_TURN: &str =
     "a room turn row in parts, whose actors only its joined row's split takes out";
 
 /// The field the turn's actor fills.
-const ACTOR: &str = "actor";
+pub(in crate::sync) const ACTOR: &str = "actor";
 
 /// The field an addressed agent fills, then its place among them.
 const ADDRESSED: &str = "addressed/";
@@ -59,6 +61,23 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     let Ok(turn) = decode(value) else {
         return undecodable();
     };
+    placed(key, turn, value)
+}
+
+/// Where the turn row under `key`, joined from its parts as `joined`, goes
+/// (FIX 12153): as a whole row does, read whatever its size.
+pub(in crate::sync) fn entry_joined(key: &str, joined: &[u8]) -> Placement {
+    match decode_held(joined) {
+        Ok(turn) => placed(key, turn, joined),
+        Err(_) => Placement::unclassified(None, SyncUnclassified::Undecodable),
+    }
+}
+
+/// Where `turn`, stored under `key` as `value`, goes: with its TURN, held
+/// while its room, its messages and each turn it quotes are, its actors
+/// split out.
+fn placed(key: &str, turn: RoomTurn, value: &[u8]) -> Placement {
+    let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
     let (Some(id), Some(room)) = (named(&turn.turn_id), named(&turn.room_id)) else {
         return undecodable();
     };
@@ -109,7 +128,17 @@ fn split(mut turn: RoomTurn, value: &[u8]) -> std::result::Result<ValueSplit, &'
 /// The turn `no_one` with each of `opened` back: its actor, and each agent
 /// it addressed.
 pub(in crate::sync) fn fill(no_one: &[u8], opened: &[(&str, EntityId)]) -> Result<Option<Vec<u8>>> {
-    let mut turn = decode(no_one).map_err(|_| bad_part())?;
+    fill_turn(decode(no_one).map_err(|_| bad_part())?, opened).map(Some)
+}
+
+/// [`fill`] of a turn row carried joined (FIX 12153), read whatever its
+/// size: an actor that did not open leaves the erased spelling.
+pub(in crate::sync) fn fill_joined(no_one: &[u8], opened: &[(&str, EntityId)]) -> Result<Vec<u8>> {
+    fill_turn(decode_held(no_one).map_err(|_| bad_part())?, opened)
+}
+
+/// `turn`, naming no one, with each of `opened` back.
+fn fill_turn(mut turn: RoomTurn, opened: &[(&str, EntityId)]) -> Result<Vec<u8>> {
     if turn.actor != ERASED_CALL_IDENTITY || !turn.addressed_agents.is_empty() {
         return Err(bad_part());
     }
@@ -125,5 +154,5 @@ pub(in crate::sync) fn fill(no_one: &[u8], opened: &[(&str, EntityId)]) -> Resul
             return Err(bad_part());
         }
     }
-    encode(&turn).map(Some)
+    encode(&turn)
 }
