@@ -807,15 +807,19 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
 });
 
 // PRIVACY-03. ARCH-0038 #harderase-v1 and ARCH-0023b #two-planes.
-// Keep the full replay scenario: capture a valid same-build peer update with
-// grants and ACKs, disconnect B, erase at A, reconnect and replay that exact
-// update. Source and every document fork must stay absent on both peers,
-// before and after restart. No raw WS counterfeit or private storage edits.
-// WsClient handles app RPC, not entity-document sync. EngineFixture.peers
-// creates independent vaults, not enrolled copies of one vault. This file's
-// one slot is unchanged; increasing it would not supply either missing setup.
+// Keep the whole replay/erasure oracle, using the real public flow ruled by
+// Engine 2026-11-07 07:36 JST: pair a machine link, device enrol B as a copy of
+// A's vault, and serve receiver B. Back up B before erasure, sync the genuine
+// source and document forks, disconnect B, then erase at A. Restore B's
+// pre-erase backup and sync again to exercise replay of its stale state.
+// Observe rows still owed to home and their Durable/Held receipts through
+// vault.sync.outbox, not a test-only capture endpoint. Source and every fork
+// must stay absent on both peers before and after restart. No raw WS
+// counterfeit, independent-vault substitute, or private storage edits.
+// Keep this whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
+// empty-vault enrolment merge. This file's one slot remains unchanged.
 suite.todo(test, "PRIVACY-03",
-  "waits on typed HTTP+SDK entity-document/fork sync replay with ACK observation and genuine same-vault peer enrolment setup; slots remain 1. Erasure resists offline replay should work");
+  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for genuine machine-link/device-enrol receiver B, pre-erase backup/restore/sync replay and ACK observation. Erasure resists offline replay should work");
 
 suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should work", async () => {
   const catalog = await loadFixtures();
@@ -985,17 +989,22 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
 // Session-bound start/witness/notes.create/claims.upsert/recall/discard now
 // have generated HTTP+SDK types. self.off_record.execute genuinely owns a
 // session-bound production code run; an unowned self.run.attach is not setup.
-// Do not replace the original scenario with a note-only discard test. It
-// needs durable base + overlay union reads, an actual spilling MCP output,
-// and decoded full export, backup AND authenticated sync captures while the
-// overlay is LIVE. All three carriers must contain zero overlay/spill bytes.
+// Keep durable base + overlay union reads, an actual spilling MCP output,
+// and decoded full export and backup while the overlay is LIVE: neither
+// carrier may contain overlay/spill bytes. No note-only discard substitute.
+// Engine 2026-11-07 07:36 JST replaces the capture-door premise with real
+// public flows: pair a machine link, device enrol and serve receiver B;
+// back up B, sync, erase at A, restore B's pre-erase backup and sync again.
+// Observe ACK state through vault.sync.outbox. While A's overlay is LIVE,
+// read A's actual overlay and spill ids FROM B and expect nothing, while
+// proving base sync works. No test-only capture door or independent vault.
 // Close without saving, restart, then prove session-not-found, absent overlay
 // bodies/receipts/spill handles and unchanged durable memory. No floor event
 // is provoked, so no floor-receipt exception applies here.
-// The public session calls do not provide a typed sync-carrier capture or
-// same-vault receiver. App WS RPC or a second independent vault proves neither.
+// Keep the whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
+// empty-vault enrolment merge; no weakening of the privacy oracle.
 suite.todo(test, "PRIVACY-06",
-  "waits on typed HTTP+SDK authenticated sync-carrier capture and same-vault receiver setup for the LIVE overlay/spill exclusion assertion; session write/read/execute doors exist. Off-record session discard should work");
+  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for real receiver B backup/restore/sync replay and LIVE overlay/spill-id exclusion reads FROM B; session write/read/execute doors exist. Off-record session discard should work");
 
 // PRIVACY-07. ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings.
 // rooms.start/witness/status/save/save_from_here/suggest_save/confirm_save/

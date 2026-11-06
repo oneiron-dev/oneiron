@@ -837,12 +837,12 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
 });
 
 /* ARCH-0067 TASK roles and ARCH-0003 productivity vocabulary.
- * Role creation/tree and immutable check-in doors NOW EXIST. But install
- * takes HubImportRequest {hub_ref:{hub_id,ref_string,pin},publisher}, not a
- * built-in pack name. This checkout/fixture has neither the actual
- * oneiron-productivity pack files nor its pinned hub record/publisher.
- * No typed built-in vocabulary-install call accepts this name. A pack made
- * up here, an arbitrary hub ref or omission of install would change the ID.
+ * Role creation/tree and immutable check-in doors NOW EXIST. Install takes
+ * HubImportRequest {hub_ref:{hub_id,ref_string,pin},publisher}, not a name.
+ * Engine 2026-11-07 07:36 JST names the real pack oneiron.productivity.
+ * Keep this whole journey BLOCKED until OPUS-L06's hub PR AND engine pin
+ * PR merge and supply the exact HubImportRequest/pin/publisher. No invented
+ * pack, arbitrary hub ref, new built-in install door, or omitted install.
  * Keep the full journey: install the declared pack; project scope plus
  * Goal -> Milestone -> routed Task and Habit; reject Goal/Task/Habit -> Task
  * with unchanged trees and no partial child; repeat the same check-in id
@@ -850,7 +850,7 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
  * original clocks/data, current_streak=1 and longest_streak=1; task readback.
  */
 suite.todo(test, "MEMORY-06",
-  "waits on actual pinned oneiron-productivity pack/hub setup or a typed built-in vocabulary-install door; role/tree/check-in calls exist");
+  "waits on merged real oneiron.productivity hub pack and engine pin PRs supplying the exact HubImportRequest/pin/publisher; role/tree/check-in calls exist");
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
 suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
