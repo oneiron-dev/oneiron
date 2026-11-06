@@ -54,6 +54,12 @@ pub(in crate::session_overlay) struct Lifecycle {
     pub(super) segment_active: bool,
 }
 
+impl Lifecycle {
+    pub(in crate::session_overlay) fn sealed_mode_is(&self, mode_generation: u64) -> bool {
+        self.state == OverlayLifecycleState::Sealed && self.mode_generation == mode_generation
+    }
+}
+
 pub(in crate::session_overlay) struct Lease {
     pub(super) overlay: Arc<SessionOverlay>,
     #[allow(
