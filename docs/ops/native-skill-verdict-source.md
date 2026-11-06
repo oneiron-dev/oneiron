@@ -38,3 +38,23 @@ A new admission-refusal, tradeoff-resolution or deferred-approval row does not
 inherit a different request's placement merely because it continues that verdict.
 It is born unknown. An absent optional position means unknown; a supplied but
 malformed position is a corrupt row, not a broader or default placement.
+
+## Original Coach read request
+
+The admitted optimizer job creates its own `Memory(Coach, System)` request after
+its actual facet/Coach/stamp checks and before ranking. It retains the verified
+owned read key from that original request. It does not reconstruct an absent
+external caller, replace an existing credential or infer model-delivery authority.
+
+The brief and healthy-skill path carry that key to their actual native VERDICTS
+scan. Capture prepares the grant clock before the custody guard and source
+snapshot. Every canonical ruling and its actual displacement row or absence must
+pass that key's native admission in that snapshot. Optional opener, custody,
+admission and receipt failures leave only this capture unknown. Original primary
+scan and native decode failures still propagate; ordinary candidates, values and
+author errors are not filtered, masked or swallowed.
+
+The brief's native-family witness is partial data, not the complete attempt read
+set or a grant to a later reader. The actual Coach job keeps the old id-only
+complete-source field unknown. Activation still needs all other native families
+and a typed downstream heal/source consumer, not ENTITY checks on ledger ids.
