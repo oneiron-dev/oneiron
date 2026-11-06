@@ -126,7 +126,7 @@ pub use self::replay_capsule::{
     ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
     StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle, capture_workflow_step,
     finalize_step_captures, note_answering_route_pin, note_answering_rung,
-    note_step_admission_role, route_prompt_digest,
+    note_step_admission_role, refresh_step_capture_request, route_prompt_digest,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
