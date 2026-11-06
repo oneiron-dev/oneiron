@@ -24,7 +24,7 @@ pub(super) struct BudgetRowTally {
 /// How much of one lease is protected by one matched row's floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FloorAllocation {
-    pub(super) row_index: u16,
+    pub(super) row_index: usize,
     pub(super) units: u64,
 }
 
@@ -32,7 +32,7 @@ pub(super) struct FloorAllocation {
 /// mutation and then committed verbatim.
 #[derive(Debug, Clone, Default)]
 pub(super) struct ReserveAllocation {
-    pub(super) matched_rows: Vec<u16>,
+    pub(super) matched_rows: Vec<usize>,
     pub(super) floor_allocations: Vec<FloorAllocation>,
     pub(super) shared_units: u64,
 }
@@ -55,7 +55,7 @@ pub(super) struct LeaseRecord {
     pub(super) state: LeaseState,
     /// Resolved policy rows this lease's call matched; empty on the
     /// single-pool branch and on unmetered local leases.
-    pub(super) matched_rows: Vec<u16>,
+    pub(super) matched_rows: Vec<usize>,
     pub(super) floor_allocations: Vec<FloorAllocation>,
     pub(super) shared_reserved_units: u64,
     /// What a bound admission granted this lease for; `None` on the plain
@@ -80,12 +80,12 @@ pub(super) enum LeaseState {
 pub(super) fn release_reservations_for_lease(state: &mut BudgetState, record: &LeaseRecord) {
     state.reserved_units = state.reserved_units.saturating_sub(record.reserve_units);
     for &row_index in &record.matched_rows {
-        if let Some(tally) = state.row_tallies.get_mut(usize::from(row_index)) {
+        if let Some(tally) = state.row_tallies.get_mut(row_index) {
             tally.reserved_units = tally.reserved_units.saturating_sub(record.reserve_units);
         }
     }
     for floor in &record.floor_allocations {
-        if let Some(tally) = state.row_tallies.get_mut(usize::from(floor.row_index)) {
+        if let Some(tally) = state.row_tallies.get_mut(floor.row_index) {
             tally.floor_reserved_units = tally.floor_reserved_units.saturating_sub(floor.units);
         }
     }
@@ -112,7 +112,7 @@ pub(super) fn apply_usage_for_lease(
     used_units: u64,
 ) {
     for &row_index in &record.matched_rows {
-        if let Some(tally) = state.row_tallies.get_mut(usize::from(row_index)) {
+        if let Some(tally) = state.row_tallies.get_mut(row_index) {
             tally.used_units = tally.used_units.saturating_add(used_units);
         }
     }
@@ -136,7 +136,7 @@ pub(super) fn apply_usage_for_lease(
         if units == 0 {
             continue;
         }
-        if let Some(tally) = state.row_tallies.get_mut(usize::from(row_index)) {
+        if let Some(tally) = state.row_tallies.get_mut(row_index) {
             tally.floor_used_units = tally.floor_used_units.saturating_add(units);
         }
         remaining = remaining.saturating_sub(units);
