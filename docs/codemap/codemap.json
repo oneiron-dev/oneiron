@@ -16890,8 +16890,8 @@
      "path": "src/code_run/dispatcher/reader_spawn.rs",
      "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
      "surface": {
-      "crate-vis": 15,
-      "fn": 3
+      "crate-vis": 16,
+      "fn": 4
      }
     },
     {
@@ -17162,7 +17162,7 @@
      "surface": {
       "crate-vis": 49,
       "mod": 8,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -17427,7 +17427,7 @@
      "path": "src/code_run/result_read/mod.rs",
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 1
      }
     },
@@ -17562,6 +17562,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopedCallControl"
+     ],
+     "path": "src/code_run/scoped_call_control.rs",
+     "purpose": "A scoped child's live cutoff at its port calls and reads (FIX 8233)",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -17575,8 +17589,8 @@
      "purpose": "Scoped children (FIX 7507 PR2): a separate code-mode agent a host queues on the reader-job machinery…",
      "surface": {
       "const": 5,
-      "crate-vis": 7,
-      "fn": 11,
+      "crate-vis": 8,
+      "fn": 13,
       "struct": 4,
       "trait": 1
      }
@@ -90270,7 +90284,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 186,
+     "files": 187,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91602,7 +91616,7 @@
    },
    "over_bar": 163,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6443,
+   "source_files": 6444,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110399,7 +110413,7 @@
      "purpose": "Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent…",
      "surface": {
       "crate-vis": 3,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -127213,7 +127227,7 @@
      "path": "src/server/reader_runner/child.rs",
      "purpose": "Execution and settlement of claimed reader children and summary jobs",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -127223,7 +127237,7 @@
      "path": "src/server/reader_runner/scoped.rs",
      "purpose": "A host-profiled scoped child at the runner (FIX 7508): a child its own host registered a profile for runs on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
