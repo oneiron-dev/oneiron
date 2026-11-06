@@ -2,6 +2,12 @@
 use super::ContextPackBuilder;
 
 impl<'a> ContextPackBuilder<'a> {
+    /// Carries the same read key into private-note and PPR candidate work.
+    pub(crate) fn scoped_note_reader(mut self, reader: crate::claim::ScopedReadActorKey) -> Self {
+        self.pipeline = self.pipeline.scoped_note_reader(reader);
+        self
+    }
+
     /// Apply the same scoped retrieval floor to every candidate channel.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.pipeline = self.pipeline.authority_filter(filter);

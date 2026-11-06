@@ -94,6 +94,12 @@ impl<'a> ContextPackBuilder<'a> {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
         self
     }
+    /// Account for this pack's copied media queries on the host's memory line.
+    pub fn media_query_memory(mut self, memory: &crate::host_memory::MachineMemory) -> Self {
+        self.pipeline = self.pipeline.media_query_memory(memory);
+        self
+    }
+
     /// Adds one typed media-space list to this pack's retrieval (OF-370); see
     /// [`crate::pipeline::PipelineBuilder::search_media`].
     pub fn search_media(

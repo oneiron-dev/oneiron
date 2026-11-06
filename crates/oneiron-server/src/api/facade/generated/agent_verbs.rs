@@ -542,6 +542,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.coach.training_offers.sources", post(facade_route))
+        .route("/vault.drafters.list", post(facade_route))
+        .route("/vault.drafters.list_as", post(facade_route))
+        .route("/vault.drafters.status", post(facade_route))
+        .route("/vault.drafters.policy.set", post(facade_route))
+        .route("/vault.drafters.revert", post(facade_route))
+        .route("/vault.drafters.revert_as", post(facade_route))
         .route("/vault.research.bind", post(facade_route))
         .route("/vault.research.fork", post(facade_route))
         .route("/vault.research.weave", post(facade_route))
