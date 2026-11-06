@@ -347,6 +347,17 @@ fn thread_walk_seen_in(
                 conversation_summary_covers(&claim),
                 reaction_covers(&claim),
             ]);
+            if claim.predicate == crate::claim::PREDICATE_CONFLICT_OPEN
+                && matches!(&claim.value, rmpv::Value::String(_))
+            {
+                match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
+                    Ok(crate::scope_summary::WordSources::From(sources)) => {
+                        pending.extend(sources.into_iter().map(|id| (id, None, source)));
+                    }
+                    Ok(crate::scope_summary::WordSources::Unresolved) | Err(_) => return Ok(None),
+                    Ok(crate::scope_summary::WordSources::Own) => {}
+                }
+            }
         }
         // FIX 6409: an epoch summary's words are its `DerivedFrom` sources',
         // each walked as a scope summary's covers are; one whose sources do
