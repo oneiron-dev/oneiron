@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1256 facade rows, 4547 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1208.
+// UniFFI census: 1262 facade rows, 4571 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -29257,6 +29257,462 @@ pub struct ReservoirSourcePreview {
     pub excluded: std::collections::HashMap<String, u64>,
     #[serde(rename = "sources")]
     pub sources: Vec<ReservoirSourceRow>,
+}
+
+/// `oneiron::drafter::types::DrafterTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterTarget {
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "tokenizer")]
+    pub tokenizer: String,
+    #[serde(rename = "runtime")]
+    pub runtime: String,
+}
+
+/// `oneiron::drafter::doors::DrafterListRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterListRequest {
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<DrafterTarget>,
+}
+
+/// `oneiron::drafter::types::DrafterServing`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterServing {
+    #[serde(rename = "stock")]
+    Stock,
+    #[serde(rename = "version")]
+    Version(String),
+}
+
+/// `oneiron::drafter::types::DrafterVersionState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterVersionState {
+    #[serde(rename = "prepared")]
+    Prepared,
+    #[serde(rename = "training")]
+    Training,
+    #[serde(rename = "returned")]
+    Returned,
+    #[serde(rename = "qualified")]
+    Qualified,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "erased")]
+    Erased,
+}
+
+/// `oneiron::drafter::doors::DrafterVersionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterVersionView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "target")]
+    pub target: DrafterTarget,
+    #[serde(rename = "parent")]
+    pub parent: DrafterServing,
+    #[serde(rename = "recipe")]
+    pub recipe: String,
+    #[serde(rename = "state")]
+    pub state: DrafterVersionState,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+    #[serde(rename = "sources")]
+    pub sources: u64,
+    #[serde(rename = "retained")]
+    pub retained: bool,
+    #[serde(rename = "serving")]
+    pub serving: bool,
+    #[serde(rename = "revertible")]
+    pub revertible: bool,
+}
+
+/// `oneiron::drafter::doors::DrafterStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterStatusRequest {
+    #[serde(
+        rename = "events_after",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub events_after: Option<String>,
+}
+
+/// `oneiron::drafter::types::DrafterRecipe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterRecipe {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "revision")]
+    pub revision: SourcePin,
+    #[serde(rename = "settings")]
+    pub settings: crate::WireJson,
+    #[serde(rename = "gpu_seconds")]
+    pub gpu_seconds: u64,
+    #[serde(rename = "device_memory_mib")]
+    pub device_memory_mib: u64,
+}
+
+/// `oneiron::drafter::types::DrafterActor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterActor {
+    #[serde(rename = "owner")]
+    Owner(String),
+    #[serde(rename = "agent")]
+    Agent(String),
+    #[serde(rename = "coach")]
+    Coach,
+    #[serde(rename = "host")]
+    Host,
+    #[serde(rename = "erase")]
+    Erase,
+    #[serde(rename = "erased")]
+    Erased,
+}
+
+/// `oneiron::drafter::policy::DrafterPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterPolicy {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(rename = "excluded_worlds")]
+    pub excluded_worlds: Vec<String>,
+    #[serde(rename = "recipe", default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<DrafterRecipe>,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "set_by", default, skip_serializing_if = "Option::is_none")]
+    pub set_by: Option<DrafterActor>,
+    #[serde(rename = "set_at", default, skip_serializing_if = "Option::is_none")]
+    pub set_at: Option<u64>,
+}
+
+/// `oneiron::drafter::types::DrafterBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterBinding {
+    #[serde(rename = "target")]
+    pub target: DrafterTarget,
+    #[serde(rename = "serving")]
+    pub serving: DrafterServing,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "previous")]
+    pub previous: DrafterServing,
+    #[serde(
+        rename = "changed_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub changed_by: Option<String>,
+    #[serde(rename = "changed_at")]
+    pub changed_at: u64,
+}
+
+/// `oneiron::drafter::serving::DrafterUnservedReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterUnservedReason {
+    #[serde(rename = "no_serving_host")]
+    NoServingHost,
+    #[serde(rename = "no_serving_worker")]
+    NoServingWorker,
+    #[serde(rename = "unsupported_shared_worker")]
+    UnsupportedSharedWorker,
+    #[serde(rename = "unsupported_external_worker")]
+    UnsupportedExternalWorker,
+    #[serde(rename = "unsupported_runtime")]
+    UnsupportedRuntime,
+    #[serde(rename = "vault_locked")]
+    VaultLocked,
+    #[serde(rename = "version_not_servable")]
+    VersionNotServable,
+    #[serde(rename = "load_set_unverified")]
+    LoadSetUnverified,
+    #[serde(rename = "worker_rejected")]
+    WorkerRejected,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::drafter::serving::DrafterServedView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterServedView {
+    #[serde(rename = "target")]
+    pub target: DrafterTarget,
+    #[serde(rename = "serving", default, skip_serializing_if = "Option::is_none")]
+    pub serving: Option<DrafterServing>,
+    #[serde(
+        rename = "generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub generation: Option<u64>,
+    #[serde(
+        rename = "draft_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub draft_digest: Option<String>,
+    #[serde(rename = "worker", default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
+    #[serde(rename = "epoch", default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<String>,
+    #[serde(rename = "applying")]
+    pub applying: bool,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<DrafterUnservedReason>,
+}
+
+/// `oneiron::drafter::types::DrafterSkipReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterSkipReason {
+    #[serde(rename = "policy_off")]
+    PolicyOff,
+}
+
+/// `oneiron::drafter::types::DrafterHoldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterHoldReason {
+    #[serde(rename = "no_trainer_recipe")]
+    NoTrainerRecipe,
+    #[serde(rename = "no_drafter_target")]
+    NoDrafterTarget,
+    #[serde(rename = "policy_moved")]
+    PolicyMoved,
+    #[serde(rename = "empty_corpus")]
+    EmptyCorpus,
+    #[serde(rename = "corpus_missing")]
+    CorpusMissing,
+    #[serde(rename = "training_in_progress")]
+    TrainingInProgress,
+    #[serde(rename = "no_admission")]
+    NoAdmission,
+}
+
+/// `oneiron::drafter::types::DrafterTrainingFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterTrainingFailure {
+    #[serde(rename = "refused")]
+    Refused,
+    #[serde(rename = "trainer_failed")]
+    TrainerFailed,
+    #[serde(rename = "receipt_unverified")]
+    ReceiptUnverified,
+    #[serde(rename = "seal_failed")]
+    SealFailed,
+    #[serde(rename = "over_budget")]
+    OverBudget,
+    #[serde(rename = "lost")]
+    Lost,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "erased")]
+    Erased,
+}
+
+/// `oneiron::drafter::types::DrafterRetrainOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterRetrainOutcome {
+    #[serde(rename = "skipped")]
+    Skipped {
+        #[serde(rename = "reason")]
+        reason: DrafterSkipReason,
+    },
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "reason")]
+        reason: DrafterHoldReason,
+    },
+    #[serde(rename = "trained")]
+    Trained {
+        #[serde(rename = "version")]
+        version: String,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "version")]
+        version: String,
+        #[serde(rename = "reason")]
+        reason: DrafterTrainingFailure,
+    },
+}
+
+/// `oneiron::drafter::types::DrafterRollbackReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterRollbackReason {
+    #[serde(rename = "slowdown")]
+    Slowdown,
+    #[serde(rename = "output_mismatch")]
+    OutputMismatch,
+    #[serde(rename = "worker_error")]
+    WorkerError,
+}
+
+/// `oneiron::drafter::types::DrafterEventKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DrafterEventKind {
+    #[serde(rename = "retrain")]
+    Retrain {
+        #[serde(rename = "attempt")]
+        attempt: AttemptId,
+        #[serde(rename = "policy_revision")]
+        policy_revision: u64,
+        #[serde(rename = "cutoff")]
+        cutoff: u64,
+        #[serde(rename = "outcome")]
+        outcome: DrafterRetrainOutcome,
+    },
+    #[serde(rename = "qualify")]
+    Qualify {
+        #[serde(rename = "version")]
+        version: String,
+        #[serde(rename = "passed")]
+        passed: bool,
+        #[serde(
+            rename = "evaluation",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        evaluation: Option<String>,
+    },
+    #[serde(rename = "activate")]
+    Activate {
+        #[serde(rename = "version")]
+        version: String,
+    },
+    #[serde(rename = "rollback")]
+    Rollback {
+        #[serde(rename = "version")]
+        version: String,
+        #[serde(rename = "reason")]
+        reason: DrafterRollbackReason,
+    },
+    #[serde(rename = "revert")]
+    Revert {
+        #[serde(rename = "version")]
+        version: String,
+    },
+    #[serde(rename = "erase")]
+    Erase {
+        #[serde(rename = "versions")]
+        versions: Vec<String>,
+        #[serde(rename = "jobs")]
+        jobs: Vec<AttemptId>,
+    },
+    #[serde(rename = "policy")]
+    Policy {
+        #[serde(rename = "revision")]
+        revision: u64,
+    },
+    #[serde(rename = "served")]
+    Served {
+        #[serde(rename = "target")]
+        target: DrafterTarget,
+        #[serde(rename = "serving")]
+        serving: DrafterServing,
+        #[serde(rename = "generation")]
+        generation: u64,
+        #[serde(
+            rename = "draft_digest",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        draft_digest: Option<String>,
+    },
+}
+
+/// `oneiron::drafter::types::DrafterBindingChange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterBindingChange {
+    #[serde(rename = "target")]
+    pub target: DrafterTarget,
+    #[serde(rename = "from")]
+    pub from: DrafterServing,
+    #[serde(rename = "to")]
+    pub to: DrafterServing,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+}
+
+/// `oneiron::drafter::types::DrafterEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterEvent {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "by")]
+    pub by: DrafterActor,
+    #[serde(rename = "kind")]
+    pub kind: DrafterEventKind,
+    #[serde(rename = "change", default, skip_serializing_if = "Option::is_none")]
+    pub change: Option<DrafterBindingChange>,
+}
+
+/// `oneiron::drafter::doors::DrafterStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterStatus {
+    #[serde(rename = "policy")]
+    pub policy: DrafterPolicy,
+    #[serde(rename = "bindings")]
+    pub bindings: Vec<DrafterBinding>,
+    #[serde(rename = "served")]
+    pub served: Vec<DrafterServedView>,
+    #[serde(rename = "events")]
+    pub events: Vec<DrafterEvent>,
+}
+
+/// `oneiron::drafter::policy::DrafterPolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterPolicySetRequest {
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(
+        rename = "excluded_worlds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub excluded_worlds: Option<Vec<String>>,
+    #[serde(rename = "recipe", default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<DrafterRecipe>,
+}
+
+/// `oneiron::drafter::doors::DrafterRevertRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterRevertRequest {
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "expected_binding_generation")]
+    pub expected_binding_generation: u64,
+}
+
+/// `oneiron::drafter::doors::DrafterRevertReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterRevertReceipt {
+    #[serde(rename = "binding")]
+    pub binding: DrafterBinding,
+    #[serde(rename = "event", default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<DrafterEvent>,
 }
 
 /// `oneiron::verbs::research::ResearchBindWire`.
