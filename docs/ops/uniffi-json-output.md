@@ -412,3 +412,17 @@ in tool order. Missing and null optional schemas retain the original absent
 result. Native schema validation, inputs, clients, grants, hooks, row evidence,
 public record shapes and finite conversion diagnostics are unchanged. This is
 selected output conversion, not end-to-end depth, memory or runtime proof.
+
+## Secret-use and decision-ask output JSON
+
+`self.use` and `self.secrets.use` consume their optional operation result JSON
+before converting the remaining secret-use answer. Decision-ask answer and
+grant-confirmation results do the same for optional caller-built pack state.
+`self.decisions.asks` consumes every ask's pack state before returning the first
+conversion error, then restores the converted states in the original list order.
+
+Missing and null optional JSON still read as absent. Status, failure, receipts,
+questions, roles, answers and other finite fields keep the original whole-record
+codec and per-verb diagnostics. These conversions do not change native execution,
+secret handling, queue behavior, authority, inputs, typed clients, hooks or public
+records. They do not prove end-to-end depth, memory or runtime bounds.
