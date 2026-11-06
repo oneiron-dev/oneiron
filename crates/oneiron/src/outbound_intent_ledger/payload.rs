@@ -323,6 +323,11 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             continue;
         };
         let Ok(stored) = StoredPayload::parse(record.payload()) else {
+            // The owner a row names is the record's, not its payload's: a row
+            // whose payload does not read still drops the erased owner.
+            if record.authorizing_owner == Some(*actor) {
+                authorized.push(record.id);
+            }
             continue;
         };
         let named = stored.named();
