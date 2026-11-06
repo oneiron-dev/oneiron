@@ -146,6 +146,14 @@ pub struct MailCalendarPull {
     /// calendar. A resource landed before whose span meets it, omitted by
     /// the finished listing, is marked absent.
     pub covers: Option<TimeRange>,
+    /// Each resource, by the provider's id, that holds no longer the UID
+    /// landed for it, with no tombstone from the provider (it holds another
+    /// UID now, or no event), and that UID, which no resource holds now.
+    /// Before the page's changes land, each such UID is marked absent, as a
+    /// finished listing marks one it omitted, and the resource's row goes:
+    /// a later page that reads the UID under another resource lands it live
+    /// again, where a delete would leave it cancelled.
+    pub vacated: Vec<(String, String)>,
 }
 
 /// One whole calendar a feed wire read (an ICS file or subscription).
@@ -456,6 +464,20 @@ impl Vault {
                 }
             };
             let at = crate::unix_seconds_now();
+            if !pull.vacated.is_empty() {
+                let uids: Vec<String> = pull
+                    .vacated
+                    .iter()
+                    .map(|(_, uid)| uid.clone())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                crate::calendar::ingest::apply_calendar_source_omissions(self, system, &uids, at)
+                    .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                self.forget_vacated_resources(source.source_ref, &pull.vacated)?;
+                report.kept_deleted += uids.len() as u64;
+                state.deleted_at_provider += uids.len() as u64;
+            }
             for change in &pull.changes {
                 let applied =
                     crate::calendar::ingest::apply_calendar_source_change(self, system, change, at);
@@ -588,6 +610,28 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             for key in keys {
                 CALENDAR_RESOURCES.delete(&self.store, txn, key)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// Forgets the resource row of each of `vacated`, by the provider's id,
+    /// while it still carries the UID named beside it.
+    fn forget_vacated_resources(
+        &self,
+        source: EntityId,
+        vacated: &[(String, String)],
+    ) -> MemoryResult<()> {
+        self.with_write_txn_grouped(|txn| {
+            for (href, uid) in vacated {
+                let key = resource_key(source, href);
+                if CALENDAR_RESOURCES
+                    .get(&self.store, txn, &key)?
+                    .is_some_and(|resource| resource.uid == *uid)
+                {
+                    CALENDAR_RESOURCES.delete(&self.store, txn, &key)?;
+                }
             }
             Ok(())
         })?;
