@@ -7,12 +7,16 @@
 //! The claim takes the run's executor lease on its run TASK in its write
 //! (FIX 4747, `super::run_task`): a run another machine holds or settled,
 //! or whose run TASK stands but does not read, ends here unrun, and a
-//! closing process claims nothing.
+//! closing process claims nothing. A spawned child has no run TASK of its
+//! own: its claim takes no lease and runs it under a fence on its nearest
+//! ancestor's (REVIEW-6638). A child that outlived its root has one, and
+//! its claim takes that lease as a root's does, also on a machine that holds
+//! no row of its settled parent.
 
 use super::resident::{resident_run_id, resident_run_input};
 use super::run_task::{
     AGENT_RUN_EXECUTOR_MOVED, AgentRunFence, AgentRunLeaseTake, agent_run_moved_in,
-    agent_run_unrun_cause_in, take_agent_run_lease_in_txn,
+    agent_run_unrun_cause_in, outlived_root_in, take_agent_run_lease_in_txn,
 };
 use super::workflow_record::is_wrapper;
 use super::{
@@ -73,7 +77,7 @@ impl AgentDispatcher<'_> {
             }
             // A row this view cannot decode is no agent run; its own worker
             // reports it.
-            let Ok(Some(run)) = agent_run_row(&queue, &txn, &row) else {
+            let Ok(Some(run)) = agent_run_row(self.vault, &txn, &row) else {
                 continue;
             };
             if !(run.task_root && residents.contains(&run.agent)) {
@@ -100,7 +104,7 @@ impl AgentDispatcher<'_> {
         if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled) {
             return Ok(None);
         }
-        let Some(run) = agent_run_row(&queue, &txn, &row)? else {
+        let Some(run) = agent_run_row(self.vault, &txn, &row)? else {
             return Ok(None);
         };
         if run.task_root
@@ -120,7 +124,8 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         }
         let qa_thread_ref = self.run_thread_in(&queue, &txn, &row)?;
-        // FIX 4747: the run's executor lease, taken in this write. A run
+        // FIX 4747: the run's executor lease, taken in this write; a spawned
+        // child's claim only fences it on its root's (REVIEW-6638). A run
         // another machine holds or settled, or whose run TASK does not read,
         // ends unrun, with no fence and no change to its run TASK; a closing
         // process claims nothing and the row stays queued, as does a run
@@ -365,24 +370,22 @@ impl AgentDispatcher<'_> {
         {
             return Ok(false);
         }
-        Ok(agent_run_row(&queue, &txn, &row)?.is_some())
+        Ok(agent_run_row(self.vault, &txn, &row)?.is_some())
     }
 }
 
-/// The row as an agent run of this pump, or `None` when it is another
-/// host's: no agent dispatch, a saved workflow's leaf, a child whose parent
-/// is gone, or a resident's inbox wake.
 /// Whether the agent run pump is the one that claims `row` (FIX 4747): an
 /// agent-def dispatch row it reads, other than a resident agent's TASK-root
 /// run, which the resident pump runs. Only such a run takes the executor
-/// lease at its claim, so only its dispatch mints a run TASK.
+/// lease at its claim, so only its dispatch mints a run TASK, and only when
+/// it is a root: a spawned child runs under its root's (REVIEW-6638) until
+/// it outlives its root, whose settlement then mints it one.
 pub(super) fn agent_pump_claims_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
 ) -> Result<bool> {
-    let queue = AttemptQueue::new(vault);
-    let Some(run) = agent_run_row(&queue, txn, row)? else {
+    let Some(run) = agent_run_row(vault, txn, row)? else {
         return Ok(false);
     };
     Ok(!(run.task_root
@@ -391,8 +394,14 @@ pub(super) fn agent_pump_claims_in(
             .is_some()))
 }
 
+/// The row as an agent run of this pump, or `None` when it is another
+/// host's: no agent dispatch, a saved workflow's leaf, a child whose parent
+/// is gone, or a resident's inbox wake. A child that outlived its root
+/// (REVIEW-6638) is this pump's with its parent gone: on a machine that
+/// took it over, which holds no row of its settled parent, it runs as a
+/// spawned run, its parent's identity kept in its payload.
 fn agent_run_row(
-    queue: &AttemptQueue<'_>,
+    vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
 ) -> Result<Option<AgentRunRow>> {
@@ -409,9 +418,11 @@ fn agent_run_row(
     };
     let agent = *agent;
     let task_root = match payload.parent_attempt {
-        Some(parent) => match queue.get_in_txn(txn, parent)? {
+        Some(parent) => match AttemptQueue::new(vault).get_in_txn(txn, parent)? {
             Some(parent) if !is_wrapper(&parent) => false,
-            _ => return Ok(None),
+            Some(_) => return Ok(None),
+            None if outlived_root_in(vault, txn, row)? => false,
+            None => return Ok(None),
         },
         None if row.run_id.as_deref() == Some(resident_run_id(agent).as_str()) => {
             return Ok(None);
