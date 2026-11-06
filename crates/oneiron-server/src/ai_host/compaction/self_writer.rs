@@ -11,13 +11,14 @@
 //! summary; the host records who wrote it, what ran it and what it cost.
 //!
 //! When the row reads the live context (FIX 4465 C), the flight's calls fork
-//! the run's live request instead, captured at its breakpoint on the rung
-//! that admitted it, and the same receipt names that rung's model. A row on
-//! `auto` (FIX 6029, the shipped default) resolves per flight: the live fork
-//! while the live prefix is still warm in its provider's prompt cache, at
-//! the breakpoint and again right before the flight's first call, else the
-//! cheap writer. Every later call of the flight, its retries and folds,
-//! keeps the source its first call ran on, and each receipt names it.
+//! the run's latest completed call instead, captured at its breakpoint on
+//! the rung that answered it (FIX 4933), and the same receipt names that
+//! rung's model. A row on `auto` (FIX 6029, the shipped default) resolves
+//! per flight: the live fork while the live prefix is still warm in its
+//! provider's prompt cache, at the breakpoint and again right before the
+//! flight's first call, else the cheap writer. Every later call of the
+//! flight, its retries and folds, keeps the source its first call ran on,
+//! and each receipt names it.
 
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -394,11 +395,12 @@ impl CompactionBackend for SelfCompactionBackend {
         self.prepare(None)
     }
 
-    /// Binds the live rung for a row that reads the live context: forced
-    /// under one that selects it, and under `auto` only while the prefix is
-    /// still warm (FIX 6029). Stages the row and the cheap writer it read
-    /// for the flight, so the flight is sized and frozen on the same ones; a
-    /// row that cannot be read is named when the flight freezes.
+    /// Binds the rung that answered the run's latest completed call (FIX
+    /// 4933) for a row that reads the live context: forced under one that
+    /// selects it, and under `auto` only while the prefix is still warm
+    /// (FIX 6029). Stages the row and the cheap writer it read for the
+    /// flight, so the flight is sized and frozen on the same ones; a row
+    /// that cannot be read is named when the flight freezes.
     fn capture_live_fork(
         &self,
         live: &LlmRequest,

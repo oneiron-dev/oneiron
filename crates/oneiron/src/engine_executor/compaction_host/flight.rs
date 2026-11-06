@@ -72,6 +72,17 @@ impl EngineNativeExecutor<'_> {
                 let note = asked.clone().flatten();
                 // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
                 let (live, room) = super::compaction::live_fork::capture(driver, request);
+                // FIX 4933: the fork's prefix is the run's latest completed
+                // call; the flight seals only the steps it holds, and every
+                // later step and fold mark waits raw for a later breakpoint.
+                let held = super::compaction::live_fork::held_steps(live.as_ref(), request);
+                let watermark =
+                    watermark.and_then(|at| super::compaction::live_fork::within_prefix(at, held));
+                let marks: Vec<FoldMark> = marks
+                    .iter()
+                    .filter(|mark| held.is_none_or(|steps| mark.through < steps))
+                    .cloned()
+                    .collect();
                 let (epoch, hooks) = match watermark {
                     Some(at) => match self.seal_compaction_window(
                         driver,

@@ -105,11 +105,10 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         || container.is_some_and(|container| vault.room_has_unrecorded_stretch(container));
     let wakes = container.map(|_| vault.subscribe_task_updates());
     // FIX 4465 D: a self agent's breakpoint, right before the answer's
-    // stream: its live fork is this answer's own admitted call.
+    // stream: its live fork is this answer's own admitted call, bound to the
+    // rung that answered it once the answer ends (FIX 4933).
     let pending = breakpoint.map(|breakpoint| {
         compaction::enter(
-            ai,
-            &vault,
             breakpoint,
             &admitted,
             handle.message_id(),
@@ -131,6 +130,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         model_call_no_record_at_arrival,
     );
     let answered = model_call.answered();
+    let terminal_rung = model_call.terminal_rung();
     let started = vault
         .policy_budget_guard(
             format!("chat:{}", handle.message_id().to_hex()),
@@ -231,7 +231,8 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         let fell_back = pending
             .as_ref()
             .is_some_and(|pending| !pending.answered_live());
-        compaction::keep(&landed.0, pending, saved.as_ref());
+        let answering = terminal_rung.lock().ok().and_then(|mut slot| slot.take());
+        compaction::keep(&ai, &landed.0, pending, saved.as_ref(), answering);
         let text = streamed
             .lock()
             .map_or_else(|_| String::new(), |text| text.clone());

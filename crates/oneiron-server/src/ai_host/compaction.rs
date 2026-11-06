@@ -9,11 +9,11 @@
 //! summaries (FIX 4465): the same cheap route, wearing its home, on its own
 //! compaction model when its definition names one, else the row's cheap
 //! model (FIX 6029); or, when the vault's row reads the live context, a fork
-//! of its live request on the rung that admitted it (FIX 4465 C). The
-//! shipped row, `auto`, forks while the live prefix is still warm in its
-//! provider's prompt cache and writes on the cheap model otherwise. The same
-//! factory serves a self agent's chat turn (FIX 4465 D), with or without the
-//! code sandbox.
+//! of its latest completed call on the rung that answered it (FIX 4465 C,
+//! FIX 4933). The shipped row, `auto`, forks while the live prefix is still
+//! warm in its provider's prompt cache and writes on the cheap model
+//! otherwise. The same factory serves a self agent's chat turn (FIX 4465
+//! D), with or without the code sandbox.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;

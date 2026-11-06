@@ -3,11 +3,12 @@
 //! It uses the same self registry, gate policy and home logic: one writer,
 //! bound to the answering agent, wearing its home at the place its caller
 //! sits, on the house compaction route. A live flight forks the answer's own
-//! admitted call, captured at the answer's breakpoint through a per-answer
-//! admission that hands back exactly that call; it is never admitted again
-//! over a rendered transcript. Under a row on `auto` (FIX 6029, the
-//! default) a breakpoint whose prefix is cold leaves the flight to the
-//! cheap writer as the agent, over the retained ledger. The flight spends on
+//! admitted call, captured once the answer ended through a per-answer
+//! admission that hands back exactly that call and the rung that answered
+//! it (FIX 4933); it is never admitted again over a rendered transcript.
+//! Under a row on `auto` (FIX 6029, the default) a breakpoint whose prefix
+//! is cold leaves the flight to the cheap writer as the agent, over the
+//! retained ledger. The flight spends on
 //! its own guard on the chat actor's budget line and bills the payer the
 //! turn resolved: each call takes its own permit and settles once, and
 //! filing settles nothing. It runs off the answer's path, queued with every
@@ -160,15 +161,17 @@ impl AiHandle {
         })
     }
 
-    /// Enters an answer's breakpoint: past its profile's threshold, the
-    /// answer's own `admitted` call is captured now, before it is sent (none
-    /// under `auto` when its prefix is cold, FIX 6029), and its flight is
-    /// queued to run off the answer's path. Says why no flight is queued
-    /// when none is; the log then stays raw.
+    /// Enters an answer's breakpoint once the answer ended: past its
+    /// profile's threshold, the answer's own `admitted` call is captured on
+    /// `answering`, the rung that answered it (FIX 4933; none under `auto`
+    /// when its prefix is cold, FIX 6029, or when no rung answered), and its
+    /// flight is queued to run off the answer's path. Says why no flight is
+    /// queued when none is; the log then stays raw.
     pub(crate) fn enter_chat_breakpoint(
         &self,
         call: ChatBreakpointCall,
         admitted: &RoleCall,
+        answering: Option<AnsweringRung>,
     ) -> Result<(), ConversationCompactionUnavailable> {
         use ConversationCompactionUnavailable as Why;
         let live = match self.writer_compaction.get() {
@@ -191,7 +194,7 @@ impl AiHandle {
         let admission: Arc<dyn LiveAdmission> = Arc::new(AnswerAdmission {
             request: admitted.request.clone(),
             ladder: Arc::clone(&admitted.ladder),
-            answering: None,
+            answering,
         });
         let meter = CompactionMeter::Chat {
             guard,

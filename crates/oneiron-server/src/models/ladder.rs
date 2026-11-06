@@ -1533,7 +1533,8 @@ impl OfferLadder {
 
     /// [`Self::stream`], with the binding of the rung that answers for the
     /// model-call record (FIX 12743): the exact answering rung's model,
-    /// locality, prompt and route pin, the owner's fallback included. The
+    /// locality, prompt and route pin, and the call as it sent it (FIX
+    /// 4933), the owner's fallback included. The
     /// receiver resolves exactly when a `Done` event goes out, sent before
     /// it on the same task; any other end leaves it unresolved.
     pub(crate) fn stream_recorded(
