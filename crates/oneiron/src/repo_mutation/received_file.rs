@@ -115,6 +115,7 @@ impl Vault {
         let row = RepoProposal {
             id: input.proposal,
             repo: repo_ref.canonical(),
+            requested_repo_ref: repo_ref.canonical(),
             actor: super::proposal::actor_erase::ProposalActor::Actor(input.pusher),
             session: input.session,
             provenance_claim: input.provenance,

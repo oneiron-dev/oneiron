@@ -212,6 +212,7 @@ impl Vault {
             let stored = StoredRepoMutationOplogEntry {
                 schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
                 repo_ref: repo_ref.canonical(),
+                requested_repo_ref: request.repo_ref.canonical(),
                 seq,
                 operation_kind: request.operation.kind().to_owned(),
                 operation_subject: Some(operation_subject(&request.operation)),
@@ -282,6 +283,7 @@ impl Vault {
         let stored = StoredRepoMutationOplogEntry {
             schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
             repo_ref: repo_ref.canonical(),
+            requested_repo_ref: request.repo_ref.canonical(),
             seq,
             operation_kind: request.operation.kind().to_owned(),
             operation_subject: Some(operation_subject(&request.operation)),
