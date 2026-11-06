@@ -10,6 +10,7 @@ use crate::ports::ScopedReadResult;
 use crate::ports::{PointRead, ReadRow};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use oneiron_contracts::gate::RetrievalFilter;
+use std::io::{self, Read, Write};
 
 impl GraphFsResolver<'_, '_> {
     pub(super) fn file_rows(
@@ -64,8 +65,14 @@ impl GraphFsResolver<'_, '_> {
                                 reader,
                             )?;
                         } else {
-                            let mut cursor = std::io::Cursor::new(body.as_slice());
-                            let value = rmpv::decode::read_value(&mut cursor)
+                            let mut input = PacedBodyIo::new(
+                                std::io::Cursor::new(body.as_slice()),
+                                reader,
+                                self.options.page_byte_cap,
+                            );
+                            let value = rmpv::decode::read_value(&mut input);
+                            let cursor = input.finish()?;
+                            let value = value
                                 .ok()
                                 .filter(|_| cursor.position() == body.len() as u64);
                             if let Some(mut value) = value {
@@ -77,14 +84,18 @@ impl GraphFsResolver<'_, '_> {
                                     texts,
                                 )?;
                                 if mask(&mut value, &keys, reader)? {
-                                    let mut bytes = Vec::new();
-                                    rmpv::encode::write_value(&mut bytes, &value).map_err(
-                                        |_| {
-                                            Error::InvariantViolation(
-                                                "masked graph-fs body did not encode",
-                                            )
-                                        },
-                                    )?;
+                                    let mut output = PacedBodyIo::new(
+                                        Vec::new(),
+                                        reader,
+                                        self.options.page_byte_cap,
+                                    );
+                                    let encoded = rmpv::encode::write_value(&mut output, &value);
+                                    let bytes = output.finish()?;
+                                    encoded.map_err(|_| {
+                                        Error::InvariantViolation(
+                                            "masked graph-fs body did not encode",
+                                        )
+                                    })?;
                                     *body = bytes;
                                 }
                             } else if let Ok(text) = std::str::from_utf8(body) {
@@ -159,6 +170,59 @@ impl GraphFsResolver<'_, '_> {
             }),
             receipt,
         })
+    }
+}
+
+struct PacedBodyIo<'a, T> {
+    inner: T,
+    reader: &'a ContainerReader,
+    scan_bytes: usize,
+    cancelled: Option<Error>,
+}
+
+impl<'a, T> PacedBodyIo<'a, T> {
+    fn new(inner: T, reader: &'a ContainerReader, scan_bytes: usize) -> Self {
+        Self {
+            inner,
+            reader,
+            scan_bytes: scan_bytes.max(1),
+            cancelled: None,
+        }
+    }
+
+    fn checkpoint(&mut self) -> io::Result<()> {
+        if let Err(error) = checkpoint(self.reader) {
+            self.cancelled = Some(error);
+            return Err(io::ErrorKind::Other.into());
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<T> {
+        if let Some(error) = self.cancelled {
+            return Err(error);
+        }
+        Ok(self.inner)
+    }
+}
+
+impl<T: Read> Read for PacedBodyIo<'_, T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.checkpoint()?;
+        let len = buf.len().min(self.scan_bytes);
+        self.inner.read(&mut buf[..len])
+    }
+}
+
+impl<T: Write> Write for PacedBodyIo<'_, T> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.checkpoint()?;
+        let len = buf.len().min(self.scan_bytes);
+        self.inner.write(&buf[..len])
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
