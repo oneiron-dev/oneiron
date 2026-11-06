@@ -404,6 +404,20 @@ bodies. This key-only charge does not cover raw-read value copies, decoded
 values, overlay copies, database pages, transaction scratch or key construction
 peaks. It adds no key copy, encode, lease, admission, wait or configured limit.
 
+The bound retained finalizer also records the actual outer allocation of the
+age-index key vector collected before retention pruning. After the original
+successful scan, its capacity times the native size of `(u64, RetrievalRunId)`
+is recorded once on the same existing caller lease. The consuming iterator
+owns that backing through the original delete loop and drops before the caller
+lease on completion, early break, error or unwind. The charge stays conservative
+until that lease drops. Unbound pruning keeps the same shared native body.
+
+The policy lookup, reserve, clock, cutoff, deletion order and errors stay
+unchanged. This charge covers only the post-scan outer vector backing, not scan
+construction peaks, cursor storage, raw row copies, individual delete buffers,
+overlay copies, database pages or transaction scratch. It adds no scan, copy,
+lease, admission, wait or configured limit.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,

@@ -287,6 +287,15 @@ pub(super) fn prune_retrieval_runs(
     txn: &mut RwTxn<'_>,
     reserve: usize,
 ) -> Result<bool> {
+    prune_retrieval_runs_with_memory(store, txn, reserve, None)
+}
+
+fn prune_retrieval_runs_with_memory(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    reserve: usize,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<bool> {
     let resolved = crate::gate::resolve_policy_manifest(store, txn)?;
     let Some(policy) = resolved.retrieval_retention_policy() else {
         // Opening a degraded vault stays possible, but no rejected policy
@@ -300,6 +309,13 @@ pub(super) fn prune_retrieval_runs(
     let age_rows = RETRIEVAL_AGE
         .scan_keys(store, txn, &[])
         .map_err(corrupt_key("retrieval run retention"))?;
+    if let Some(memory) = memory {
+        memory.materialized(
+            0,
+            (age_rows.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<(u64, RetrievalRunId)>() as u64),
+        );
+    }
     let over = age_rows
         .len()
         .saturating_sub(max_runs.saturating_sub(reserve));
@@ -319,7 +335,16 @@ pub(super) fn require_prune_retrieval_runs(
     txn: &mut RwTxn<'_>,
     reserve: usize,
 ) -> Result<()> {
-    if prune_retrieval_runs(store, txn, reserve)? {
+    require_prune_retrieval_runs_with_memory(store, txn, reserve, None)
+}
+
+pub(super) fn require_prune_retrieval_runs_with_memory(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    reserve: usize,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<()> {
+    if prune_retrieval_runs_with_memory(store, txn, reserve, memory)? {
         Ok(())
     } else {
         Err(Error::InvalidConfig(
