@@ -50,9 +50,11 @@ no-history selection, through the same value-only terminal.
 The ordinary claim read keeps its history, fold and successor selection. At its
 terminal history projection, it transfers the already-owned birth through the
 same field updates instead of cloning another relationship set. The borrowed
-projection door stays unchanged. History intermediates remain unadmitted; the
-final projected body owns its own post-allocation capacity lease. The original
-body keeps its own guard until it drops, including while a replacement is built.
+projection door stays unchanged. History intermediates remain unadmitted. The
+selected birth's value and predicate acquire post-allocation capacity leases
+after its native decode and initial-weight check, before the fold consumes it.
+The original body keeps its own guard until it drops, including while a
+replacement is built.
 
 The machine-history fold decodes its birth from the authenticated signed birth,
 not the mutable target row. Its private event states borrow that same body and
@@ -61,6 +63,12 @@ the decoded birth into the final owned projection; the borrowed fold door makes
 one copy for its returned projection. Branch grant maps and other fold scratch
 still allocate and remain unadmitted. This transfer does not establish retained-input
 FIFO progress or custody for a later typed copy.
+The selected birth's unchanged value and predicate keep those same charges
+through the fold, carrier checks, successor selection and owned projection.
+The selected head takes those charges without remeasuring or copying either
+field. A carrier-check error drops the projection before its storage charge;
+a successor bypass drops the unused birth before releasing its charge. This
+does not admit history decoding, fold scratch or scope-map growth.
 Contact reads retain only each live head's predicate index and value for the
 fold. The value owns a separate post-allocation lease on the supplied line.
 The canonical decoder charges the current value's actual heap capacities before
@@ -491,9 +499,11 @@ allocation; that allocation's floor includes the original total across these
 separate holders. The full-body terminal then transfers the evidence, scope and
 session-tag backing into another trailing holder. Those fields drop before their
 holder. The value-head terminal drops its unused metadata with the DOM instead.
-A final history projection records these fields' actual capacities after
-allocation; it does not pre-admit the history decoder. Decode errors and
-allocation refusals keep their distinct native result variants.
+The history-selected value and predicate record their actual capacities after
+the birth decode and keep the same backing charge through their final consumer.
+Unused projected metadata and relationships do not acquire a head charge. This
+does not pre-admit the history decoder. Decode errors and allocation refusals
+keep their distinct native result variants.
 
 This reserves requested backing, not an allocator's unobservable excess capacity
 before allocation. Excess capacity is recorded after allocation. It is not a

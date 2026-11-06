@@ -133,12 +133,12 @@ pub fn decode_claim_body_with_scope_memory(
 }
 
 /// Validates the entire body, then retains only its value and live-head metadata.
-/// `history` borrows validated metadata and may select an owned projected birth.
+/// `history` borrows validated metadata and may select an already-guarded value head.
 pub fn decode_claim_value_head_with_scope_memory(
     data: &[u8],
     allow_reserved_predicate: bool,
     memory: Option<ClaimScopeReadMemory<'_>>,
-    mut history: impl FnMut(&str, Option<&Value>) -> Result<Option<ClaimBody>>,
+    mut history: impl FnMut(&str, Option<&Value>) -> Result<Option<ClaimValueHead>>,
 ) -> std::result::Result<ClaimValueHead, ClaimBodyReadError> {
     match decode_claim(
         data,
@@ -153,7 +153,7 @@ pub fn decode_claim_value_head_with_scope_memory(
 
 enum DecodeTarget<'callback> {
     Body,
-    Value(&'callback mut dyn FnMut(&str, Option<&Value>) -> Result<Option<ClaimBody>>),
+    Value(&'callback mut dyn FnMut(&str, Option<&Value>) -> Result<Option<ClaimValueHead>>),
 }
 
 enum DecodedClaim {
@@ -374,9 +374,7 @@ fn decode_claim(
         .map(|dom_memory| dom_memory.split_allocated(predicate.capacity() as u64));
     if let DecodeTarget::Value(history) = target {
         if let Some(projected) = history(&predicate, evidence.as_ref())? {
-            return Ok(DecodedClaim::Value(
-                ClaimBodyRead::retained(projected, memory).into_value_head(),
-            ));
+            return Ok(DecodedClaim::Value(projected));
         }
         return Ok(DecodedClaim::Value(ClaimValueHead::new(
             predicate,

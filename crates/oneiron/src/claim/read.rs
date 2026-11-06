@@ -114,14 +114,27 @@ impl Vault {
     ) -> std::result::Result<Option<ClaimValueHead>, ClaimBodyReadError> {
         self.with_claim_body_in_txn(rtxn, id, |data| {
             decode_claim_value_head_with_scope_memory(data, true, memory, |predicate, evidence| {
-                self.selected_machine_claim_in_txn(
+                let mut storage = None;
+                let projected = self.selected_machine_claim_in_txn(
                     rtxn,
                     id,
                     predicate,
                     evidence,
                     None,
-                    super::history_projection::resolved_machine_history,
-                )
+                    |store, txn, fold, target| {
+                        let (projection, retained) =
+                            super::history_projection::resolved_machine_history_with_value_storage(
+                                store, txn, fold, target, memory,
+                            )?;
+                        storage = Some(retained);
+                        Ok(projection)
+                    },
+                )?;
+                Ok(projected.map(|body| {
+                    storage
+                        .expect("selected history retains its value storage")
+                        .into_value_head(body)
+                }))
             })
         })
     }

@@ -19,6 +19,7 @@ use crate::scan_check::ScanCount;
 use crate::side_table::{Raw, SideTable};
 use crate::store::EngineScan;
 use crate::store::Store;
+use crate::write_envelope::claim_body::{ClaimScopeReadMemory, ClaimValueHeadStorage};
 use crate::{EntityId, Vault};
 use oneiron_authority::authority::{AuthorityKey, ROLE_OWNER};
 use rand_core::RngCore;
@@ -45,8 +46,9 @@ pub(crate) use self::chain::{
     ControlRows, StoreRows, chain_transitions, machine_history_for_restriction,
     machine_history_rows, machine_history_rows_at, machine_history_rows_from, read_handoff_chain,
     resolved_machine_history, resolved_machine_history_from, resolved_machine_history_with_sources,
-    restricts_held_machine_history, trusted_machine_handoff, verified_handoff_chain,
-    verified_handoff_chain_from, verify_handoff_signature,
+    resolved_machine_history_with_value_storage, restricts_held_machine_history,
+    trusted_machine_handoff, verified_handoff_chain, verified_handoff_chain_from,
+    verify_handoff_signature,
 };
 pub(crate) use self::pin::{PIN_PREFIX, pin_key};
 pub(crate) use self::resolve::{into_projected_machine_claim, project_machine_claim};
@@ -131,6 +133,22 @@ fn machine_history(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
+    machine_history_with_value_storage(source, store, txn, fold, target, None)
+        .map(|(projection, carriers, _)| (projection, carriers))
+}
+
+fn machine_history_with_value_storage(
+    source: &dyn ControlRows,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+    memory: Option<ClaimScopeReadMemory<'_>>,
+) -> Result<(
+    ClaimTransitionProjection,
+    Vec<EntityId>,
+    ClaimValueHeadStorage,
+)> {
     let rows = machine_history_rows_from(source, store, txn, target)?;
     let packet = trusted_machine_handoff(store, txn, target)?;
     if fold.vault_id != Some(rows.birth.vault_id)
@@ -177,6 +195,7 @@ fn machine_history(
     // The signed birth's own ClaimOf weight, the one the materializer gave
     // the edge.
     let initial_weight = super::claim_initial_claim_of_weight(&original).map_err(|_| bad())?;
+    let storage = ClaimValueHeadStorage::retained(&original, memory);
     fold_machine_claim_transitions_owned(
         original,
         &rows.birth.vault_id,
@@ -243,7 +262,7 @@ fn machine_history(
         }
         TransitionFoldError::Rollback => Error::InvalidClaimBody("machine history event rollback"),
     })
-    .map(|projection| (projection, carriers))
+    .map(|projection| (projection, carriers, storage))
 }
 
 /// How an adopted candidate must stand to the stored pin.

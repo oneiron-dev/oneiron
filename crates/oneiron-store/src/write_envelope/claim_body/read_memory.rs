@@ -97,49 +97,6 @@ impl ClaimBodyRead {
         }
     }
 
-    /// Records a final projected body's backing after native history selection.
-    /// History decoding, folding and projection allocations are not admitted here.
-    pub fn retained(body: ClaimBody, memory: Option<ClaimScopeReadMemory<'_>>) -> Self {
-        let value_memory = memory.map(|memory| {
-            let mut lease = memory.value_lease();
-            lease.materialized(0, value_storage_bytes(&body.value));
-            lease
-        });
-        let predicate_memory = memory.map(|memory| {
-            let mut lease = memory.value_lease();
-            lease.materialized(0, body.predicate.capacity() as u64);
-            lease
-        });
-        let metadata_memory = memory.map(|memory| {
-            let mut lease = memory.value_lease();
-            lease.materialized(
-                0,
-                metadata_storage_bytes(
-                    body.evidence.as_ref(),
-                    body.scope.as_ref(),
-                    body.session_tag.as_ref(),
-                ),
-            );
-            lease
-        });
-        let memory = memory.map(|memory| {
-            let mut lease = memory.memory.empty_lease();
-            let bytes = body
-                .rel
-                .as_ref()
-                .map_or(0, |ids| relationship_bytes(ids.capacity()));
-            lease.materialized(0, bytes);
-            lease
-        });
-        Self::new(
-            body,
-            memory,
-            value_memory,
-            predicate_memory,
-            metadata_memory,
-        )
-    }
-
     /// Extracts a body only when all of its backing guards are absent.
     pub fn try_into_unbound_body(self) -> Result<ClaimBody, Self> {
         if self._memory.is_some()
@@ -170,6 +127,44 @@ impl Deref for ClaimBodyRead {
 
     fn deref(&self) -> &Self::Target {
         &self.body
+    }
+}
+
+/// Storage charges for the unchanged value and predicate of a selected birth.
+/// This records allocated backing; it does not admit history allocations.
+pub struct ClaimValueHeadStorage {
+    value_memory: Option<MemoryLease>,
+    predicate_memory: Option<MemoryLease>,
+}
+
+impl ClaimValueHeadStorage {
+    pub fn retained(body: &ClaimBody, memory: Option<ClaimScopeReadMemory<'_>>) -> Self {
+        let value_memory = memory.map(|memory| {
+            let mut lease = memory.value_lease();
+            lease.materialized(0, value_storage_bytes(&body.value));
+            lease
+        });
+        let predicate_memory = memory.map(|memory| {
+            let mut lease = memory.value_lease();
+            lease.materialized(0, body.predicate.capacity() as u64);
+            lease
+        });
+        Self {
+            value_memory,
+            predicate_memory,
+        }
+    }
+
+    /// The body must still own the exact value and predicate backing recorded above.
+    pub fn into_value_head(self, body: ClaimBody) -> ClaimValueHead {
+        ClaimValueHead::new(
+            body.predicate,
+            body.lifecycle,
+            body.stale,
+            body.value,
+            self.value_memory,
+            self.predicate_memory,
+        )
     }
 }
 
