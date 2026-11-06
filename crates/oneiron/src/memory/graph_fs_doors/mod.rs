@@ -10,7 +10,7 @@ use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::ClaimReadStatus;
 use crate::graph_fs::{
     GRAPH_FS_PROJECTION_VERSION, GraphFsCommandOutput, GraphFsCoreutilsDecision, GraphFsEntryKind,
-    GraphFsOptions, GraphFsResolver, checkpoint, copy_text_parts,
+    GraphFsOptions, GraphFsResolver, checkpoint, copy_text_parts, copy_utf8_field,
 };
 
 impl GraphFsMountRequest {
@@ -41,6 +41,21 @@ fn call_key(verb: &str, parameters: impl serde::Serialize) -> MemoryResult<Strin
         .map_err(|_| MemoryError::bad_request("graph-fs parameters did not encode"))
 }
 
+fn base64_output(
+    bytes: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+    scan_bytes: usize,
+) -> MemoryResult<String> {
+    // Non-final chunks contain complete three-byte base64 groups.
+    let quantum = (scan_bytes / 3).max(1) * 3;
+    let mut output = String::new();
+    for chunk in bytes.chunks(quantum) {
+        checkpoint(reader)?;
+        base64::engine::general_purpose::STANDARD.encode_string(chunk, &mut output);
+    }
+    Ok(output)
+}
+
 fn output(
     tree: &GraphFsResolver<'_, '_>,
     request: &GraphFsMountRequest,
@@ -58,12 +73,16 @@ fn output(
         GraphFsCoreutilsDecision::Walk => GraphFsPlan::Walk,
     };
     let read_receipt = result.read_receipt().cloned();
-    let (output, encoding) = match String::from_utf8(result.into_bytes()) {
-        Ok(text) => (text, GraphFsEncoding::Utf8),
-        Err(bytes) => (
-            base64::engine::general_purpose::STANDARD.encode(bytes.into_bytes()),
-            GraphFsEncoding::Base64,
-        ),
+    let scan_bytes = request.options().page_byte_cap();
+    let (output, encoding) = {
+        let bytes = result.into_bytes();
+        match copy_utf8_field(&bytes, reader, scan_bytes)? {
+            Some(text) => (text, GraphFsEncoding::Utf8),
+            None => (
+                base64_output(&bytes, reader, scan_bytes)?,
+                GraphFsEncoding::Base64,
+            ),
+        }
     };
     Ok(GraphFsOutput {
         mount: descriptor(tree, request),

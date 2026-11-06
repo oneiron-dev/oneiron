@@ -255,8 +255,8 @@ pub(crate) fn copy_text_parts(
     Ok(path)
 }
 
-/// Validates and copies an authenticated cursor field in reader-paced UTF-8 windows.
-pub(super) fn copy_utf8_field(
+/// Validates and copies complete UTF-8 text in reader-paced windows.
+pub(crate) fn copy_utf8_field(
     mut bytes: &[u8],
     reader: &ContainerReader,
     scan_bytes: usize,
