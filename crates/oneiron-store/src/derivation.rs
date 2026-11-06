@@ -151,4 +151,3 @@ pub fn sealed_digest(
 ) -> [u8; 32] {
     key(Some(owner), kind, computation, content).0
 }
-
