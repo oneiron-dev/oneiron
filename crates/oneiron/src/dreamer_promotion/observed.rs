@@ -32,7 +32,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// distinct live TURNs the user spoke, across at least
 /// [`OBSERVED_PREFERENCE_MIN_SESSIONS`] distinct live SESSIONs, read on the
 /// writer's snapshot.
-pub(super) fn observed_preference_support_in_txn(
+pub(crate) fn observed_preference_support_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     evidence: &[EntityId],

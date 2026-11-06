@@ -163,6 +163,39 @@ impl BranchResources<'_> {
             .collect()
     }
 
+    /// Whether `candidate` is a want the user's own turns show, written as its
+    /// own Observed claim beside the stated heads it matches (ARCH-0003
+    /// #observed-vs-stated, FIX 21842): a `preference.*` candidate with an
+    /// untainted Generated meet that names no supersession, whose every
+    /// matched prior is a `user_stated` head, and whose evidence meets the
+    /// counted bar. It is neither attached to such a head nor judged against
+    /// it: the engine holds the pair and opens its conflict.
+    pub(in crate::dreamer_consolidation) fn observed_beside_stated(
+        &self,
+        candidate: &PromotionCandidate,
+        matches: &[(EntityId, bool)],
+    ) -> Result<bool> {
+        if candidate.supersedes.is_some()
+            || candidate.evidence_meet != crate::claim::ClaimSource::Generated
+            || !crate::claim::is_preference_predicate(candidate.candidate.predicate())
+            || matches.is_empty()
+        {
+            return Ok(false);
+        }
+        for (id, _) in matches {
+            if self.prior(*id)?.body.source != Some(crate::claim::ClaimSource::UserStated) {
+                return Ok(false);
+            }
+        }
+        let vault = self.read.vault();
+        let txn = vault.store.env.read_txn()?;
+        crate::dreamer_promotion::observed_preference_support_in_txn(
+            vault,
+            &txn,
+            &candidate.evidence_turn_refs,
+        )
+    }
+
     pub(in crate::dreamer_consolidation) fn route_priors(
         &self,
         candidates: &[PromotionCandidate],
@@ -170,13 +203,17 @@ impl BranchResources<'_> {
         rules: &PredicateKeyRules,
     ) -> Result<Vec<ConflictSet>> {
         let mut exact = BTreeSet::new();
+        // Observed wants held beside what the user stated: never judged.
+        let mut observed = BTreeSet::new();
         let mut priors = Vec::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let matches = self.matching_priors(candidate, rules)?;
             for (id, _) in &matches {
                 self.require_prior_write(self.scope(), *id)?;
             }
-            if matches.len() == 1 && matches[0].1 {
+            if self.observed_beside_stated(candidate, &matches)? {
+                observed.insert(index);
+            } else if matches.len() == 1 && matches[0].1 {
                 exact.insert(index);
             }
             priors.push(matches);
@@ -193,11 +230,12 @@ impl BranchResources<'_> {
             conflict.prior_heads = ids.into_iter().collect();
             conflict
                 .candidate_indexes
-                .retain(|index| !exact.contains(index));
+                .retain(|index| !exact.contains(index) && !observed.contains(index));
         }
         conflicts.retain(|conflict| !conflict.candidate_indexes.is_empty());
         for (index, matches) in priors.into_iter().enumerate() {
-            if matches.iter().any(|(_, equal)| !equal)
+            if !observed.contains(&index)
+                && matches.iter().any(|(_, equal)| !equal)
                 && !conflicts
                     .iter()
                     .any(|set| set.candidate_indexes.contains(&index))
