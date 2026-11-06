@@ -10,15 +10,17 @@
 //! not project or seal goes as today's carrier, marked so
 //! ([`WindowPadForm::Carrier`], KEEP TODAY).
 //!
-//! `header ‖ payload ‖ refs ‖ capsule`, the header [`WINDOW_PAD_HEADER_BYTES`]
+//! `header ‖ payload ‖ refs ‖ capsule ‖ copies`, the header [`WINDOW_PAD_HEADER_BYTES`]
 //! long. A payload that fits rides the first frame whole, so a frame's
 //! release judges all of it; what does not fit after the header follows in
 //! order on the same socket as `WINDOW_PAD_PART` frames
 //! (`[envelope id:32][offset:8 BE][bytes]`, the id the header's BLAKE3, the
-//! offset counted from the header's end): the refs and capsule, and the rest
+//! offset counted from the header's end): the refs, capsule, copies and the rest
 //! of a payload past one frame, such as a replacement or a catch-up whose
-//! window outgrew the floor (FIX 8247). Its receiver joins every part and
-//! checks the payload against the header's digest before it reads any of it.
+//! window outgrew the floor (FIX 8247). Its receiver joins the required
+//! payload, references and capsule and checks their digests before delivery.
+//! Optional copies may finish later on the same socket, without delaying or
+//! repeating that canonical delivery.
 //! The header has its own allowance over the frame floor, so an update that
 //! fit one frame before still does.
 //!
@@ -41,9 +43,10 @@ const REFS_CONTEXT: &str = "oneiron/window-pads/refs/v1";
 
 /// magic (4) ‖ kind (1) ‖ form (1) ‖ queue seq (8) ‖ payload length (4) ‖
 /// payload digest (32) ‖ reference count (4) ‖ recipient (16) ‖ source
-/// position (96) ‖ capsule digest (32) ‖ capsule length (4); every integer
-/// big-endian, every absent field zero.
-pub const WINDOW_PAD_HEADER_BYTES: usize = 4 + 1 + 1 + 8 + 4 + 32 + 4 + 16 + 96 + 32 + 4;
+/// position (96) ‖ capsule digest (32) ‖ capsule length (4) ‖ optional copy
+/// digest (32) ‖ optional copy length (4); every integer big-endian, every
+/// absent field zero.
+pub const WINDOW_PAD_HEADER_BYTES: usize = 4 + 1 + 1 + 8 + 4 + 32 + 4 + 16 + 96 + 32 + 4 + 32 + 4;
 /// One reference: the pad's full id, world (16) ‖ generation (8) ‖ mint (16).
 const REF_BYTES: usize = 40;
 /// magic (4) ‖ kind (1) ‖ readiness (1) ‖ queue seq (8) ‖ payload digest (32)
@@ -151,6 +154,9 @@ pub struct WindowPadEnvelope {
     /// unless sealed.
     pub refs: Vec<[u8; 40]>,
     pub sidecar: Option<WindowPadSidecar>,
+    /// Optional sender-signed, recipient-sealed derived copies. These bytes
+    /// authenticate neither the canonical payload nor the transport peer.
+    pub home_claim_copies: Vec<u8>,
 }
 
 /// What an envelope bound: what its receipt must name to answer it.
@@ -252,6 +258,8 @@ struct Header {
     source_position: Option<[u8; 96]>,
     sidecar_digest: Option<[u8; 32]>,
     capsule_len: usize,
+    copies_digest: [u8; 32],
+    copies_len: usize,
 }
 
 impl Header {
@@ -273,6 +281,8 @@ impl Header {
             source_position: present(array(header, 70)),
             sidecar_digest: present(array(header, 166)),
             capsule_len: u32::from_be_bytes(array(header, 198)) as usize,
+            copies_digest: array(header, 202),
+            copies_len: u32::from_be_bytes(array(header, 234)) as usize,
         };
         read.check()?;
         Ok(read)
@@ -307,12 +317,17 @@ impl Header {
         WINDOW_PAD_HEADER_BYTES + self.payload_len
     }
 
-    /// The whole envelope's length.
-    fn total(&self) -> Option<usize> {
+    /// The canonical payload and every required pad, without optional copies.
+    fn required(&self) -> Option<usize> {
         self.refs
             .checked_mul(REF_BYTES)?
             .checked_add(self.capsule_len)?
             .checked_add(self.head())
+    }
+
+    /// The whole envelope's length.
+    fn total(&self) -> Option<usize> {
+        self.required()?.checked_add(self.copies_len)
     }
 }
 
@@ -345,6 +360,10 @@ impl WindowPadEnvelope {
             header[166..198].copy_from_slice(&sidecar.digest);
             header[198..202].copy_from_slice(&u32_len(sidecar.capsule.len())?.to_be_bytes());
         }
+        if !self.home_claim_copies.is_empty() {
+            header[202..234].copy_from_slice(blake3::hash(&self.home_claim_copies).as_bytes());
+            header[234..238].copy_from_slice(&u32_len(self.home_claim_copies.len())?.to_be_bytes());
+        }
         Header::read(&header)?;
         if self.refs.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(invalid("window pad references out of order"));
@@ -352,17 +371,20 @@ impl WindowPadEnvelope {
         Ok(header)
     }
 
-    /// The references and the capsule, end to end.
+    /// The references, capsule and optional copies, end to end.
     fn tail(&self) -> Vec<u8> {
         let capsule = self
             .sidecar
             .as_ref()
             .map_or(&[][..], |sidecar| &sidecar.capsule);
-        let mut tail = Vec::with_capacity(self.refs.len() * REF_BYTES + capsule.len());
+        let mut tail = Vec::with_capacity(
+            self.refs.len() * REF_BYTES + capsule.len() + self.home_claim_copies.len(),
+        );
         for item in &self.refs {
             tail.extend_from_slice(item);
         }
         tail.extend_from_slice(capsule);
+        tail.extend_from_slice(&self.home_claim_copies);
         tail
     }
 
@@ -495,6 +517,22 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
     if header.total() != Some(bytes.len()) {
         return Err(invalid("window pad envelope length"));
     }
+    decode_window_pad_fields(bytes, &header)
+}
+
+/// The original canonical ready point, even when optional copies come later.
+fn decode_required_window_pads(bytes: &[u8]) -> Result<WindowPadEnvelope, TransportError> {
+    let header = Header::read(bytes)?;
+    if header.required() != Some(bytes.len()) {
+        return Err(invalid("window pad envelope length"));
+    }
+    decode_window_pad_fields(bytes, &header)
+}
+
+fn decode_window_pad_fields(
+    bytes: &[u8],
+    header: &Header,
+) -> Result<WindowPadEnvelope, TransportError> {
     let payload = bytes[WINDOW_PAD_HEADER_BYTES..header.head()].to_vec();
     if *blake3::hash(&payload).as_bytes() != header.payload_digest {
         return Err(invalid("window pad payload digest"));
@@ -513,7 +551,7 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
         header.sidecar_digest,
     ) {
         (Some(recipient), Some(source_position), Some(digest)) => {
-            let capsule = bytes[refs_end..].to_vec();
+            let capsule = bytes[refs_end..refs_end + header.capsule_len].to_vec();
             if *blake3::hash(&capsule).as_bytes() != digest {
                 return Err(invalid("window pad capsule digest"));
             }
@@ -526,6 +564,16 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
         }
         _ => None,
     };
+    let copies = &bytes[refs_end + header.capsule_len..];
+    // Derived copies are optional: their damage never rejects canonical bytes.
+    let home_claim_copies = if copies.len() == header.copies_len
+        && !copies.is_empty()
+        && *blake3::hash(copies).as_bytes() == header.copies_digest
+    {
+        copies.to_vec()
+    } else {
+        Vec::new()
+    };
     Ok(WindowPadEnvelope {
         kind: header.kind,
         form: header.form,
@@ -533,6 +581,7 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
         payload,
         refs,
         sidecar,
+        home_claim_copies,
     })
 }
 

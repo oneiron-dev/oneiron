@@ -71,6 +71,36 @@ impl SyncClient {
         prepared: Option<crate::embed::home_vectors::PreparedHomeClaimDelivery>,
         answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
+        let copies = prepared
+            .map(|prepared| {
+                prepared.into_copies_for(
+                    &self.vault,
+                    from,
+                    &crate::embed::home_vectors::HomeClaimDelivery {
+                        window: window_key,
+                        payload: update,
+                    },
+                )
+            })
+            .unwrap_or_default();
+        self.import_own_device_window_update_with_retained_copies(
+            window_key, update, from, copies, None, answers,
+        )
+    }
+
+    /// The same native import with holders already bound to the original
+    /// envelope before its repo-copy translation.
+    pub(super) fn import_own_device_window_update_with_retained_copies(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        from: PeerMachine,
+        copies: Vec<
+            std::sync::Arc<crate::embed::home_vectors::retained_copy::PreparedHomeClaimCopy>,
+        >,
+        copy_delivery: Option<[u8; 32]>,
+        answers: Option<&mut Vec<Vec<u8>>>,
+    ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
         if update.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
@@ -86,18 +116,6 @@ impl SyncClient {
                 "full-window exchange requires causal promotion",
             ));
         }
-        let copies = prepared
-            .map(|prepared| {
-                prepared.into_copies_for(
-                    &self.vault,
-                    from,
-                    &crate::embed::home_vectors::HomeClaimDelivery {
-                        window: window_key,
-                        payload: update,
-                    },
-                )
-            })
-            .unwrap_or_default();
         if window.key.world().is_some() {
             // Every unresolved world update waits staged while their bytes
             // together stay within the memory bound, however many there are
@@ -108,6 +126,7 @@ impl SyncClient {
                     bytes: update.to_vec(),
                     from,
                     copies,
+                    copy_delivery,
                 });
             // An update joined from its envelope's parts may pass the bound
             // alone (FIX 8247): it waits while nothing else does, and beside

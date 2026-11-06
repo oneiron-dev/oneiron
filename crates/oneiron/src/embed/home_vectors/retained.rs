@@ -46,8 +46,9 @@ impl PreparedHomeClaimResponse {
         self.received.vector.entity_id
     }
 
-    /// Called only from the writer that materialized the canonical source.
-    /// Borrow the outer holder here; do not drop it before that writer commits.
+    /// Called after canonical admission, in its materializing writer or its
+    /// existing pending job's writer. The exact source is rechecked there.
+    /// Borrow the outer holder through the actual outer writer's return.
     pub(crate) fn retain_in_txn(
         &self,
         vault: &Vault,

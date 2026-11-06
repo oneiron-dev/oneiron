@@ -11,13 +11,16 @@
 //! Artifact validation yields between ordered groups, rows and nested history
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
-//! retained-parent and workflow checks, encoding and its envelope checksum
-//! still run whole. The outer canonical digest yields between BLAKE3 chunks.
-//! Aborted-transaction preflight and the NOTE workflow plan also run whole;
-//! manifest construction yields between its original whole pack/hash chunks.
+//! retained-parent and workflow checks, and encoding still run whole. The
+//! envelope checksum and outer canonical digest yield between BLAKE3 chunks.
+//! NOTE scope and immutable plan lookups yield between source rows; store-bound
+//! workflow checks and the aborted-transaction preflight still run whole. Manifest construction
+//! yields between whole packs and within each chunk hash.
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
-//! completion turn; pure snapshot equality then resumes one row at a time.
+//! completion turn; pure snapshot equality resumes between rows and within
+//! entity blobs, current document text, titles, field names, receipt bytes and
+//! fork and proposal payloads.
 //! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
@@ -34,6 +37,7 @@ use super::canonical::{
     CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalSnapshot, CanonicalValidation,
     RebuildAt, StoreCapturedCanonical, invalid, rebuild_page, rebuild_start,
 };
+use super::document::{NotePlanRows, NoteScopeRows};
 use super::ladder::{
     CanonicalComparison, ManifestChunks, PreparedRecovery, RecoveryBudget, RecoveryTier, limit,
     prepare_rebuilt_with_manifest, verify_page,
@@ -129,6 +133,8 @@ pub(crate) struct RecoveryWork {
     validation: Option<CanonicalValidation>,
     encoded_digest: Option<EncodedDigest>,
     preflight_manifest: Option<ManifestChunks>,
+    preflight_note_scope: Option<NoteScopeRows>,
+    preflight_note_plan: Option<NotePlanRows>,
     doc: Option<LoroDoc>,
     rebuilt: RebuildAt,
     prepared: Option<PreparedRecovery>,
@@ -184,6 +190,8 @@ impl RecoveryWork {
             validation: None,
             encoded_digest: None,
             preflight_manifest: None,
+            preflight_note_scope: None,
+            preflight_note_plan: None,
             doc: None,
             rebuilt: RebuildAt::default(),
             prepared: None,
@@ -217,6 +225,8 @@ impl RecoveryWork {
             }
             if result.is_err() && self.phase == RecoveryPhase::Preflight {
                 self.preflight_manifest = None;
+                self.preflight_note_scope = None;
+                self.preflight_note_plan = None;
                 self.doc = None;
             }
             result?;
@@ -307,7 +317,7 @@ impl RecoveryWork {
                     }
                     let encoded = self
                         .source
-                        .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
+                        .encode_validated_payload_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
                     limit(encoded.len(), self.budget.max_bytes)?;
                     self.encoded_digest = Some(EncodedDigest::new(encoded));
                 }
@@ -401,13 +411,31 @@ impl RecoveryWork {
                 .doc
                 .take()
                 .ok_or_else(|| invalid("recovery preflight"))?;
+            let rows = self
+                .preflight_note_scope
+                .get_or_insert_with(NoteScopeRows::default);
+            if !rows.advance(&self.source, self.budget.max_obligations) {
+                self.doc = Some(doc);
+                return Ok(());
+            }
+            let plan = self
+                .preflight_note_plan
+                .get_or_insert_with(NotePlanRows::default);
+            if !plan.advance(&self.source, rows.scope(), self.budget.max_obligations) {
+                self.doc = Some(doc);
+                return Ok(());
+            }
             crate::sync::bridge::preflight_validated_canonical_recovery_with_source(
                 vault,
                 materializer,
                 &self.source,
                 &doc,
                 self.source.captured(),
+                rows.scope(),
+                plan,
             )?;
+            self.preflight_note_scope = None;
+            self.preflight_note_plan = None;
             self.doc = Some(doc);
             self.preflight_manifest = Some(ManifestChunks::default());
         }

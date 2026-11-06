@@ -106,10 +106,12 @@ impl SyncClient {
             ));
         }
         // A window's bytes come in their envelope, its pads installed here first (FIX 7107).
-        let (sub_tag, payload) = match self.accept_window_pad_frame(&key, sub_tag, payload)? {
-            std::ops::ControlFlow::Continue(frame) => frame,
-            std::ops::ControlFlow::Break(answer) => return Ok(answer),
-        };
+        let (sub_tag, payload, copies) =
+            match self.accept_window_pad_frame(&key, sub_tag, payload)? {
+                std::ops::ControlFlow::Continue(frame) => frame,
+                std::ops::ControlFlow::Break(answer) => return Ok(answer),
+            };
+        let copy_delivery = payload.delivery_digest();
         let payload: &[u8] = &payload;
         match sub_tag {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
@@ -238,10 +240,12 @@ impl SyncClient {
                 }
                 // The home this connection proved, if it proved one, sent these bytes.
                 let mut answers = Vec::new();
-                match self.import_own_device_window_update(
+                match self.import_own_device_window_update_with_retained_copies(
                     window_key,
                     payload,
                     self.home_peer,
+                    copies,
+                    copy_delivery,
                     Some(&mut answers),
                 ) {
                     // What answers a deferred sealed update this import let in (FIX 10474).
@@ -267,7 +271,7 @@ impl SyncClient {
                 // Judged again once no demotion holds the window closed.
                 let (window, conflicts) = self
                     .manager
-                    .replace_window_bounded(
+                    .replace_window_bounded_with_retained_copies(
                         &key,
                         payload,
                         &evidence,
@@ -277,6 +281,7 @@ impl SyncClient {
                         },
                         ReplacementByteBound::NetworkFrame,
                         own_device.as_ref(),
+                        &copies,
                     )
                     .map_err(|error| match error {
                         Error::Sync(SyncError::SyncProtocolError {
