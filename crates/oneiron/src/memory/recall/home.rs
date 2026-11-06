@@ -303,6 +303,12 @@ impl HomeRecallAsk {
             answerable: home_answers(request, room_turn),
         }
     }
+
+    /// The backing storage of this ask's own query string, in bytes.
+    #[must_use]
+    pub fn query_storage_bytes(&self) -> u64 {
+        self.query.capacity() as u64
+    }
 }
 
 /// Whether the home can take `request` (FIX 2905): its search carries the
