@@ -272,29 +272,38 @@ impl ScopedRead<'_> {
     ///
     /// Composes through the same session-aware edge port as reachability.
     /// Every facet is read: a long list raises the advisory edge-scan check,
-    /// never a refusal (FIX 8665).
+    /// never a refusal (FIX 8665). Only a base read raises it: a room's
+    /// staged rows have no name in the vault's checks (FIX 4280).
     pub(crate) fn claim_facet_refs_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        let mut count = crate::scan_check::ScanCount::start(
-            &self.vault.store,
-            rtxn,
-            crate::store::EngineScan::EdgePeerRows,
-            &[
-                &[crate::ports::EdgeDirection::Out as u8][..],
-                id.as_bytes(),
-                &[EdgeKind::FacetOf as u8][..],
-            ]
-            .concat(),
-        )?;
+        let mut count = if self.reads_room() {
+            None
+        } else {
+            Some(crate::scan_check::ScanCount::start(
+                &self.vault.store,
+                rtxn,
+                crate::store::EngineScan::EdgePeerRows,
+                &[
+                    &[crate::ports::EdgeDirection::Out as u8][..],
+                    id.as_bytes(),
+                    &[EdgeKind::FacetOf as u8][..],
+                ]
+                .concat(),
+            )?)
+        };
         let mut facets = Vec::new();
         for entry in self.out_edges_in(rtxn, id, Some(EdgeKind::FacetOf))? {
-            count.row();
+            if let Some(count) = count.as_mut() {
+                count.row();
+            }
             facets.push(entry?.target);
         }
-        count.defer(&self.vault.store);
+        if let Some(count) = count {
+            count.defer(&self.vault.store);
+        }
         Ok(facets)
     }
 
