@@ -310,8 +310,15 @@ opening policy remain unchanged.
 ### Captured House response quantities on errors
 
 The same retained native admission also stores the original read's completion
-request observations. Each request records its actual prompt count. A parsed HTTP
-response records its status and each answer's native `index`, `tokens_evaluated`
+request observations. Each request records its actual prompt count and the hash
+of its finalized native JSON input body, after the tokenizer supplied the actual
+end-token id and the sender inserted `logit_bias`. The sender hashes that input's
+JSON serialization before its HTTP await; this is not the earlier input-plan
+hash. It excludes HTTP compression, framing, headers and credentials, so it is
+not a wire-byte hash or proof that bytes were sent or a model ran. An unresolved
+or refused request can still retain the body the sender actually constructed.
+
+A parsed HTTP response records its status and each answer's native `index`, `tokens_evaluated`
 and `tokens_predicted` when present, before status, batch or label validation.
 Malformed shapes and missing counters remain explicit unknowns. Native zero
 counts remain zero data; they do not replace the existing accounting output floor.

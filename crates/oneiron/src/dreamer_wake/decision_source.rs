@@ -77,6 +77,8 @@ pub struct DecisionCallAdmission {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionCompletionObservation {
+    /// The finalized native JSON input body, not compressed wire bytes or proof of send.
+    pub input_body_hash: [u8; 32],
     pub requested_prompts: usize,
     /// None when the request returned no parsed native response.
     pub response: Option<DecisionCompletionResponse>,
