@@ -120787,7 +120787,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/recovery_kit/live.rs",
@@ -123666,6 +123666,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 3,
       "mod": 24,
       "re-export": 2
