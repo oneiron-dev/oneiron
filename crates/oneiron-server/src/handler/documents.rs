@@ -529,6 +529,20 @@ pub(super) fn document_delivery_retrying(
             out.extend(notice(doc));
             return false;
         }
+        // A NOTE fork's state, and the set after it, were built for this
+        // socket's own NOTE: they pass as built, behind its owner gate again,
+        // never exported again as the NOTE's text (FIX 12789). Only the
+        // empty set, the notice of a fork change, is read below.
+        if doc.kind == document_sub_tags::NOTE_FORK_STATE
+            || (doc.kind == document_sub_tags::NOTE_FORK_SET && !doc.payload.is_empty())
+        {
+            if state.owner_documents.contains_key(&doc.entity)
+                && owner_auth(server, state, false).is_ok()
+            {
+                out.extend(notice(doc));
+            }
+            return false;
+        }
         // A fork upload's receipt changes no text, so no state goes before
         // it; it reaches the owner lane its upload came on (FIX 12789).
         if doc.kind == document_sub_tags::NOTE_FORK_RECEIPT {
