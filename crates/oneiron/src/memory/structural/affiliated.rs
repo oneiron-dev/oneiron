@@ -46,10 +46,10 @@ struct TakeSourcePin<'l> {
 }
 
 impl Memory<'_> {
-    /// Resolves `<document-ref>@<revision>` under this writer: the ref must
-    /// name a record with that retained revision, and this writer's Recorded
-    /// lane must read the record at it. A missing and a withheld source get
-    /// the same `NOT_FOUND`.
+    /// Resolves `<document-ref>@<revision>` under this writer in one snapshot
+    /// of its Recorded lane ([`admitted_take_source_in`]). A source that does
+    /// not resolve and one this writer may not read get the same refusal and
+    /// the same receipt ([`take_source_refusal`]).
     fn take_source_pin(&self, source_ref: &str) -> MemoryResult<TakeSourcePin<'_>> {
         let Some((reference, revision)) = source_ref.trim().rsplit_once('@') else {
             return Err(MemoryError::bad_request_with(
@@ -59,22 +59,12 @@ impl Memory<'_> {
         };
         let revision = crate::vault::RevisionRef::from_hex(revision)?;
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-        let not_found = || {
-            MemoryError::not_found(format!(
-                "take source {reference:?} does not resolve at its revision"
-            ))
+        let admitted = lane.with_grant_read_snapshot(|txn| {
+            admitted_take_source_in(self.vault, &lane, txn, reference, revision)
+        })?;
+        let Some(source) = admitted else {
+            return Err(take_source_refusal(reference, lane.read_receipt(None, 0)?));
         };
-        let source = self
-            .vault
-            .resolve_pinned_entity_reference(reference, revision)?
-            .ok_or_else(not_found)?;
-        let read = lane.read(
-            &[crate::claim::PointRead::id(source).at(crate::vault::ReadMode::Pinned(revision))],
-            None,
-        )?;
-        if read.value.into_iter().next().flatten().is_none() {
-            return Err(not_found().with_read_receipt(read.receipt));
-        }
         Ok(TakeSourcePin {
             lane,
             reference: reference.to_owned(),
@@ -87,31 +77,58 @@ impl Memory<'_> {
 impl TakeSourcePin<'_> {
     /// Proves the pin again in the content writer's own snapshot: the ref
     /// still names the same record at that revision, and the writer still
-    /// reads it there.
+    /// reads it there. A failed proof is the same refusal as a failed pin.
     fn prove_in_txn(&self, vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
-        let resolved =
-            vault.resolve_pinned_entity_reference_in(txn, &self.reference, self.revision)?;
-        let readable = resolved == Some(self.source)
-            && self
-                .lane
-                .get_entities_parts_with_mode_in_txn(
-                    txn,
-                    &[self.source],
-                    crate::vault::ReadMode::Pinned(self.revision),
-                )?
-                .into_iter()
-                .next()
-                .flatten()
-                .is_some();
-        if readable {
-            Ok(())
-        } else {
-            Err(MemoryError::not_found(format!(
-                "take source {:?} does not resolve at its revision",
-                self.reference
-            )))
+        if admitted_take_source_in(vault, &self.lane, txn, &self.reference, self.revision)?
+            == Some(self.source)
+        {
+            return Ok(());
         }
+        Err(take_source_refusal(
+            &self.reference,
+            self.lane.read_receipt_in(txn, None, 0)?,
+        ))
     }
+}
+
+/// The record `reference` names at `revision` when `lane` may read it there,
+/// in `txn`: the ref resolves at that retained revision, the revision alone
+/// names the same record (so a provenance audit can find and admit it again,
+/// [`crate::Vault::revision_record_in`]), and the lane reads the record at
+/// it. `None` for every other case alike.
+fn admitted_take_source_in(
+    vault: &crate::Vault,
+    lane: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    reference: &str,
+    revision: crate::vault::RevisionRef,
+) -> crate::error::Result<Option<crate::EntityId>> {
+    let Some(source) = vault.resolve_pinned_entity_reference_in(txn, reference, revision)? else {
+        return Ok(None);
+    };
+    if vault.revision_record_in(txn, revision)? != Some(source) {
+        return Ok(None);
+    }
+    let readable = lane
+        .get_entities_parts_with_mode_in_txn(
+            txn,
+            &[source],
+            crate::vault::ReadMode::Pinned(revision),
+        )?
+        .into_iter()
+        .next()
+        .flatten()
+        .is_some();
+    Ok(readable.then_some(source))
+}
+
+/// The one refusal a take's unresolved or unreadable source gets: the same
+/// `NOT_FOUND` and an unnarrowed lane receipt, whichever case it was.
+fn take_source_refusal(reference: &str, receipt: crate::claim::ScopedReadReceipt) -> MemoryError {
+    MemoryError::not_found(format!(
+        "take source {reference:?} does not resolve at its revision for this writer"
+    ))
+    .with_read_receipt(receipt)
 }
 
 /// The `unlinked` facts a NOTE's `markdown` earns for `memory`'s writer, the
