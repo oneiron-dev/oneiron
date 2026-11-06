@@ -21,6 +21,7 @@ use crate::entity_id::EntityId;
 
 mod doors;
 mod finish;
+mod pricing;
 mod statistics;
 
 pub use self::doors::eval_seat_canary;
@@ -28,6 +29,7 @@ pub(super) use self::doors::{
     measurement_in_txn, measurements_in_txn, put_in_txn as put_measurement_in_txn,
 };
 pub use self::finish::{JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS};
+pub use self::pricing::{EvalCallPrice, EvalMonetaryRates};
 pub use self::statistics::{EstimateGap, EvalFamilySummary, MeasurementMethodPin};
 
 /// One arm: the exact model a seat would serve, at its serving revision.
@@ -184,7 +186,7 @@ pub enum MeasurementState {
 
 /// The exact host offer that answered a measured leg. The fingerprint is
 /// the gate's full binding identity; credential names stay behind its hash.
-/// Rates are the same binding's native prices, not catalog list prices.
+/// Rates are the binding's lease-unit conversions, not monetary prices.
 /// This is historical evidence, never permission to send or switch a model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -223,6 +225,9 @@ pub struct EvalLegRecord {
     pub served: Option<String>,
     /// The actual exact generative offer, or unknown for other execution paths.
     pub serving_offer: Option<EvalServingOffer>,
+    /// The same physical call's native monetary quote and measured counts.
+    /// Unknown, unpriced or multiple calls never become a zero-price snapshot.
+    pub call_price: Option<EvalCallPrice>,
     /// The blind score on the measured axis, as the scorer answered it.
     pub score: Option<f64>,
     /// The scorer that answered, `model@version`.

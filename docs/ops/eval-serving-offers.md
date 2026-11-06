@@ -33,3 +33,26 @@ be read, this snapshot is unknown. Helper-skill requests and non-generative
 seats leave it unknown.
 This snapshot adds no call refusal and is not evidence of what a later call
 actually served. Only successful per-leg records supply that evidence.
+
+## Monetary evidence on a measured leg
+
+Lease-unit rates are not currency prices. A generative measured leg can now
+keep `call_price`: the existing usage meter's quote and counts from that exact
+physical call. The scoped capture uses the same run instance and the meter's
+prepared settlement bytes. It does not create another price table or wait for
+a ledger write. The snapshot keeps the currency (or the meter's existing
+free-in-any-currency case), price-table snapshot, all input/output/cache rates,
+all four measured token counts, amount, run instance, lease and source rows.
+
+The leg keeps a snapshot only for one native prepared event matching its
+actual constructed binding's offer, model, route, catalog revision and payer.
+An unbound meter, absent quote, unpriced usage, decode failure, multiple calls
+or a mismatched route leaves `call_price` unknown. The original answer, scoring
+and error paths do not change. Incumbent, candidate and incumbent retest use
+this same path. Non-generative seats remain unchanged.
+
+This is historical evidence. It is not a current price quote, loaded-file
+proof, policy authority, a durable-ledger receipt or an automatic switch.
+Comparing fewer tokens is not a money comparison. Automatic approval still
+needs the current policy and bindings, current quality and sufficiency, the
+download-card rule, and both monetary quotes repriced on the same workload.

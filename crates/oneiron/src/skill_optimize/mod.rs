@@ -186,10 +186,10 @@ pub use self::eval_set::{
     setup_eval_cohorts, sufficiency_card,
 };
 pub use self::eval_set::{
-    EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
-    EvalMeasurement, EvalMeasurementRequest, EvalServingOffer, EvalTaskInput, FloorSlicePolicy,
-    JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
-    MeasurementUnavailable, ScoreDirection, eval_seat_canary,
+    EstimateGap, EvalArmPin, EvalAxisPin, EvalCallPrice, EvalCaseMeasurement, EvalFamilySummary,
+    EvalLegRecord, EvalMeasurement, EvalMeasurementRequest, EvalMonetaryRates, EvalServingOffer,
+    EvalTaskInput, FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin,
+    MeasurementState, MeasurementUnavailable, ScoreDirection, eval_seat_canary,
 };
 pub(crate) use self::eval_set::{
     erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,
