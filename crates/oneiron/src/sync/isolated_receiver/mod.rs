@@ -142,11 +142,14 @@ impl PreparedIsolatedWindow {
 
     /// Stages all content and its window bytes in this root, after the caller
     /// staged and checked its original signed history and logged request.
+    /// The caller retains `entity_effects` across the real root write. On an
+    /// error it reconciles those effects without replacing the original error.
     pub(in crate::sync) fn stage_in_txn(
         self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         own_device: Option<&OwnDeviceImport>,
+        entity_effects: &mut EntityImportEffects,
     ) -> Result<StagedIsolatedWindow> {
         let cutoffs = crate::sync::window::check_window_update_residence_in_txn(
             vault,
@@ -174,7 +177,7 @@ impl PreparedIsolatedWindow {
             own_device,
             (&key, &base),
             &update,
-            || content.stage_in_txn(vault, txn),
+            || content.stage_in_txn(vault, txn, entity_effects),
         )
     }
 }
@@ -184,6 +187,7 @@ impl IsolatedContent {
         self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
+        entity_effects: &mut EntityImportEffects,
     ) -> Result<StagedIsolatedWindow> {
         let Self {
             key,
@@ -206,7 +210,7 @@ impl IsolatedContent {
             custody.stage_in_txn(vault, &candidate, &key, txn)?;
         }
         births.stage_in_txn(vault, &candidate, txn)?;
-        let entities = bridge::stage_isolated_entities_in_txn(
+        entity_effects.stage_in_txn(
             &candidate,
             &entities,
             vault,
@@ -247,7 +251,6 @@ impl IsolatedContent {
         Ok(StagedIsolatedWindow {
             key,
             candidate,
-            entities,
             edges,
             tombstones,
             messages,
@@ -257,12 +260,12 @@ impl IsolatedContent {
     }
 }
 
-/// Owned results of staging, not a durability receipt. Drop on root failure;
-/// publish only from the real write door's after-commit callback.
+/// Owned results of staging, not a durability receipt. Entity effects stay
+/// with the outer caller, including partial-stage and root errors; publish
+/// both only from the real write door's after-commit callback.
 pub(in crate::sync) struct StagedIsolatedWindow {
     key: WindowKey,
     candidate: LoroDoc,
-    entities: EntityImportEffects,
     edges: EdgeImportEffects,
     tombstones: TombstoneEffects,
     messages: MessageDocumentEffects,
@@ -278,18 +281,21 @@ pub(in crate::sync) struct PublishedIsolatedWindow {
 }
 
 impl StagedIsolatedWindow {
-    pub(in crate::sync) fn publish_after_commit(self, vault: &Vault) -> PublishedIsolatedWindow {
+    pub(in crate::sync) fn publish_after_commit(
+        self,
+        vault: &Vault,
+        entity_effects: EntityImportEffects,
+    ) -> PublishedIsolatedWindow {
         let Self {
             key,
             candidate,
-            entities,
             edges,
             tombstones,
             messages,
             repos,
             mut healed,
         } = self;
-        let revisions = entities.publish_after_commit(vault);
+        let revisions = entity_effects.publish_after_commit(vault);
         healed.extend(edges.publish_after_commit(vault));
         healed.extend(tombstones.publish_after_commit(vault, key.as_str()));
         messages.publish_after_commit(vault);
