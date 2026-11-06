@@ -428,14 +428,15 @@ pub(super) fn forget_remote_task_in_txn(
 /// Polls row `id`'s remote task `task_id` in the MCP session `session`
 /// from now on, in `wtxn` (FIX 16028): the connector ended the one the task
 /// was created in. A handle naming another task, or keeping no poll, stays
-/// as it is.
+/// as it is. Whether the handle changed.
 pub(super) fn renew_remote_task_session_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &IntentId,
     task_id: &str,
     session: Option<String>,
-) -> IntentLedgerResult<()> {
+) -> IntentLedgerResult<bool> {
+    let mut renewed = false;
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         if let Some(poll) = settlement
             .remote_task
@@ -444,8 +445,10 @@ pub(super) fn renew_remote_task_session_in_txn(
             .and_then(|handle| handle.poll.as_mut())
         {
             poll.session = session;
+            renewed = true;
         }
-    })
+    })?;
+    Ok(renewed)
 }
 
 /// Row `id`'s provider wait and its edge, when that edge is still ahead of

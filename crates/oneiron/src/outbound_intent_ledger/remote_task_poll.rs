@@ -283,7 +283,9 @@ impl Vault {
     /// session `session` from now on (FIX 16028): the connector ended the
     /// one its polls went in (HTTP 404), and a new `initialize` under the
     /// row's own endpoint and credential opened this one. Only a row still
-    /// Deferred on that task changes.
+    /// Deferred on that task, its handle keeping how to poll it, changes:
+    /// whether it did, so a host that renewed a session for a row settled
+    /// or erased since ends it.
     ///
     /// # Errors
     /// Storage and row-codec faults.
@@ -292,16 +294,14 @@ impl Vault {
         intent: &[u8; 32],
         task_id: &str,
         session: Option<String>,
-    ) -> IntentLedgerResult<()> {
-        self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<()> {
+    ) -> IntentLedgerResult<bool> {
+        self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<bool> {
             let deferred = super::store::get_ledger_record(self, txn, intent)?
                 .is_some_and(|record| record.state == IntentState::Deferred);
-            if deferred {
-                super::settlement::renew_remote_task_session_in_txn(
-                    self, txn, intent, task_id, session,
-                )?;
+            if !deferred {
+                return Ok(false);
             }
-            Ok(())
+            super::settlement::renew_remote_task_session_in_txn(self, txn, intent, task_id, session)
         })
     }
 

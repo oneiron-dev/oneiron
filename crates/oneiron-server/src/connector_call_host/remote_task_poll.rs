@@ -181,15 +181,33 @@ impl ServedConnectorCallHost {
             if response.status() == reqwest::StatusCode::NOT_FOUND && live.session.is_some() {
                 drop(response);
                 let renewed = renew_session(&live, &task.poll.protocol)?;
-                let session = renewed
+                // The new session is this poll's until the ledger keeps it:
+                // every way short of that ends it, so no retry leaves one
+                // open on the connector.
+                let Ok(session) = renewed
                     .session
                     .as_ref()
                     .map(|value| value.to_str().map(str::to_owned))
                     .transpose()
-                    .map_err(|_| "session_unreadable")?;
-                self.vault
+                else {
+                    renewed.end();
+                    return Err("session_unreadable");
+                };
+                match self
+                    .vault
                     .remote_task_session_renewed(&task.intent, &task.task_id, session)
-                    .map_err(|_| "session_unrecorded")?;
+                {
+                    Ok(true) => {}
+                    // Erased or settled since the pass read it.
+                    Ok(false) => {
+                        renewed.end();
+                        return Ok(Polled::Gone);
+                    }
+                    Err(_) => {
+                        renewed.end();
+                        return Err("session_unrecorded");
+                    }
+                }
                 let response = renewed
                     .post(&request, Some(CALL_TIMEOUT))
                     .send()
@@ -223,7 +241,8 @@ impl ServedConnectorCallHost {
 /// `live`'s endpoint, protocol revision and credential (FIX 16028):
 /// `initialize` with no session, declaring no capabilities (a poll answers
 /// no task input), its revision checked as the send checked it, then
-/// `notifications/initialized` in the new session.
+/// `notifications/initialized` in the new session. A renewal that fails once
+/// the server opened a session ends that session.
 fn renew_session(live: &LiveSession, revision: &str) -> Result<LiveSession, &'static str> {
     let initialize = json!({
         "jsonrpc": "2.0",
@@ -248,31 +267,35 @@ fn renew_session(live: &LiveSession, revision: &str) -> Result<LiveSession, &'st
     if !response.status().is_success() {
         return Err("session_renewal_refused");
     }
-    let session = response.headers().get(SESSION_HEADER).cloned();
-    let Ok(Some((initialized, _))) = read_reply(response, INITIALIZE_ID) else {
-        return Err("session_renewal_unreadable");
-    };
-    // The key pinned one revision; a server that answers another is not
-    // the connector the owner approved.
-    if initialized.get("error").is_some()
-        || initialized
-            .pointer("/result/protocolVersion")
-            .and_then(Value::as_str)
-            != Some(revision)
-    {
-        return Err("session_renewal_rejected");
-    }
     let renewed = LiveSession {
         client: live.client.clone(),
         endpoint: live.endpoint.clone(),
         protocol: live.protocol.clone(),
-        session,
+        session: response.headers().get(SESSION_HEADER).cloned(),
         auth: live.auth.clone(),
     };
+    // The key pinned one revision; a server that answers another is not
+    // the connector the owner approved.
+    let refusal = match read_reply(response, INITIALIZE_ID) {
+        Ok(Some((initialized, _))) => (initialized.get("error").is_some()
+            || initialized
+                .pointer("/result/protocolVersion")
+                .and_then(Value::as_str)
+                != Some(revision))
+        .then_some("session_renewal_rejected"),
+        _ => Some("session_renewal_unreadable"),
+    };
+    if let Some(refusal) = refusal {
+        renewed.end();
+        return Err(refusal);
+    }
     let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
     match renewed.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
         Ok(response) if response.status().is_success() => Ok(renewed),
-        _ => Err("session_renewal_unconfirmed"),
+        _ => {
+            renewed.end();
+            Err("session_renewal_unconfirmed")
+        }
     }
 }
 
