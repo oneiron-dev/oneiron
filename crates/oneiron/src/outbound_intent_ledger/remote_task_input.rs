@@ -18,11 +18,15 @@
 //! answers the round's own Ask, checked by its typed identity, in one
 //! transaction, and wakes the Ask's waiters after the commit. Values come
 //! only from the owner's own submission, and an accept is admitted only
-//! while the send's authority admits it: the grant that admitted the send,
-//! live under today's policy and naming the send's principal, an active
-//! connector key, and neither its tool setting nor its elicitation setting
-//! never allow. The submit checks that, and the claim checks it again before
-//! any byte goes out; an accept it no longer admits is Refused, never sent.
+//! while the send's authority admits that very answer, as a live answer is
+//! checked under its grant: the grant that admitted the send, live under
+//! today's policy and naming the send's principal, on an active connector
+//! key whose catalog still routes, admitting the send's server, tool and
+//! endpoint at the data class the tool and the answer's own content reach
+//! (credential content is Secret), and neither the key's tool setting nor
+//! its elicitation setting never allow. The submit checks that, and the
+//! claim checks it again before any byte goes out; an accept it no longer
+//! admits is Refused, never sent.
 //!
 //! The poller claims the answer for a question with the same digest in the
 //! same session only ([`Vault::claim_remote_task_answer_in_txn`]): the row is
@@ -60,10 +64,11 @@ use self::owner_ask::{ANSWER, ASK_QUEUE, ask_matches, ask_round, input_ask};
 use super::remote_task_poll::RemoteTaskPoll;
 use super::settlement::intent_settlement_in_txn;
 use super::types::{FrozenOutboundCall, IntentLedgerError, IntentLedgerResult, IntentState};
-use crate::connector_key::{ConnectorKeyStatus, SlateDisposition};
+use crate::connector_key::SlateDisposition;
 use crate::consent::AuthenticatedOwner;
 use crate::llm::decision::DecisionAsk;
 use crate::model_decision::DecisionAnswer;
+use crate::outbound_consent::{ConnectorElicitationBinding, ElicitationAnswerVerdict};
 use crate::secret_custody::{
     open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
@@ -120,6 +125,24 @@ impl RemoteTaskInputRow {
             question_digest: self.question_digest,
             ask: self.ask,
         }
+    }
+}
+
+/// What one reconciling pass over the parked questions has to change
+/// ([`Vault::forget_ended_remote_task_inputs`]), as its snapshot read it.
+#[derive(Default)]
+struct InputReconciliation {
+    /// Parked questions whose send is no longer Deferred.
+    ended: Vec<[u8; 32]>,
+    /// Rows waiting for the owner whose Ask is gone.
+    waiting: Vec<[u8; 32]>,
+    /// Open owner Asks of this queue that no row is bound to.
+    unbound: Vec<u64>,
+}
+
+impl InputReconciliation {
+    fn is_empty(&self) -> bool {
+        self.ended.is_empty() && self.waiting.is_empty() && self.unbound.is_empty()
     }
 }
 
@@ -250,81 +273,78 @@ fn next_generation_in_txn(
     }
 }
 
-/// Why the send's authority no longer admits the owner's accept on row
-/// `intent`, read in `txn`; `None` while it does. It is the authority a live
-/// answer meets (`Vault::authorize_connector_elicitation_answer`), read in
-/// one snapshot: the send is still Deferred; the grant that admitted it (its
-/// typed capability provenance, ONE-1885) is there, live under today's
-/// policy, still covers its connector, tool and endpoint, and names the
-/// principal the send was admitted for, as admission derived it from the
-/// grant; the governing key is there and active; and neither its setting for
-/// the tool nor its elicitation setting is never allow. A call that names no
-/// grant or no governing key never declared form elicitation, so it is
-/// refused too.
+/// Why the send's authority does not admit the owner's accept `answer` (the
+/// `ElicitResult` it sends) on row `intent`, read in `txn`; `None` while it
+/// does. The send is still Deferred and names the grant that admitted it
+/// (its typed capability provenance, ONE-1885), the principal admission
+/// derived from that grant, and its governing key. The answer then meets
+/// exactly the check a live answer meets under its grant
+/// ([`Vault::elicitation_answer_grant_verdict_in_txn`], ONE-2510): that very
+/// grant there, the principal's and live under today's policy, on a
+/// governing key that is there and active and a catalog that still routes,
+/// admitting the send's server, tool and endpoint, with arguments granted,
+/// at the data class the tool's slate class and the answer's own content
+/// reach together (FIX 8807: credential content is Secret). Last, neither
+/// the key's setting for the tool nor its elicitation setting is never
+/// allow. The owner's own submission is their consent on exactly this
+/// answer, which an `always ask` elicitation setting asks for. A call that
+/// names no grant, principal or governing key never declared form
+/// elicitation, so it is refused too.
 fn accept_refusal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     intent: &[u8; 32],
-) -> crate::Result<Option<&'static str>> {
+    answer: &Value,
+) -> crate::Result<Option<String>> {
+    let refuse = |reason: &str| -> crate::Result<Option<String>> { Ok(Some(reason.to_owned())) };
     let Some(mut record) = super::store::get_ledger_record(vault, txn, intent)
         .map_err(owner_error)?
         .filter(|record| record.state == IntentState::Deferred)
     else {
-        return Ok(Some("the task's send is no longer deferred"));
+        return refuse("the task's send is no longer deferred");
     };
     let Some(grant_id) = record
         .capability_provenance()
         .map(|capability| capability.grant_id())
     else {
-        return Ok(Some("the task's send names no grant"));
+        return refuse("the task's send names no grant");
     };
-    let Some(grant) =
-        crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, txn, &grant_id)?
+    let Some(principal) =
+        super::payload::admitting_actor_in_txn(vault, txn, intent).map_err(owner_error)?
     else {
-        return Ok(Some("the grant that admitted the task's send is gone"));
+        return refuse("the task's send names no principal");
     };
-    let principal =
-        super::payload::admitting_actor_in_txn(vault, txn, intent).map_err(owner_error)?;
-    if principal != Some(EntityId::from_hex(&grant.principal_ref).unwrap_or(grant_id)) {
-        return Ok(Some(
-            "the grant that admitted the task's send names another principal",
-        ));
-    }
-    let floor = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
-    if !grant.is_active_under_policy(&floor) {
-        return Ok(Some(
-            "the grant that admitted the task's send is no longer live",
-        ));
-    }
-    let covers = grant.scope.scoped_mcp_grant().is_some_and(|scope| {
-        scope.server == record.server
-            && scope.tool == record.tool
-            && record.resolved_endpoint.as_deref().is_some_and(|endpoint| {
-                scope
-                    .endpoint_allowlist
-                    .iter()
-                    .any(|allowed| allowed == endpoint)
-            })
-    });
-    if !covers {
-        return Ok(Some(
-            "the grant that admitted the task's send no longer covers it",
-        ));
-    }
     super::payload::open_payload_in_txn(vault, txn, &mut record).map_err(owner_error)?;
     let call = FrozenOutboundCall::from_record(&record);
     let view = crate::outbound_consent::FrozenToolCallView::read(&call)?;
     let Some(key_ref) = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok()) else {
-        return Ok(Some("the task's send names no connector key"));
+        return refuse("the task's send names no connector key");
     };
-    let Some(key) = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &key_ref)? else {
-        return Ok(Some("the connector key of the task's send is gone"));
+    // The send's own binding, as a live question binds its call's: the
+    // catalog name a poll routes by is the send's server.
+    let binding = ConnectorElicitationBinding {
+        principal_ref: principal.to_hex(),
+        grant_id,
+        key_ref,
+        name: view.server().to_owned(),
+        server: view.server().to_owned(),
+        tool: view.tool().to_owned(),
+        endpoint: view.endpoint().to_owned(),
     };
-    if key.status != ConnectorKeyStatus::Active {
-        return Ok(Some(
-            "the connector key of the task's send is no longer active",
-        ));
+    let mut read = Vec::new();
+    match vault.elicitation_answer_grant_verdict_in_txn(txn, &binding, answer, &mut read)? {
+        None | Some(ElicitationAnswerVerdict::Send | ElicitationAnswerVerdict::AskOwner) => {}
+        Some(
+            ElicitationAnswerVerdict::Escalate(reason) | ElicitationAnswerVerdict::Refuse(reason),
+        ) => {
+            return Ok(Some(format!(
+                "the grant that admitted the task's send does not admit this answer ({reason})"
+            )));
+        }
     }
+    let Some(key) = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &key_ref)? else {
+        return refuse("the connector key of the task's send is gone");
+    };
     let tool = crate::connector_key::connector_tool_setting_in_txn(
         &vault.store,
         txn,
@@ -333,16 +353,12 @@ fn accept_refusal_in_txn(
         view.tool(),
     )?;
     if tool == SlateDisposition::NeverAllow {
-        return Ok(Some(
-            "the connector's setting for this tool is now never allow",
-        ));
+        return refuse("the connector's setting for this tool is now never allow");
     }
     let elicitation =
         crate::connector_key::connector_elicitation_setting_in_txn(&vault.store, txn, &key_ref)?;
     if elicitation == SlateDisposition::NeverAllow {
-        return Ok(Some(
-            "the connector's elicitation setting is now never allow",
-        ));
+        return refuse("the connector's elicitation setting is now never allow");
     }
     Ok(None)
 }
@@ -509,15 +525,18 @@ impl Vault {
     ///
     /// # Errors
     /// A proof that is not the owner's; no question parked; a stale round;
-    /// a question not waiting for the owner; a send whose authority no
-    /// longer admits an accept (it is no longer Deferred; the grant that
-    /// admitted it is gone, no longer live, no longer covers it or names
-    /// another principal; its connector key is gone or not active; the key's
-    /// setting for the tool or for elicitation is now never allow); an Ask
-    /// that is not this round's or that was answered another way or
-    /// withdrawn; a field the schema does not name, a required field left
-    /// out, a value of the wrong type, outside its choices, bounds, pattern
-    /// or format; custody and storage faults. Nothing is written then.
+    /// a question not waiting for the owner; an Ask that is not this
+    /// round's or that was answered another way or withdrawn; a field the
+    /// schema does not name, a required field left out, a value of the wrong
+    /// type, outside its choices, bounds, pattern or format; a send whose
+    /// authority does not admit this answer (it is no longer Deferred; the
+    /// grant that admitted it is gone, no longer live, names another
+    /// principal, or does not admit its server, tool, endpoint or the data
+    /// class the answer reaches, as a live answer is checked; its connector
+    /// key is gone or not active or its catalog no longer routes; the key's
+    /// setting for the tool or for elicitation is now never allow), whose
+    /// reason the refusal names; custody and storage faults. Nothing is
+    /// written then.
     pub fn submit_remote_task_input(
         &self,
         owner: &AuthenticatedOwner,
@@ -538,9 +557,6 @@ impl Vault {
                     "the task's question is no longer waiting for the owner",
                 ));
             }
-            if let Some(reason) = accept_refusal_in_txn(self, txn, intent)? {
-                return Err(refused(reason));
-            }
             let Some(ask) = self.decision_ask_in_txn(txn, row.ask)? else {
                 return Err(refused(NOT_ITS_ASK));
             };
@@ -555,7 +571,13 @@ impl Vault {
             let mut answer = Map::new();
             answer.insert("action".to_owned(), Value::String("accept".to_owned()));
             answer.insert("content".to_owned(), Value::Object(content));
-            carrier.answer = Some(Value::Object(answer));
+            let answer = Value::Object(answer);
+            // The answer the grant would refuse as a live one is refused
+            // here, and the owner is told why.
+            if let Some(reason) = accept_refusal_in_txn(self, txn, intent, &answer)? {
+                return Err(refused(&reason));
+            }
+            carrier.answer = Some(answer);
             row.sealed = seal_carrier_in_txn(self, txn, &subject, generation, &carrier)?;
             row.phase = RemoteTaskInputPhase::Ready;
             INPUTS.put(&self.store, txn, intent, &row)?;
@@ -718,20 +740,6 @@ impl Vault {
         if !deferred {
             return Ok(None);
         }
-        if row.phase == RemoteTaskInputPhase::Ready
-            && let Some(reason) = accept_refusal_in_txn(self, wtxn, intent)?
-        {
-            row.phase = RemoteTaskInputPhase::Refused;
-            INPUTS.put(&self.store, wtxn, intent, &row)?;
-            tracing::warn!(
-                reason = "remote_task_input_answer_refused",
-                refusal = reason,
-                generation = row.generation,
-                "the owner's answer to a background task's question is no longer admitted; it \
-                 is not sent, and the question shows it refused"
-            );
-            return Ok(None);
-        }
         let carrier = open_carrier_in_txn(
             self,
             wtxn,
@@ -739,6 +747,23 @@ impl Vault {
             row.generation,
             &row.sealed,
         )?;
+        // The frozen accept meets its grant again, as it is now: one the
+        // grant narrowed past since the submit is Refused, never sent.
+        if row.phase == RemoteTaskInputPhase::Ready {
+            let answer = carrier.answer.as_ref().ok_or_else(carrier_corrupt)?;
+            if let Some(reason) = accept_refusal_in_txn(self, wtxn, intent, answer)? {
+                row.phase = RemoteTaskInputPhase::Refused;
+                INPUTS.put(&self.store, wtxn, intent, &row)?;
+                tracing::warn!(
+                    reason = "remote_task_input_answer_refused",
+                    refusal = %reason,
+                    generation = row.generation,
+                    "the owner's answer to a background task's question is no longer admitted; \
+                     it is not sent, and the question shows it refused"
+                );
+                return Ok(None);
+            }
+        }
         let result = match row.phase {
             RemoteTaskInputPhase::Declined => json!({ "action": "decline" }),
             RemoteTaskInputPhase::Cancelled => json!({ "action": "cancel" }),
@@ -833,52 +858,57 @@ impl Vault {
 
     /// Forgets every parked question whose send is no longer Deferred (it
     /// settled, stopped, or its row is gone), and reconciles the owner Asks
-    /// with the rows that stay, in one writer: a restore brings the Asks
-    /// back as its image holds them (DECISION_ASK is content) while the rows
-    /// stand as they are live (L04). An open Ask this queue minted (its
-    /// typed identity proves it) whose intent keeps no row, or whose row is
-    /// another question, round or Ask, is withdrawn; a row waiting for the
-    /// owner whose Ask is gone, withdrawn or another ask's (a restored image
-    /// can number another ask with it) gets its Ask queued again. The Asks'
-    /// waiters wake and the key retirements are carried out after the
-    /// commit. How many questions it forgot.
+    /// with the rows that stay: a restore brings the Asks back as its image
+    /// holds them (DECISION_ASK is content) while the rows stand as they are
+    /// live (L04). An open Ask this queue minted (its typed identity proves
+    /// it) whose intent keeps no row, or whose row is another question,
+    /// round or Ask, is withdrawn; a row waiting for the owner whose Ask is
+    /// gone, withdrawn or another ask's (a restored image can number another
+    /// ask with it) gets its Ask queued again. The served poller runs it on
+    /// every pass, polled or not. It reads one snapshot first and opens its
+    /// one writer only when that snapshot finds something to change, which
+    /// the writer checks again. After the commit the Asks' waiters wake, and
+    /// every task-input key retirement a committed writer staged and nobody
+    /// carried out yet, an earlier pass's or a stopped process's included,
+    /// is carried out. How many questions it forgot.
     ///
     /// # Errors
     /// Custody, storage, row-codec and ask-queue faults, before the commit.
     pub fn forget_ended_remote_task_inputs(&self) -> IntentLedgerResult<usize> {
-        let unbound = self.unbound_input_asks()?;
-        let (forgot, withdrawn) =
+        let plan = self.input_reconciliation()?;
+        let (forgot, withdrawn) = if plan.is_empty() {
+            (0, Vec::new())
+        } else {
             self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<(usize, Vec<u64>)> {
-                let mut ended = Vec::new();
-                let mut waiting = Vec::new();
-                for row in INPUTS.iter_from(&self.store, txn, &[])? {
-                    let (intent, row) = row?;
-                    let deferred = super::store::get_ledger_record(self, txn, &intent)?
+                let mut forgot = 0;
+                let mut withdrawn = Vec::new();
+                for intent in &plan.ended {
+                    let parked = INPUTS.get(&self.store, txn, intent)?.is_some();
+                    let deferred = super::store::get_ledger_record(self, txn, intent)?
                         .is_some_and(|record| record.state == IntentState::Deferred);
-                    if !deferred {
-                        ended.push(intent);
-                    } else if row.phase == RemoteTaskInputPhase::AwaitingOwner {
-                        waiting.push((intent, row));
+                    if parked && !deferred {
+                        withdrawn.extend(self.forget_input_in_txn(txn, intent)?);
+                        forgot += 1;
                     }
                 }
-                let mut withdrawn = Vec::new();
-                for intent in &ended {
-                    withdrawn.extend(self.forget_input_in_txn(txn, intent)?);
+                for intent in &plan.waiting {
+                    if let Some(row) = INPUTS
+                        .get(&self.store, txn, intent)?
+                        .filter(|row| row.phase == RemoteTaskInputPhase::AwaitingOwner)
+                    {
+                        self.requeue_missing_input_ask_in_txn(txn, intent, row)?;
+                    }
                 }
-                for (intent, row) in waiting {
-                    self.requeue_missing_input_ask_in_txn(txn, &intent, row)?;
-                }
-                for seq in unbound {
+                for seq in plan.unbound {
                     withdrawn.extend(self.withdraw_unbound_input_ask_in_txn(txn, seq)?);
                 }
-                Ok((ended.len(), withdrawn))
-            })?;
+                Ok((forgot, withdrawn))
+            })?
+        };
         for seq in withdrawn {
             self.signal_decision_answer(seq);
         }
-        if forgot > 0 {
-            self.finish_remote_task_input_retirements();
-        }
+        self.finish_remote_task_input_retirements();
         Ok(forgot)
     }
 
@@ -890,15 +920,18 @@ impl Vault {
     }
 
     /// [`Self::forget_remote_task_input_in_txn`], naming the Ask it
-    /// withdrew, for its waiters' signal once the writer committed.
-    fn forget_input_in_txn(
+    /// withdrew, for its waiters' signal once the writer committed. The
+    /// subject's retirement is staged before the row goes, so a custody
+    /// fault there writes nothing and the caller can keep what finds the
+    /// intent again (the ledger's poll writers keep its poll row).
+    pub(super) fn forget_input_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         intent: &[u8; 32],
     ) -> IntentLedgerResult<Option<u64>> {
+        retire_connector_resume_in_txn(&self.store, wtxn, &input_subject(intent)?)?;
         let row = INPUTS.get(&self.store, wtxn, intent).ok().flatten();
         INPUTS.delete(&self.store, wtxn, intent)?;
-        retire_connector_resume_in_txn(&self.store, wtxn, &input_subject(intent)?)?;
         Ok(row.and_then(|row| self.withdraw_input_ask_in_txn(wtxn, intent, &row)))
     }
 
@@ -955,11 +988,7 @@ impl Vault {
         intent: &[u8; 32],
         mut row: RemoteTaskInputRow,
     ) -> IntentLedgerResult<()> {
-        let missing = match self.decision_ask_in_txn(wtxn, row.ask)? {
-            None => true,
-            Some(ask) => !ask_matches(intent, &row, &ask)? || ask.withdrawn_at.is_some(),
-        };
-        if !missing {
+        if !self.input_ask_missing_in_txn(wtxn, intent, &row)? {
             return Ok(());
         }
         let principal = super::payload::admitting_actor_in_txn(self, wtxn, intent)?;
@@ -967,6 +996,20 @@ impl Vault {
         row.ask = self.queue_decision_ask_in_txn(wtxn, &request, Some(&state))?;
         INPUTS.put(&self.store, wtxn, intent, &row)?;
         Ok(())
+    }
+
+    /// Whether the owner Ask of `row`, a question of `intent`, is gone: no
+    /// ask at its number, another ask there, or its own withdrawn.
+    fn input_ask_missing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        intent: &[u8; 32],
+        row: &RemoteTaskInputRow,
+    ) -> IntentLedgerResult<bool> {
+        Ok(match self.decision_ask_in_txn(txn, row.ask)? {
+            None => true,
+            Some(ask) => !ask_matches(intent, row, &ask)? || ask.withdrawn_at.is_some(),
+        })
     }
 
     /// Whether open Ask `ask` of this queue is the one its question's row is
@@ -991,21 +1034,36 @@ impl Vault {
         Ok(Some(bound))
     }
 
-    /// The open owner Asks this queue minted that no row is bound to, read
-    /// in a snapshot before the reconciling writer, which checks each again.
-    fn unbound_input_asks(&self) -> IntentLedgerResult<Vec<u64>> {
+    /// What [`Self::forget_ended_remote_task_inputs`] has to change, read
+    /// in one snapshot before its writer, which checks each again: the
+    /// parked questions whose send is no longer Deferred, the rows waiting
+    /// for the owner whose Ask is gone, and the open owner Asks this queue
+    /// minted that no row is bound to.
+    fn input_reconciliation(&self) -> IntentLedgerResult<InputReconciliation> {
         let txn = self
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
-        let mut unbound = Vec::new();
-        for ask in self.open_queue_asks_in_txn(&txn, ASK_QUEUE)? {
-            if self.input_ask_bound_in_txn(&txn, &ask)? == Some(false) {
-                unbound.push(ask.seq);
+        let mut plan = InputReconciliation::default();
+        for row in INPUTS.iter_from(&self.store, &txn, &[])? {
+            let (intent, row) = row?;
+            let deferred = super::store::get_ledger_record(self, &txn, &intent)?
+                .is_some_and(|record| record.state == IntentState::Deferred);
+            if !deferred {
+                plan.ended.push(intent);
+            } else if row.phase == RemoteTaskInputPhase::AwaitingOwner
+                && self.input_ask_missing_in_txn(&txn, &intent, &row)?
+            {
+                plan.waiting.push(intent);
             }
         }
-        Ok(unbound)
+        for ask in self.open_queue_asks_in_txn(&txn, ASK_QUEUE)? {
+            if self.input_ask_bound_in_txn(&txn, &ask)? == Some(false) {
+                plan.unbound.push(ask.seq);
+            }
+        }
+        Ok(plan)
     }
 
     /// Withdraws ask `seq` in `wtxn` when it is still open, this queue's
