@@ -5,7 +5,8 @@
 //! executed bodies too ([`execution`], FIX 3607), the replay context its
 //! step's checkpoint committed ([`context`], FIX 6351), and the route prompt
 //! its answering rung put first ([`route_prompt`], FIX 6255), owned by the
-//! original run.
+//! original run. An owner verdict's pair also keeps its pending owner pair
+//! beside its forks ([`owner_pair`], FIX 3609).
 //!
 //! Each body is written as the side-row wall admits it, in the writer that
 //! puts its capsule ([`admit`]), and an erase of the capsule's actor
@@ -18,6 +19,7 @@ mod context;
 mod erase;
 mod execution;
 mod fork_erase;
+mod owner_pair;
 mod restore;
 mod route_prompt;
 mod spawn_erase;
@@ -26,7 +28,7 @@ mod start_parts;
 use serde::{Deserialize, Serialize};
 
 use super::super::contribution::{
-    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
+    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment, OwnerPair,
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::replay_capsule::{CapsuleHost, CapsuleRequest, StepReplayCapsule};
@@ -46,6 +48,10 @@ pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
 pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
+pub(crate) use self::owner_pair::{
+    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
+    owner_pair_in_txn, put_owner_pair,
+};
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
@@ -82,6 +88,8 @@ struct ForkRow {
 enum ForkValue {
     Fork(ContributionForkReceipt),
     Unavailable(ContributionReplayUnavailable),
+    /// An owner verdict's pending pair (FIX 3609).
+    OwnerPair(Box<OwnerPair>),
 }
 
 /// A matched pair's rows as they stand.
@@ -90,6 +98,7 @@ pub(crate) struct ForkRows {
     pub(crate) unavailable: Option<ContributionReplayUnavailable>,
     pub(crate) with_skill: Option<ContributionForkReceipt>,
     pub(crate) without_skill: Option<ContributionForkReceipt>,
+    pub(crate) owner_pair: Option<OwnerPair>,
 }
 
 fn fork_row_name(treatment: ForkTreatment) -> &'static str {
@@ -338,6 +347,7 @@ pub(crate) fn fork_rows_in_txn(
                 ForkTreatment::WithSkill => rows.with_skill = Some(receipt),
                 ForkTreatment::WithoutSkill => rows.without_skill = Some(receipt),
             },
+            ForkValue::OwnerPair(pair) => rows.owner_pair = Some(*pair),
         }
     }
     Ok(rows)

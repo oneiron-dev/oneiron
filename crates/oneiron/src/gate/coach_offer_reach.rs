@@ -22,7 +22,9 @@
 //! The same row reaches the result of a training run an offer led to
 //! (FIX 857): the one reserved question about a Scored run's result, while
 //! the run still waits at the expectation it froze, and the ask on its TURN.
-//! Revoking the row closes both questions.
+//! It also reaches an owner-judged contribution pair (FIX 3609): the pair's
+//! reserved question and answer parts, while no ask carries the pair, and
+//! the ask on them. Revoking the row closes every one of these questions.
 
 use rmpv::Value;
 
@@ -204,6 +206,14 @@ pub(crate) fn coach_offer_ask_ceiling_in_txn(
     if crate::task_verb::is_training_swap_ask_intent(&input.intent_key) {
         return coach_swap_ask_ceiling_in(vault, txn, input);
     }
+    // FIX 3609: the one owner a pending contribution pair asks, on its
+    // reserved question and answer TURNs.
+    if crate::task_verb::is_contribution_pair_ask_intent(&input.intent_key) {
+        return Ok(
+            crate::task_verb::contribution_pair_ask_permitted_in(vault, txn, input)?
+                && offer_reach_granted(&super::resolve_policy_manifest(&vault.store, txn)?),
+        );
+    }
     let Some(key) = crate::task_verb::training_offer_ask_key(&input.intent_key) else {
         return Ok(false);
     };
@@ -305,6 +315,10 @@ pub(crate) fn coach_offer_question_permit_in_txn(
         let ids = (conversation, turn, message);
         return coach_swap_question_permit_in(vault, txn, actor, ids, envelope, policy);
     }
+    if envelope.message_type == crate::task_verb::CONTRIBUTION_PAIR_QUESTION_TYPE {
+        let ids = (conversation, turn, message);
+        return coach_pair_question_permit_in(vault, txn, actor, ids, envelope, policy);
+    }
     if envelope.author != WITNESS_AUTHOR_SYSTEM
         || envelope.message_type != crate::gate::training_ask_kind::OFFER_QUESTION_TYPE
         || !envelope.is_visible
@@ -377,6 +391,44 @@ fn coach_swap_question_permit_in(
     if (question.conversation, question.turn, question.message) != ids
         || envelope.content != question.text
         || !offer_reach_granted(policy)
+    {
+        return Ok(None);
+    }
+    Ok(Some(OfferQuestionPermit {
+        actor,
+        body: envelope.encode_body()?,
+    }))
+}
+
+/// The permit one reserved part of an owner-judged contribution pair's
+/// question carries to the witness door (FIX 3609): the writer is the Coach
+/// in its System class; the message is one visible row at order 0; its
+/// metadata names a pending pair's part whose reservation holds exactly
+/// these `(conversation, TURN, MESSAGE)` ids and this text's digest, while
+/// no ask carries the pair, for a live owner; and the live policy grants
+/// the reach.
+fn coach_pair_question_permit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    ids: (EntityId, EntityId, EntityId),
+    envelope: &WitnessMessageEnvelope<'_>,
+    policy: &PolicyManifestResolution,
+) -> Result<Option<OfferQuestionPermit>> {
+    if envelope.author != WITNESS_AUTHOR_SYSTEM
+        || !envelope.is_visible
+        || envelope.order != 0
+        || !is_coach(actor.entity_ref(), actor.actor_class())?
+    {
+        return Ok(None);
+    }
+    let Some(metadata) = envelope.metadata.as_ref() else {
+        return Ok(None);
+    };
+    let content = envelope.content;
+    if !crate::task_verb::contribution_pair_question_permitted_in(
+        vault, txn, ids, metadata, content,
+    )? || !offer_reach_granted(policy)
     {
         return Ok(None);
     }

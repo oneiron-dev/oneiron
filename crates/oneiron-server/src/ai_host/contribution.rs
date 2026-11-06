@@ -14,9 +14,12 @@
 //! (L08-A's 07:42 answer: no frozen rubric is qualified on executed output
 //! alone). An `Audit` anchor is scored instead by the completed random
 //! audit's frozen checker contract, by its own judge alone, and never
-//! through a project goal's axis (FIX 3611, [`audit`]).
+//! through a project goal's axis (FIX 3611, [`audit`]). An `OwnerVerdict`
+//! anchor's pair is judged by the owner's own word, never by a model: its
+//! route only freezes the criterion (FIX 3609, [`owner`]).
 
 mod audit;
+mod owner;
 mod program;
 
 use std::sync::Weak;
@@ -43,6 +46,7 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use self::audit::AuditScorer;
+use self::owner::OwnerScorer;
 use self::program::{LentProgram, ProgramLending, executed_evidence};
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
@@ -115,10 +119,13 @@ impl ContributionReplayHost for HostContributionReplay {
             handle: &self.handle,
             fork_units: self.fork_units,
         };
+        let owner = OwnerScorer { judge: self.judge };
         // An audit's pair is scored by its stored checker contract (FIX
-        // 3611); every other anchor by the replay judge's goal axis.
+        // 3611), an owner verdict's by the owner's word (FIX 3609), and
+        // every other anchor's by the replay judge's goal axis.
         let scorer: &dyn ContributionForkScorer = match candidate.anchor {
             Anchor::Audit { .. } => &audit,
+            Anchor::OwnerVerdict => &owner,
             _ => &held_out,
         };
         Ok(

@@ -16,6 +16,13 @@
 //! publishes nothing from one fork: the Coach's recipe records the pair
 //! ([`crate::skill_attribution::record_contribution_pair`]).
 //!
+//! An owner verdict's pair is generated the same way, then judged by the
+//! owner, not by a model (FIX 3609, [`owner`]). Its forks are kept once, and
+//! one pending pair asks the owner which of the two blinded answers pass the
+//! frozen criterion. A pending pair never regenerates and never pays again.
+//! The owner's word scores both forks and records the pair in the ask's
+//! settling commit.
+//!
 //! A knowledge exposure is the one unit: a body the host put in the run's
 //! task, tagged where it went. A callable or result-only use, an ancestor
 //! the run read through a verb, an anchor that cannot judge a new output,
@@ -26,6 +33,7 @@ mod admission;
 mod ancestor;
 mod execution;
 mod generation;
+mod owner;
 
 use serde::{Deserialize, Serialize};
 
@@ -35,9 +43,14 @@ use self::ancestor::target_step;
 pub use self::execution::{
     ContributionForkExecution, ContributionForkProgram, ExecutedBody, ExecutedFork,
     ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode, ForkExecutionOutcome,
-    ForkExecutionPin, ForkScore, execute_contribution_fork,
+    ForkExecutionPin, ForkJudge, ForkScore, execute_contribution_fork,
 };
 use self::execution::{ProgramStep, pair_evidence_mode, retry_pending, scored_in};
+pub use self::owner::OwnerJudgment;
+pub(crate) use self::owner::{
+    OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
+    settle_owner_pair_in_txn,
+};
 use super::replay_capsule::{ExposureSlot, ReplayRung, StepReplayCapsule, StoredRungBinding};
 use super::shadow_runner::ShadowUnavailable;
 use super::storage::{
@@ -46,6 +59,7 @@ use super::storage::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::maintenance::ContributionForks;
+use crate::learning::Anchor;
 use crate::receipt::attempt_pack_receipt_id;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill_attribution::{ContributionCandidate, ContributionFork, Experiment};
@@ -63,8 +77,9 @@ pub(super) const FORK_RECEIPT_PREFIX: &str = "contribution_fork:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionReplayUnavailable {
-    /// The anchor cannot judge a new output (an owner verdict, a world
-    /// outcome) or does not settle correctness.
+    /// The anchor cannot judge a new output (a world outcome) or does not
+    /// settle correctness. An owner verdict's pair is judged by the owner
+    /// (FIX 3609).
     AnchorNotReplayable,
     /// The anchor does not resolve to a frozen case and rubric now.
     AnchorUnresolved,
@@ -411,6 +426,8 @@ struct Prepared {
     with_skill_hash: [u8; 32],
     without_skill: LlmRequest,
     without_skill_hash: [u8; 32],
+    /// The target's revision as the step saw it.
+    exposure_revision: String,
     anchor: ReplayAnchor,
     anchor_scoring: ForkScoringIdentity,
     anchor_hash: [u8; 32],
@@ -433,7 +450,8 @@ struct Runner<'a> {
 impl Runner<'_> {
     /// One paired draw in a fixed order, the fork with the skill first, then
     /// an engine step's two programs run in that order, then both scored in
-    /// the pair's one evidence mode.
+    /// the pair's one evidence mode: by the anchor's scorer, or for an owner
+    /// verdict by the owner's word on one pending pair (FIX 3609).
     fn run(&self, prepared: &Prepared, rows: ForkRows) -> Outcome<ContributionForks> {
         let with_skill =
             match self.generated(prepared, rows.with_skill, ForkTreatment::WithSkill)? {
@@ -457,6 +475,10 @@ impl Runner<'_> {
         let Some(mode) = pair_evidence_mode(host, &with_skill, &without_skill) else {
             return Ok(Err(retry_pending([&with_skill, &without_skill])));
         };
+        if self.candidate.anchor == Anchor::OwnerVerdict {
+            let pending = rows.owner_pair;
+            return self.owner_judged(prepared, pending, with_skill, without_skill, mode);
+        }
         let with_skill = match self.scored(prepared, with_skill, mode)? {
             Ok(fork) => fork,
             Err(reason) => return Ok(Err(reason)),
@@ -521,7 +543,11 @@ impl Runner<'_> {
         else {
             return Ok(Err(ContributionReplayUnavailable::Unfinished));
         };
-        fork.score = Some(ForkScore { mode, passed });
+        fork.score = Some(ForkScore {
+            mode,
+            passed,
+            judge: ForkJudge::Scorer,
+        });
         let Some(kept) = put_fork(self.vault, &self.pair, &fork)? else {
             return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };

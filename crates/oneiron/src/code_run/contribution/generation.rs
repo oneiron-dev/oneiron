@@ -24,9 +24,11 @@ impl Runner<'_> {
         capsule: std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>,
     ) -> Outcome<Prepared> {
         use ContributionReplayUnavailable as Unavailable;
+        // An owner verdict's pair is generated here like any other and
+        // judged by the owner (FIX 3609); a world outcome is not replayed.
         if !matches!(
             self.candidate.anchor,
-            Anchor::HeldOut | Anchor::Audit { .. }
+            Anchor::HeldOut | Anchor::Audit { .. } | Anchor::OwnerVerdict
         ) {
             return Ok(Err(Unavailable::AnchorNotReplayable));
         }
@@ -68,6 +70,7 @@ impl Runner<'_> {
         if current.as_deref() != Some(first.revision.as_str()) {
             return Ok(Err(Unavailable::SkillRevisionMoved));
         }
+        let exposure_revision = first.revision.clone();
         let Some(with_skill) = capsule_request(self.vault, &capsule)? else {
             return Ok(Err(
                 if matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. }) {
@@ -98,6 +101,7 @@ impl Runner<'_> {
         Ok(Ok(Prepared {
             with_skill_hash: request_hash(&with_skill)?,
             without_skill_hash: request_hash(&without_skill)?,
+            exposure_revision,
             capsule,
             binding,
             with_skill,

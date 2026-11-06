@@ -6,8 +6,11 @@
 //! stands, read on the caller's snapshot. Both forks were also scored in
 //! one evidence mode, the one their kept program runs settle (FIX 3607,
 //! [`super::execution`]): `Text`, or `Executed` under the one pin both ran
-//! their own answers under from that capsule's start. A pair they do not
-//! prove is still recorded, as unmatched; nothing here refuses it.
+//! their own answers under from that capsule's start. An owner verdict's
+//! forks were both scored by the owner's one word that its pending pair
+//! kept as judged, and every other anchor's by its scorer (FIX 3609,
+//! [`super::owner`]). A pair they do not prove is still recorded, as
+//! unmatched; nothing here refuses it.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,10 +18,12 @@ use super::super::replay_capsule::StepReplayCapsule;
 use super::super::storage::{fork_rows_in_txn, step_replay_capsules_in_txn};
 use super::ancestor::target_step;
 use super::execution::pair_evidence_mode;
+use super::owner::OwnerPair;
 use super::{
-    ContributionForkReceipt, ForkEvidenceMode, ForkExecutionOutcome, ForkScoring, ForkTreatment,
-    anchor_hash, pair_digest, receipt_attempt,
+    ContributionForkReceipt, ForkEvidenceMode, ForkExecutionOutcome, ForkJudge, ForkScoring,
+    ForkTreatment, anchor_hash, pair_digest, receipt_attempt,
 };
+use crate::learning::Anchor;
 use crate::skill_attribution::{ContributionCandidate, ContributionFork};
 use crate::{Result, Vault};
 
@@ -39,8 +44,9 @@ pub enum ForkMismatch {
     OtherScore,
     /// The two forks were not scored against one anchor: their stored
     /// anchors differ, a stored anchor is not the candidate's anchor bound
-    /// to its fork's frozen scoring identity, or the forks were not scored
-    /// in one evidence mode, the one their kept program runs settle.
+    /// to its fork's frozen scoring identity, the forks were not scored
+    /// in one evidence mode, the one their kept program runs settle, or not
+    /// by the one judge the anchor takes (FIX 3609).
     AnchorDiverged,
     /// A fork did not regenerate the capsule of the step the target's check
     /// regenerates as it stands: another capsule, request, model, route
@@ -118,6 +124,13 @@ pub(crate) fn matched_contribution_facts_in_txn(
         }
         _ => reasons.push(ForkMismatch::OtherCapsule),
     }
+    let pending = rows.owner_pair.as_ref();
+    reasons.extend(judge_mismatch(
+        candidate,
+        pending,
+        &with_fork,
+        &without_fork,
+    ));
     reasons.sort_unstable();
     reasons.dedup();
     if !reasons.is_empty() {
@@ -198,4 +211,29 @@ fn evidence_mismatch(
     let executed = matches!(with_score.mode, ForkEvidenceMode::Executed { .. });
     (executed && !(from_start(with_fork) && from_start(without_fork)))
         .then_some(ForkMismatch::OtherCapsule)
+}
+
+/// Why the pair's two scores are not proved by the judge its anchor takes
+/// (FIX 3609), if they are not. An owner verdict's forks are both scored by
+/// one owner's word, the one its pending pair kept as judged, on the two
+/// forks it showed. Every other anchor's forks are scored by its scorer. A
+/// fork not scored yet is reported as `Unscored` by the caller.
+fn judge_mismatch(
+    candidate: &ContributionCandidate,
+    pending: Option<&OwnerPair>,
+    with_fork: &ContributionForkReceipt,
+    without_fork: &ContributionForkReceipt,
+) -> Option<ForkMismatch> {
+    let (Some(with_score), Some(without_score)) = (with_fork.score, without_fork.score) else {
+        return None;
+    };
+    let proved = match (candidate.anchor, with_score.judge) {
+        (Anchor::OwnerVerdict, ForkJudge::Owner(judgment)) => {
+            without_score.judge == with_score.judge
+                && pending.is_some_and(|pair| pair.judged(judgment, with_fork, without_fork))
+        }
+        (Anchor::OwnerVerdict, ForkJudge::Scorer) => false,
+        (_, judge) => judge == ForkJudge::Scorer && without_score.judge == ForkJudge::Scorer,
+    };
+    (!proved).then_some(ForkMismatch::AnchorDiverged)
 }

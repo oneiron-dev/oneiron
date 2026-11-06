@@ -2,12 +2,15 @@
 //! their experiment key; an erase moves the whole pair to an opaque key
 //! and reissues its receipts in the SAME writer as the CHECK rebind. The
 //! scores and answers stay, but no erased subject derives a retained key.
+//! A pending owner pair is not moved: the erase deletes it and retires the
+//! ask that carries its question, so no answer to it scores anything (FIX
+//! 3609).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::super::contribution::FORK_RECEIPT_PREFIX;
+use super::super::super::contribution::{FORK_RECEIPT_PREFIX, OwnerPairRoute};
 use super::super::super::replay_capsule::StepReplayCapsule;
 use super::{FORKS, ForkValue, actor_gone_in_txn};
 use crate::entity_id::{ENTITY_ID_LEN, bytes_to_hex_lower};
@@ -98,7 +101,9 @@ fn receipt_entities(receipt: &str) -> impl Iterator<Item = EntityId> + '_ {
 /// references without changing a measurement. New fork paths are opaque
 /// from birth, so keeping their bodies keeps no target-derived path. A row
 /// that no longer decodes (one written before FIX 3607 changed the row)
-/// cannot say whom it names, so the erase deletes it rather than fail.
+/// cannot say whom it names, so the erase deletes it rather than fail. A
+/// pending owner pair of such a pair is deleted, and its ask is cut Stale in
+/// this writer.
 pub(crate) fn erase_contribution_forks_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -124,6 +129,8 @@ pub(crate) fn erase_contribution_forks_in_txn(
             row.provenance.subjects.contains(entity)
                 || matches!(&row.value, ForkValue::Fork(fork)
                     if receipt_entities(&fork.scoring.outcome_receipt).any(|id| id == *entity))
+                || matches!(&row.value, ForkValue::OwnerPair(pair)
+                    if receipt_entities(&pair.scoring.outcome_receipt).any(|id| id == *entity))
         })
         .map(|((pair, _), _)| *pair)
         .collect();
@@ -136,10 +143,18 @@ pub(crate) fn erase_contribution_forks_in_txn(
     }
     let mut rebound = BTreeMap::new();
     let mut erased_outcomes = BTreeMap::new();
+    let mut retired_asks = Vec::new();
     for (key, mut row) in rows {
         let Some(pair) = moved.get(&key.0) else {
             continue;
         };
+        if let ForkValue::OwnerPair(pending) = &row.value {
+            if let OwnerPairRoute::Asked { ask, .. } = pending.route {
+                retired_asks.push(ask);
+            }
+            FORKS.delete(&vault.store, wtxn, &key)?;
+            continue;
+        }
         row.provenance.subjects.retain(|id| id != entity);
         if let ForkValue::Fork(fork) = &mut row.value {
             if receipt_entities(&fork.scoring.outcome_receipt).any(|id| id == *entity) {
@@ -158,5 +173,6 @@ pub(crate) fn erase_contribution_forks_in_txn(
         FORKS.delete(&vault.store, wtxn, &key)?;
         FORKS.put(vault, wtxn, &(*pair, key.1), &row)?;
     }
+    crate::task_verb::retire_contribution_pair_asks_in(vault, wtxn, &retired_asks)?;
     crate::skill_attribution::rebind_contribution_fork_receipts_in_txn(vault, wtxn, &rebound)
 }

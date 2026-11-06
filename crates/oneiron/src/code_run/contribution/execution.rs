@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::{CapsuleHost, StepReplayCapsule};
 use super::super::storage::{fork_execution_outputs, fork_response, store_fork_execution};
+use super::owner::OwnerJudgment;
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, Outcome, Prepared,
     Runner,
@@ -73,12 +74,25 @@ pub enum ForkEvidenceMode {
     Executed { pin: [u8; 32] },
 }
 
-/// A fork's score: the evidence mode its pair was scored in and whether it
-/// passed. Both forks of a pair are scored in one mode.
+/// A fork's score: the evidence mode its pair was scored in, whether it
+/// passed and who decided that. Both forks of a pair are scored in one mode
+/// and by one judge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForkScore {
     pub mode: ForkEvidenceMode,
     pub passed: bool,
+    pub judge: ForkJudge,
+}
+
+/// Who decided a fork's score (FIX 3609). It is kept apart from the
+/// evidence mode: the mode says what was read, the judge says who read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkJudge {
+    /// The anchor's scorer the host lent, by the pair's frozen rubric.
+    Scorer,
+    /// The owner's own counted word on the pair's question.
+    Owner(OwnerJudgment),
 }
 
 /// What both forks of an engine step run under (FIX 3607), frozen before
@@ -494,12 +508,16 @@ fn own_run(fork: &ContributionForkReceipt) -> Option<Option<&ContributionForkExe
     )
 }
 
-/// `fork`, when it is scored in `mode`; else the pair diverged.
+/// `fork`, when it is scored in `mode` by the anchor's scorer; else the pair
+/// diverged.
 pub(super) fn scored_in(
     fork: ContributionForkReceipt,
     mode: ForkEvidenceMode,
 ) -> std::result::Result<ContributionForkReceipt, Unavailable> {
-    if fork.score.is_some_and(|score| score.mode == mode) {
+    if fork
+        .score
+        .is_some_and(|score| score.mode == mode && score.judge == ForkJudge::Scorer)
+    {
         Ok(fork)
     } else {
         Err(Unavailable::ForksDiverged)
