@@ -9,10 +9,15 @@
 //! ([`HostSelfDispatcher::read_world_seal`]). Instrumentation never refuses or
 //! fails the call it watches. A search also freezes each served row's Scope
 //! at its bridge position for a later step-capsule projection (FIX 7162).
+//! A descriptor of one of the run's results that another run reads freezes
+//! the ledger's origins under the same clean epoch, and a read of another
+//! run's result notes the origins its descriptor froze, or, with none,
+//! marks the ledger unknown (FIX 7084).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
+use crate::code_run::ResultOrigins;
 use crate::code_run::storage::{ReadWorldSeal, ReadWorldUnknown};
 use crate::code_run::types::{AgentVerbAnswer, SelfDispatchOutcome};
 use crate::federation::Scope;
@@ -166,6 +171,35 @@ impl HostSelfDispatcher<'_> {
             .epoch
             .filter(|_| live.clean && run.is_some() && live.run == run)?;
         Some(ReadWorldSeal { epoch })
+    }
+
+    /// The origins of `run`'s results as its ledger stands now, frozen for a
+    /// descriptor another run reads one of them by (FIX 7084): read under the
+    /// entry's seal, while every ledger write of the entry landed. `None`
+    /// when the ledger is not complete, or cannot be read.
+    pub(crate) fn frozen_result_origins(&self, run: EntityId) -> Option<ResultOrigins> {
+        let seal = self.read_world_seal(Some(run))?;
+        self.storage.result_origins(run, seal).ok().flatten()
+    }
+
+    /// Notes what a read of another run's result serves `run` at bridge
+    /// position `at` (FIX 7084): the worlds and row scopes its descriptor
+    /// froze. A result whose origins are unknown marks the ledger
+    /// `RetainedResult`. The source run's ledger as it stands now is never
+    /// read here.
+    pub(crate) fn read_worlds_retained(
+        &self,
+        run: EntityId,
+        at: u64,
+        origins: Option<&ResultOrigins>,
+    ) {
+        let Some(origins) = origins else {
+            self.read_worlds_unknown(run, ReadWorldUnknown::RetainedResult);
+            return;
+        };
+        if self.read_worlds_noted(run, at, &origins.worlds) {
+            self.read_rows_noted(run, at, &origins.row_scopes);
+        }
     }
 
     /// Notes the worlds of `hits`, the hits a canonical executor run's search

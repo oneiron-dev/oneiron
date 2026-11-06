@@ -153,6 +153,10 @@ struct ResolvedResult {
     /// The rows a read of it is withheld by beside the run's own, when it is
     /// not the run's: `Some(None)` when they are not known.
     rows: Option<Option<Vec<EntityId>>>,
+    /// The origins its descriptor froze when it is another run's, which a
+    /// read of it notes in this run's ledger (FIX 7084): `None` when they
+    /// are unknown, and for the run's own result.
+    origins: Option<crate::code_run::ResultOrigins>,
     /// The range of its body a read of it must stay inside, and reads by
     /// default, in the owner's offsets.
     within: Option<(u64, u64)>,

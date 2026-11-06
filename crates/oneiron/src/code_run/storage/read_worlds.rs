@@ -10,6 +10,8 @@
 //! also keep their Scope by bridge position; a step capsule projects that
 //! proof only when its complete input and ledger are proved (FIX 7162).
 
+mod origins;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};

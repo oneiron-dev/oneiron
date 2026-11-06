@@ -2,10 +2,11 @@
 //! finding report, fenced by its generation; a summary job's text, stored as
 //! a result of its own run and reported as its finding; and the card a done
 //! summary's reply carries. Each write goes through the run's one reader
-//! transaction door.
+//! transaction door. A finding keeps the origins frozen at its first report
+//! (FIX 7084).
 
 use super::{ReportOutcome, finding_key};
-use crate::code_run::{ExecutorStorage, ReaderFindingRef, ReaderJobState};
+use crate::code_run::{ExecutorStorage, ReaderFindingRef, ReaderJobState, ResultOrigins};
 use crate::{EntityId, Result};
 
 /// The one name a summary job's run binds its text to.
@@ -64,6 +65,7 @@ impl ExecutorStorage<'_> {
     /// settled child, or one claimed again since, keeps what it has; a
     /// scoped child whose borrowed parent lease is gone settles at `now_ms`
     /// with what it had committed before, and this finding does not land.
+    /// A replay keeps the origins frozen at the first report (FIX 7084).
     pub(crate) fn report_reader_finding(
         &self,
         task: EntityId,
@@ -82,7 +84,11 @@ impl ExecutorStorage<'_> {
                 tx.settle_lease_lost(job, now_ms)?;
                 return Ok(ReportOutcome::Settled);
             }
-            if job.finding.as_ref() == Some(finding) {
+            if job
+                .finding
+                .as_ref()
+                .is_some_and(|held| held.reports_same(finding))
+            {
                 return Ok(ReportOutcome::Replay);
             }
             let parent_run = job.binding.parent_run;
@@ -106,7 +112,9 @@ impl ExecutorStorage<'_> {
     /// executor, its one name `summary`), marked with its members' taint,
     /// then reported as the job's finding. Its replay save stamps the
     /// spawning actor's response ownership in the same transaction. The
-    /// run's end settles it.
+    /// run's end settles it. The text is made from its members alone, so its
+    /// origins are the union of theirs, unknown when any member's are (FIX
+    /// 7084).
     pub(crate) fn store_summary_job_text(
         &self,
         task: EntityId,
@@ -176,6 +184,7 @@ impl ExecutorStorage<'_> {
             handle: output.handle,
             bytes: output.raw_len,
             rows,
+            origins: ResultOrigins::of_sources(&members),
         };
         let reported =
             self.report_reader_finding(task, generation, &finding, crate::unix_millis_now())?;

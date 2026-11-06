@@ -354,9 +354,14 @@ impl RecordingJsHost<'_, '_> {
             Err(code) => return Ok(Err(result_refusal(code))),
         }
         if let Some(extra) = &found.rows {
-            // Another run's result reaches this one (FIX 6130).
-            let cause = crate::code_run::ReadWorldUnknown::RetainedResult;
-            self.gated_write.read_worlds_unknown(self.run_id, cause);
+            // Another run's result reaches this one (FIX 6130): the origins
+            // its descriptor froze are noted at the step's bridge position,
+            // or, unknown, the ledger misses it (FIX 7084).
+            self.gated_write.read_worlds_retained(
+                self.run_id,
+                self.next_seq,
+                found.origins.as_ref(),
+            );
             let held = self.callable_rows.1.take();
             self.callable_rows.1 = held
                 .zip(extra.clone())
@@ -385,7 +390,8 @@ impl RecordingJsHost<'_, '_> {
     /// then a reader child's source (a scoped child's lent inputs, each by
     /// its name or handle, FIX 7507), then a finding of one of its children.
     /// The step's replay context keeps the findings the lookup read (FIX
-    /// 6352).
+    /// 6352). Another run's result keeps the origins its descriptor froze
+    /// (FIX 7084).
     pub(super) fn resolve_for_read(
         &mut self,
         storage: &ExecutorStorage<'_>,
@@ -397,6 +403,7 @@ impl RecordingJsHost<'_, '_> {
                 name,
                 owner: self.run_id,
                 rows: None,
+                origins: None,
                 within: None,
                 child_source: false,
             }));
@@ -420,6 +427,7 @@ impl RecordingJsHost<'_, '_> {
                     name: Some(name.to_owned()),
                     owner: source.owner,
                     rows: Some(source.rows.clone()),
+                    origins: source.origins.clone(),
                     within: Some(source.range),
                     child_source: true,
                 }));
@@ -441,6 +449,7 @@ impl RecordingJsHost<'_, '_> {
                 name: Some(name.to_owned()),
                 owner: source.owner,
                 rows: Some(source.rows.clone()),
+                origins: source.origins.clone(),
                 within: Some(source.range),
                 child_source: true,
             }));
@@ -460,6 +469,7 @@ impl RecordingJsHost<'_, '_> {
             name: None,
             owner: finding.owner,
             rows: Some(finding.rows),
+            origins: finding.origins,
             within: None,
             child_source: false,
         }))
