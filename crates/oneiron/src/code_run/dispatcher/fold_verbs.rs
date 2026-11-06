@@ -79,30 +79,41 @@ impl HostSelfDispatcher<'_> {
     }
 }
 
-/// Keys whose value the engine writes as a typed tag (a fold handle, a
-/// claim source, a fold kind, a speech verb): never a quoted text.
-const FOLD_ANSWER_TAG_KEYS: [&str; 4] = ["fold", "source", "kind", "verb"];
+/// The fields of a fold answer that quote text a fold keeps: a stub, a
+/// note, ids, result handles and a mark's failure. Every other field is
+/// engine-typed (fold handles, spans, kinds, verbs, sources, flags) and is
+/// never masked.
+const FOLD_ANSWER_TEXT_KEYS: [&str; 5] = ["stub", "note", "ids", "handles", "failed"];
 
-/// Masks every known custody value in the text values of one fold answer:
-/// keys, numbers, booleans and typed tags are kept as they are.
+/// Masks every known custody value in the text fields of one fold answer,
+/// by its schema: only string values under a [`FOLD_ANSWER_TEXT_KEYS`] field,
+/// at any depth, pass through the masking. Keys, numbers, booleans and the
+/// typed fields keep their values, so the answer stays the same JSON.
 fn mask_answer_text(
     storage: &crate::code_run::storage::ExecutorStorage<'_>,
     value: &mut serde_json::Value,
 ) -> Result<()> {
+    mask_answer_value(storage, value, false)
+}
+
+fn mask_answer_value(
+    storage: &crate::code_run::storage::ExecutorStorage<'_>,
+    value: &mut serde_json::Value,
+    text: bool,
+) -> Result<()> {
     match value {
-        serde_json::Value::String(text) => {
-            *text = crate::engine_executor::mask_known_text(storage, text)?;
+        serde_json::Value::String(string) if text => {
+            *string = crate::engine_executor::mask_known_text(storage, string)?;
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                mask_answer_text(storage, item)?;
+                mask_answer_value(storage, item, text)?;
             }
         }
         serde_json::Value::Object(fields) => {
             for (key, item) in fields.iter_mut() {
-                if !FOLD_ANSWER_TAG_KEYS.contains(&key.as_str()) {
-                    mask_answer_text(storage, item)?;
-                }
+                let text = text || FOLD_ANSWER_TEXT_KEYS.contains(&key.as_str());
+                mask_answer_value(storage, item, text)?;
             }
         }
         _ => {}
