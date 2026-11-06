@@ -13340,7 +13340,7 @@
      "path": "src/channel_identity_provider/gmail/http.rs",
      "purpose": "Production Gmail send wire: one POST to `users.messages.send` (OF-374)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -21509,6 +21509,7 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 9,
+      "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
       "struct": 3,
@@ -38382,7 +38383,7 @@
      "path": "src/gate/decode/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -39167,7 +39168,7 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 7,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -39185,6 +39186,23 @@
       "crate-vis": 4,
       "fn": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyGrantExtension",
+      "PolicyGrantMapEntry",
+      "PolicyGrantValue",
+      "PolicyScopedGrantRow"
+     ],
+     "path": "src/gate/policy_manifest_doors/scoped_grants.rs",
+     "purpose": "Typed access to the manifest's existing scoped-grant rows",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "struct": 3
      }
     },
     {
@@ -40075,6 +40093,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/value_encoding.rs",
+     "purpose": "Value-preserving encoding for policy manifest rewrites",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -91412,7 +91440,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 195,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92359,7 +92387,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6500,
+   "source_files": 6502,
    "test_files": 895
   },
   "oneiron-android": {
@@ -143680,6 +143708,9 @@
       "PolicyCriticality",
       "PolicyEnforcementAction",
       "PolicyEnforcementVoice",
+      "PolicyGrantExtension",
+      "PolicyGrantMapEntry",
+      "PolicyGrantValue",
       "PolicyHedgeBucket",
       "PolicyHelpRouting",
       "PolicyManifest",
@@ -143704,6 +143735,7 @@
       "PolicyRowReceipt",
       "PolicyRowScope",
       "PolicyRule",
+      "PolicyScopedGrantRow",
       "PolicySensitivity",
       "PolicySignature",
       "PolicySkipReason",
@@ -145368,8 +145400,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1136,
-      "struct": 3439
+      "enum": 1137,
+      "struct": 3442
      }
     },
     {
