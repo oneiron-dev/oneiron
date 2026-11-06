@@ -32,6 +32,7 @@ use crate::agent_dispatch::SourcedTypeTree;
 use crate::agent_dispatch::load_vault_type_tree_sourced;
 use crate::agent_dispatch::team_shape_skill;
 use crate::agent_dispatch::team_shape_skill_in_force;
+use crate::claim::ScopedReadActorKey;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
@@ -45,7 +46,7 @@ use crate::task_type::{
     DecisionAxis, DecisionObservation, TaskTypeNode, TaskTypeRef, TaskTypeTree,
 };
 use crate::team::TeamReceipt;
-use crate::team::receipt::team_receipts_sourced;
+use crate::team::receipt::team_receipts_sourced_for_reader;
 use crate::team::run_binding::{team_run_tasks, team_run_tasks_sourced};
 use crate::temporal::TimeRange;
 use crate::{Error, Result, Vault};
@@ -583,8 +584,15 @@ impl Vault {
         now: u64,
     ) -> Result<TypeTreeUpkeepReport> {
         self.require_coach_attempt(attempt, COACH_TYPE_TREE_UPKEEP_FACET)?;
+        let coach = self.coach_authority()?.entity_ref();
+        let key = ScopedReadActorKey::with_actor_class(coach.to_hex(), "system")
+            .ok_or_else(|| Error::InvalidConfig("invalid Coach read key".into()))?
+            .require_relationship_grants(Some(coach));
+        let reader = self.scoped_read(key);
         let (receipts, receipt_rows): (Vec<TeamReceipt>, Vec<Option<Vec<EntityId>>>) =
-            team_receipts_sourced(self, None)?.into_iter().unzip();
+            team_receipts_sourced_for_reader(&reader, None)?
+                .into_iter()
+                .unzip();
         let projects: BTreeSet<EntityId> = receipts
             .iter()
             .filter_map(|receipt| receipt.project)

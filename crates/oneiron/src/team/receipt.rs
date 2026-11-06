@@ -11,6 +11,10 @@
 //! its outcome were read from, as the writer that assembled each named them
 //! (FIX 7103). A writer that names none leaves them unknown.
 
+mod input_source;
+
+pub(crate) use input_source::{TeamInputSource, team_receipts_sourced_for_reader};
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +52,8 @@ struct StoredTeamReceipt {
     fact_sources: Option<Vec<EntityId>>,
     /// `None` too while the receipt has no outcome.
     outcome_sources: Option<Vec<EntityId>>,
+    /// An optional original-input witness, never a complete fact set or a grant.
+    input_source: Option<TeamInputSource>,
 }
 
 impl StoredTeamReceipt {
@@ -326,6 +332,7 @@ pub fn record_team_receipt_sourced(
         receipt: receipt.clone(),
         fact_sources,
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
+        input_source: None,
     };
     vault.with_write_txn_grouped(|wtxn| put_team_receipt_in_txn(vault, wtxn, &stored))
 }
@@ -339,12 +346,24 @@ pub(crate) fn record_team_receipt_sourced_in_txn(
     fact_sources: Option<Vec<EntityId>>,
     outcome_sources: Option<Vec<EntityId>>,
 ) -> Result<()> {
+    record_team_receipt_with_input_in_txn(vault, txn, receipt, fact_sources, outcome_sources, None)
+}
+
+pub(crate) fn record_team_receipt_with_input_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &TeamReceipt,
+    fact_sources: Option<Vec<EntityId>>,
+    outcome_sources: Option<Vec<EntityId>>,
+    input_source: Option<TeamInputSource>,
+) -> Result<()> {
     receipt.validate()?;
     crate::task_type::validate_type_ref_in_txn(vault, txn, receipt.project, &receipt.type_ref)?;
     let stored = StoredTeamReceipt {
         receipt: receipt.clone(),
         fact_sources,
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
+        input_source,
     };
     put_team_receipt_in_txn(vault, txn, &stored)
 }

@@ -30,6 +30,7 @@
 
 mod input_capture;
 
+pub(super) use input_capture::INPUT_PREDICATE;
 pub(crate) use input_capture::record_led_team_captured;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -299,6 +300,17 @@ pub(crate) fn record_led_team_in_txn(
     input: &TeamRecordInput,
     now: u64,
 ) -> Result<std::result::Result<TeamRunAnswer, &'static str>> {
+    record_led_team_with_input_in_txn(vault, txn, leader, input, None, now)
+}
+
+fn record_led_team_with_input_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    leader: AttemptId,
+    input: &TeamRecordInput,
+    input_source: Option<super::receipt::TeamInputSource>,
+    now: u64,
+) -> Result<std::result::Result<TeamRunAnswer, &'static str>> {
     let store = DreamerRunnerStore::new(vault);
     let Some(lead) = store.status_in_txn(txn, leader)? else {
         return Ok(Err("team_unbound"));
@@ -429,7 +441,14 @@ pub(crate) fn record_led_team_in_txn(
     if receipt.validate().is_err() {
         return Ok(Err("team_record_invalid_input"));
     }
-    super::receipt::record_team_receipt_sourced_in_txn(vault, txn, &receipt, None, None)?;
+    super::receipt::record_team_receipt_with_input_in_txn(
+        vault,
+        txn,
+        &receipt,
+        None,
+        None,
+        input_source,
+    )?;
     Ok(Ok(recorded(&receipt, false)))
 }
 

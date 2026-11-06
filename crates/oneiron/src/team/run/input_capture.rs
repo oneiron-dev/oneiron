@@ -18,9 +18,10 @@ use crate::vault::entity_refs::resolve_entity_ref;
 use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
+use super::super::receipt::TeamInputSource;
 use super::{TeamRecordInput, TeamRunAnswer};
 
-const INPUT_PREDICATE: &str = "team.record.input";
+pub(in crate::team) const INPUT_PREDICATE: &str = "team.record.input";
 
 type Answer = std::result::Result<TeamRunAnswer, &'static str>;
 
@@ -69,13 +70,21 @@ fn capture_receipt_in_txn(
         return Ok(None);
     };
     let postcommit = VadPostcommitScope::new(vault, &child);
-    let Ok(decoded) = capture_input_in_txn(vault, &mut child, input, position, envelope, now)
+    let Ok((decoded, source)) =
+        capture_input_in_txn(vault, &mut child, input, position, envelope, now)
     else {
         return Ok(None);
     };
     // Receipt errors are not capture errors. Propagate them; a refusal or replay
     // returns its ordinary answer but discards the newly captured source.
-    let answer = super::record_led_team_in_txn(vault, &mut child, leader, &decoded, now)?;
+    let answer = super::record_led_team_with_input_in_txn(
+        vault,
+        &mut child,
+        leader,
+        &decoded,
+        Some(source),
+        now,
+    )?;
     if matches!(&answer, Ok(TeamRunAnswer::Recorded { replay: false, .. })) {
         child.commit()?;
         postcommit.merge_into(vault, parent);
@@ -90,7 +99,7 @@ fn capture_input_in_txn(
     position: &CapturePosition,
     envelope: &WriteEnvelope,
     now: u64,
-) -> Result<TeamRecordInput> {
+) -> Result<(TeamRecordInput, TeamInputSource)> {
     let original = serde_json::to_string(input).map_err(|_| unavailable())?;
     let id = EntityId::from_bytes(vault.store.clock.ulid()?)?;
     let subject = ClaimSubject::Entity(envelope.actor().entity_ref());
@@ -135,7 +144,7 @@ fn capture_input_in_txn(
     if decoded != *input {
         return Err(unavailable());
     }
-    Ok(decoded)
+    Ok((decoded, TeamInputSource::captured(id, &body)?))
 }
 
 struct CapturePosition {
