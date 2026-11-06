@@ -56,10 +56,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 4 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1656 | 182 | 55 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1657 | 182 | 55 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 632 | 4 | 0 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 633 | 4 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 27 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 55 | 1 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 13 | 1 | 0 |
@@ -814,7 +814,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `ai_host` | dir | 123 | XL | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `api` | dir | 695 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 17 | L | HTTP authentication for log-backed version-two capability slips |
-| `big_rung` | file+dir | 4 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
+| `big_rung` | file+dir | 5 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
 | `builtin_host` | file+dir | 7 | m | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
 | `byte_line` | file | 1 | m | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
@@ -987,7 +987,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `file_secret_marks` | file | 1 | s | Value-free file-mask paths, read visibility, and byte-span transformations |
 | `gate_decision` | file+dir | 6 | s | Store-layer modules of core `store::gate_decision`; core re-exports each one at its old path |
 | `gate_reason` | file | 1 | m | Gate outcomes, stable reason codes, and pure metric classification |
-| `git_wire` | file+dir | 23 | m | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
+| `git_wire` | file+dir | 24 | m | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
 | `graph_fs` | file+dir | 5 | m | Store-layer modules of core `graph_fs`; core re-exports each one at its old path |
 | `graph_version` | file | 1 | s | The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian… |
 | `heap_drop` | file | 1 | s | Counts reported by rebuildable index and window heap drops |

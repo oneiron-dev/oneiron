@@ -30,9 +30,8 @@ impl BodySpool {
         let bytes = SPOOL_PIECE
             + super::json::BASE64_TEXT_BUFFER_BYTES
             + super::json::BASE64_DECODE_BUFFER_BYTES;
-        MachineMemory::process().lease_untimed(bytes as u64, &|| {
-            self.stopped.load(Ordering::Relaxed)
-        })
+        MachineMemory::process()
+            .lease_untimed(bytes as u64, &|| self.stopped.load(Ordering::Relaxed))
     }
 
     /// Admits one text sink and one JSON reader before either allocates.
@@ -68,7 +67,9 @@ pub(in crate::api) fn reader_memory_refused(refusal: MemoryRefusal) -> crate::er
 }
 
 /// The combined sealed-reader working buffers keep memory's own response.
-pub(in crate::api) fn sealed_decode_memory_refused(refusal: MemoryRefusal) -> crate::error::ApiError {
+pub(in crate::api) fn sealed_decode_memory_refused(
+    refusal: MemoryRefusal,
+) -> crate::error::ApiError {
     match refusal {
         MemoryRefusal::Floor { .. } => crate::error::ApiError::internal_server_error(
             "this machine cannot allocate the custody request's decode buffers",
