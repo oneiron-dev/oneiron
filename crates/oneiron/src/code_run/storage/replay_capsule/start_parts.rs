@@ -409,7 +409,8 @@ fn stripped_pieces_in_rows(
 /// start. `files` are the files the image carries. Returns the digests
 /// that rested without their bytes (FIX 4192 review fix: each content
 /// piece of the old start a census carried without them, and the old
-/// manifest when the start names another one), and the digests whose body
+/// manifest when the start names another one and nothing else keeps its
+/// bytes), and the digests whose body
 /// rows it put back; `None` for a capsule that names no start or no actor.
 ///
 /// # Errors
@@ -440,7 +441,7 @@ pub(crate) fn republish_step_start_in_rows(
         }
     }
     let (before, output) = republish_manifest_in_rows(rows, scope.run, &start, pieces.manifest())?;
-    if before != output.raw_blake3 {
+    if before != output.raw_blake3 && !kept_apart_in_rows(rows, files, &before) {
         rested.insert(before);
     }
     landed.insert(output.raw_blake3);
@@ -606,13 +607,16 @@ fn republish_manifest_in_rows(
 
 /// FIX 9180: a restore's disposition of the step start the capsule row
 /// `row` names, whose rest retired, among an image's raw rows, as a
-/// retired body leaves one: every descriptor holding its manifest goes
-/// explicitly incomplete, with nothing to show. Returns the digests that
-/// rest without their bytes: each of its content pieces a census carried
-/// without them (FIX 4192 review fix: its config, frame and elements, which
-/// no stream carries), found among the rows with `files`, the files the
-/// image carries, and its manifest; none for a capsule that names no
-/// start. The settle takes each one no live start lands again.
+/// retired body leaves one: the run's own occurrence of its manifest goes
+/// explicitly incomplete, with nothing to show, and its holder row goes
+/// (FIX 4192 review fix: another holder of the same bytes keeps its
+/// descriptor). Returns the digests that rest without their bytes: each of
+/// its content pieces a census carried without them (FIX 4192 review fix:
+/// its config, frame and elements, which no stream carries), found among
+/// the rows with `files`, the files the image carries, and its manifest
+/// unless another holder or a standalone hold keeps its bytes; none for a
+/// capsule that names no start. The settle takes each one no live start
+/// lands again.
 ///
 /// # Errors
 ///
@@ -624,15 +628,81 @@ pub(crate) fn drop_step_start_in_rows(
 ) -> Result<Vec<[u8; 32]>> {
     let at = place(rows, row)
         .map_err(|_| Error::CorruptedIndex("a carried step start's capsule row"))?;
-    let Some(start) = CAPSULES.decode_value(&rows[at].1)?.start else {
+    let capsule = CAPSULES.decode_value(&rows[at].1)?;
+    let Some(start) = capsule.start else {
         return Ok(Vec::new());
     };
     let mut rested: Vec<[u8; 32]> = stripped_pieces_in_rows(rows, files, start.body)
         .into_iter()
         .collect();
-    prune_digest_in_rows(rows, &start.body.hash)?;
-    rested.push(start.body.hash);
+    release_manifest_occurrence_in_rows(rows, capsule.run, &start)?;
+    if !kept_apart_in_rows(rows, files, &start.body.hash) {
+        rested.push(start.body.hash);
+    }
     Ok(rested)
+}
+
+/// Releases, among an image's raw rows, only the occurrence run `run`
+/// holds of `start`'s manifest (FIX 4192 review fix): its descriptor goes
+/// explicitly incomplete, with nothing to show, and its holder row goes.
+/// Every other holder of the same bytes keeps its descriptor and holder row.
+///
+/// # Errors
+///
+/// An occurrence that does not derive, and a row that does not decode or
+/// encode.
+fn release_manifest_occurrence_in_rows(
+    rows: &mut Rows,
+    run: EntityId,
+    start: &ExecutorStepStart,
+) -> Result<()> {
+    let manifest = CodeRunRawOutput {
+        path: start.path.clone(),
+        ..CodeRunRawOutput::of_ref(start.body)
+    };
+    let occurrence = ResultOccurrence::of(Some(run), &manifest)?;
+    if let Ok(at) = place(rows, &BODY_ROWS.key_bytes(&(run, occurrence.id()))) {
+        let mut owned = BODY_ROWS.decode_value(&rows[at].1)?;
+        if owned
+            .state
+            .held()
+            .is_some_and(|held| held.blake3 == manifest.raw_blake3)
+        {
+            owned.state = BodyState::Incomplete { retained: None };
+            rows[at].1 = BODY_ROWS.encode_value(&owned)?;
+        }
+    }
+    take_row(
+        rows,
+        &BODY_DIGEST_ROWS.key_bytes(&(manifest.raw_blake3, occurrence.id())),
+    );
+    Ok(())
+}
+
+/// Whether the bytes `digest` names outlive a start's release of its own
+/// occurrence among an image's raw rows (FIX 4192 review fix): the body row
+/// holds them (inline, or a file among `files`, the files the image
+/// carries), and another holder row or the row's standalone hold keeps
+/// them. A restore never prunes such bytes as a start's rest.
+fn kept_apart_in_rows(rows: &Rows, files: &BTreeSet<[u8; 32]>, digest: &[u8; 32]) -> bool {
+    if !holds_bytes_in_rows(rows, files, digest) {
+        return false;
+    }
+    let held = place(rows, &code_run_body_row_key(digest))
+        .ok()
+        .and_then(|at| RAW_OUTPUTS.decode_value(&rows[at].1).ok())
+        .is_some_and(|body| {
+            matches!(
+                body,
+                StoredBody::Inline { held: true, .. } | StoredBody::File { held: true, .. }
+            )
+        });
+    let mut holders = BODY_DIGEST_ROWS.decl().prefix.to_vec();
+    holders.extend_from_slice(digest);
+    let (Ok(first) | Err(first)) = place(rows, &holders);
+    held || rows
+        .get(first)
+        .is_some_and(|(key, _)| key.starts_with(&holders))
 }
 
 /// FIX 9180: settles, among an image's raw rows, the bodies carried starts
