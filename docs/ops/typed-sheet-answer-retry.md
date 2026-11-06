@@ -71,6 +71,15 @@ it read, including original inputs, saved current-unit decision, completed
 outcomes, receipts, pins, visibility and generation. A losing writer adopts the canonical row instead of overwriting it.
 The first complete row is never extended or overwritten.
 
+The caller's existing absolute deadline is checked at each sheet preparation
+row and cell-column, folder selection and before-value item, and canonical
+progress-unit boundary. This includes formula, empty-input and other no-call
+units. The check returns the existing typed document timeout even without a
+registered document-memory host. A later retry uses its new caller deadline
+and keeps the stored inputs, current-unit decision and completed prefix.
+
+These checks are cooperative, not preemption: source snapshots, parsers,
+hashing, clones, serialization and database waits can run between checkpoints.
 Progress writes and local prefix clones are not full-heap admission. No runtime,
 hard-time or full FIX 9815 completion claim is made here.
 

@@ -222,6 +222,15 @@ impl ArtifactAsk<'_> {
         Ok(())
     }
 
+    pub(crate) fn check_deadline(&self) -> Result<()> {
+        if Instant::now() >= self.deadline {
+            return Err(crate::office_body::machine_memory_refused(
+                oneiron_docedit::resource::ResourceRefusal::Deadline,
+            ));
+        }
+        Ok(())
+    }
+
     /// Ask one unit: its state and images through the decider under the
     /// run's clock. The receipt's evidence is the engine's own pins, the
     /// sources read then each image the ladder was shown; `None` when the

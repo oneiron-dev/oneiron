@@ -61,8 +61,13 @@ impl Vault {
         let ask = &request.ask;
         ask.validate()?;
         let answer_col = request.answer_col;
-        let rows: BTreeSet<u32> = request.items.iter().map(|item| item.row).collect();
-        let files: BTreeSet<EntityId> = request.items.iter().map(|item| item.artifact).collect();
+        let mut rows = BTreeSet::new();
+        let mut files = BTreeSet::new();
+        for item in request.items {
+            ask.check_deadline()?;
+            rows.insert(item.row);
+            files.insert(item.artifact);
+        }
         let (Some(first), Some(last)) = (rows.first().copied(), rows.last().copied()) else {
             return Err(invalid("a folder ask names its files"));
         };
@@ -88,6 +93,7 @@ impl Vault {
         let mut row = if let Some(row) = self.decided_sheet_answers(output, &identity, unmasked)? {
             row
         } else {
+            ask.check_deadline()?;
             let base_live = self.office_body_pin(output)?;
             let (version, bytes, read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
             let frontier = *blake3::hash(&bytes).as_bytes();
@@ -98,15 +104,16 @@ impl Vault {
                 .items
                 .iter()
                 .map(|item| {
-                    cells
+                    ask.check_deadline()?;
+                    Ok(cells
                         .get(&CellRef {
                             col: answer_col,
                             row: item.row,
                         })
                         .cloned()
-                        .unwrap_or(CellValue::Blank)
+                        .unwrap_or(CellValue::Blank))
                 })
-                .collect();
+                .collect::<Result<Vec<_>>>()?;
             self.retain_decided_sheet_answers(
                 output,
                 DecidedSheetAnswers {
@@ -154,6 +161,7 @@ impl Vault {
             self.docx_archive_limits_in_txn(&rtxn, Some(ask.principal))?
         };
         while let Some(progress) = &row.progress {
+            ask.check_deadline()?;
             let DecidedSheetInputs::FolderItems { before } = &progress.inputs else {
                 return Err(invalid("folder ask has different stored inputs"));
             };
