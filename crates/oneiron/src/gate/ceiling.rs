@@ -395,8 +395,8 @@ impl SourceTrustCeiling {
         actor_ref: Option<&str>,
     ) -> Option<SourceTrustRow> {
         let first = self.row(source)?;
-        // Actor-specific untrusted clamps override a class-wide permit only
-        // for that actor. They can never create a permit without that baseline.
+        // An actor-specific row overrides a class-wide permit only for that
+        // actor. It never creates a permit without that baseline.
         if let Some(id) = actor_ref.and_then(|actor| EntityId::from_hex(actor).ok())
             && let Some(row) = self.additional_bound_rows.get(&(source, id))
         {
@@ -450,68 +450,6 @@ impl SourceTrustCeiling {
         }
         for ((source, _), row) in other.additional_bound_rows {
             self.set_row(source, row);
-        }
-    }
-
-    fn restrict_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
-        let Some(first) = self.row(source) else {
-            return; // Untrusted input cannot open a source permit.
-        };
-        match row.actor_ref {
-            Some(actor) if first.actor_ref != Some(actor) => {
-                if let Some(existing) = self.additional_bound_rows.get_mut(&(source, actor)) {
-                    *existing = existing.merge(row);
-                } else if first.actor_ref.is_none() {
-                    // A class-wide permit covers this actor. Intersect just
-                    // that actor's scope, leaving every other actor unchanged.
-                    let bound_first = SourceTrustRow {
-                        actor_ref: Some(actor),
-                        ..first
-                    };
-                    self.additional_bound_rows
-                        .insert((source, actor), bound_first.merge(row));
-                }
-            }
-            _ => {
-                if row.actor_ref.is_none() {
-                    // A class-wide restriction intersects every existing
-                    // actor slot, preserving each binding. It must neither
-                    // single out the first scanned actor nor grant outsiders.
-                    *self.slot_mut(source) = Some(first.merge(SourceTrustRow {
-                        actor_ref: first.actor_ref,
-                        ..row
-                    }));
-                    for ((slot_source, _), bound) in &mut self.additional_bound_rows {
-                        if *slot_source == source {
-                            *bound = bound.merge(SourceTrustRow {
-                                actor_ref: bound.actor_ref,
-                                ..row
-                            });
-                        }
-                    }
-                } else {
-                    *self.slot_mut(source) = Some(first.merge(row));
-                }
-            }
-        }
-    }
-
-    pub(super) fn restrict_only(&mut self, other: Self) {
-        self.malformed_manifest_seen |= other.malformed_manifest_seen;
-        for source in [
-            ClaimSource::UserStated,
-            ClaimSource::Observed,
-            ClaimSource::Inferred,
-            ClaimSource::Imported,
-            ClaimSource::ToolOutput,
-            ClaimSource::Generated,
-        ] {
-            if let Some(row) = other.row(source) {
-                self.restrict_row(source, row);
-            }
-        }
-        for ((source, _), row) in other.additional_bound_rows {
-            self.restrict_row(source, row);
         }
     }
 

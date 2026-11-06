@@ -329,6 +329,48 @@ pub(in crate::sync) fn stamp_birth_or_warn(
     }
 }
 
+/// Carried birth envelopes decoded before opening their writer.
+pub(super) struct BirthBatch {
+    carried: Vec<(EntityId, RowBirth)>,
+}
+
+impl BirthBatch {
+    pub(super) fn prepare(delta: &loro::event::MapDelta<'_>, window_key: &str) -> Self {
+        let mut carried = Vec::new();
+        for (key, value) in &delta.updated {
+            let Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) = value else {
+                continue;
+            };
+            match (owner(key), decode(bytes)) {
+                (Some(id), Some(birth)) => carried.push((id, birth)),
+                _ => {
+                    tracing::warn!(window = window_key, key = %key, "row birth carrier malformed; left out")
+                }
+            }
+        }
+        Self { carried }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.carried.is_empty()
+    }
+
+    pub(super) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        doc: &LoroDoc,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        let Self { carried } = self;
+        for (id, birth) in carried {
+            if carried_row_lands_in_txn(vault, wtxn, doc, id)? {
+                stamp_birth_or_warn(vault, wtxn, id, birth)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Observer B for the birth map: a birth that lands after its row (a later
 /// import, or a promotion snapshot) is stamped once the row is live, when the
 /// window carries that row as one that replicates. A birth whose row has not
@@ -340,29 +382,11 @@ pub(crate) fn materialize_births_from_delta(
     window_key: &str,
     _lease_vault_id: u64,
 ) -> Option<Vec<EntityId>> {
-    let mut carried = Vec::new();
-    for (key, value) in &delta.updated {
-        let Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) = value else {
-            continue;
-        };
-        match (owner(key), decode(bytes)) {
-            (Some(id), Some(birth)) => carried.push((id, birth)),
-            _ => {
-                tracing::warn!(window = window_key, key = %key, "row birth carrier malformed; left out")
-            }
-        }
-    }
-    if carried.is_empty() {
+    let staged = BirthBatch::prepare(delta, window_key);
+    if staged.is_empty() {
         return Some(Vec::new());
     }
-    let result = vault.with_write_txn_grouped(|wtxn| {
-        for (id, birth) in &carried {
-            if carried_row_lands_in_txn(vault, wtxn, doc, id)? {
-                stamp_birth_or_warn(vault, wtxn, id, birth)?;
-            }
-        }
-        Ok(())
-    });
+    let result = vault.with_write_txn_grouped(|wtxn| staged.stage_in_txn(vault, doc, wtxn));
     match result {
         Ok(()) => Some(Vec::new()),
         Err(err) => {
