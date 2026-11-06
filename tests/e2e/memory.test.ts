@@ -734,14 +734,18 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
 /* ARCH-0003 observed/stated disagreement; ARCH-0040 source trust.
  * The extraction and run-bound supersession doors NOW EXIST:
  * vault.memory.signal_extraction/result, self.run.attach, vault.claims.supersede.
- * The full ID still needs a publicly established, leased generated-writing
- * run owned by the paired agent and registered on the serving host. The
- * resident pump can create runs, but holds the entry guard while it calls
- * the model; attach waits on that same guard. No typed public between-entry
- * hold/setup door is supplied here that leaves that run leased and attachable.
- * The shared fixture has no runner binding for such a hold. A provider barrier
- * inside the entry, an inert AGENT_DEF, a queued task or a guessed run id is
- * not this setup. execute_code is not a permitted substitute.
+ * Engine 2026-11-07 07:12 JST confirms the real run composition: agents.spawn,
+ * pair the genuine agent_def_ref holder, read agents.spawn.get until leased,
+ * then self.run.attach and claims.supersede as that agent. A queue receipt
+ * alone does not let the human owner borrow the agent's run.
+ * Engine 07:32 keeps this WHOLE/BLOCKED on the production Observed/language
+ * producer FIX 21842. Model JSON is not a host-stamped Observed producer;
+ * any source/value/scope oracle change is an Engine decision, not this suite's.
+ * This fixture has not established deterministic timing for one attach while
+ * the real run keeps its lease. A barrier inside the model entry holds the
+ * same guard attach needs. Do not invent a new registration/hold API, retry
+ * a Busy mutating attach, or substitute an inert AGENT_DEF, queued task,
+ * guessed run id, execute_code or a weaker attach-only smoke test.
  * Keep the complete journey: English/user_stated; three Japanese requests
  * over two sessions; exact scripted production extraction; both active with
  * stated first and an exact conflict pair; a genuine generated supersession
@@ -749,7 +753,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
  * evidence and lifecycle. Never directly upsert an observed result instead.
  */
 suite.todo(test, "MEMORY-03",
-  "waits on public leased live-run ownership/registration setup for the generated supersession leg; extraction and attach calls exist");
+  "waits on merged FIX 21842 production Observed/language producer and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists, not a new registration API");
 
 /* MEMORY-04: ARCH-0032 writers, ARCH-0002 NOTE beside CLAIM, OF-330.
  * author_take NOW EXISTS as AuthorTakeRequest -> EntityRefReceipt, and real
