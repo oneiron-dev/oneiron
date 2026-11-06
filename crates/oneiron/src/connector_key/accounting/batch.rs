@@ -60,13 +60,25 @@ struct DispatchBatchProgress {
 }
 
 impl DispatchBatchProgress {
+    /// A batch no writer has charged yet, first sampled at `accounted_at`.
+    fn fresh(batch: &DispatchBatch, accounted_at: u64) -> Self {
+        Self {
+            effect_channel: batch.effect_channel.clone(),
+            count: batch.count,
+            admitted: 0,
+            refused: 0,
+            paced_until: None,
+            accounted_at,
+            last_accounted_at: accounted_at,
+        }
+    }
+
     /// Dispatches with a final outcome.
     fn settled(&self) -> u64 {
         self.admitted.saturating_add(self.refused)
     }
 
-    /// The tally the progress stands for, with nothing paced and no ladder
-    /// events: those belong to the call that fired them.
+    /// An empty tally, with nothing counted and no ladder events.
     fn tally(&self, caller_observed_at: Option<u64>) -> ConnectorKeyDispatchTally {
         ConnectorKeyDispatchTally {
             admitted: self.admitted,
@@ -82,8 +94,15 @@ impl DispatchBatchProgress {
         }
     }
 
-    /// Marks the unsettled rest paced until `paced_until` in `tally`.
-    fn report_paced(&self, tally: &mut ConnectorKeyDispatchTally) {
+    /// Writes the batch's counts and samples into `tally`, and the rest as
+    /// paced while windows hold it; the ladder events stay the call's.
+    fn report(&self, tally: &mut ConnectorKeyDispatchTally) {
+        tally.admitted = self.admitted;
+        tally.refused = self.refused;
+        tally.accounted_at = self.accounted_at;
+        tally.last_accounted_at = self.last_accounted_at;
+        tally.paced = 0;
+        tally.paced_until = None;
         if let Some(until) = self.paced_until {
             tally.paced = self.count - self.settled();
             tally.paced_until = Some(until);
@@ -91,14 +110,11 @@ impl DispatchBatchProgress {
     }
 }
 
-/// Why one transaction chunk stopped admitting.
-enum ChunkStop {
-    /// The key is not active, or a full row that does not pace refused: the
-    /// rest of the batch is refused.
-    Refused,
-    /// Every full row is a count-bound window that refuses (FIX 8686): the
-    /// rest of the batch waits for it, uncharged.
-    Paced,
+/// One batch as a call names it: its row key, normalized channel and size.
+struct DispatchBatch {
+    key: (EntityId, String),
+    effect_channel: String,
+    count: u64,
 }
 
 impl Vault {
@@ -203,83 +219,73 @@ impl Vault {
             return Err(invalid_body("effect channel must not be blank"));
         }
         self.measure_limit(EngineLimit::ConnectorDispatchBatch, count);
-        let key = (*id, batch_ref.to_owned());
-        let stored = {
-            let rtxn = self.store.env.read_txn()?;
-            DISPATCH_BATCH.get(&self.store, &rtxn, &key)?
+        let batch = DispatchBatch {
+            key: (*id, batch_ref.to_owned()),
+            effect_channel,
+            count,
         };
-        let mut accounting_now = accounting_clock();
-        let mut progress = match stored {
+        // The counts come from the batch's row as each writer reads it; the
+        // ladder events gather across this call's chunks.
+        let mut tally = DispatchBatchProgress::fresh(&batch, 0).tally(telemetry.caller_observed_at);
+        loop {
+            if self.admit_dispatch_chunk(&batch, accounting_clock(), &mut tally)? {
+                return Ok(tally);
+            }
+        }
+    }
+
+    /// One writer's share of a batch, its progress read and written in the
+    /// same transaction as its debits and op records (FIX 11058): a call
+    /// racing another under the same ref charges only what the row it reads
+    /// leaves unsettled. The writer reads the batch's row (a first call starts
+    /// one), refuses another channel or count under the ref, and returns
+    /// finished without writing when the batch is settled or its rest still
+    /// waits for its windows. Otherwise it admits up to one chunk against the
+    /// key's live state at `accounting_now`: a refusal settles the whole rest
+    /// refused, a pace leaves it waiting until `paced_until`. `tally` takes
+    /// the row's counts and the chunk's ladder events once the writer commits.
+    /// Returns whether the batch is done for this call.
+    fn admit_dispatch_chunk(
+        &self,
+        batch: &DispatchBatch,
+        accounting_now: u64,
+        tally: &mut ConnectorKeyDispatchTally,
+    ) -> Result<bool> {
+        let id = &batch.key.0;
+        let mut wtxn = self.store.env.write_txn()?;
+        let progress = match DISPATCH_BATCH.get(&self.store, &wtxn, &batch.key)? {
             Some(progress) => {
-                if progress.effect_channel != effect_channel || progress.count != count {
+                if progress.effect_channel != batch.effect_channel || progress.count != batch.count
+                {
                     return Err(invalid_body("a batch_ref names one batch"));
                 }
                 progress
             }
-            None => DispatchBatchProgress {
-                effect_channel,
-                count,
-                admitted: 0,
-                refused: 0,
-                paced_until: None,
-                accounted_at: accounting_now,
-                last_accounted_at: accounting_now,
-            },
+            None => DispatchBatchProgress::fresh(batch, accounting_now),
         };
-        let mut tally = progress.tally(telemetry.caller_observed_at);
-        if progress.settled() == count {
-            return Ok(tally);
-        }
-        // A call before the windows open charges nothing: the rest still
-        // waits for them.
-        if progress
-            .paced_until
-            .is_some_and(|until| until > accounting_now)
+        if progress.settled() == progress.count
+            || progress
+                .paced_until
+                .is_some_and(|until| until > accounting_now)
         {
-            progress.report_paced(&mut tally);
-            return Ok(tally);
+            // Nothing to charge: the writer aborts and the row stands.
+            progress.report(tally);
+            return Ok(true);
         }
-        loop {
-            let chunk = (count - progress.settled()).min(CONNECTOR_DISPATCH_TRANSACTION_CHUNK);
-            let stopped =
-                self.admit_dispatch_chunk(&key, chunk, accounting_now, &mut progress, &mut tally)?;
-            if stopped.is_some() || progress.settled() == count {
-                break;
-            }
-            accounting_now = accounting_clock();
-        }
-        Ok(tally)
-    }
-
-    /// One writer's share of a batch: up to `chunk` dispatches against the
-    /// key's live state at `accounting_now`, its debits, op records and the
-    /// batch's progress in one commit. Returns why the key stopped admitting
-    /// (not active, an exhausted row, or a full window that paces): a refusal
-    /// settles the whole rest of the batch refused, a pace leaves it waiting.
-    /// `progress` and `tally` move only once the writer commits.
-    fn admit_dispatch_chunk(
-        &self,
-        key: &(EntityId, String),
-        chunk: u64,
-        accounting_now: u64,
-        progress: &mut DispatchBatchProgress,
-        tally: &mut ConnectorKeyDispatchTally,
-    ) -> Result<Option<ChunkStop>> {
-        let id = &key.0;
-        let mut wtxn = self.store.env.write_txn()?;
         let mut record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
-        let mut next = progress.clone();
+        let chunk = (progress.count - progress.settled()).min(CONNECTOR_DISPATCH_TRANSACTION_CHUNK);
+        let mut next = progress;
         next.paced_until = None;
         next.last_accounted_at = accounting_now;
         // The dispatches after this chunk, settled with it on a refusal.
         let after = next.count - next.settled() - chunk;
         let mut charges = Vec::new();
-        let mut stopped = None;
+        let mut stopped = false;
         for i in 0..chunk {
             if record.status != ConnectorKeyStatus::Active {
                 next.refused = next.refused.saturating_add(chunk - i + after);
-                stopped = Some(ChunkStop::Refused);
+                stopped = true;
                 break;
             }
             match charge_effector_budgets(
@@ -314,7 +320,7 @@ impl Vault {
                     )? {
                         charges.push(charge);
                         next.paced_until = Some(next_eligible_at);
-                        stopped = Some(ChunkStop::Paced);
+                        stopped = true;
                         break;
                     }
                     if on_exhaust == EffectorBudgetOnExhaust::Suspend {
@@ -339,21 +345,17 @@ impl Vault {
                     }
                     charges.push(charge);
                     next.refused = next.refused.saturating_add(chunk - i + after);
-                    stopped = Some(ChunkStop::Refused);
+                    stopped = true;
                     break;
                 }
             }
         }
-        DISPATCH_BATCH.put(&self.store, &mut wtxn, key, &next)?;
+        DISPATCH_BATCH.put(&self.store, &mut wtxn, &batch.key, &next)?;
         wtxn.commit()?;
-        *progress = next;
         for charge in charges {
             tally.take_ladder_events(charge);
         }
-        tally.admitted = progress.admitted;
-        tally.refused = progress.refused;
-        tally.last_accounted_at = accounting_now;
-        progress.report_paced(tally);
-        Ok(stopped)
+        next.report(tally);
+        Ok(stopped || next.settled() == next.count)
     }
 }
