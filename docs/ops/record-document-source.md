@@ -95,3 +95,27 @@ stand for extra operations, and divergent shared uses cannot be erased or
 first-selected to make a join pass. SKILL remains absent from the emitted window
 root registry. No source data here grants native permission, and no complete
 window round-trip or root activation is claimed.
+
+
+### Native window source-bank framing (source only)
+
+The independent SKILL source bank now has a canonical binary spelling in
+`sync/checkpoint_payload/frame/record_documents.rs`. It reuses the outer
+carrier's copy-locator, home and dependency encoding. Each source keeps its own
+copies, actor holes and final head/row/part slot uses. Repeated descriptor
+positions and writes shared by different sources are not deduplicated. The bank
+contains no original head bytes, part digests or actor payloads.
+
+Both encoding and decoding validate against the actual final outer skeleton.
+Every value reference must be a retained native write or a shallow winner, with
+any retained/shallow alias agreeing on root, key, peer and Lamport timestamp.
+Latest-state entries alone do not establish a source. Head and row references
+keep the exact entity key; each native part reference must name its actual
+withheld key slot. The source owner's opening function takes that same skeleton
+and validates these references before reading authenticated holder copies.
+
+This is the source bank's first format, not a new spelling of `LoroCarrier` and
+not an old-format reader. It does not connect the real operations classifier,
+outer carrier field, variable piece-count reconstruction, row-slice export or
+authenticated native source writer. SKILL root activation remains off. Opened
+history and newly derived digests remain data, not native operation authority.
