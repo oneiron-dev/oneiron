@@ -24,7 +24,7 @@
 
 use std::borrow::Cow;
 
-use aes_gcm::aead::{AeadInOut, KeyInit, inout::InOutBuf};
+use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce, Tag};
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -277,28 +277,31 @@ fn wrap_aad(id: &[u8; ID_LEN]) -> [u8; WRAP_AAD_DOMAIN.len() + ID_LEN] {
     aad
 }
 
-/// Wraps `raw` under `vault_key` for snapshot `id`, writing ciphertext and
-/// its tag directly into the fallibly reserved canonical wrapped-key bytes.
+/// Wraps `raw` under `vault_key` for snapshot `id` in the fallibly reserved
+/// canonical wrapped-key bytes. This buffer is wiped if encryption fails.
 fn wrap_key(vault_key: &[u8; 32], id: &[u8; ID_LEN], raw: &[u8; 32]) -> Result<WrappedSnapshotKey> {
     let mut nonce = [0; WRAP_NONCE_LEN];
     os_fill(&mut nonce)?;
     let cipher = Aes256Gcm::new_from_slice(vault_key)
         .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    let mut bytes = Vec::new();
+    let mut bytes = Zeroizing::new(Vec::new());
     bytes
         .try_reserve_exact(WRAPPED_LEN)
         .map_err(std::io::Error::from)?;
     bytes.push(VERSION);
     bytes.extend_from_slice(&nonce);
-    bytes.resize(WRAPPED_LEN, 0);
-    let (ciphertext, tag_out) = bytes[1 + WRAP_NONCE_LEN..].split_at_mut(raw.len());
-    let buffer = InOutBuf::new(raw, ciphertext)
-        .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    bytes.extend_from_slice(raw);
     let tag = cipher
-        .encrypt_inout_detached(&Nonce::from(nonce), &wrap_aad(id), buffer)
+        .encrypt_in_place_detached(
+            &Nonce::from(nonce),
+            &wrap_aad(id),
+            &mut bytes[1 + WRAP_NONCE_LEN..],
+        )
         .map_err(|_| refused("sealing an inference snapshot failed"))?;
-    tag_out.copy_from_slice(&tag);
-    Ok(WrappedSnapshotKey { bytes })
+    bytes.extend_from_slice(&tag);
+    Ok(WrappedSnapshotKey {
+        bytes: std::mem::take(&mut *bytes),
+    })
 }
 
 /// Opens `wrapped` under `vault_key` for snapshot `id` directly into the
@@ -317,10 +320,14 @@ fn open_wrapped(
     let cipher = Aes256Gcm::new_from_slice(vault_key).map_err(|_| corrupt())?;
     let mut raw = Zeroizing::new([0u8; 32]);
     let (ciphertext, tag) = ciphertext.split_at(raw.len());
-    let tag = Tag::try_from(tag).map_err(|_| corrupt())?;
-    let buffer = InOutBuf::new(ciphertext, &mut raw[..]).map_err(|_| corrupt())?;
+    raw.copy_from_slice(ciphertext);
     cipher
-        .decrypt_inout_detached(&Nonce::from(*nonce), &wrap_aad(id), buffer, &tag)
+        .decrypt_in_place_detached(
+            &Nonce::from(*nonce),
+            &wrap_aad(id),
+            &mut raw[..],
+            Tag::from_slice(tag),
+        )
         .map_err(|_| corrupt())?;
     Ok(raw)
 }
