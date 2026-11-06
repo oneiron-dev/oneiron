@@ -191,6 +191,10 @@ struct AgentRunTaskBody {
     subkind: String,
     /// The run's original attempt id, hex: the try its dispatch enqueued.
     attempt_ref: String,
+    /// The try that last took the lease, hex: the original, or a retry or
+    /// successor of it. Slice 6 re-creates the queue row under this id, so
+    /// the memo keys of its finished steps match.
+    live_attempt_ref: String,
     run_id: Option<String>,
     parent_attempt_ref: Option<String>,
     /// The TASK the dispatch realizes, when it realizes one.
@@ -348,9 +352,32 @@ fn put_agent_run_task_in_txn(
     let Some(record) = AttemptQueue::new(vault).get_in_txn(&*wtxn, attempt)? else {
         return Ok(false);
     };
+    // Only a run whose claim takes the lease gets a run TASK: a workflow
+    // leaf and a resident's TASK-root run keep their pumps' path, and their
+    // leases would never be renewed.
+    if !super::agent_run::agent_pump_claims_in(vault, &*wtxn, &record)? {
+        return Ok(false);
+    }
+    let world = input.scope.as_ref().and_then(|scope| scope.world);
+    // TASKs ride the shared base window to every machine, whatever their
+    // world stamp, so a run whose world keeps its text on this device gets
+    // no run TASK and stays here: a run moves only within world privacy
+    // (cross-arch-0019 item 05). Engine call (CALLS, FIX 4747): the model
+    // call's off-device verdict for the run's world; a run that names no
+    // world may carry any world's text, so it goes only while no world stays
+    // on this device.
+    if vault
+        .model_call_hold_in_txn(
+            &*wtxn,
+            world,
+            &crate::settings::CallerLocality::OffDevice.into(),
+        )?
+        .is_some()
+    {
+        return Ok(false);
+    }
     let parent = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
-    let world = input.scope.as_ref().and_then(|scope| scope.world);
     let facet = input.scope.as_ref().and_then(|scope| scope.facet);
     let held_until = if closing(vault) {
         now
@@ -362,6 +389,7 @@ fn put_agent_run_task_in_txn(
         schema_version: AGENT_RUN_TASK_SCHEMA_VERSION,
         subkind: AGENT_RUN_TASK_SUBKIND.to_owned(),
         attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
+        live_attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
         run_id: record.run_id.clone(),
         parent_attempt_ref: parent.map(|parent| bytes_to_hex_lower(parent.as_bytes())),
         realized_task_ref: record.task_ref.clone(),
@@ -443,9 +471,13 @@ pub(crate) fn take_agent_run_lease_in_txn(
                         .unwrap_or(held.held_until),
                     ..held
                 });
+            // The TASK follows the try that takes it: its id and its payload
+            // as the queue holds it now, scrubs included.
             update_agent_run_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
                 body.executor = lease;
                 body.outcome = None;
+                body.live_attempt_ref = bytes_to_hex_lower(row.id.as_bytes());
+                body.queue_payload.clone_from(&row.payload);
                 Ok(())
             })?;
             Ok(AgentRunLeaseTake::Taken(AgentRunFence {
@@ -861,8 +893,12 @@ pub(crate) fn settle_agent_run_task_in_txn(
         return Ok(());
     }
     let now = vault.store.clock.now_recorded_at();
+    // A settled run needs its frozen payload no more: the TASK drops it, so
+    // its text lives on no machine past the run (the TASK's sync history
+    // keeps the old bytes until its window is cut).
     update_agent_run_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
+        body.queue_payload.clear();
         Ok(())
     })
 }

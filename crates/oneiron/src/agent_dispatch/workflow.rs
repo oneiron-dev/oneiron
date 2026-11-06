@@ -426,15 +426,6 @@ impl AgentDispatcher<'_> {
             return Err(invalid("new workflow step unexpectedly deduped"));
         };
         launch.reserve_in_txn(self, txn, status.attempt.id, Some(requested), now)?;
-        // FIX 4747: a released leaf is an agent run too: its portable record
-        // is minted in the write that queues it.
-        super::run_task::mint_agent_run_task_in_txn(
-            self.vault,
-            txn,
-            status.attempt.id,
-            &frozen,
-            now,
-        )?;
         let index: Vec<_> = frozen
             .definition
             .skills

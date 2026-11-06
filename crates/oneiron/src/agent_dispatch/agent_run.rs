@@ -368,6 +368,25 @@ impl AgentDispatcher<'_> {
 /// The row as an agent run of this pump, or `None` when it is another
 /// host's: no agent dispatch, a saved workflow's leaf, a child whose parent
 /// is gone, or a resident's inbox wake.
+/// Whether the agent run pump is the one that claims `row` (FIX 4747): an
+/// agent-def dispatch row it reads, other than a resident agent's TASK-root
+/// run, which the resident pump runs. Only such a run takes the executor
+/// lease at its claim, so only its dispatch mints a run TASK.
+pub(super) fn agent_pump_claims_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &AttemptRecord,
+) -> Result<bool> {
+    let queue = AttemptQueue::new(vault);
+    let Some(run) = agent_run_row(&queue, txn, row)? else {
+        return Ok(false);
+    };
+    Ok(!(run.task_root
+        && vault
+            .resident_binding_for_effect_in_txn(txn, run.agent)?
+            .is_some()))
+}
+
 fn agent_run_row(
     queue: &AttemptQueue<'_>,
     txn: &heed::RoTxn<'_>,
