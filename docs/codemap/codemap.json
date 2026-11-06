@@ -41097,6 +41097,43 @@
      "surface": {
       "const": 1,
       "fn": 9,
+      "re-export": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgUiFileImport",
+      "AgUiFileRead",
+      "AgUiFileReadInput",
+      "AgUiFileReceipt",
+      "AgUiFileView"
+     ],
+     "path": "src/ingest/ag_ui/file.rs",
+     "purpose": "File-only AG-UI capture and exact, scoped source observations",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgUiAppObservation",
+      "AgUiCustomMapping",
+      "AgUiObservationKind",
+      "AgUiRepairLink",
+      "AgUiRepairLinkStatus"
+     ],
+     "path": "src/ingest/ag_ui/observations.rs",
+     "purpose": "Owner-registered CUSTOM field projections",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
       "struct": 3
      }
     },
@@ -83746,7 +83783,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1280
+      "fn": 1282
      }
     },
     {
@@ -90245,7 +90282,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91066,7 +91103,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6398,
+   "source_files": 6400,
    "test_files": 895
   },
   "oneiron-android": {
@@ -105556,7 +105593,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1248
+      "fn": 1250
      }
     },
     {
@@ -107349,7 +107386,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1249
+      "fn": 1251
      }
     },
     {
@@ -111819,6 +111856,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/ag_ui_file_doors.rs",
+     "purpose": "Owner-selected AG-UI file capture; shared by served facade transports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -112665,7 +112712,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 166
+      "crate-vis": 167
      }
     },
     {
@@ -127803,7 +127850,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 674,
+     "files": 675,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128316,7 +128363,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1600,
+   "source_files": 1601,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -138955,6 +139002,16 @@
       "AffectClaimConsolidation",
       "AffectTurnEvidence",
       "AffectedTests",
+      "AgUiAppObservation",
+      "AgUiCustomMapping",
+      "AgUiFileImport",
+      "AgUiFileRead",
+      "AgUiFileReadInput",
+      "AgUiFileReceipt",
+      "AgUiFileView",
+      "AgUiObservationKind",
+      "AgUiRepairLink",
+      "AgUiRepairLinkStatus",
       "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
@@ -143445,8 +143502,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1121,
-      "struct": 3402
+      "enum": 1123,
+      "struct": 3410
      }
     },
     {
