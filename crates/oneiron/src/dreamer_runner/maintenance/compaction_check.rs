@@ -595,7 +595,7 @@ fn judge_call(
     let mut request = judge_shell(model, schema, locality, keyless);
     request.messages.push(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text: input }],
+        content: vec![ContentPart::Text { text: input, signature: None }],
     });
     Ok(request)
 }
@@ -630,6 +630,7 @@ fn judge_shell(
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: model.rubric.to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -653,7 +654,7 @@ fn judgment(response: &LlmResponse, declaration: &CompactionCheckDeclaration) ->
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
