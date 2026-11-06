@@ -104,8 +104,11 @@ A direct whole-slot assignment can also contain a flat comma-valued right-hand
 side such as `module.exports = (module.exports = {a: 1}, module.exports)`.
 Every non-final element must be a plain native whole-slot assignment with an
 object literal, function expression, arrow function or class expression value;
-the final element must read the native `module.exports` slot. The outer slot is
-captured before the right-hand side. Replacements apply in source order, including
+the final element must read the native `module.exports` slot or supply another
+of those fresh expressions. For example,
+`module.exports = (module.exports = {a: 1}, {b: 2})` keeps only `b` from the final
+outer replacement. The outer slot is captured before the right-hand side.
+Replacements apply in source order, including
 each value's unresolved spread or computed-key sites, and the outer store keeps
 the last replacement's keys. The old wrapper `exports` binding remains detached.
 The entire sequence must qualify before any of these effects or reference
