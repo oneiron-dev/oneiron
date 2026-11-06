@@ -31,7 +31,7 @@ pub use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence
 pub use made_by::MadeByClass;
 pub use read_memory::{
     ClaimBodyRead, ClaimBodyReadError, ClaimScopeReadMemory, ClaimStringRead, ClaimValueHead,
-    ClaimValueRead,
+    ClaimValueHeadStorage, ClaimValueRead,
 };
 pub use relationship_scope::{
     RelationshipScope, RelationshipSet, meet_relationship_scopes, relationship_scope_includes,
