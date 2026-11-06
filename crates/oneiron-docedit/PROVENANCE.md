@@ -139,9 +139,9 @@ The same-count later-paragraph fallback (2026-11-06, FIX 17480) touches
 paragraph count, later lines reuse the same-index paragraph's properties;
 new replacement text uses its first run's (else first field's, else the global
 run's) properties. A later-template error falls back to the first paragraph's
-template. New replacement text in the first line of a same-count rebuild,
-and changed middle lines in a count-changing rebuild, keep the existing
-first-paragraph/global-run template.
+template. New replacement text in the first line of a same-count rebuild
+and in paired middle lines of a count-changing rebuild keeps the existing
+global-run template; unpaired added lines keep the first-paragraph template.
 Field-removal receipts, expected-text checks and the retained/cut paths are
 unchanged.
 
@@ -160,9 +160,11 @@ unchanged common whole-paragraph text prefix and suffix back to their actual
 original paragraphs, using nonoverlapping text equality as the retained
 mapping does. These paragraphs keep their own paragraph, terminal and run
 properties through the static-run renderer, including field text converted
-to ordinary runs. Changed middle and added paragraphs still use the existing
-first-paragraph template; unknown coverage or copied-property errors fall
-back directly to that same template. No field wrapper survives the rebuild,
+to ordinary runs. Paired middle paragraphs use their actual pPr, endParaRPr
+and prefix/suffix run properties, but the replacement middle keeps the global
+run template; unpaired added paragraphs still use the existing first-paragraph
+template. Unknown coverage or copied-property errors fall back directly to that
+same template. No field wrapper survives the rebuild,
 and its field-removal receipts are unchanged. This is a deterministic current
 text assignment, not canonical paragraph identity or a PowerPoint proof.
 
@@ -175,3 +177,13 @@ properties keep the original first-template render. Later same-count and
 count-changing paths, all static-run primitives and all field-removal receipts
 are unchanged. This does not assign canonical identity or claim PowerPoint
 rendering fidelity.
+
+The count-changing paired-middle carry (2026-11-06, FIX 17480) pairs new middle
+lines head..head+paired with the original paragraphs at the same positions,
+reusing the deterministic native positional assignment, not canonical identity,
+history or nearest-style inference. Each paired line keeps its actual paragraph
+properties and prefix/suffix runs as static runs; its replacement middle keeps
+the global run template, with direct first-template fallback on unknown coverage
+or copied-property errors. Unpaired added lines keep the first template. Static
+field conversion, fallbacks and field-removal receipts are unchanged. This is a
+source-only correction, not a PowerPoint fidelity proof.

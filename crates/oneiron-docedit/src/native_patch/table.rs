@@ -406,8 +406,9 @@ pub(super) fn set_cell(
     // is tried first (FIX 12227): each field the change covers whole goes,
     // the new text written into an adjacent run, only when the cell then
     // reads exactly the requested text. Otherwise the cell is rebuilt from
-    // its first paragraph/run template, except same-count later lines and
-    // count-changed unchanged outer paragraphs reuse their actual properties.
+    // its first paragraph/run template, except same-count lines and
+    // count-changed unchanged outer and paired middle paragraphs reuse
+    // their actual properties.
     // Unsupported coverage/properties fall back to the existing templates.
     let (out, cut_fields) = match crate::edit::cell_text_cut(&bytes, &tree, body, value) {
         Some((out, cut_fields)) => (out, cut_fields),
@@ -432,11 +433,13 @@ pub(super) fn set_cell(
 /// each direct run/field's properties on the common character prefix/suffix
 /// as static runs; the first line's replacement keeps the global template,
 /// later lines use their paragraph's first run/field (else global).
-/// With different counts, only unchanged common whole-paragraph prefix/suffix
-/// lines keep their original paragraph and static run properties. Changed
-/// middle and added lines use the first template. Unsupported coverage or
-/// properties use the actual one-template render for same-count later lines,
-/// then first; same-count first and count-changed outer lines fall to first.
+/// With different counts, unchanged common whole-paragraph prefix/suffix
+/// lines and paired middle lines keep their original paragraph and static
+/// run properties; each paired middle replacement keeps the global run
+/// template. Unpaired added lines use the first template. Unsupported
+/// coverage or properties use the actual one-template render for same-count
+/// later lines, then first; same-count first, count-changed outer and paired
+/// middle lines fall to first.
 /// Copied properties keep namespace bindings; removed field types are reported.
 fn rebuilt(
     bytes: &[u8],
@@ -610,6 +613,7 @@ fn rebuilt(
         }
         (head, tail)
     };
+    let paired = (paragraphs.len() - head - tail).min(new_count - head - tail);
     let mut out = bytes[..first_node.span.start].to_vec();
     for (index, line) in value.split('\n').enumerate() {
         let rendered = if same_count && index == 0 {
@@ -634,6 +638,11 @@ fn rebuilt(
                 paragraphs[paragraphs.len() - (new_count - index)]
             };
             match styled(actual, paragraph_run(actual.0), line) {
+                Some(xml) => xml,
+                None => render((first, first_node), source_run, line)?,
+            }
+        } else if !same_count && index >= head && index < head + paired {
+            match styled(paragraphs[index], source_run, line) {
                 Some(xml) => xml,
                 None => render((first, first_node), source_run, line)?,
             }
