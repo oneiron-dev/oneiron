@@ -89,7 +89,8 @@ pub(super) fn project_snapshot_in_txn<'a>(
 /// document `doc` took past `base`, as one `u:w` row. For a BASE window that
 /// the owner's discard took rows from, the row holds those operations as
 /// `doc`, projected in that write, holds them. `from_home`: the home sent
-/// them, so the home holds them.
+/// `update`, so it holds the operations `update` itself carries; any other
+/// operation `doc` took meanwhile, a local write among them, is not.
 ///
 /// # Errors
 ///
@@ -122,7 +123,7 @@ pub(crate) fn persist_window_arrival(
             (Some(copy), Some(discarded)) => {
                 let mut held = home_held_in_txn(store, txn, key)?;
                 if from_home {
-                    held.merge(&advanced_past(&copy.oplog_vv(), base));
+                    held.merge(&sent_end(update));
                 }
                 match project_in_txn(store, txn, key, copy, &discarded, &held)? {
                     Some(bytes) => Some(export_updates_from(&doc_from_snapshot(&bytes)?, base)?),
@@ -170,14 +171,13 @@ fn project_in_txn(
     }
 }
 
-/// Each peer of `version` that has operations past `base`, at its end in
-/// `version`.
-fn advanced_past(version: &VersionVector, base: &VersionVector) -> VersionVector {
-    version
-        .iter()
-        .filter(|&(peer, end)| base.get(peer).is_none_or(|from| from < end))
-        .map(|(peer, end)| (*peer, *end))
-        .collect()
+/// Where each peer's operations in `update` end: the home, having sent it,
+/// holds every operation of those peers up to there. An update that does not
+/// decode proves nothing.
+fn sent_end(update: &[u8]) -> VersionVector {
+    LoroDoc::decode_import_blob_meta(update, true)
+        .map(|meta| meta.partial_end_vv)
+        .unwrap_or_default()
 }
 
 /// The operations of `version` that `held` holds: each peer at the lesser

@@ -294,22 +294,40 @@ pub(crate) fn project_window_doc(
     Ok(sorted.join(&parts.skeleton))
 }
 
-/// The atoms `skeleton`'s retained operations write past `held`. A
-/// shallow-root winner is below every retained operation, and held.
+/// The atoms `skeleton`'s retained operations write past `held`, and, when
+/// `held` does not hold the shallow root itself, each root winner no retained
+/// operation writes: a local cut is no proof the home holds what is under it.
 fn unheld_atoms(skeleton: &Skeleton, held: &VersionVector) -> BTreeSet<AtomId> {
     let mut unheld = BTreeSet::new();
+    let mut retained = BTreeSet::new();
     for change in &skeleton.changes {
         let from = held.get(&change.peer).copied().unwrap_or(0);
         for (index, op) in change.ops.iter().enumerate() {
+            let Some(atom) = op.value else {
+                continue;
+            };
+            retained.insert(atom);
             let counter = i32::try_from(index)
                 .ok()
                 .and_then(|index| change.counter.checked_add(index));
-            if counter.is_none_or(|counter| counter >= from)
-                && let Some(atom) = op.value
-            {
+            if counter.is_none_or(|counter| counter >= from) {
                 unheld.insert(atom);
             }
         }
+    }
+    if let Some(shallow) = &skeleton.shallow
+        && !shallow
+            .vv
+            .iter()
+            .all(|(peer, end)| held.get(peer).copied().unwrap_or(0) >= *end)
+    {
+        unheld.extend(
+            shallow
+                .winners
+                .iter()
+                .filter_map(|winner| winner.value)
+                .filter(|atom| !retained.contains(atom)),
+        );
     }
     unheld
 }
