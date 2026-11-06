@@ -57,11 +57,19 @@ Lease-admitted observations and request captures remain separate from provider
 bytes and logical-generation admission.
 
 The optional scoped generated entry carries that same context through the first
-generation and the native captured stronger-provider close. Generated-backend usage
-stays in the caller's spend inventory; native stronger-provider settlements stay in
-the caller's receipt inventory even on a later error. Neither inventory alone proves
-complete usage. These ports do not connect the Arc's actual pace counter or enable
-its stronger reads by themselves.
+generation and the native captured stronger-provider close. Finished generated steps
+stay in the caller's spend inventory. A paid correction prefix cut before a terminal
+step stays in its separate usage inventory; it has no terminal memo and must not pin
+a checkpoint-paid step hash. Native stronger-provider settlements stay in the
+caller's receipt inventory even on a later error. Neither inventory alone proves
+complete usage.
+
+The Arc's existing generated-only advisory path borrows its actual start counter for
+this admission. It keeps the same allowance and the same reserved narrative slot.
+Memo recovery runs before a new start can be denied. Each schema correction takes a
+new start, while transport retries share their start. There is no outer pace shortcut
+that skips a memo, and no second counter update after the response. This does not
+enable stronger reads.
 
 Settlement inventories also do not establish complete token measurement. Missing usage
 stays unknown; billed reservations and currency charges are not actual token counts.

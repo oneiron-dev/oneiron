@@ -230,6 +230,7 @@ impl DecisionLadder<'_> {
         run: Option<&RunAdmission>,
     ) -> DurableStepResult<GeneratedDecisions> {
         let mut receipts = Vec::new();
+        let mut cut_usage = Vec::new();
         self.run_pack_generated_common(
             rung,
             questions,
@@ -241,6 +242,7 @@ impl DecisionLadder<'_> {
             reversibility,
             deadline,
             spent,
+            &mut cut_usage,
             labels,
             run,
             None,
@@ -251,7 +253,8 @@ impl DecisionLadder<'_> {
 
     /// The same generated read with per-generation admission and native
     /// stronger-provider settlements kept in the caller's inventory.
-    /// The generated backend's usage still returns through `spent`.
+    /// Finished generated steps return through `spent`; `cut_usage` keeps a paid
+    /// correction prefix without a terminal memo or a checkpoint step receipt.
     #[expect(
         clippy::too_many_arguments,
         reason = "the generated pack retains its context and caller-owned settlements"
@@ -268,6 +271,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
         spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
+        cut_usage: &mut Vec<LlmUsage>,
         labels: Option<&dyn DecisionWireLabels>,
         run: Option<&RunAdmission>,
         context: &DecisionCallContext<'_>,
@@ -284,6 +288,7 @@ impl DecisionLadder<'_> {
             reversibility,
             deadline,
             spent,
+            cut_usage,
             labels,
             run,
             Some(context),
@@ -308,6 +313,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
         spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
+        cut_usage: &mut Vec<LlmUsage>,
         labels: Option<&dyn DecisionWireLabels>,
         run: Option<&RunAdmission>,
         context: Option<&DecisionCallContext<'_>>,
@@ -366,7 +372,7 @@ impl DecisionLadder<'_> {
                 );
                 continue;
             }
-            let answers = match read(rung, &pack, &call, spent, labels, context).await? {
+            let answers = match read(rung, &pack, &call, spent, cut_usage, labels, context).await? {
                 Reply::Answers(answers) => answers,
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
@@ -414,6 +420,7 @@ async fn read(
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
     steps: &mut Vec<([u8; 32], LlmUsage, bool)>,
+    cut_usage: &mut Vec<LlmUsage>,
     labels: Option<&dyn DecisionWireLabels>,
     context: Option<&DecisionCallContext<'_>>,
 ) -> DurableStepResult<Reply> {
@@ -444,7 +451,7 @@ async fn read(
                         GenerationOutcome::Cut { usage } => {
                             let started = usage.is_some();
                             if let Some(usage) = usage {
-                                steps.push((hash, usage, false));
+                                cut_usage.push(usage);
                             }
                             return Ok(Reply::AllowanceCut { started });
                         }

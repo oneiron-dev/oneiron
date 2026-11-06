@@ -113,12 +113,16 @@ impl Decider<'_> {
         run: Option<&RunAdmission>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let mut receipts = Vec::new();
-        self.decide_scoped_common(read, questions, labels, spent, run, None, &mut receipts)
+        let mut cut_usage = Vec::new();
+        self.decide_scoped_common(
+            read, questions, labels, spent, &mut cut_usage, run, None, &mut receipts,
+        )
             .await
     }
 
     /// Carry one invocation's admission and native stronger-provider settlements
     /// through the same scoped read, including a failure after paid work.
+    /// `cut_usage` has no terminal step to pin as checkpoint-paid.
     #[expect(
         clippy::too_many_arguments,
         reason = "the scoped read retains its invocation context and settlements"
@@ -129,11 +133,14 @@ impl Decider<'_> {
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
         spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
+        cut_usage: &mut Vec<LlmUsage>,
         run: Option<&RunAdmission>,
         context: &DecisionCallContext<'_>,
         receipts: &mut Vec<RunReceipt>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
-        self.decide_scoped_common(read, questions, labels, spent, run, Some(context), receipts)
+        self.decide_scoped_common(
+            read, questions, labels, spent, cut_usage, run, Some(context), receipts,
+        )
             .await
     }
 
@@ -147,6 +154,7 @@ impl Decider<'_> {
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
         spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
+        cut_usage: &mut Vec<LlmUsage>,
         run: Option<&RunAdmission>,
         context: Option<&DecisionCallContext<'_>>,
         receipts: &mut Vec<RunReceipt>,
@@ -215,6 +223,7 @@ impl Decider<'_> {
                             Duration::from_millis(read.pass.remaining_ms()),
                         ),
                         spent,
+                        cut_usage,
                         Some(wire),
                         run,
                         context,
