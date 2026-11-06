@@ -57,6 +57,7 @@ pub(crate) struct ChatContextCapture {
     /// The exact board layout batch this chat render projected (BOARD-LAYOUT);
     /// `None` when no activation follows.
     layout_candidate: Option<BoardLayoutCandidate>,
+    memory: MachineMemory,
     // Payload fields drop before their independent capacity charges.
     _memories_storage: RetainedMemoriesOutput,
     _fingerprint_storage: MemoryLease,
@@ -82,6 +83,7 @@ pub(crate) struct FrozenChatContext {
     capture: ChatContextCapture,
     /// The receipt's context fields and the admitted request's digest.
     emit: Option<(ContextReceiptFields, String)>,
+    _emit_storage: MemoryLease,
 }
 
 /// The saved answer the records are kept for.
@@ -148,6 +150,7 @@ pub(super) fn capture_chat_context(
         rendered_fingerprint,
         read_auth: auth.clone(),
         layout_candidate,
+        memory: memory.clone(),
         _memories_storage: memories_storage,
         _fingerprint_storage: fingerprint_storage,
     })
@@ -225,6 +228,7 @@ pub(crate) fn freeze_chat_context(
     capture: ChatContextCapture,
     request: &LlmRequest,
 ) -> FrozenChatContext {
+    let mut emit_storage = capture.memory.empty_lease();
     let emit = match emit_fields(&capture, request) {
         Ok(emit) => Some(emit),
         Err(reason) => {
@@ -235,7 +239,37 @@ pub(crate) fn freeze_chat_context(
             None
         }
     };
-    FrozenChatContext { capture, emit }
+    if let Some((fields, request_digest)) = &emit {
+        emit_storage.materialized(0, emit_storage_bytes(fields, request_digest));
+    }
+    FrozenChatContext {
+        capture,
+        emit,
+        _emit_storage: emit_storage,
+    }
+}
+
+fn emit_storage_bytes(fields: &ContextReceiptFields, request_digest: &String) -> u64 {
+    let slots = (fields.activated_memory_ids.capacity() as u64)
+        .saturating_mul(std::mem::size_of::<String>() as u64);
+    let ids = fields.activated_memory_ids.iter().fold(slots, |bytes, id| {
+        bytes.saturating_add(id.capacity() as u64)
+    });
+    [
+        Some(&fields.persona_compile_stamp),
+        Some(&fields.board_state_ref),
+        fields.substrate_ref.as_ref(),
+        fields.model.as_ref(),
+        fields.reasoning_effort.as_ref(),
+        fields.prompt_input_ref.as_ref(),
+        fields.disclosure_stamp.as_ref(),
+        Some(request_digest),
+    ]
+    .into_iter()
+    .flatten()
+    .fold(ids, |bytes, text| {
+        bytes.saturating_add(text.capacity() as u64)
+    })
 }
 
 /// The receipt's context fields, as `ai.reply` stamps its own, and the
