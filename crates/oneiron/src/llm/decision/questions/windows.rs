@@ -159,6 +159,16 @@ pub fn close_due_outcome_windows(vault: &Vault, now: u64) -> Result<usize> {
             if QUESTION_WINDOW.contains(&vault.store, txn, &key)? {
                 continue;
             }
+            if !QUESTION_ANSWER.contains(
+                &vault.store,
+                txn,
+                &super::store::AnswerKey {
+                    question: window.question,
+                    claim: window.answer.claim,
+                },
+            )? {
+                continue;
+            }
             let version = window.answer.decision.receipt.question_version;
             let Some(record) = QUESTION_VERSION.get(
                 &vault.store,

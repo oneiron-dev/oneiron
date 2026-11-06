@@ -124,7 +124,6 @@ fn policy_named_by(bytes: &[u8]) -> Result<CheckpointRootPolicy> {
     };
     let body = bytes
         .strip_prefix(AUTHORITY_CHECKPOINT_V2_DOMAIN)
-        .filter(|_| bytes.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES)
         .ok_or_else(refused)?;
     rmp_serde::from_slice::<PolicyOnly>(body)
         .map(|only| only.root_policy)

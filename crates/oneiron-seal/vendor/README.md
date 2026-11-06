@@ -109,3 +109,9 @@
     dropped layer and the PNG predictor's row buffers. The xref table admits
     a map node share per entry, and the admitted `/Prev`-merge helper per
     entry a merge adds.
+  - CMap scratch/copy removal (FIX 12777, narrow slice): `src/parser/cmap_parser.rs`
+    folds 1..4-byte source codes and the discarded XUID digit list on the stack
+    instead of temporary vectors, and `src/encodings/cmap.rs` moves owned range
+    targets into the map instead of cloning them. Grammar, entry points, error
+    behavior, returned mappings and the reverse map are unchanged; no new API,
+    and no admission/heap/lifecycle claim.

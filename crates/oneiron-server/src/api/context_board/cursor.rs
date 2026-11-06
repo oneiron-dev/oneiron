@@ -133,6 +133,35 @@ impl MemoriesCursorStore {
             self.close(&key);
         }
     }
+
+    /// Closes every MCP connector session kept on STREAM connection
+    /// `connection` (`mcp-connector:<hex>`), as its credential is pruned:
+    /// each key a connector's read set is kept under (the "mcp" tag, the
+    /// gate class and ref, the connection, the world and facet) that names
+    /// it (FIX 9143). The world and facet ride as options, `None` for a
+    /// vault-wide connector, so the tuple parses them as options.
+    pub(crate) fn close_mcp_connection(&mut self, connection: &str) {
+        let stale: Vec<String> = self
+            .entries
+            .keys()
+            .chain(self.read_sets.keys())
+            .filter(|key| {
+                serde_json::from_str::<(
+                    String,
+                    String,
+                    String,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                )>(key)
+                .is_ok_and(|(tag, _, _, on, _, _)| tag == "mcp" && on == connection)
+            })
+            .cloned()
+            .collect();
+        for key in stale {
+            self.close(&key);
+        }
+    }
 }
 
 pub(crate) fn memories_cursor_key(

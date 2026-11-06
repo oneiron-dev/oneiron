@@ -25,7 +25,7 @@ pub(super) async fn exchange(
     parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth = authorize_request(&parts, &server, LfsAccess::Read)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Read).await?;
     // The machine the request's connection proved: the selector, the
     // manifest and every piece are judged for it (FIX 4937).
     let peer = auth.peer();

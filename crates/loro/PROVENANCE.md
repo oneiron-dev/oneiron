@@ -18,6 +18,13 @@ dependency is added. The other loro crates (`loro-common` 1.16.0,
 `loro-delta` 1.13.0, `loro_fractional_index` 1.13.0, `loro-kv-store` 1.16.0,
 `loro-rle` 1.6.0, `loro-thunderdome` 0.6.2) stay on the registry.
 
+A maturin sdist collects path dependencies, not registry dependencies a patch
+redirects (the oneiron-py sdist, ONE-1441). So, as for heed, the root manifest
+also declares loro's local path edge in `[workspace.dependencies]`, the member
+crates take loro from the workspace, and the vendored loro's `loro-internal`
+edge names the sibling vendor's path: the sdist carries both vendors (FIX
+6519). Both declarations select the same tree as the patch.
+
 ## Why this vendor exists
 
 KS-7 erase must reach mixed sync carriers (window snapshots and updates,
@@ -63,6 +70,8 @@ unmodified trees.
 - `loro-1.16.2/src/lib.rs` — a `loro::checkpoint` module re-exporting the new
   types, the two `LoroDoc` methods below delegating to the internal ones, and
   the `loro::snapshot_at_exports` re-export.
+- `loro-1.16.2/Cargo.toml` — the `loro-internal` dependency names
+  `path = "../loro-internal-1.16.2"` beside its unchanged version (FIX 6519).
 
 **Added by this vendor:**
 
@@ -111,7 +120,11 @@ an error):
   reference at any depth or is a mergeable-child marker, so nested child CRDTs,
   history-only child references and mergeable children are all refused;
 - the caller's `Classify::plain_key` proves every key an opaque id or a fixed
-  schema name (keys stay plaintext in the skeleton);
+  schema name (keys stay plaintext in the skeleton), or `Classify::key_holders`
+  names at least one rightful holder for a key that is not plain (FIX 10278:
+  the key is withheld; the default answers `None`, so a caller that does not
+  implement it classifies exactly as before). A key that begins with
+  `KEY_PLACEHOLDER_PREFIX` (`"\0key:"`) is refused either way;
 - `Classify::holders` names at least one rightful holder for every value and
   every commit message.
 
@@ -119,7 +132,9 @@ an error):
 lamports and timestamps, plaintext keys, atom ids for values and messages, the
 shallow root's start version and map winners, each key's latest winner, both
 version vectors and frontiers, and one slot per atom naming its kind and
-holders) and one `Atom` per value or message site. A shallow-root winner whose
+holders) and one `Atom` per value or message site. A withheld key has one
+`SlotKind::Key` atom (`Payload::Key`, made at its first sight), and every op
+and winner that names it spells it as `key_placeholder(atom)`. A shallow-root winner whose
 op is retained shares that op's atom. A key's latest winner is the greatest
 (lamport, peer) among its retained ops and its shallow-root winner, which is
 how Loro's history cache resolves it; capture checks the document's latest
@@ -130,7 +145,11 @@ postcard, which keeps binary values typed.
 Join takes the skeleton, the opened atoms and the ids of the erased ones
 (every slot must be exactly one of the two). An erased value becomes a map
 delete at its original op id and lamport, so it wins or loses exactly where the
-original write did, and an erased message becomes no message. A full-history
+original write did, and an erased message becomes no message. An opened
+withheld key is written back under its own spelling; every op and winner on an
+erased one becomes a delete of its placeholder at its original id and lamport,
+so its value is never written and the key never reads back (a deleted entry
+stays out of the map's value). A full-history
 document is rebuilt by importing the history through Loro's JSON change path;
 a shallow one is assembled as a native shallow snapshot (the retained changes
 over the original start version, and the shallow-root maps rebuilt from their
@@ -165,7 +184,7 @@ workspace `[lints]` do not apply to them.
 ## Re-vendoring
 
 Unpack the new `.crate` archives over both vendor directories, then re-apply
-the five changed files and the added module above, and update this file. The
+the six changed files and the added module above, and update this file. The
 join relies on the fast-snapshot layout, `ChangeStore::encode_from`, map-state
 encoding, and the shallow-root store; any upstream move must re-run the KS7-3
 fleet probe before landing.

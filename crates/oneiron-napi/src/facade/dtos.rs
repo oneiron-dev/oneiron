@@ -539,9 +539,25 @@ pub struct NapiMemoryStaleStamp {
     pub pact_epoch: f64,
 }
 
+/// Raw evidence from one exact embedding space, before fusion.
+#[napi(object)]
+pub struct NapiEmbeddingMatchEvidence {
+    pub space: String,
+    pub embedding_kind: String,
+    pub query_kind: String,
+    pub score: f64,
+    pub floor: f64,
+    pub strong: f64,
+    pub matched: bool,
+}
+
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
+    /// The ASSET id for a media or text asset hit.
+    pub asset_ref: Option<String>,
+    /// Raw per-kind evidence from each exact space, before fusion.
+    pub embedding_matches: Vec<NapiEmbeddingMatchEvidence>,
     /// Short ref, hydratable via `hydrate`; never revision-qualified.
     pub short_id: String,
     /// The revision the item was read at; `shortId@sourceRevisionRef` hydrates it.
@@ -566,6 +582,8 @@ pub struct NapiMemoryItem {
     pub world: Option<String>,
     /// Facet hex, when faceted.
     pub facet: Option<String>,
+    /// The claim's explicit project audience, not a topic or a WORLD.
+    pub project_ref: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
     /// A conversation record's current reactions, one grouped line per glyph;

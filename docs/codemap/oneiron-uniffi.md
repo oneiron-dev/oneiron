@@ -13,13 +13,28 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
 | `src/codec.rs` | src | L | 12 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
+| `src/codec/ai_options.rs` | src | s | — | — | Owned AI-options output lift for opaque model option JSON (FIX 12936) |
+| `src/codec/browser_batch.rs` | src | s | — | — | Owned opaque leaves for the browser batch's complete answer (FIX 12936) |
+| `src/codec/checkpoints.rs` | src | s | — | — | Owned checkpoint output lifts for stored reply JSON (FIX 12936) |
+| `src/codec/claims.rs` | src | s | — | — | Owned claim-review output lifts for opaque claim JSON (FIX 12936) |
+| `src/codec/core_write.rs` | src | s | — | — | Owned native conversation-write receipt lift for opaque JSON (FIX 12936) |
+| `src/codec/diagnostics.rs` | src | s | — | — | Owned diagnostic and Coach inspection outputs (FIX 12936) |
+| `src/codec/key_value.rs` | src | s | — | — | Owned keyed-memory output lifts for opaque stored JSON (FIX 12936) |
+| `src/codec/lens_actions.rs` | src | s | — | — | Owned result-set action output conversion (FIX 12936) |
+| `src/codec/lens_frames.rs` | src | s | — | — | Owned lens-frame event output conversion (FIX 12936) |
+| `src/codec/policy_settings.rs` | src | s | — | — | Owned policy action output conversion (FIX 12936) |
+| `src/codec/proposal_results.rs` | src | m | — | — | Owned lifts for proposal and connector results (FIX 12936) |
+| `src/codec/proposals.rs` | src | s | — | — | The pending proposal's typed result, without a JSON-tree record round trip |
+| `src/codec/skill_callables.rs` | src | s | — | — | Owned callable-contract output lifts for opaque schema JSON (FIX 12936) |
+| `src/codec/wire_json.rs` | src | s | — | — | Consuming output conversion for an opaque JSON leaf |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
 | `src/dto.rs` | src | L | 55 struct · 14 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView +61 | The typed UniFFI records of the SDK surface |
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 13 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/generated/facade_generated.rs` | src | generated | — | — | — |
-| `src/generated/facade_types_generated.rs` | src | generated | 3377 struct · 1110 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, AckPosition, ActAnswerArtifactAskOutcome, ActAnswerConnectorCallReply +4479 | — |
+| `src/generated/facade_types_generated.rs` | src | generated | 3456 struct · 1138 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, AckPosition, ActAnswerArtifactAskOutcome, ActAnswerConnectorCallReply +4586 | — |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
-| `src/lib.rs` | src | m | 1 struct · 12 fn · 1 const · 7 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
+| `src/lib.rs` | src | m | 1 struct · 12 fn · 1 const · 8 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
+| `src/native_limit_questions.rs` | src | s | 1 struct · 1 fn | NativeLimitQuestion | `Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from… |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
 | `src/receipt_page.rs` | src | s | 1 struct | FacadeReceiptPage | `vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, and the… |

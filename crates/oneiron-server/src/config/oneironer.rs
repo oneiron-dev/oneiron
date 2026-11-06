@@ -226,9 +226,9 @@ pub struct OneironerConfig {
     pub trace_history_per_turn: u32,
     /// Store-clock seconds a trace is kept. Defaults to seven days.
     pub trace_history_max_age_secs: u64,
-    /// The vault turns' configured processing language as a lowercase ISO
-    /// 639 code, when the host names one (`language = "ja"`, say). It is
-    /// sent as every vault turn's language; unset sends no configured
+    /// The configured processing language as a lowercase ISO 639 code,
+    /// when the host names one (`language = "ja"`, say). It is sent with
+    /// every vault turn and feedback filter input; unset sends no configured
     /// language. Leave it unset when the vault's language is unknown or mixed.
     pub language: Option<String>,
 }

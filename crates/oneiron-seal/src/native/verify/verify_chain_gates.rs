@@ -178,14 +178,19 @@ pub(crate) fn validate_chain(
     }
 }
 
-pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
+pub(super) fn anchors(
+    config: &SealConfig,
+    limits: &SealResourceLimits,
+) -> Result<Vec<pkix_chain::TrustAnchor>, SealMemoryRefusal> {
     use der::Decode;
-    config
-        .trust_anchors_der
-        .iter()
-        .filter_map(|d| x509_cert::Certificate::from_der(d).ok())
-        .map(pkix_chain::TrustAnchor::from_cert)
-        .collect()
+    let mut anchors = Vec::new();
+    for der in &config.trust_anchors_der {
+        if let Ok(cert) = x509_cert::Certificate::from_der(der) {
+            pdf::admitted::reserve(limits, &mut anchors, 1)?;
+            anchors.push(pkix_chain::TrustAnchor::from_cert(cert));
+        }
+    }
+    Ok(anchors)
 }
 
 /// Retry only the reason for a failed DSS check: if fully parsed material
@@ -290,7 +295,7 @@ pub(crate) fn verify_document(
             VerifyFindingCode::InvalidPdfRevision,
         )
         .map_err(memory_refused)?;
-    let anchors = anchors(ctx.config);
+    let anchors = anchors(ctx.config, limits).map_err(memory_refused)?;
     // Every certificate copy below is held on the verification's ledger
     // until it drops (FIX 12260).
     let mut anchor_certs = Vec::new();
@@ -304,6 +309,9 @@ pub(crate) fn verify_document(
     // validate its CMS/TSP integrity. No signer path or profile is decided
     // until all trusted time proofs are available.
     let sigs = collect_signatures(&doc, limits)?;
+    memory
+        .admit_len::<super::verify_evidence::EnvelopeEvidence>(sigs.len())
+        .map_err(memory_refused)?;
     let envelopes: Vec<_> = sigs
         .iter()
         .enumerate()
@@ -366,6 +374,9 @@ pub(crate) fn verify_document(
     // earliest eligible proof fixes signer validation time; a possibly newer
     // document timestamp can separately attest the effective DSS.
     let mut envelopes = envelopes;
+    memory
+        .admit_len::<Option<crate::api::PadesProfile>>(envelopes.len())
+        .map_err(memory_refused)?;
     let mut profiles = Vec::with_capacity(envelopes.len());
     for index in 0..envelopes.len() {
         if envelopes[index].kind != crate::api::SignatureKind::Signature {
@@ -493,6 +504,9 @@ pub(crate) fn verify_document(
         ),
     }
     .map_err(memory_refused)?;
+    memory
+        .admit_len::<crate::api::SignatureReport>(envelopes.len())
+        .map_err(memory_refused)?;
     let signatures = envelopes
         .into_iter()
         .zip(profiles)

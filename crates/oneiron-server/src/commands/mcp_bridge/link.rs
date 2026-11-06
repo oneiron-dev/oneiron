@@ -40,6 +40,7 @@ use tokio_tungstenite::tungstenite::{self, Message};
 
 use super::bridge_auth::UpgradeHeaders;
 use crate::cli::{McpSurface, McpTransport};
+use oneiron_vault_contract::BINDING_HEADER;
 
 mod replies;
 
@@ -209,7 +210,7 @@ impl HttpLink {
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header("x-oneiron-binding", binding);
+            .header(BINDING_HEADER, binding);
         // OF-604: a large body crosses zstd, as the remote SDK's does.
         let request = match oneiron::sync::transport::encode_http_body(&body) {
             Some(encoded) => request
@@ -557,7 +558,7 @@ impl SocketLink {
                 };
                 for (name, value) in [
                     ("authorization", format!("Bearer {bearer}")),
-                    ("x-oneiron-binding", binding),
+                    (BINDING_HEADER, binding),
                 ] {
                     let Ok(value) = value.parse() else {
                         return Opened::Failed("the slip is not a header value".to_owned());

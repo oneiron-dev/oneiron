@@ -228,6 +228,11 @@ pub(super) type EventWrite = (bool, UsageMode, Option<Money>, Option<UnpricedRea
 
 fn price_event(event: &mut UsageEvent) -> Result<Option<Money>, UsageError> {
     event.validate()?;
+    // Validation proves the overflow, including a raw service amount whose
+    // nano-currency conversion cannot be stored in service_amount.
+    if event.unpriced == Some(UnpricedReason::PriceOverflow) {
+        return Ok(None);
+    }
     // An overflowing price keeps the call's counts and frozen rates (FIX 6407).
     match event.cost_input().map(|input| input.calculate()) {
         None => Ok(None),

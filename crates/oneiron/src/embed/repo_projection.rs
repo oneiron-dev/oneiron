@@ -28,8 +28,9 @@ pub(super) use derived::{
     put_pending_in_txn, put_ready_in_txn,
 };
 pub(crate) use derived::{
-    finalize_repo_derived_index_copies_in_txn, repo_derived_batch, repo_derived_fields,
-    repo_derived_index_text_in, retire_repo_derived_index_copies_in_txn,
+    discard_repo_derived_index_copy_in_txn, finalize_repo_derived_index_copies_in_txn,
+    repo_derived_batch, repo_derived_fields, repo_derived_index_text_in,
+    retire_repo_derived_index_copies_in_txn,
 };
 pub(crate) use session::apply_ops_session_projected;
 
@@ -55,9 +56,10 @@ use crate::store::ManifestDbs;
 pub(super) fn asset_payload_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
+    id: &EntityId,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
-    asset_payload_in(vault, &vault.store, txn, body)
+    asset_payload_in(vault, &vault.store, txn, id, body)
 }
 
 /// [`asset_payload_in_txn`] through the caller's base or room view.
@@ -65,8 +67,11 @@ pub(super) fn asset_payload_in(
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
+    id: &EntityId,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
+    let filed = repo_file_body_in(vault, store, txn, id, body)?;
+    let body = filed.as_deref().unwrap_or(body);
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
     let Some(text) =
         super::media::asset_text(body, |blob| repo_blob_body_in(vault, store, txn, blob))?
@@ -85,11 +90,12 @@ pub(super) fn asset_payload_in(
 pub(super) fn pending_payload_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
+    id: &EntityId,
     entity_type: u8,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
     if entity_type == ENTITY_TYPE_ASSET {
-        return asset_payload_in_txn(vault, txn, body);
+        return asset_payload_in_txn(vault, txn, id, body);
     }
     Ok(super::embeddable_payload(entity_type, body))
 }
@@ -188,10 +194,11 @@ pub(super) fn media_copy_hash_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
+    let filed = repo_file_body_in(vault, store, txn, id, &row.body)?;
+    let body = filed.as_deref().unwrap_or(&row.body);
     // FIX 9949: an ASSET's bytes are the blob it holds by reference.
-    let Some((_, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
-        repo_blob_body_in(vault, store, txn, blob)
-    })?
+    let Some((_, bytes)) =
+        crate::memory::asset_media_in(body, |blob| repo_blob_body_in(vault, store, txn, blob))?
     else {
         return Ok(None);
     };
@@ -242,19 +249,35 @@ pub(super) fn repo_blob_body_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    match crate::store::asset_file_in_txn(store, txn, id, &row.body)? {
-        Some(manifest) => {
-            let _pin = vault.pin_result_body(manifest.facts.blake3);
-            let key = crate::store::body_key_row_in_txn(store, txn, &manifest.facts.blake3)?;
-            crate::store::CheckedAssetBody::read_all(
-                &vault.store.body_dir()?,
-                &manifest.facts,
-                key.as_ref(),
-            )
-            .map(Some)
-        }
-        None => Ok(Some(row.body)),
-    }
+    Ok(Some(
+        repo_file_body_in(vault, store, txn, id, &row.body)?.unwrap_or(row.body),
+    ))
+}
+
+/// Materializes a native ASSET file from the caller's current stored row body.
+/// An inline body returns `None`; manifest and file errors are never a raw-body fallback.
+/// The body, id and view must belong to the same transaction snapshot.
+///
+/// # Errors
+/// A manifest, key or file-body read failure.
+pub(super) fn repo_file_body_in(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, body)? else {
+        return Ok(None);
+    };
+    let _pin = vault.pin_result_body(manifest.facts.blake3);
+    let key = crate::store::body_key_row_in_txn(store, txn, &manifest.facts.blake3)?;
+    crate::store::CheckedAssetBody::read_all(
+        &vault.store.body_dir()?,
+        &manifest.facts,
+        key.as_ref(),
+    )
+    .map(Some)
 }
 
 /// What a mask change on the blobs `sources` reaches beyond the records
@@ -356,7 +379,13 @@ pub(crate) fn requeue_repo_embedding_in_txn(
     let Some(record) = vault.store.port_entity_record(wtxn, entity)? else {
         return Ok(());
     };
-    if !super::eligibility::is_embeddable_in_txn(vault, wtxn, record.entity_type, &record.body)? {
+    if !super::eligibility::is_embeddable_in_txn(
+        vault,
+        wtxn,
+        entity,
+        record.entity_type,
+        &record.body,
+    )? {
         return Ok(());
     }
     let owed = vault

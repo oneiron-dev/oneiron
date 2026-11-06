@@ -46,6 +46,7 @@ pub use self::ledger::{
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
 };
+pub(crate) use self::projector::reconcile_displaced_actor_credit_in_txn;
 pub use self::projector::{
     FIELD_SKILL_GOAL_REVISION, FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF,
     PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,

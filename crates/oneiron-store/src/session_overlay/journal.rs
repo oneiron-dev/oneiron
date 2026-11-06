@@ -1,3 +1,6 @@
+//! Typed session-overlay journal: entries, promotion plans, and replay.
+//! Entry [`PublishedEntry`]; consumed by `snapshot` and the `overlay` segment/retire machinery.
+//! Owned by `session_overlay`; the overlay lifecycle is the sole promoter (ONE-1730).
 use zeroize::Zeroize;
 
 use super::overlay::PlanCharge;
@@ -308,6 +311,7 @@ pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
         BatchOp::Put {
             id,
             entity_type,
+            row_version,
             data,
             allow_maintenance,
             allow_reserved_predicate,
@@ -318,6 +322,7 @@ pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
             entity_type: *entity_type,
             occurred: entry.occurred,
             learned_at: entry.learned_at,
+            row_version: *row_version,
             data: data.clone(),
             allow_maintenance: *allow_maintenance,
             allow_reserved_predicate: *allow_reserved_predicate,

@@ -151,7 +151,7 @@ pub(super) fn direct_append_output(
         name: body.name,
         media_type: body.media_type,
         bytes: bytes.to_vec(),
-        report: serde_json::json!({}),
+        report: "{}".to_owned(),
         made_by: made_by.cloned().or_else(|| {
             Some(default_version_made_by(
                 &actor, provenance, None, learned_at,

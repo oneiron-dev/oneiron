@@ -117,6 +117,14 @@ struct PassBoundBandit<'a> {
 }
 
 impl GoalAxisBandit for PassBoundBandit<'_> {
+    fn goal_revision(&self) -> Option<&str> {
+        self.inner.goal_revision()
+    }
+
+    fn arm_record(&self, arm: AxisArm) -> Option<(EntityId, &crate::skill::SkillRecord)> {
+        self.inner.arm_record(arm)
+    }
+
     fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
         if !self.clock.decision_may_start() {
             return Err(Error::InvalidConfig(
