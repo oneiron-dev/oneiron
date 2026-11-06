@@ -139,6 +139,7 @@ pub(super) fn admit_put<'a>(
         posture,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
+    crate::source_audience::note_landed_in(store, wtxn, entity_type, data)?;
     let project_revisions =
         store
             .project_writes

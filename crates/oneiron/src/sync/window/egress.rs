@@ -881,7 +881,9 @@ pub(in crate::sync) fn withhold_audience_carriers(
 ) -> Result<bool> {
     let (withheld, by) = {
         let rtxn = vault.store.env.read_txn()?;
-        if !crate::source_audience::any_policy_in(vault, &rtxn)? {
+        if !crate::source_audience::any_policy_in(vault, &rtxn)?
+            && !crate::source_audience::any_landed_in(vault, &rtxn)?
+        {
             return Ok(false);
         }
         let mut carried = Vec::new();
