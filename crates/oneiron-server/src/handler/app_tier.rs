@@ -43,6 +43,10 @@ pub(super) async fn handle_sync_message(
             super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
                 .map(ControlFlow::Continue)
         }
+        SyncMessage::SealedUpdate(payload) => {
+            super::sealed_updates::handle(server, conn_id, conn_state, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
         SyncMessage::Doc {
             entity,
             kind,
@@ -472,7 +476,9 @@ fn answer_app_message(
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);
-            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?.queued(conn)
+            let own_machine_only = request.method == "residence.claim.vector";
+            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?
+                .queued_for_machine(conn, own_machine_only)
             {
                 direct_tx
                     .send(frame)
@@ -556,7 +562,8 @@ fn answer_app_message(
                 auth,
                 context,
                 connection.as_deref(),
-            );
+            )
+            .with_signing_request_transport(state.signing_request_transport.clone());
             return Ok(Some(VerbCall::Verb {
                 auth: auth.clone(),
                 request,

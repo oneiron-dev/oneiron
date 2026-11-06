@@ -186,6 +186,21 @@ impl BatchBuilder<'_> {
         self.commit_inner(None, None, guard, |_| Ok(()), None)
     }
 
+    /// The target guard and retained-denial behavior, with atomic hooks
+    /// after successful preflight and after apply. Either hook's error rolls
+    /// back the batch and its allow receipts. This terminal has no reader
+    /// savepoint: its hooks share the batch's writer. A guard returning false
+    /// has verified an exact replay: it succeeds without applying any op or
+    /// running either hook, and still waits for the group's durable commit.
+    pub(crate) fn commit_with_target_guard_and_hooks(
+        self,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
+        before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner_with_before_apply(None, None, guard, before_apply, after_apply, None)
+    }
+
     /// Promotion's checker-aware terminal owns the transaction so a preflight
     /// refusal commits only its actual receipt through the ordinary batch path.
     /// The checker runs once, before any batch writes. Promotion's `after_apply`
@@ -223,10 +238,29 @@ impl BatchBuilder<'_> {
     }
 
     fn commit_inner(
-        mut self,
+        self,
         checker: Option<&BoundedAutoChecker>,
         reader: Option<&ScopedRead<'_>>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
+    ) -> Result<()> {
+        self.commit_inner_with_before_apply(
+            checker,
+            reader,
+            |txn| target_guard(txn).map(|_| true),
+            |_| Ok(()),
+            after_apply,
+            writer_hold_site,
+        )
+    }
+
+    fn commit_inner_with_before_apply(
+        mut self,
+        checker: Option<&BoundedAutoChecker>,
+        reader: Option<&ScopedRead<'_>>,
+        target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
+        before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
@@ -255,6 +289,7 @@ impl BatchBuilder<'_> {
         let births = std::mem::take(&mut self.births);
         let asset_files = std::mem::take(&mut self.asset_files);
         let replicated_puts = std::mem::take(&mut self.replicated_puts);
+        let marked_carriers = std::mem::take(&mut self.marked_carriers);
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
@@ -267,8 +302,20 @@ impl BatchBuilder<'_> {
             // The caller's writer-hold site, when it named one: started
             // here so the span is this closure's hold only (FIX 12511).
             let _hold = writer_hold_site.map(crate::store::writer_hold::WriterHold::start);
-            if let Err(err) = target_guard(wtxn) {
-                return Rows::Discard(Err(err.into()));
+            match target_guard(wtxn) {
+                Ok(true) => {}
+                Ok(false) => {
+                    #[cfg(feature = "sync")]
+                    rows.clear();
+                    return Rows::Discard(Ok(Committed {
+                        changes_claims: false,
+                        tasks: Vec::new(),
+                        staged_gate_decisions: Vec::new(),
+                        approved_vad_ids: Vec::new(),
+                        pad_windows: BTreeSet::new(),
+                    }));
+                }
+                Err(err) => return Rows::Discard(Err(err.into())),
             }
             #[cfg(feature = "sync")]
             if let Err(err) =
@@ -331,6 +378,9 @@ impl BatchBuilder<'_> {
                 .as_mut()
                 .map(|pending| std::mem::take(&mut pending.probes))
                 .unwrap_or_default();
+            if let Err(err) = before_apply(wtxn) {
+                return Rows::Discard(Err(err.into()));
+            }
             let routed = if reader.is_some() {
                 match crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(
                     vault, &*wtxn, &mut ops, &births,
@@ -358,6 +408,7 @@ impl BatchBuilder<'_> {
                     .with_births(births)
                     .with_asset_files(asset_files)
                     .with_replicated_puts(replicated_puts)
+                    .with_marked_carriers(marked_carriers)
                     .with_caller_envelopes(caller_envelopes)
                     .with_prepared(prepared),
                 origin,

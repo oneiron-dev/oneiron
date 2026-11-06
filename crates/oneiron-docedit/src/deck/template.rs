@@ -59,6 +59,8 @@ pub struct TextStyle {
     /// `a:defRPr/a:latin/@typeface`, theme references such as `+mn-lt` kept
     /// as written.
     pub typeface: Value<String>,
+    /// The same typeface resolved through the template's theme, when available.
+    pub resolved_typeface: Option<String>,
     /// `a:lnSpc`.
     pub line_spacing: Value<Spacing>,
     /// `a:spcBef`.
@@ -236,6 +238,7 @@ fn style(context: &SlideContext<'_>, layers: &[Layer<'_>], ph: Option<&Placehold
             Some(false),
         ),
         typeface: context.lookup(&latin, attr("typeface", |v| Some(v.to_owned())), None),
+        resolved_typeface: context.latin(&defaults).value.map(|font| font.resolved),
         line_spacing: context.lookup(&chain, spacing("lnSpc"), None),
         space_before: context.lookup(&chain, spacing("spcBef"), None),
         space_after: context.lookup(&chain, spacing("spcAft"), None),
