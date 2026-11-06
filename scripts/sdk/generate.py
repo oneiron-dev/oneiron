@@ -2382,6 +2382,12 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_identity_lookup({name}, output)'
             elif row['output'] == 'Vec<crate::query_expansion::host::HydeHostWork>':
                 result = f'crate::codec::lift_hyde_host_work({name}, output)'
+            elif row['output'] == 'Vec<crate::task_verb::sdk::RetrievalRunEvidence>':
+                result = f'crate::codec::lift_retrieval_run_evidences({name}, output)'
+            elif row['output'] == 'Option<crate::task_verb::sdk::RetrievalRunEvidence>':
+                result = f'crate::codec::lift_retrieval_run_evidence_opt({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::RetrievalDiagnosticExport':
+                result = f'crate::codec::lift_retrieval_diagnostic_export({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):

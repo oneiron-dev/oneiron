@@ -69,6 +69,10 @@ mod policy_settings;
 mod proposal_results;
 mod proposals;
 mod results;
+mod retrieval_evidence;
+pub(crate) use retrieval_evidence::{
+    lift_retrieval_diagnostic_export, lift_retrieval_run_evidence_opt, lift_retrieval_run_evidences,
+};
 mod saved_queries;
 pub(crate) use saved_queries::{
     lift_saved_query_evaluation, lift_saved_query_read, lift_saved_query_record,
