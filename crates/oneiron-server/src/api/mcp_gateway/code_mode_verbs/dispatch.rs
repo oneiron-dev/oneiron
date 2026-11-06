@@ -372,7 +372,7 @@ pub(super) fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, Ag
             hook_notice: error
                 .hook_notice
                 .as_ref()
-                .map(|_| json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)),
+                .map(|_| serde_json::json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)),
             code: error.kind.to_owned(),
         })),
     }
