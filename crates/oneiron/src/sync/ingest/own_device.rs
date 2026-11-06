@@ -292,7 +292,7 @@ pub(super) fn lane_in_txn(
     };
     let authored_by = match ctx.residence {
         Some(Residence::Quarantine(doc) | Residence::Forward { doc, .. }) => {
-            authored_by_in_window(doc, id)
+            authored_by_in_window(ctx, wtxn, doc, id)?
         }
         None => None,
     };
@@ -306,19 +306,51 @@ pub(super) fn lane_in_txn(
 }
 
 /// The actor the `AuthoredBy` edge of MESSAGE `id` names in `doc`, the
-/// window the import landed: `None` when no such edge is there, or when
-/// edges name more than one author.
-fn authored_by_in_window(doc: &LoroDoc, id: &EntityId) -> Option<EntityId> {
+/// window the import landed, judged as the edge pass will judge that edge:
+/// its carrier decodes as an `AuthoredBy` value, neither end is tombstoned
+/// in the window, and the edge resides in it. `None` when no such edge is
+/// there, when one of the row's author carriers does not decode, or when
+/// they name more than one author: a row the edge pass would leave with no
+/// author takes none here.
+fn authored_by_in_window(
+    ctx: &IngestCtx<'_>,
+    wtxn: &heed::RwTxn<'_>,
+    doc: &LoroDoc,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
     let mut named = None;
-    let mut several = false;
-    map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
-        if let Some((source, kind, target)) = crate::sync::bridge::parse_edge_key(key)
-            && source == *id
-            && kind == crate::EdgeKind::AuthoredBy
-            && named.replace(target).is_some_and(|prior| prior != target)
-        {
-            several = true;
+    let mut sound = true;
+    map_for_each_value_bytes(&doc.get_map("edges"), |key, value| {
+        let Some((source, kind, target)) = crate::sync::bridge::parse_edge_key(key) else {
+            return;
+        };
+        if source != *id || kind != crate::EdgeKind::AuthoredBy {
+            return;
+        }
+        let decodes =
+            value.is_some_and(|bytes| crate::edge::decode_edge_value_for_kind(kind, bytes).is_ok());
+        if !decodes || named.replace(target).is_some_and(|prior| prior != target) {
+            sound = false;
         }
     });
-    if several { None } else { named }
+    let Some(actor) = named.filter(|_| sound) else {
+        return Ok(None);
+    };
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+    if tombstones.contains(id) || tombstones.contains(&actor) {
+        return Ok(None);
+    }
+    let Some(window) = WindowKey::try_new(ctx.window_key) else {
+        return Ok(None);
+    };
+    let resides = crate::sync::types::edge_belongs_to_window_in(
+        ctx.vault,
+        wtxn,
+        doc,
+        &tombstones,
+        id,
+        &actor,
+        &window,
+    )?;
+    Ok(resides.then_some(actor))
 }
