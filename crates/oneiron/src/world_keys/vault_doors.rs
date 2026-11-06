@@ -145,6 +145,9 @@ impl Vault {
             // A revoke this install could not carry is carried as its key
             // loads (CALLS CUSTODY_REVOKE_PENDING_CARRY).
             self.carry_pending_revokes_logged();
+            // So is the record of a membership change no host issuer signed
+            // (FIX 12335).
+            self.carry_pending_membership_executions_logged();
             return Ok(machine);
         }
         Err(super::refused(
