@@ -807,14 +807,18 @@ async fn hydrate_inner(
     drop(runs);
     // Every row the board delivered: its MEMORIES rows (pins included), its
     // capability hits, and the task intents, worlds, room and project it named.
+    let mut delivered_storage = server.memory.empty_lease();
     let mut delivered: Vec<_> = response
         .memories
         .iter()
         .flat_map(|memories| &memories.rows)
         .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())
         .collect();
+    retain_delivered_rows(&mut delivered_storage, &delivered);
     delivered.extend(hits_of(response.pack.as_ref()));
+    retain_delivered_rows(&mut delivered_storage, &delivered);
     delivered.extend(parts.named.iter().copied());
+    retain_delivered_rows(&mut delivered_storage, &delivered);
     let mut rider_key = None;
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
         reads
@@ -842,6 +846,8 @@ async fn hydrate_inner(
             reads.acknowledge(&changed_line);
         }
     }
+    drop(delivered);
+    drop(delivered_storage);
     // The rows this board was derived from, kept beside a keyed replay of it.
     // A replay re-admits each row it named beyond its documents: every
     // notification, rider row (those its overflow counts too), pack source,
@@ -895,6 +901,18 @@ async fn hydrate_inner(
             line: changed_line,
         }),
     ))
+}
+
+fn retain_delivered_rows(
+    storage: &mut crate::machine::MemoryLease,
+    delivered: &Vec<oneiron::EntityId>,
+) {
+    let bytes = (delivered.capacity() as u64)
+        .saturating_mul(std::mem::size_of::<oneiron::EntityId>() as u64);
+    let growth = bytes.saturating_sub(storage.bytes());
+    if growth != 0 {
+        storage.materialized(0, growth);
+    }
 }
 
 /// The capability hits a pack carried.
