@@ -338,7 +338,7 @@ impl SyncClient {
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
         let owed = &pull.owed;
-        with_manager_peer(&self.manager, pull.lane, |peer| {
+        with_manager_peer(&self.manager, pull.lane, None, |peer| {
             session.note_rows(peer, &key, &admitted, owed)
         })
     }
@@ -356,7 +356,7 @@ impl SyncClient {
             .session
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        let out = with_manager_peer(&self.manager, pull.lane, |peer| {
+        let out = with_manager_peer(&self.manager, pull.lane, None, |peer| {
             session.poll(
                 peer,
                 now,
@@ -413,18 +413,19 @@ impl SyncClient {
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
         let before = session.receiving_bytes();
-        let (mut out, births, advanced) = with_manager_peer(&self.manager, pull.lane, |peer| {
-            let out = session.handle_frame(peer, tag, payload)?;
-            // Only Data the current attempt took in order keeps the pass
-            // alive; any other frame leaves its idle deadline as it was.
-            let advanced = tag == transport::TAG_ASSET_BODY_DATA
-                && before.is_some_and(|before| {
-                    session
-                        .receiving_bytes()
-                        .is_some_and(|after| after > before)
-                });
-            Ok::<_, TransportError>((out, session.take_federated_births(), advanced))
-        })?;
+        let (mut out, births, advanced) =
+            with_manager_peer(&self.manager, pull.lane, None, |peer| {
+                let out = session.handle_frame(peer, tag, payload)?;
+                // Only Data the current attempt took in order keeps the pass
+                // alive; any other frame leaves its idle deadline as it was.
+                let advanced = tag == transport::TAG_ASSET_BODY_DATA
+                    && before.is_some_and(|before| {
+                        session
+                            .receiving_bytes()
+                            .is_some_and(|after| after > before)
+                    });
+                Ok::<_, TransportError>((out, session.take_federated_births(), advanced))
+            })?;
         if advanced {
             pull.idle_until = Instant::now() + STAGED_BODY_PULL_IDLE;
         }
