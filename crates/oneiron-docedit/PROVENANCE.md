@@ -320,3 +320,22 @@ The generic first-paragraph template renderer is unchanged: newly added
 paragraphs do not acquire arbitrary identity attributes from that template.
 Run serialization, retained text mapping and field-cut receipts are unchanged.
 This is source preservation, not full native or PowerPoint fidelity proof.
+
+
+## Native table paragraph boundary gaps
+
+The table-cell fallback keeps original raw non-node bytes at the edges of an
+actually reused field-free paragraph. A leading or trailing gap beside a text
+segment carries only when the original first or last direct segment is nonempty
+and contributes the first retained prefix character or last retained suffix
+character. Its other neighbor is the original paragraph edge, or the already
+copied first `a:pPr` or last `a:endParaRPr`, with no skipped direct child.
+The exterior gaps before that first `a:pPr` and after that last `a:endParaRPr`
+also keep their original bytes. Every gap excludes node spans and stays under
+the same original paragraph attributes and body ancestors. Leading/trailing
+zero-text children still drop and prevent bridges; field-containing paragraphs,
+unknown-coverage fallback, templates for added paragraphs, static run/break
+serialization, matching and field-removal receipts are unchanged. The complete
+fallback helper moves to `native_patch/table/rebuilt.rs` without changing its
+parent caller. This is source-only retention work, not proof of Office fidelity
+or completion of the full table-cell fallback or OF-509/OF-510.

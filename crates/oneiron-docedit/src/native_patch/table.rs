@@ -430,4 +430,3 @@ pub(super) fn set_cell(
     package.replace_xml_part(slide, out)?;
     Ok(cut_fields)
 }
-
