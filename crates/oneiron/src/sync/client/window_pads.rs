@@ -26,6 +26,7 @@ use base64::Engine;
 use loro::LoroDoc;
 
 use super::base::{ResidenceReceipt, SyncClient};
+use super::home_claim_copies::HomeClaimCopies;
 use crate::authority::PeerMachine;
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport::{
@@ -53,6 +54,7 @@ pub(crate) struct DeferredSealedUpdate {
     key: WindowKey,
     envelope: ReceivedWindowPadEnvelope,
     from: PeerMachine,
+    copies: HomeClaimCopies,
 }
 
 /// What a sealed envelope's isolated check found (FIX 10474).
@@ -386,7 +388,10 @@ impl SyncClient {
         key: &WindowKey,
         sub_tag: u8,
         payload: &'a [u8],
-    ) -> Result<ControlFlow<Vec<Vec<u8>>, (u8, WindowPadPayload<'a>)>, TransportError> {
+    ) -> Result<
+        ControlFlow<Vec<Vec<u8>>, (u8, WindowPadPayload<'a>, HomeClaimCopies)>,
+        TransportError,
+    > {
         if sub_tag == window_sub_tags::WINDOW_PAD_RECEIPT {
             return self
                 .accept_window_pad_receipt(key.as_str(), sub_tag, payload)
@@ -401,6 +406,7 @@ impl SyncClient {
                 return Ok(ControlFlow::Continue((
                     sub_tag,
                     WindowPadPayload::borrowed(payload),
+                    Vec::new(),
                 )));
             }
             WindowPadArrival::Streaming => return Ok(ControlFlow::Break(Vec::new())),
@@ -416,13 +422,25 @@ impl SyncClient {
             }
             WindowPadArrival::Envelope(sub_tag, envelope) => (sub_tag, envelope),
         };
+        let copies = if self.config.federation_peer.is_none() {
+            self.vault.prepare_relayed_home_claim_copy_bytes(
+                self.home_peer,
+                &crate::embed::home_vectors::HomeClaimDelivery {
+                    window: key.as_str(),
+                    payload: &envelope.payload,
+                },
+                &envelope.home_claim_copies,
+            )
+        } else {
+            Vec::new()
+        };
         // FIX 10474: a sealed capsule installs for a payload its import door's
         // isolated check admits, as the home installs one only after its own.
         if envelope.form == WindowPadForm::Sealed {
             match self.sealed_payload_check(key, sub_tag, &envelope.payload)? {
                 SealedCheck::Admitted => {}
                 SealedCheck::Waits => {
-                    self.defer_sealed_update(key, envelope)?;
+                    self.defer_sealed_update(key, envelope, copies)?;
                     // What it carries may prove an edge another staged update waits on.
                     let mut answers = Vec::new();
                     self.drain_staged_world_updates(Some(&mut answers))?;
@@ -459,7 +477,7 @@ impl SyncClient {
                     .into_payload()
                     .try_map_owned(|payload| self.admitted_window_payload(key, payload))?
                 {
-                    Some(payload) => ControlFlow::Continue((sub_tag, payload)),
+                    Some(payload) => ControlFlow::Continue((sub_tag, payload, copies)),
                     None => ControlFlow::Break(Vec::new()),
                 },
             );
@@ -483,7 +501,7 @@ impl SyncClient {
         key: &WindowKey,
         state: &[u8],
         cold: Option<&LoroDoc>,
-    ) -> Result<Vec<u8>, TransportError> {
+    ) -> Result<(Vec<u8>, HomeClaimCopies), TransportError> {
         let envelope = transport::decode_window_pad_envelope(state)?;
         if envelope.kind != WindowPadKind::BulkState {
             return Err(invalid("bulk state outside its envelope"));
@@ -519,8 +537,17 @@ impl SyncClient {
                 "bulk window pads not installed".into(),
             ));
         }
+        let copies = self.vault.prepare_relayed_home_claim_copy_bytes(
+            self.home_peer,
+            &crate::embed::home_vectors::HomeClaimDelivery {
+                window: key.as_str(),
+                payload: &envelope.payload,
+            },
+            &envelope.home_claim_copies,
+        );
         // FIX 7608 slice 4: copy rows land on the sources this device holds.
         self.admitted_whole_payload(key, envelope.payload)
+            .map(|payload| (payload, copies))
     }
 
     /// A promotion reply's snapshot of `window`, its envelope in base64, the
@@ -536,7 +563,8 @@ impl SyncClient {
         window: &WindowKey,
         encoded: &str,
         held: Option<&LoroDoc>,
-    ) -> Result<Option<Vec<u8>>, TransportError> {
+        from: PeerMachine,
+    ) -> Result<Option<(Vec<u8>, HomeClaimCopies)>, TransportError> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .map_err(|_| invalid("invalid promotion snapshot"))?;
@@ -575,9 +603,17 @@ impl SyncClient {
         {
             tracing::warn!(%window, "promoted window pads not installed; its pad rows land them");
         }
+        let copies = self.vault.prepare_relayed_home_claim_copy_bytes(
+            from,
+            &crate::embed::home_vectors::HomeClaimDelivery {
+                window: window.as_str(),
+                payload: &envelope.payload,
+            },
+            &envelope.home_claim_copies,
+        );
         // FIX 7608 slice 4: copy rows land on the sources this device holds.
         self.admitted_whole_payload(window, envelope.payload)
-            .map(Some)
+            .map(|payload| Some((payload, copies)))
     }
 
     /// `doc` with each world update still waiting for `key`, staged or sealed
