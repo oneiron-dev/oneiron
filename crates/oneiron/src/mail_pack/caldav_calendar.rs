@@ -19,9 +19,12 @@
 //!   read 200 a page in href order by `calendar-multiget`. Once the listing
 //!   ends, the changes after the token its first page took are read, so a
 //!   change made while it listed is read again.
-//! - **Changes.** `sync-collection` from the token: a removed member is a
-//!   delete, by the UID landed for it; a changed one is read again whole. A
-//!   token the server no longer honours lists the calendar again.
+//! - **Changes.** `sync-collection` from the token: a changed member is read
+//!   again whole; a removed one is a delete, by the UID landed for it, unless
+//!   another member holds that UID now (an event the provider moved). A round
+//!   reads its changed members before its removed ones, so a move is seen
+//!   whichever pages its two members fall on. A token the server no longer
+//!   honours lists the calendar again.
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
@@ -87,11 +90,15 @@ struct CalDavCursor {
     round: Option<ChangeRound>,
 }
 
-/// A round of changes past its first page.
+/// A round of changes past its first page. A round reads its changed
+/// members first, then its removed ones, each in href order.
 #[derive(Debug, Serialize, Deserialize)]
 struct ChangeRound {
     /// The last member it read.
     after: String,
+    /// Whether that member was a removed one.
+    #[serde(default)]
+    removed: bool,
     /// The token its first page answered, followed once it ends.
     token: String,
 }
@@ -495,17 +502,13 @@ fn decoded_path(url: &Url) -> Vec<u8> {
     out
 }
 
-/// The next page of a run over `members` in href order, after `after`: at
-/// most `limit`, and whether more follow.
-fn page_after<V: Clone>(
-    members: &BTreeMap<String, V>,
-    after: &str,
-    limit: usize,
-) -> (Vec<(String, V)>, bool) {
-    let mut page: Vec<(String, V)> = members
-        .range::<str, _>((Bound::Excluded(after), Bound::Unbounded))
+/// The next page of a run over `members` in order, after `after`: at most
+/// `limit`, and whether more follow.
+fn page_after<K: Ord + Clone>(members: &BTreeSet<K>, after: &K, limit: usize) -> (Vec<K>, bool) {
+    let mut page: Vec<K> = members
+        .range((Bound::Excluded(after), Bound::Unbounded))
         .take(limit + 1)
-        .map(|(href, value)| (href.clone(), value.clone()))
+        .cloned()
         .collect();
     let more = page.len() > limit;
     page.truncate(limit);
@@ -556,14 +559,17 @@ impl HttpCalDavCalendarWire<'_> {
     }
 
     /// The next page of changes after the cursor's token, at most
-    /// `CHANGES_PAGE` members in href order. Deletes go first: a removed
+    /// `CHANGES_PAGE` members: the changed members first, then the removed
+    /// ones, each in href order, so every event a round reads has landed
+    /// before any member it removes is settled. Deletes go first: a removed
     /// member's landed UID, and the UID a changed member held before it
     /// holds another or none; then each changed member's event. A UID read
-    /// again under another member is not deleted: its old member's row is
-    /// retired. A round over more pages than one goes on from its last
-    /// member under the same token, and ends on the token its first page
-    /// answered, so a change made while it ran is read again. `None` when
-    /// the server no longer honours the token.
+    /// again under another member, on this page or landed under one that
+    /// keeps it, is not deleted: its old member's row is retired. A round
+    /// over more pages than one goes on from its last member under the same
+    /// token, and ends on the token its first page answered, so a change
+    /// made while it ran is read again. `None` when the server no longer
+    /// honours the token.
     fn changes(
         &self,
         account: &Account<'_>,
@@ -575,28 +581,29 @@ impl HttpCalDavCalendarWire<'_> {
             return Ok(None);
         };
         let (after, round_token) = match cursor.round {
-            Some(round) => (round.after, round.token),
-            None => (String::new(), synced.token.clone()),
+            Some(round) => ((round.removed, round.after), round.token),
+            None => ((false, String::new()), synced.token.clone()),
         };
-        let mut members: BTreeMap<String, bool> = BTreeMap::new();
-        for href in synced.changed {
-            members.insert(href, false);
-        }
-        for href in synced.removed {
-            members.insert(href, true);
-        }
+        let removed: BTreeSet<String> = synced.removed.into_iter().collect();
+        let members: BTreeSet<(bool, String)> = synced
+            .changed
+            .into_iter()
+            .filter(|href| !removed.contains(href))
+            .map(|href| (false, href))
+            .chain(removed.iter().map(|href| (true, href.clone())))
+            .collect();
         let (page, more) = page_after(&members, &after, CHANGES_PAGE);
         let (gone, events) = self.page_changes(account, source, calendar, &page)?;
         let changes = self.settle(source, gone, events)?;
         let next = if more {
+            let (in_removed, after) = page.last().cloned().unwrap_or(after);
             CalDavCursor {
                 calendar: calendar.to_string(),
                 token: cursor.token,
                 listed: None,
                 round: Some(ChangeRound {
-                    after: page
-                        .last()
-                        .map_or_else(String::new, |(href, _)| href.clone()),
+                    after,
+                    removed: in_removed,
                     token: round_token,
                 }),
             }
@@ -622,15 +629,15 @@ impl HttpCalDavCalendarWire<'_> {
         account: &Account<'_>,
         source: &MailSyncSource,
         calendar: &Url,
-        page: &[(String, bool)],
+        page: &[(bool, String)],
     ) -> Result<(Vec<(String, String)>, Vec<RemoteCalendarObject>)> {
         let changed: Vec<String> = page
             .iter()
-            .filter(|(_, removed)| !*removed)
-            .map(|(href, _)| href.clone())
+            .filter(|(removed, _)| !*removed)
+            .map(|(_, href)| href.clone())
             .collect();
         let mut gone = Vec::new();
-        for (href, _) in page.iter().filter(|(_, removed)| *removed) {
+        for (_, href) in page.iter().filter(|(removed, _)| *removed) {
             if let Some(uid) = landed_uid(self.vault, source.source_ref, href)? {
                 gone.push((href.clone(), uid));
             }
@@ -654,17 +661,31 @@ impl HttpCalDavCalendarWire<'_> {
     }
 
     /// The changes one page makes: deletes first, then the events. A UID
-    /// read again under another member is not deleted; the row of the
-    /// member that held it is retired instead.
+    /// still held is not deleted: one this page reads under another member,
+    /// or one the source landed under a member that does not leave it on
+    /// this page (an earlier page of the round read it there). The row of
+    /// the member that left it is retired instead. A UID two members leave
+    /// is deleted once.
     fn settle(
         &self,
         source: &MailSyncSource,
         gone: Vec<(String, String)>,
         events: Vec<RemoteCalendarObject>,
     ) -> Result<Vec<RemoteCalendarChange>> {
+        let unread: BTreeSet<String> = gone
+            .iter()
+            .filter(|(_, uid)| !events.iter().any(|event| event.uid == *uid))
+            .map(|(_, uid)| uid.clone())
+            .collect();
+        let kept = {
+            let leaving: BTreeSet<&str> = gone.iter().map(|(href, _)| href.as_str()).collect();
+            super::calendar::uids_held_outside(self.vault, source.source_ref, &unread, &leaving)?
+        };
+        let mut deleted = BTreeSet::new();
         let mut changes = Vec::new();
         for (href, uid) in gone {
-            if !events.iter().any(|event| event.uid == uid) {
+            let held = !unread.contains(&uid) || kept.contains(&uid);
+            if !held && deleted.insert(uid.clone()) {
                 changes.push(RemoteCalendarChange::Delete { href, uid });
             } else if !events.iter().any(|event| event.href == href) {
                 super::calendar::forget_resource_href(self.vault, source.source_ref, &href)?;
@@ -684,13 +705,8 @@ fn list_page(
     token: String,
     after: &str,
 ) -> Result<(Vec<RemoteCalendarChange>, CalDavCursor, bool)> {
-    let members: BTreeMap<String, ()> = account
-        .members(calendar)?
-        .into_iter()
-        .map(|href| (href, ()))
-        .collect();
-    let (page, more) = page_after(&members, after, LIST_PAGE);
-    let hrefs: Vec<String> = page.into_iter().map(|(href, ())| href).collect();
+    let members = account.members(calendar)?;
+    let (hrefs, more) = page_after(&members, &after.to_owned(), LIST_PAGE);
     let mut changes = Vec::new();
     for (_, member) in account.read_members(calendar, &hrefs)? {
         if let Member::Event(object) = member {

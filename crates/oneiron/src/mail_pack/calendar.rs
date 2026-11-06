@@ -84,6 +84,38 @@ pub(super) fn forget_resource_href(vault: &Vault, source: EntityId, href: &str) 
     })
 }
 
+/// Which of `uids` the calendar source `source` landed under a provider's
+/// resource other than those in `leaving`: the UIDs a moved event still
+/// carries at its new place, which a wire must not delete when it reads the
+/// old place gone.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn uids_held_outside(
+    vault: &Vault,
+    source: EntityId,
+    uids: &std::collections::BTreeSet<String>,
+    leaving: &std::collections::BTreeSet<&str>,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut held = std::collections::BTreeSet::new();
+    if uids.is_empty() {
+        return Ok(held);
+    }
+    let leaving: std::collections::BTreeSet<[u8; 32]> = leaving
+        .iter()
+        .map(|href| resource_key(source, href).1)
+        .collect();
+    let txn = vault.store.env.read_txn()?;
+    for row in CALENDAR_RESOURCES.iter_from(&vault.store, &txn, source.as_bytes())? {
+        let ((_, href), resource) = row?;
+        if !leaving.contains(&href) && uids.contains(&resource.uid) {
+            held.insert(resource.uid);
+        }
+    }
+    Ok(held)
+}
+
 /// Where one calendar source's pull stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 struct MailCalendarSyncState {
