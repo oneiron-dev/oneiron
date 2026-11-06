@@ -145,3 +145,16 @@ Native projection of stored provenance, contract validation, storage, owner
 checks, lifecycle and restore admission, inputs, hooks and the separate UniFFI
 conversion are unchanged. This selected output conversion is not an end-to-end
 depth or memory bound.
+
+
+### Core Coach inspection proposal output
+
+The core `vault.coach.inspect` result adapter moves the served proposal claim's
+value and scope, and each present repair document, around the original
+whole-result codec. It restores the native JSON at its original fields.
+An absent proposal and an absent repair keep their original null fields;
+returned repair values, including a present null, keep their field position.
+The outer scoped-read receipt, report, diagnostic and working set retain their
+original codec. Native read filtering, claim and repair selection, authority,
+inputs, hooks and public types are unchanged. This does not change diagnostic
+projection or prove a general depth or memory bound.

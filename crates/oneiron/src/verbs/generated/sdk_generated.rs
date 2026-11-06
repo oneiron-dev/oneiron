@@ -30348,7 +30348,7 @@ fn invoke_vault_coach_inspect(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    encode(vault_coach_inspect(memory, decode(value)?)?)
+    claim_output::coach(vault_coach_inspect(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_people_list(

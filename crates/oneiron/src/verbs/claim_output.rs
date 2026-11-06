@@ -4,7 +4,8 @@ use serde_json::Value;
 
 use crate::claim::ScopedReadResult;
 use crate::memory::{
-    ClaimProposalReview, ClaimSettlement, ClaimView, MemoryResult, SignalExtractionResult,
+    ClaimProposalReview, ClaimSettlement, ClaimView, CoachInspectionView, MemoryResult,
+    SignalExtractionResult,
 };
 
 use super::encode;
@@ -52,6 +53,24 @@ pub(super) fn extraction(mut output: Option<SignalExtractionResult>) -> MemoryRe
     let mut encoded = encode(output)?;
     for (index, payload) in payloads.into_iter().enumerate() {
         restore_claim(&mut encoded["claims"][index]["claim"], payload);
+    }
+    Ok(encoded)
+}
+
+pub(super) fn coach(mut output: ScopedReadResult<CoachInspectionView>) -> MemoryResult<Value> {
+    let payload = output.value.proposal.as_mut().map(|proposal| {
+        (
+            take_claim(&mut proposal.claim),
+            proposal.repair.as_mut().map(Value::take),
+        )
+    });
+    let mut encoded = encode(output)?;
+    if let Some((claim, repair)) = payload {
+        let proposal = &mut encoded["value"]["proposal"];
+        restore_claim(&mut proposal["claim"], claim);
+        if let Some(repair) = repair {
+            proposal["repair"] = repair;
+        }
     }
     Ok(encoded)
 }
