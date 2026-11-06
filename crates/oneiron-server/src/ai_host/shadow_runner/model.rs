@@ -109,11 +109,10 @@ impl Gateway<'_> {
             let unavailable = ShadowUnavailable::new(Reason::ModelUnavailable, "model_not_served");
             return Ok(refused(receipt, unavailable));
         };
-        if ladder.exact_prompt() != Some(binding.prompt.as_deref()) {
-            let unavailable =
-                ShadowUnavailable::new(Reason::RouteUnavailable, "route_prompt_moved");
+        let Some(ladder) = ladder.for_replay_binding(&binding) else {
+            let unavailable = ShadowUnavailable::new(Reason::RouteUnavailable, "no_exact_rung");
             return Ok(refused(receipt, unavailable));
-        }
+        };
         receipt.served = ladder.exact_replay_route_pin();
         let moved = match &receipt.served {
             Some(served) if *served == pin.route => None,
