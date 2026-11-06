@@ -12,6 +12,7 @@ mod bundle_access;
 mod bundle_payload;
 mod bundle_stage;
 mod bundle_turn;
+mod content_world;
 mod custody;
 mod directives;
 mod discover;
@@ -24,6 +25,7 @@ mod prune;
 mod recall_scope;
 mod sealed_updates;
 mod search;
+mod window_index;
 mod world_eviction;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
@@ -76,6 +78,7 @@ pub(crate) use bundle_payload::sealed_bundle_awaiting_reader;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
+pub use content_world::ContentWorld;
 pub use custody::{
     custody_residence_commit, custody_residence_drain, custody_residence_frames,
     custody_residence_held, custody_residence_stage,
@@ -127,6 +130,10 @@ pub use search::{
     RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
     residence_search_revision, with_forwarded_search_page,
 };
+pub use window_index::{
+    IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
+    window_index_projection, window_index_projection_with,
+};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{put_home_window_vv, world_placed_elsewhere};
 
@@ -134,7 +141,6 @@ pub(crate) use world_eviction::{put_home_window_vv, world_placed_elsewhere};
 use loro::ExportMode;
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -255,135 +261,6 @@ pub const INDEX_PAGE_MAX: usize = 256;
 /// A bounded promotion snapshot fits inside the app RPC result after base64
 /// expansion. Above this, do not perform a partial promotion.
 pub const MAX_PROMOTION_SNAPSHOT_BYTES: usize = 22 * 1024 * 1024;
-
-/// One metadata-only entry: the body and CRDT history are absent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowIndexEntry {
-    pub entity_id: String,
-    pub title: Option<String>,
-    pub learned_at: u64,
-}
-
-/// Pagination over an already selected metadata projection. No Loro history
-/// is exported when moving from one page to the next.
-#[derive(Debug, Clone, Copy)]
-pub struct IndexPage {
-    /// Exclusive entity ID cursor, never an offset into an unfiltered window.
-    pub after: Option<EntityId>,
-    pub limit: usize,
-}
-
-/// Lightweight cross-page revision of read policy and the materialized
-/// graph. Neither ordinary clock reads nor app RPC bookkeeping move these.
-/// A change to a facet edge or retrieval floor invalidates cached selection.
-pub fn index_selection_revision(vault: &Vault) -> Result<([u8; 32], u64, u64)> {
-    let txn = vault.store.env.read_txn()?;
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
-    Ok((
-        // FIX 7608 slice 4: a re-mask of a marked repo copy is a new selection.
-        super::selector::secret_projection::with_copy_generation_in_txn(
-            vault,
-            &txn,
-            policy.read_frontier_hash()?,
-        )?,
-        crate::ppr::read_graph_version(&vault.store, &txn)?,
-        crate::federation::record_scope::read_scope_revision(&vault.store, &txn)?,
-    ))
-}
-
-/// Authorize one window and build a metadata-only, sorted projection ONCE.
-/// The server retains it for a bounded socket session; every later page
-/// rechecks the grant, snapshot revision and live actor read floor.
-pub fn window_index_projection(
-    vault: &Vault,
-    source: &LoroDoc,
-    window: &WindowKey,
-    scope: FederationGrantScope,
-    selector: &SyncSelector,
-    title_max_chars: usize,
-    readable: impl FnMut(EntityId) -> Result<bool>,
-) -> Result<Vec<WindowIndexEntry>> {
-    window_index_projection_with(
-        vault,
-        source,
-        window,
-        scope,
-        selector,
-        Withhold::Unknown,
-        title_max_chars,
-        readable,
-    )
-}
-
-/// [`window_index_projection`] for the machine a residence read serves:
-/// `withhold` names the worlds kept off it, at the selector's source.
-#[allow(clippy::too_many_arguments)]
-pub fn window_index_projection_with(
-    vault: &Vault,
-    source: &LoroDoc,
-    window: &WindowKey,
-    scope: FederationGrantScope,
-    selector: &SyncSelector,
-    withhold: Withhold<'_>,
-    title_max_chars: usize,
-    mut readable: impl FnMut(EntityId) -> Result<bool>,
-) -> Result<Vec<WindowIndexEntry>> {
-    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
-    // FIX 7608 slice 4: a marked repo item is listed by its copy id and
-    // titled by its copy, never by its raw body.
-    let copies = super::selector::secret_projection::IndexCopies::read(vault)?;
-    let mut entries = Vec::new();
-    let mut result = Ok(());
-    map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
-        if result.is_err() {
-            return;
-        }
-        let (Ok(id), Some(blob)) = (EntityId::from_hex(key), blob) else {
-            return;
-        };
-        if id.to_hex() != key {
-            return;
-        }
-        let Some(header) = EntityMetadataHeader::parse(blob) else {
-            return;
-        };
-        match readable(id) {
-            Ok(true) => entries.push(WindowIndexEntry {
-                entity_id: copies.shown(&id, key),
-                title: copies.title(&id, blob, |body| title_from_body(body, title_max_chars)),
-                learned_at: header.learned_at,
-            }),
-            Ok(false) => {}
-            Err(error) => result = Err(error),
-        }
-    });
-    result?;
-    entries.sort_unstable_by(|a, b| a.entity_id.cmp(&b.entity_id));
-    Ok(entries)
-}
-
-/// Slice a previously authorized projection in O(log N + page size), with no
-/// full-window Loro export or selector rebuild.
-pub fn window_index_page(
-    entries: &[WindowIndexEntry],
-    page: IndexPage,
-) -> Result<Vec<WindowIndexEntry>> {
-    if page.limit == 0 {
-        return Err(Error::sync_protocol(
-            SyncProtocolValidation::DocumentAdmissionDenied,
-        ));
-    }
-    let start = page.after.map_or(0, |cursor| {
-        let after = cursor.to_hex();
-        entries.partition_point(|entry| entry.entity_id <= after)
-    });
-    Ok(entries
-        .iter()
-        .skip(start)
-        .take(page.limit)
-        .cloned()
-        .collect())
-}
 
 /// Read one grant-selected body without creating any Loro operations on the
 /// device. The returned value is a read-only cache entry until its whole
