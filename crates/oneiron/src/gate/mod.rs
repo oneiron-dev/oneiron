@@ -165,6 +165,8 @@ pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
 pub(crate) use self::definition_ceiling::{
     agent_definition_ceiling_for_actor, definition_only_ceiling_for_actor,
 };
+// An off-record room's claim decision, captured for the room (FIX 9967).
+pub(crate) use self::doors::capture_claim_policy_for_write;
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
