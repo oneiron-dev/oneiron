@@ -2,8 +2,10 @@
 
 The running driver keeps an app-open hint that `host.session.open` parks on an ask.
 It retains the same actor/machine key, sitting id, and resolved hint timestamp.
-Answering the ask wakes a content-free post-commit signal. The driver then retries
-the ordinary hook boundary; the signal itself is neither an answer nor authority.
+First settlement of the ask wakes a content-free post-commit signal. Re-enabling
+hooks also wakes retained opens, after the switch commits and its binding cache
+is invalidated. The driver then retries the ordinary hook boundary; the signal
+itself is neither an answer nor authority.
 The existing ask deadline also wakes the driver, including while passes are paused
 or no other session has an expiry timer.
 
