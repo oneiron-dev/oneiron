@@ -149,14 +149,15 @@ This does not price serialized or later decoded copies, config map storage,
 number internals or construction peaks.
 
 The canonical detached provisional stage separately records the actual backing
-capacity of its encoded retrieval-row value after encoding, once on that same
-private lease. It uses the existing typed staged-row writer without re-encoding
-or copying the value. The encoded buffer stays alive through the native put and
-drops before the cloned record and its lease, including write errors and unwind.
-An unbound caller keeps the original direct put path without added accounting.
-This covers only the serialized value on that bound detached path. Encoded keys,
-serialization scratch, marker and index values, session and other unbound writes,
-finalized rows and later decoded records are separate allocations outside it.
+capacities of its encoded retrieval-row key and value after encoding, once on
+that same private lease. It uses the existing typed staged-row writer without
+re-encoding or copying either buffer. Both encoded buffers stay alive through
+the native put and drop before the cloned record and its lease, including write
+errors and unwind. An unbound caller keeps the original direct put path without
+added accounting. This covers only the encoded key and serialized value on that
+bound detached path. Serialization scratch, keys and values of marker, index,
+session and other unbound writes, finalized rows and later decoded records are
+separate allocations outside it.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full

@@ -140,6 +140,11 @@ impl StagedRow {
         self.value.capacity() as u64
     }
 
+    /// The actual backing capacity of this row's encoded key.
+    pub(crate) fn key_capacity_bytes(&self) -> u64 {
+        self.key.capacity() as u64
+    }
+
     pub(crate) fn put(&self, dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>) -> Result<()> {
         let admitted = self
             .decl
