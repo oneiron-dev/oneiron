@@ -18,7 +18,10 @@
 use heed::RoTxn;
 use zeroize::Zeroizing;
 
-use super::super::super::container::{Stop, masked_retained_repo_copy, walk_retained_repo_members};
+use super::super::super::container::{
+    Stop, masked_retained_repo_copy, walk_retained_repo_members,
+    walk_retained_repo_members_with_hidden,
+};
 use super::super::super::lift_history::{LiftFamily, owner_kept_in_txn};
 use super::super::known_marks::known_leaf_hits;
 use super::super::offset;
@@ -98,11 +101,13 @@ impl<'a> RepoKnownCheck<'a> {
         }
     }
 
-    /// Whether a known value reads anywhere in `bytes`: its own bytes and
-    /// every member, each raw container buffer included, as the release
-    /// rules read a copy. A value in a container's own bytes, such as a ZIP
-    /// entry's name, takes no place a copy can overwrite, so a blob it reads
-    /// in has no masked copy (FIX 8966).
+    /// Whether a known value reads anywhere in `bytes`: its own bytes, every
+    /// member, each raw container buffer, and the bytes no reader shows
+    /// beside a container's members (a ZIP's local entries outside its
+    /// central directory, a PDF's superseded revisions), each decoded as a
+    /// scan reads them. A value there, or in a container's own bytes such as
+    /// a ZIP entry's name, takes no place a copy can overwrite, so a blob it
+    /// reads in has no masked copy (FIX 8966).
     ///
     /// # Errors
     /// A walk failure.
@@ -123,7 +128,7 @@ impl<'a> RepoKnownCheck<'a> {
             Err(Stop::Refuse("known value"))
         };
         // A container no reader here reads shows a reader nothing more.
-        match walk_retained_repo_members(bytes, &mut visit) {
+        match walk_retained_repo_members_with_hidden(bytes, &mut visit) {
             Ok(()) | Err(Stop::Refuse(_)) => Ok(hit),
             Err(Stop::Fail(error)) => Err(error),
         }
