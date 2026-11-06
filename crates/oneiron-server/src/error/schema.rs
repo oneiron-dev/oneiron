@@ -95,7 +95,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
     let mut properties = Map::from_iter([("code".to_owned(), json!({ "const": code.as_str() }))]);
 
     match code {
-        ErrorCode::BadRequest => {
+        ErrorCode::BadRequest | ErrorCode::DeadlineExceeded => {
             optional_string(&mut properties, "field");
         }
         ErrorCode::Forbidden

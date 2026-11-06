@@ -77,7 +77,7 @@ pub(super) fn show_held_media(
     slide: &str,
     native: u32,
     media: &HeldMedia,
-) -> Result<bool, LiveError> {
+) -> Result<(bool, Vec<Conversion>), LiveError> {
     let refuse = LiveError::Invalid(HELD_MEDIA);
     if !image_part(&media.part)
         || package
@@ -86,8 +86,8 @@ pub(super) fn show_held_media(
     {
         return Err(refuse);
     }
-    if let Some(changed) = svg_fallback::show(package, slide, native, &media.part)? {
-        return Ok(changed);
+    if let Some((changed, derived)) = svg_fallback::show(package, slide, native, &media.part)? {
+        return Ok((changed, derived.into_iter().collect()));
     }
     let dropped = svg_fallback::drop_svg(package, slide, native)?;
     let (bytes, tree) = xml::read(package, slide)?;
@@ -100,7 +100,7 @@ pub(super) fn show_held_media(
         .iter()
         .any(|rel| Some(rel.id.as_str()) == shown && !rel.external && rel.target == media.part)
     {
-        return Ok(dropped);
+        return Ok((dropped, Vec::new()));
     }
     let id = match rels
         .into_iter()
@@ -121,7 +121,7 @@ pub(super) fn show_held_media(
         .unwrap_or_else(|| "r:embed".to_owned());
     let edit = xml::set_attribute(&bytes, node, &attribute, &id);
     package.replace_xml_part(slide, xml::splice(&bytes, vec![edit])?)?;
-    Ok(true)
+    Ok((true, Vec::new()))
 }
 
 /// Write a live-born picture showing the held media `media` names as the
@@ -136,7 +136,7 @@ pub(super) fn born_held_picture(
     (x, y): (i64, i64),
     (cx, cy): (i64, i64),
     media: &HeldMedia,
-) -> Result<(), LiveError> {
+) -> Result<Vec<Conversion>, LiveError> {
     if !image_part(&media.part)
         || package
             .part(&media.part)?
@@ -144,13 +144,13 @@ pub(super) fn born_held_picture(
     {
         return Err(LiveError::Invalid(HELD_MEDIA));
     }
-    let blip = svg_fallback::born_blip(package, slide, &media.part)?;
+    let (blip, derived) = svg_fallback::born_blip(package, slide, &media.part)?;
     let picture = format!(
         r#"<p:pic xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}"><p:nvPicPr><p:cNvPr id="{id}" name="{}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill>{blip}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#,
         xml::escape_attribute(name)
     );
     insert_frame(package, slide, id, &picture)?;
-    Ok(())
+    Ok(derived.into_iter().collect())
 }
 
 /// Paragraphs holding `text`, one per line: each in `p_pr`, its run in

@@ -51,6 +51,7 @@ pub use self::reminder_route::reminder_route;
 use self::secret_commands::{read_secret_value, register_secret, rotate_secret};
 pub use self::secret_commands::{reveal_secret, revoke_secret, secret_scan, secrets};
 pub use self::transfer_commands::{export, import};
+pub(crate) use self::vault_key::page_seal_at;
 pub use self::vault_key::vault_key;
 pub(super) use self::vault_key::{
     HostUnlock, ensure_page_seal_wrapped, prepare_page_seal, read_secret_file,

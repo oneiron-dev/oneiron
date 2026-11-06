@@ -4,7 +4,7 @@
 //! of rungs per role key. A role written out in DETAILED replaces whatever a
 //! shorthand gave it.
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use oneiron::llm::manifest::ModelRole;
@@ -43,27 +43,20 @@ impl ModelRef {
 }
 
 impl ModelRef {
-    /// The engine's `provider/name@revision` for this model. Characters
-    /// outside the id grammar become `.`, so distinct provider spellings can
-    /// meet; config resolution refuses such a meeting.
+    /// The engine's `provider/name@revision` for this model. The name keeps
+    /// ASCII letters, digits, `.` and `-`; every other UTF-8 byte, including
+    /// `_`, becomes `_hh` so distinct wire spellings keep distinct identities.
     pub fn engine_id(&self, revision: &str) -> anyhow::Result<oneiron::ModelId> {
-        let name: String = self
-            .model
-            .bytes()
-            .map(|byte| {
-                if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
-                    byte as char
-                } else {
-                    '.'
-                }
-            })
-            .collect();
-        oneiron::ModelId::new(format!(
-            "{}/{}@{revision}",
-            self.provider,
-            name.trim_matches('.')
-        ))
-        .map_err(|error| anyhow::anyhow!("model {self}: {error}"))
+        let mut name = String::with_capacity(self.model.len());
+        for byte in self.model.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-') {
+                name.push(byte as char);
+            } else {
+                write!(&mut name, "_{byte:02x}").expect("writing to a String cannot fail");
+            }
+        }
+        oneiron::ModelId::new(format!("{}/{name}@{revision}", self.provider))
+            .map_err(|error| anyhow::anyhow!("model {self}: {error}"))
     }
 }
 

@@ -17,6 +17,14 @@ Missing, hidden or non-MESSAGE rows, absent values and read errors do not ask.
 The default of 100, zero-to-one behavior, cursor, receipt/history cohort and
 provenance are unchanged. The requested count is served without another clamp.
 
-Neither slice changes a numeric constant, policy default, wire format or stored
-row. A normal matching engine/server update is enough; no migration or client
+`view` subscriptions pass the full positive requested count through the outer
+facade and the native recall path, without the old 1000-row count ceiling.
+The default remains 100 and zero is still refused. The existing downstream
+`RequestedResultRows` measurement runs once per execution; no new outer
+measurement is added. World, kind and predicate narrowing and the 8 MiB view
+snapshot guard are unchanged. Available data and native retrieval budgets can
+still yield fewer rows. This change adds no queue or memory admission.
+
+None of these slices changes a numeric constant, policy default, wire format
+or stored row. A normal matching engine/server update is enough; no migration or client
 configuration is needed. These are source changes, not runtime/resource proof.

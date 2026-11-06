@@ -419,6 +419,12 @@ impl Vault {
         // FIX 7366: a live room's overlay rows of a gone actor's code runs
         // take their erased form too; the vault writer is released here.
         crate::code_run::erase_gone_actors_in_live_overlays(self, ids);
+        // FIX 14976: an erase that reached a drafter returned its binding to
+        // stock in its own transaction; the serving host now drops the
+        // plaintext and restarts its worker with stock.
+        if !ids.is_empty() {
+            self.notify_drafter_serving();
+        }
         #[cfg(feature = "sync")]
         {
             let manager = self

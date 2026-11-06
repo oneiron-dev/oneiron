@@ -60,6 +60,9 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod live;
+mod sheet_keep;
+
+pub(super) use sheet_keep::SheetKeep;
 
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
 const WITHDRAWALS: SideTable<(EntityId, [u8; 32]), UnitWithdrawal, Named> =
@@ -855,39 +858,10 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
         self.authorize_settle(consent, actor)?;
-        let key = settlement_key_parts(artifact, &held.run_ref);
-        let manifest_hash = manifest_ref(&held.manifest)?;
         let (head, record) = self.with_write_txn_grouped(|wtxn| {
-            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
-            let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact)?
-                .ok_or(Error::EntityNotFound)?;
-            let record = SettlementRecord {
-                proposal_ref: held.run_ref.clone(),
-                outcome: SettleOutcomeKind::Proposed,
-                settled_at: learned_at,
-                actor_ref: Some(actor.entity_ref().to_hex()),
-                brief_ref: consent.brief_ref().map(str::to_owned),
-                grant_ref,
-                before_version: held.base_version,
-                version: Some(head.version),
-                content_hash: Some(head.content_hash),
-                manifest_ref: Some(manifest_hash),
-                manifest_ops: u64::try_from(held.manifest.ops.len()).unwrap_or(u64::MAX),
-                pptx_slide_creation_id_mints: Vec::new(),
-                pptx_review_identities: super::settle::pptx_review_identities(held),
-                pptx_judgments: held.manifest.slide_judgments.clone(),
-                docx_judgments: held.manifest.paragraph_judgments.clone(),
-                anchors: Vec::new(),
-                reason: Some("units_withdrawn".to_owned()),
-                sheet_answers: held.sheet_answers.clone(),
-                deck: None,
-            };
-            RECORD.put(&self.store, wtxn, &key, &record)?;
-            self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
-            Ok((head, record))
+            self.settle_all_withdrawn_in_txn(
+                wtxn, artifact, held, withdrawal, consent, actor, learned_at,
+            )
         })?;
         let receipt = settlement_receipt_record(*artifact, &record)?;
         let receipt = self.with_withdrawn_units(*artifact, &record, receipt)?;
@@ -899,6 +873,51 @@ impl Vault {
             reconciliation: None,
             review: SettledReview::of(record),
         })
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub(super) fn settle_all_withdrawn_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact: &EntityId,
+        held: &EditProposal,
+        withdrawal: &UnitWithdrawal,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        learned_at: u64,
+    ) -> Result<(crate::blob_artifact::BlobArtifactVersion, SettlementRecord)> {
+        let key = settlement_key_parts(artifact, &held.run_ref);
+        let manifest_hash = manifest_ref(&held.manifest)?;
+        let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
+        if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
+            return Err(already_settled(&existing));
+        }
+        let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        let record = SettlementRecord {
+            proposal_ref: held.run_ref.clone(),
+            outcome: SettleOutcomeKind::Proposed,
+            settled_at: learned_at,
+            actor_ref: Some(actor.entity_ref().to_hex()),
+            brief_ref: consent.brief_ref().map(str::to_owned),
+            grant_ref,
+            before_version: held.base_version,
+            version: Some(head.version),
+            content_hash: Some(head.content_hash),
+            manifest_ref: Some(manifest_hash),
+            manifest_ops: u64::try_from(held.manifest.ops.len()).unwrap_or(u64::MAX),
+            pptx_slide_creation_id_mints: Vec::new(),
+            pptx_review_identities: super::settle::pptx_review_identities(held),
+            pptx_judgments: held.manifest.slide_judgments.clone(),
+            docx_judgments: held.manifest.paragraph_judgments.clone(),
+            anchors: Vec::new(),
+            reason: Some("units_withdrawn".to_owned()),
+            sheet_answers: held.sheet_answers.clone(),
+            deck: None,
+        };
+        RECORD.put(&self.store, wtxn, &key, &record)?;
+        self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
+        Ok((head, record))
     }
 
     /// Merges `fresh` into the withdrawal under `key`: an answer already

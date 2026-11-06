@@ -21,6 +21,7 @@ mod owner_call;
 mod person_call;
 pub(crate) use self::person_call::person_socket_admits;
 mod question_answers_result;
+mod read_result;
 mod served_rows;
 pub(crate) mod skill_execution;
 mod stream_reads;
@@ -37,7 +38,7 @@ pub(crate) use self::actor_dispatch::{
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{
-    mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_tasks_section,
+    mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
     mcp_validated_call_args,
 };
 pub(crate) use self::board_observations::run_session_reads;
@@ -61,11 +62,12 @@ pub(crate) use self::envelope::{
     mcp_tool_first_gateway,
 };
 pub(crate) use self::exec_board_verbs::{
-    deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_mcp_read_result,
-    execute_run_board_verb, execute_run_board_verb_in_session,
+    deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_run_board_verb,
+    execute_run_board_verb_in_session,
 };
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
 pub(crate) use self::owner_call::resolve_mcp_caller;
+pub(crate) use self::read_result::execute_mcp_read_result;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
