@@ -230,6 +230,26 @@ impl PreparedEffect {
     }
 }
 
+/// What the chokepoint does with an outcome-free Pending call that may have
+/// gone out, before any resend (FIX 4747): the step its transport's
+/// provider lookup, or the owner's answer, gives it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UncertainSendStep {
+    /// The provider kept the send: the row settles delivered, and nothing
+    /// is sent. The transport keeps the provider's ref for the receipt.
+    Delivered,
+    /// The provider answered that it has no such send: the row becomes a
+    /// definite non-delivery, its possible-delivery mark cleared, and it is
+    /// sent.
+    LookedUpUnsent,
+    /// The owner answered resend: the row is sent once more, still marked
+    /// as one that may have gone out before.
+    OwnerReleased,
+    /// Nobody can tell: the row stays Pending and uncertain, nothing is
+    /// sent, and the caller asks the owner.
+    Hold,
+}
+
 /// Connector-agnostic transport. The endpoint, bytes, and idempotency key are
 /// readable only from the frozen call supplied here.
 pub(crate) trait OutboundTransport {
@@ -263,6 +283,24 @@ pub(crate) trait OutboundTransport {
     /// stays one whose delivery is unknown.
     fn known_non_delivery(&self, _call: &FrozenOutboundCall) -> bool {
         false
+    }
+
+    /// Whether this transport looks a call that may have gone out up at its
+    /// provider before any resend (FIX 4747; canon ARCH-0023b "never a blind
+    /// retry"): such a call that came back ambiguous stays Pending and
+    /// uncertain instead of being abandoned, and its resend waits for
+    /// [`Self::uncertain_send_step`]. Only a connector-send TASK's dispatch
+    /// transport does; by default a transport does not, and the chokepoint
+    /// keeps its rule.
+    fn looks_up_uncertain_sends(&self) -> bool {
+        false
+    }
+
+    /// The step for `call`, an outcome-free Pending row that may have gone
+    /// out, before its resend (FIX 4747). Asked only when
+    /// [`Self::looks_up_uncertain_sends`]; by default nobody can tell.
+    fn uncertain_send_step(&mut self, _call: &FrozenOutboundCall) -> UncertainSendStep {
+        UncertainSendStep::Hold
     }
 
     /// Whether this transport's caller holds a paced result and brings the

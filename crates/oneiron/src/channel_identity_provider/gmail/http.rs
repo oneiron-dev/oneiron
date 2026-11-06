@@ -11,8 +11,12 @@ use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::{Value, json};
 
-use super::send::{GmailSendAuthority, GmailSendWire, GmailSendWireError, GmailSentMessage};
+use super::send::{
+    GmailSendAuthority, GmailSendWire, GmailSendWireError, GmailSentMessage,
+    GmailSentSearchUnanswered,
+};
 use crate::error::{Error, Result};
+use crate::outbound::SENT_LOOKUP_TIMEOUT;
 
 const GMAIL_SEND_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 const GMAIL_MESSAGES_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
@@ -128,6 +132,48 @@ impl HttpGmailSendWire {
             .as_str()
             .map(str::to_owned)
     }
+
+    /// One search of the mailbox's SENT for `rfc822msgid:<id>` (FIX 4747),
+    /// ids only, bounded by [`SENT_LOOKUP_TIMEOUT`]: the first match's Gmail
+    /// message id, or `None` when the search answered with none.
+    fn search_sent(
+        &self,
+        auth: &HeaderValue,
+        rfc_message_id: &str,
+    ) -> std::result::Result<Option<String>, GmailSentSearchUnanswered> {
+        let query = format!("rfc822msgid:{rfc_message_id}");
+        let response = self
+            .client
+            .get(GMAIL_MESSAGES_URL)
+            .query(&[
+                ("q", query.as_str()),
+                ("labelIds", "SENT"),
+                ("maxResults", "1"),
+            ])
+            .header(AUTHORIZATION, auth.clone())
+            .timeout(SENT_LOOKUP_TIMEOUT)
+            .send()
+            .map_err(|_| GmailSentSearchUnanswered)?;
+        if !response.status().is_success() {
+            return Err(GmailSentSearchUnanswered);
+        }
+        let value = read_bounded_json(response).ok_or(GmailSentSearchUnanswered)?;
+        let Some(messages) = value.get("messages") else {
+            return Ok(None);
+        };
+        match messages
+            .as_array()
+            .ok_or(GmailSentSearchUnanswered)?
+            .first()
+        {
+            None => Ok(None),
+            Some(message) => message
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| Some(id.to_owned()))
+                .ok_or(GmailSentSearchUnanswered),
+        }
+    }
 }
 
 impl GmailSendWire for HttpGmailSendWire {
@@ -161,6 +207,20 @@ impl GmailSendWire for HttpGmailSendWire {
                 "gmail_send_credential_door_refused".to_owned(),
             )),
         }
+    }
+
+    fn find_sent_message(
+        &self,
+        authority: &GmailSendAuthority<'_>,
+        rfc_message_id: &str,
+    ) -> std::result::Result<Option<String>, GmailSentSearchUnanswered> {
+        let mut found = None;
+        let _door = authority.with_token_at_door(&mut |token: &[u8]| {
+            let auth = bearer_header_for_client(&self.client, token)?;
+            found = Some(self.search_sent(&auth, rfc_message_id));
+            Ok(())
+        });
+        found.unwrap_or(Err(GmailSentSearchUnanswered))
     }
 }
 

@@ -176,6 +176,19 @@ pub struct OutboundDispatchRequest {
     /// transport call. In memory only, never persisted; `None` for every
     /// send that is not a connector-send TASK's.
     pub(crate) send_executor_fence: Option<super::connector_task::SendExecutorFence>,
+    /// FIX 4747: the logical send's engine send id, for a connector-send
+    /// TASK's send: the id its provider keeps on the wire where it keeps one,
+    /// and the one a lookup asks for. Its presence makes the dispatch
+    /// transport look a send that may have gone out up before any resend. In
+    /// memory only, never persisted; `None` for every other send.
+    pub(crate) engine_send_id: Option<super::EngineSendId>,
+    /// FIX 4747: an earlier executor of this TASK may have sent it, so the
+    /// transport looks it up before this machine's send.
+    pub(crate) earlier_send_lookup: bool,
+    /// FIX 4747: the owner answered this TASK's uncertain send with resend:
+    /// the transport releases the send that may have gone out for one
+    /// resend, with no lookup.
+    pub(crate) owner_released_resend: bool,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -233,6 +246,9 @@ impl OutboundDispatchRequest {
             ambient_alternative: None,
             sender_posture_fallback: false,
             send_executor_fence: None,
+            engine_send_id: None,
+            earlier_send_lookup: false,
+            owner_released_resend: false,
         }
     }
 
@@ -466,6 +482,12 @@ pub struct OutboundExecutionRequest<'a> {
     /// so no existing adapter changes; present, an adapter that drops it has
     /// sent an email about a meeting rather than an invitation.
     pub calendar_invite: Option<CalendarInviteMimePart>,
+    /// FIX 4747: the logical send's engine send id, on a connector-send
+    /// TASK's send. A transport whose provider keeps an id of the sender's on
+    /// the wire derives that id from it (native mail's Message-ID, LINE's
+    /// retry key), so any machine can look the send up. `None` for every
+    /// other send, which keys as it always did.
+    pub engine_send_id: Option<&'a super::EngineSendId>,
 }
 
 /// Adapter execution outcome consumed by the common receipt emitter.
@@ -634,6 +656,19 @@ pub trait OutboundExecutionSink {
     /// nothing.
     fn known_non_delivery(&self, _intent_ref: &str, _idempotency_key: Option<&str>) -> bool {
         false
+    }
+
+    /// Whether the send `engine_send_id` names went out, as its provider
+    /// says (FIX 4747): asked before any resend of a send that may have gone
+    /// out. One bounded read ([`super::SENT_LOOKUP_TIMEOUT`]), never of a
+    /// body; `NotSent` only when the provider's own search answered. By
+    /// default a sink cannot tell, and the owner is asked.
+    fn lookup_sent(
+        &mut self,
+        _engine_send_id: &super::EngineSendId,
+        _target: &super::SentLookupTarget<'_>,
+    ) -> super::SentLookup {
+        super::SentLookup::CannotTell
     }
 }
 
