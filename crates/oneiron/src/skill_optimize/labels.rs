@@ -152,6 +152,9 @@ pub struct JudgeRegrade {
 pub struct JudgeLabelReadPosition {
     pub scope: Scope,
     pub kind_band: u8,
+    #[serde(deserialize_with = "crate::write_envelope::claim_body::RelationshipScope::deserialize")]
+    pub relationship: crate::write_envelope::claim_body::RelationshipScope,
+    pub private: bool,
     pub body_worlds: Vec<EntityId>,
     pub body_facets: Vec<EntityId>,
     pub anchors: GateReadAnchors,
