@@ -175,15 +175,16 @@ impl DecisionProvider for HouseRead {
             Some(admission) => Some((self.reader.generation_reader()?, admission)),
             None => None,
         };
-        // Nonlocal extraction still needs its native admission request.
+        // A configured native reader prepares nonlocal extraction before funding.
         if *oneiron::inference_context::admitted_as(context.purpose)
             == oneiron::llm::CallPurpose::Extraction
             && self.gate.connector.locality != oneiron::ModelLocality::OnDevice
+            && self.native.is_none()
         {
             return None;
         }
         let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
-            self.decide_captured_request(call, generation)
+            self.decide_captured_request(call, generation, context)
         });
         Some(CapturedDecision { result, receipts })
     }
@@ -197,15 +198,16 @@ impl DecisionProvider for HouseRead {
             Some(admission) => Some((self.reader.generation_reader()?, admission)),
             None => None,
         };
-        // Nonlocal extraction still needs its native admission request.
+        // A configured native reader prepares nonlocal extraction before funding.
         if *oneiron::inference_context::admitted_as(context.purpose)
             == oneiron::llm::CallPurpose::Extraction
             && self.gate.connector.locality != oneiron::ModelLocality::OnDevice
+            && self.native.is_none()
         {
             return None;
         }
         let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
-            self.decide_pack_captured_request(pack, generation)
+            self.decide_pack_captured_request(pack, generation, context)
         });
         Some(CapturedDecisionPack { result, receipts })
     }
@@ -255,6 +257,26 @@ impl DecisionProvider for HouseRead {
     }
 }
 
+struct HouseExtractionPreparer<'house, 'context> {
+    house: &'house HouseRead,
+    reader: &'house Arc<crate::models::DecisionReader>,
+    context: &'house DecisionCallContext<'context>,
+}
+
+impl oneiron::llm::decision::DecisionReadPreparer for HouseExtractionPreparer<'_, '_> {
+    fn prepare<'request>(
+        &self,
+        request: &oneiron::llm::LabelReadRequest<'request>,
+    ) -> oneiron::Result<Box<dyn oneiron::llm::decision::PreparedDecisionRead + 'request>> {
+        self.reader.prepare_extraction(
+            request,
+            &self.house.vault,
+            self.context,
+            self.house.gate.connector.locality,
+        )
+    }
+}
+
 impl HouseRead {
     fn decide_captured_request(
         &self,
@@ -263,6 +285,7 @@ impl HouseRead {
             &dyn LabelReadGenerationReader,
             &dyn DecisionGenerationAdmission,
         )>,
+        context: &DecisionCallContext<'_>,
     ) -> oneiron::Result<DecisionReadOutcome<ProviderDecision>> {
         let mut answers = self.decide_pack_captured_request(
             &DecisionPack {
@@ -275,6 +298,7 @@ impl HouseRead {
                 run: call.run,
             },
             generation,
+            context,
         )?;
         answers
             .pop()
@@ -288,17 +312,37 @@ impl HouseRead {
             &dyn LabelReadGenerationReader,
             &dyn DecisionGenerationAdmission,
         )>,
+        context: &DecisionCallContext<'_>,
     ) -> oneiron::Result<Vec<DecisionReadOutcome<ProviderDecision>>> {
-        let read = |provider: DecisionReadProvider<'_>| match generation {
-            Some((native, admission)) => {
-                provider.decide_pack_with_generation(pack, native, admission)
+        let preparer = self
+            .native
+            .as_ref()
+            .filter(|_| {
+                *oneiron::inference_context::admitted_as(context.purpose)
+                    == oneiron::llm::CallPurpose::Extraction
+                    && self.gate.connector.locality != oneiron::ModelLocality::OnDevice
+            })
+            .map(|reader| HouseExtractionPreparer {
+                house: self,
+                reader,
+                context,
+            });
+        let read = |provider: DecisionReadProvider<'_>| {
+            let provider = match &preparer {
+                Some(preparer) => provider.prepared_by(preparer),
+                None => provider,
+            };
+            match generation {
+                Some((native, admission)) => {
+                    provider.decide_pack_with_generation(pack, native, admission)
+                }
+                None => provider.decide_pack(pack).map(|answers| {
+                    answers
+                        .into_iter()
+                        .map(DecisionReadOutcome::Answered)
+                        .collect()
+                }),
             }
-            None => provider.decide_pack(pack).map(|answers| {
-                answers
-                    .into_iter()
-                    .map(DecisionReadOutcome::Answered)
-                    .collect()
-            }),
         };
         if let Some(run) = pack.run {
             let gate = RunHouseGate {
