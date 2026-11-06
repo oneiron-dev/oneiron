@@ -1153,7 +1153,9 @@ async fn execute_agent_verb_row(
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
-/// arm's door future is on the heap, so this one stays small (FIX 12072).
+/// row's arm is its own async function, constructed and boxed in its own
+/// non-inlined function (FIX 19837); this match holds only that boxed handle,
+/// so its frame stays small however large any one row is.
 async fn execute_agent_verb_row_on(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -1166,9 +1168,43 @@ async fn execute_agent_verb_row_on(
         pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
-    result += invalid + 'match tool {\n'
-    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows() if row['name'] != 'ai.anonymous_chat')
+    result += invalid + ('let row = McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold };\n'
+                         'match tool {\n')
+    rows = [row for row in mcp_rows() if row['name'] != 'ai.anonymous_chat']
+    helpers = ''
+    for row in rows:
+        name, method = row['name'], row['name'].replace('.', '_')
+        arm = mcp_input_dispatch(row)
+        prefix, suffix = f'{json.dumps(name)} => {{\n', ' },\n'
+        assert arm.startswith(prefix) and arm.endswith(suffix), f'{name}: an MCP arm is not one block'
+        body = arm[len(prefix):-len(suffix)]
+        result += f'{json.dumps(name)} => boxed_mcp_verb_row_{method}(row).await,\n'
+        # The row's body is unchanged; it runs in its own function on the
+        # same arguments, the ones it does not read named once (FIX 19837).
+        uses_invalid = re.search(r'(?<![\w"])invalid(?![\w"])', body) is not None
+        helpers += (f"#[inline(never)]\nfn boxed_mcp_verb_row_{method}<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {{\nBox::pin(mcp_verb_row_{method}(row))\n}}\n"
+                    f"async fn mcp_verb_row_{method}(row: McpVerbRow<'_>) -> McpVerbRowResult {{\n"
+                    'let McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold } = row;\n'
+                    'let _ = (&server, &tool, &input, &actor, &memory, &surface, &served, &board_hooks, &pre_hooked_fold);\n'
+                    + (invalid if uses_invalid else '') + f'{body} }}\n')
     result += '_ => Err(invalid()), } }\n'
+    result += '''/// What one MCP row's arm returns.
+type McpVerbRowResult = Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError>;
+/// One MCP row's arm, boxed by its own function (FIX 19837).
+type McpVerbRowFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = McpVerbRowResult> + Send + 'a>>;
+/// [`execute_agent_verb_row_on`]'s arguments, moved whole into the one row's arm.
+struct McpVerbRow<'a> {
+    server: &'a Arc<SyncServer>,
+    tool: &'a str,
+    input: Value,
+    actor: &'a McpCallContext,
+    memory: oneiron::Memory<'a>,
+    surface: McpRowSurface,
+    served: &'a mut McpServed,
+    board_hooks: &'a mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
+}
+''' + helpers
     result += '''/// One typed verb result, drained in a single frame.
 fn mcp_agent_verb_output(
         output: impl serde::Serialize,
