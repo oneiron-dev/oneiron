@@ -840,6 +840,7 @@ impl<'a> Exchange<'a> {
                 }
             };
         }
+        body = body.into_spooled(self.vault);
         if let Some(declared) = self
             .elicitation
             .as_ref()

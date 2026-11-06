@@ -62,6 +62,20 @@ impl RawOutboundBody {
         })
     }
 
+    /// Moves byte-backed storage to an anonymous spool when possible.
+    /// Existing file storage is retained. A placement error keeps the original
+    /// bytes, so moving storage cannot refuse an already returned body.
+    #[must_use]
+    pub fn into_spooled(self, vault: &Vault) -> Self {
+        if matches!(self.storage.as_ref(), Storage::File(_)) {
+            return self;
+        }
+        match Self::read_spooled(vault, self.reader()) {
+            Ok(spooled) => spooled,
+            Err(_) => self,
+        }
+    }
+
     /// Clears an already validated JSON reply with the send's own door
     /// value. Unchanged JSON retains its original bytes; changed JSON uses
     /// the same parsed-value comparison and compact encoding as clear_bytes.
