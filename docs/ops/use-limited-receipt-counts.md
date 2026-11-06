@@ -8,9 +8,11 @@ A withheld record must not reappear through its omission metadata:
 
 - `ScopedRead::admit_in` excludes use-limited rows from suppressed counts after
   all existing world, credential, room, device, TASK/facet and countability
-  checks. This fixes tagging receipts without changing a visible read or an
-  ordinary policy-denial count. It also follows the existing generic use-limit
-  predicate for an explicit cooperative-review restriction.
+  checks. Code-memory payload suppression uses this classifier. Tagging turn
+  and mention receipts already report zero omissions and keep doing so.
+  Visible reads and ordinary policy-denial counts are unchanged. The classifier
+  also follows the existing generic use-limit predicate for an explicit
+  cooperative-review restriction.
 - MCP TASK-board omission counts preserve the existing connector and slip
   world/facet checks, then omit a C6-limited row from `scope_omitted`. This uses
   the existing public `Vault::legal_hold_use_limit` door. Like the surrounding

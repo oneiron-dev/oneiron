@@ -5,7 +5,7 @@
 use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// The audience conjunct every admission path applies, over the current
     /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(in crate::claim::scoped_read) fn audience_readable_in(
@@ -79,7 +79,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
             return Ok(false);
@@ -181,9 +181,9 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// [`Self::private_threads_readable_in`] over the row `id` holds in
-    /// `txn`, alone: the bound a door serving rows by record scope (the TURN
-    /// routes) holds a turn's words to (FIX 5652), asking no grant, facet or
-    /// floor of this read. A row with no record has no thread to withhold it.
+    /// `txn`, alone: the one bound the TURN doors hold the owner's read to
+    /// (FIX 5652, 5938), asking no grant, facet or floor of this read. A row
+    /// with no record has no thread to withhold it.
     pub(crate) fn private_threads_admit_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -250,7 +250,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let own = self
             .actor_key

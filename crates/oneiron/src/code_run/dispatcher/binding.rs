@@ -100,6 +100,7 @@ impl<'a> HostSelfDispatcher<'a> {
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
             hook_view: RefCell::new(None),
+            pre_hooked_fold: None,
             parked_hooks: RefCell::new(Vec::new()),
             reader_spawn: None,
             reader_child: None,
@@ -116,6 +117,7 @@ impl<'a> HostSelfDispatcher<'a> {
             read_worlds: Cell::default(),
             caller_task: false,
             repo_review_policy: None,
+            git_door_base: None,
             spawn_capture: spawn_capture::SpawnCapture::default(),
         })
     }
