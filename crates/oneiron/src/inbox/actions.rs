@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::list::NotificationRow;
 use super::notification::NotificationKind;
+use crate::agent_dispatch::{AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER};
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
 use crate::memory::Memory;
@@ -52,9 +53,10 @@ impl Memory<'_> {
     /// The taps `row` offers this caller now: a pending digest settings ask
     /// is accepted or declined and an applied change undone (FIX 5629), a
     /// pending request to join a private thread is approved or denied
-    /// (FIX 6505), and a send that may have gone out is sent again or left
-    /// (FIX 4747). Any other row, and a target that no longer reads or has
-    /// settled, offers none.
+    /// (FIX 6505), and a send that may have gone out, or a call a moved
+    /// agent run's replayed step makes that its earlier machine may have
+    /// made, is sent again or left (FIX 4747). Any other row, and a target
+    /// that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
         match row.kind {
@@ -68,6 +70,9 @@ impl Memory<'_> {
             }
             NotificationKind::Ask if producer == UNCERTAIN_SEND_NOTIFICATION_PRODUCER => {
                 self.uncertain_send_actions(row)
+            }
+            NotificationKind::Ask if producer == AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER => {
+                self.agent_run_effect_actions(row)
             }
             _ => Vec::new(),
         }
@@ -103,6 +108,41 @@ impl Memory<'_> {
                 NotificationAction::new(
                     UNCERTAIN_SEND_ANSWER_VERB,
                     serde_json::json!({ "task_ref": task_ref, "resend": resend }),
+                )
+            })
+            .collect()
+    }
+
+    /// The producer names the run TASK in `source.result` and the effect's
+    /// intent id in `source.event` (FIX 4747 slice 7); the ask is a vault
+    /// owner's, and only an owner's proof answers it. Shown while the effect
+    /// still waits for an answer: make the call again, or leave it.
+    fn agent_run_effect_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some((task, intent)) = crate::agent_dispatch::agent_run_effect_ask_target(&row.source)
+        else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let waits = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| vault.agent_run_effect_awaits_owner_in(&txn, task, &intent));
+        if !matches!(waits, Ok(true)) {
+            return Vec::new();
+        }
+        let task_ref = task.to_hex();
+        [true, false]
+            .into_iter()
+            .map(|resend| {
+                NotificationAction::new(
+                    AGENT_RUN_EFFECT_ANSWER_VERB,
+                    serde_json::json!({
+                        "task_ref": task_ref,
+                        "intent_ref": intent,
+                        "resend": resend,
+                    }),
                 )
             })
             .collect()

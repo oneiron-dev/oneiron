@@ -50,6 +50,12 @@ pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
 /// id (16 bytes).
 pub const AGENT_RUN_TASK: &[u8] = b"oneiron.agent_run_task.v0\0";
 
+/// The connector-send TASK a schedule by an agent run's step creates
+/// (`agent_dispatch::agent_run_send_task_id_in`, FIX 4747 slice 7), so the
+/// step replayed on another machine finds it. Parts: the run's try id (16
+/// bytes), the verb call's invocation (16 bytes), channel, verb, target.
+pub const AGENT_RUN_SEND_TASK: &[u8] = b"oneiron.agent_run_send_task.v0\0";
+
 /// The embedded default owner actor (`vault::embedded_owner_actor_id`, ONE-1441
 /// WIRE-P1). No parts. It must stay the same text as the domain behind
 /// `oneiron_vault_contract::embedded_owner_holder_hex`, the supervisor's copy

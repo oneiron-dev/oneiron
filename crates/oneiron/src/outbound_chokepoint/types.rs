@@ -56,6 +56,11 @@ pub(crate) struct OutboundEffectResult {
     /// instant, Unix seconds, its windows all open again: nothing was
     /// recorded, charged or sent.
     pub(crate) paced_until: Option<u64>,
+    /// FIX 4747 slice 7: why an agent run's effect did not go at its
+    /// admission (its run stood down, an earlier executor may have made it,
+    /// the owner left it, or its run's marks are full): nothing was
+    /// recorded, charged or sent. `None` for every other result.
+    pub(crate) agent_run_effect: Option<crate::agent_dispatch::AgentRunEffectStop>,
 }
 
 impl OutboundEffectResult {

@@ -62,8 +62,25 @@ pub struct PreparedToolCall {
     /// the request sealed. Set only from the pending call's trusted flag,
     /// never from the request's own arguments or headers.
     keeps_no_record: bool,
+    /// The agent run try whose step makes the call (FIX 4747 slice 7): its
+    /// admission marks the effect on that run's TASK, and its transport
+    /// starts only while this machine holds the run. Set only from the
+    /// pending call's caller binding, never frozen or sent.
+    agent_run: Option<crate::attempt_queue::AttemptId>,
 }
 impl PreparedToolCall {
+    /// This call as one the agent run try `run` makes, when it names one
+    /// (FIX 4747 slice 7).
+    #[must_use]
+    pub(crate) fn for_agent_run(mut self, run: Option<crate::attempt_queue::AttemptId>) -> Self {
+        self.agent_run = run;
+        self
+    }
+    /// The agent run try whose step makes the call, if any (FIX 4747 slice
+    /// 7).
+    pub(crate) const fn agent_run(&self) -> Option<crate::attempt_queue::AttemptId> {
+        self.agent_run
+    }
     /// This call as an off-record caller's, when `off_record` says so (FIX
     /// 9372): its admitted ledger row keeps the request sealed.
     #[must_use]
@@ -151,6 +168,7 @@ impl PreparedToolCall {
             payload: FrozenMcpPayload::new(bytes.to_vec()),
             frozen,
             keeps_no_record: false,
+            agent_run: None,
         })
     }
     #[cfg(test)]
@@ -493,6 +511,7 @@ pub fn prepare_tool_call(
         payload: FrozenMcpPayload::new(bytes),
         frozen,
         keeps_no_record: false,
+        agent_run: None,
     })
 }
 /// Decode a durable payload before recovery uses its manifest identity.

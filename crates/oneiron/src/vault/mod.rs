@@ -211,6 +211,11 @@ pub struct Vault {
     /// took at its claim, by attempt: what the run's step commits and
     /// outbound effects meet. In memory only, never persisted.
     pub(crate) agent_run_fences: std::sync::Mutex<crate::agent_dispatch::AgentRunFences>,
+    /// FIX 4747 slice 7: the run TASK and try of each outbound effect an
+    /// agent run's step started on this process, by intent id, until its
+    /// ledger row settles for good: the writer that settles the row sets the
+    /// run TASK's mark settled. In memory only, never persisted.
+    pub(crate) agent_run_effect_sites: std::sync::Mutex<crate::agent_dispatch::AgentRunEffectSites>,
     /// This device's home search, lent by its own sync connection
     /// ([`crate::sync::HomeSearch`], OF-534). A `Weak`, so a dropped
     /// connection routes nothing; the slot keeps the mode that connection

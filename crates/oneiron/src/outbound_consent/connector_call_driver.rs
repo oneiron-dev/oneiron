@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use crate::Vault;
+use crate::agent_dispatch::AgentRunEffectStop;
 use crate::connector_key::{
     CONNECTOR_ISSUER_HOLD_REASON, ConnectorCallRoute, ConnectorKeyRecord, ConnectorScopeEvidence,
     ScopeExceedCall, SlateDataClass, SlateDisposition, canonical_scoped_server_segment,
@@ -85,6 +86,11 @@ pub(super) enum Step {
         next_eligible_at: u64,
         reasons: Vec<String>,
     },
+    /// FIX 4747 slice 7: an agent run's replayed step makes a call an
+    /// earlier executor of its run may have made: unsent, it waits for the
+    /// owner's answer to the ask its admission raised, and the settler's
+    /// pass drives it again then. The call's own owner ask is not queued.
+    AwaitsRunEffectAnswer { reasons: Vec<String> },
 }
 
 /// What a held `self.use` call's resumed send came to, as its host saw it
@@ -136,7 +142,8 @@ impl Step {
             | Self::Retryable { reasons, .. }
             | Self::Unsettled { reasons, .. }
             | Self::NotDelivered { reasons, .. }
-            | Self::Paced { reasons, .. } => reasons,
+            | Self::Paced { reasons, .. }
+            | Self::AwaitsRunEffectAnswer { reasons } => reasons,
             Self::Delivered { .. } | Self::AwaitingInput { .. } => Vec::new(),
         }
     }
@@ -516,6 +523,15 @@ impl Vault {
                     approval_digest: None,
                 }
             }
+            // FIX 4747 slice 7: the call waits, held, for the owner's answer
+            // to the run effect ask; it asks nothing of its own, and the
+            // answer wakes the settler, whose pass drives it again.
+            Step::AwaitsRunEffectAnswer { reasons } => ConnectorCallOutcome::Held {
+                call_ref: keep(call_ref, &pending)?,
+                decision_ref: None,
+                reasons,
+                approval_digest: None,
+            },
             // The ledger stops the send, so nothing resends it, and the call
             // reads its definite non-delivery at once: its caller re-issues
             // it against the connector as now installed (FIX 2553).
@@ -692,22 +708,41 @@ impl Vault {
             host.abandon_awaiting_input(&left.handle);
         }
         let sent = prepared.call().clone();
-        // An off-record caller's admitted request stays sealed in the ledger (FIX 9372).
-        let dispatch = prepared.keeping_no_record(pending.off_record).execute(
-            self,
-            &authority,
-            grant_id,
-            &grant,
-            &pending.principal_ref,
-            pending.attempt_id,
-            pending.call_seq,
-            now_ms(),
-            &mut *host,
-        )?;
+        // An off-record caller's admitted request stays sealed in the ledger
+        // (FIX 9372). An agent run's call is marked on its run TASK and sends
+        // only while this machine holds the run (FIX 4747 slice 7).
+        let dispatch = prepared
+            .keeping_no_record(pending.off_record)
+            .for_agent_run(pending.agent_run)
+            .execute(
+                self,
+                &authority,
+                grant_id,
+                &grant,
+                &pending.principal_ref,
+                pending.attempt_id,
+                pending.call_seq,
+                now_ms(),
+                &mut *host,
+            )?;
         // FIX 4747 slice 5: the run that made the call no longer runs here;
         // nothing went, and the call names why.
         if dispatch.agent_run_stood_down {
             return Ok(refused(crate::agent_dispatch::AGENT_RUN_STOOD_DOWN));
+        }
+        // FIX 4747 slice 7: the admission stopped it for its run. A call that
+        // waits for the owner's answer holds; any other stop is the call's
+        // typed answer to the step: its run moved, the owner left it (it may
+        // have happened elsewhere), or its run's marks are full.
+        if let Some(stop) = dispatch.agent_run_effect {
+            return Ok(match stop {
+                AgentRunEffectStop::AwaitsOwner => Step::AwaitsRunEffectAnswer {
+                    reasons: vec![stop.reason().to_owned()],
+                },
+                AgentRunEffectStop::StoodDown
+                | AgentRunEffectStop::LeftByOwner
+                | AgentRunEffectStop::MarksFull => refused(stop.reason()),
+            });
         }
         if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
             *scope_evidence = crate::connector_key::connector_scope_evidence(

@@ -123,11 +123,12 @@ impl AgentDispatcher<'_> {
         // FIX 4747: the run's executor lease, taken in this write. A run
         // another machine holds or settled, or whose run TASK does not read,
         // ends unrun, with no fence and no change to its run TASK; a closing
-        // process claims nothing and the row stays queued.
+        // process claims nothing and the row stays queued, as does a run
+        // released for the vault's cloud home within its grace (slice 7).
         let fence = match take_agent_run_lease_in_txn(self.vault, &mut txn, &row, now)? {
             AgentRunLeaseTake::NoRunTask => None,
             AgentRunLeaseTake::Taken(fence) => Some(fence),
-            AgentRunLeaseTake::Closing => return Ok(None),
+            AgentRunLeaseTake::Closing | AgentRunLeaseTake::LeftForCloud => return Ok(None),
             AgentRunLeaseTake::HeldElsewhere
             | AgentRunLeaseTake::Settled
             | AgentRunLeaseTake::Unreadable => {

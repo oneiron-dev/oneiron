@@ -118,6 +118,7 @@ fn paced_result(intent_id: IntentId, next_eligible_at: u64, reason: &str) -> Out
         ask_consent: None,
         approval_actor: None,
         paced_until: Some(next_eligible_at),
+        agent_run_effect: None,
     }
 }
 

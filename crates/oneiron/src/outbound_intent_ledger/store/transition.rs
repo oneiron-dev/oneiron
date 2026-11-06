@@ -72,5 +72,7 @@ pub(super) fn transition_record_in_txn(
         crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, wtxn, &id)?;
     }
     super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
+    // FIX 4747 slice 7: an agent run's effect mark settles in this writer.
+    crate::agent_dispatch::settle_agent_run_effect_mark_in_txn(vault, wtxn, &record);
     Ok(Transitioned::Moved(record))
 }
