@@ -1778,6 +1778,22 @@ export class Oneiron {
         pick: (input: Facade.EvalLabelPickRequest): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsLabelsPick(input) as Facade.EvalCase),
       },
     },
+    drafters: {
+      /** The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible. */
+      list: (input: Facade.DrafterListRequest): Facade.DrafterVersionView[] => this.#call(() => this.#client.vaultDraftersList(input) as Facade.DrafterVersionView[]),
+      /** An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read. */
+      list_as: (input: Facade.DrafterListRequest): Facade.DrafterVersionView[] => this.#call(() => this.#client.vaultDraftersListAs(input) as Facade.DrafterVersionView[]),
+      /** The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor. */
+      status: (input: Facade.DrafterStatusRequest): Facade.DrafterStatus => this.#call(() => this.#client.vaultDraftersStatus(input) as Facade.DrafterStatus),
+      policy: {
+        /** The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock. */
+        set: (input: Facade.DrafterPolicySetRequest): Facade.DrafterPolicy => this.#call(() => this.#client.vaultDraftersPolicySet(input) as Facade.DrafterPolicy),
+      },
+      /** The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back. */
+      revert: (input: Facade.DrafterRevertRequest): Facade.DrafterRevertReceipt => this.#call(() => this.#client.vaultDraftersRevert(input) as Facade.DrafterRevertReceipt),
+      /** An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert. */
+      revert_as: (input: Facade.DrafterRevertRequest): Facade.DrafterRevertReceipt => this.#call(() => this.#client.vaultDraftersRevertAs(input) as Facade.DrafterRevertReceipt),
+    },
     roots: {
       requests: {
         /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
