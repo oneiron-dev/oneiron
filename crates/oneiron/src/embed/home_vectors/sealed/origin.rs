@@ -185,6 +185,25 @@ impl Vault {
         self.open_home_claim_vector(origin, delivery, &signed.copy)
     }
 
+    /// Opens optional wire copies against the original envelope, before its
+    /// payload is translated for native import. Malformed copies are a miss.
+    pub(crate) fn prepare_relayed_home_claim_copy_bytes(
+        &self,
+        raw_peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        bytes: &[u8],
+    ) -> Vec<std::sync::Arc<super::super::retained_copy::PreparedHomeClaimCopy>> {
+        if bytes.is_empty() {
+            return Vec::new();
+        }
+        let Ok(copies) = rmp_serde::from_slice::<Vec<SenderSignedHomeClaimVector>>(bytes) else {
+            tracing::debug!("derived home CLAIM copy bytes did not decode; raw import unchanged");
+            return Vec::new();
+        };
+        self.prepare_relayed_home_claim_delivery(raw_peer, delivery, &copies)
+            .into_copies_for(self, raw_peer, delivery)
+    }
+
     /// Prepares optional copies without lending their sender proof to raw
     /// import. Missing or invalid copies never refuse the canonical delivery.
     pub(crate) fn prepare_relayed_home_claim_delivery(

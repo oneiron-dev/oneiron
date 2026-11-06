@@ -11,6 +11,8 @@ use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
 
+pub(in crate::sync::client) type HomeClaimCopies = Vec<Arc<PreparedHomeClaimCopy>>;
+
 /// Keeps the original sender and actual native leases through deferral and heal.
 /// Dropping this unacknowledged update releases its holders; it is not a receipt.
 #[derive(Clone)]
