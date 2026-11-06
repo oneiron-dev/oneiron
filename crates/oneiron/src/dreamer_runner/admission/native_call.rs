@@ -34,6 +34,7 @@ struct NativeCallObligation {
     gross_coverage: NativeGrossCoverage,
     net_response: NativeNetResponse,
     net_coverage: NativeNetCoverage,
+    house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +138,7 @@ pub(crate) fn retain_native_call_in_txn(
         gross_coverage: NativeGrossCoverage::Unknown,
         net_response: NativeNetResponse::Unknown,
         net_coverage: NativeNetCoverage::Unknown,
+        house_completions: None,
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
@@ -146,6 +148,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.gross_coverage = NativeGrossCoverage::Unknown;
         original.net_response = NativeNetResponse::Unknown;
         original.net_coverage = NativeNetCoverage::Unknown;
+        original.house_completions = None;
         if original != row {
             return Err(invalid_dreamer_runner(
                 "native call original admission differs",
@@ -154,6 +157,29 @@ pub(crate) fn retain_native_call_in_txn(
         return Ok(());
     }
     CALLS.put(&vault.store, wtxn, &admitted.origin, &row)
+}
+
+/// Keep the original House read's request/response counters even when its
+/// unchanged logical result is an error. A partial prefix is never an invoice.
+pub(crate) fn record_native_house_completions_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: AdmittedCallId,
+    completions: &[crate::dreamer_wake::DecisionCompletionObservation],
+) -> Result<()> {
+    let Some(mut row) = CALLS.get(&vault.store, &*wtxn, &origin)? else {
+        return Err(invalid_dreamer_runner(
+            "native call has no original admission",
+        ));
+    };
+    match &row.house_completions {
+        None => {
+            row.house_completions = Some(completions.to_vec());
+            CALLS.put(&vault.store, wtxn, &origin, &row)
+        }
+        Some(original) if original == completions => Ok(()),
+        _ => Err(invalid_dreamer_runner("native House observations differ")),
+    }
 }
 
 /// Keep the actual response quantity at its native producer, before schema
