@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
+mod credential_serialized;
+
 use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
