@@ -43,6 +43,9 @@ pub(crate) enum ErasablePurpose {
     HomeHandoff,
     /// One federation grant's scope opening: parent = the grant.
     GrantScope,
+    /// One sealed artifact of a vault's own drafter (FIX 12569): parent =
+    /// the drafter version, incarnation = derived from the artifact's id.
+    DrafterArtifact,
 }
 
 impl ErasablePurpose {
@@ -50,6 +53,7 @@ impl ErasablePurpose {
         match self {
             Self::HomeHandoff => 1,
             Self::GrantScope => 2,
+            Self::DrafterArtifact => 3,
         }
     }
 
@@ -57,6 +61,7 @@ impl ErasablePurpose {
         match code {
             1 => Some(Self::HomeHandoff),
             2 => Some(Self::GrantScope),
+            3 => Some(Self::DrafterArtifact),
             _ => None,
         }
     }
