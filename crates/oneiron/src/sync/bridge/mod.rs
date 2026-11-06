@@ -23,7 +23,9 @@ mod childof;
 pub(in crate::sync) use childof::{defer_child_of, settle_child_of};
 mod companion_identity;
 mod edges;
+pub(in crate::sync) use edges::{EdgeImportEffects, stage_isolated_edges_in_txn};
 mod entities;
+pub(in crate::sync) use entities::{EntityImportEffects, stage_isolated_entities_in_txn};
 mod observers;
 mod provenance;
 pub use provenance::RevisionEvent;
@@ -44,6 +46,7 @@ pub(in crate::sync) use regenerates::{
 pub(in crate::sync) mod shell_pin;
 mod task_fact_edges;
 mod tombstones;
+pub(in crate::sync) use tombstones::{TombstoneEffects, stage_tombstones_in_txn};
 
 // it resolves through this import, so the moved body stays byte-identical.
 
