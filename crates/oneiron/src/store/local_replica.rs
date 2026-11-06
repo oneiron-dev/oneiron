@@ -14,7 +14,12 @@
 //! revisions and snapshots, code memory, receipt archive, birth custody, hub
 //! packages and refinements), gate decisions, task mirror, scope stamp, VAD
 //! metadata and project-room indexes stay in place, and promotion brings its
-//! rows back beside them.
+//! rows back beside them. The owner's discard of a world copy
+//! ([`KeepControls::release_local_members`], FIX 14534) also takes each
+//! removed member's owned payload: its entity document and typed body, a
+//! NOTE's text slots, review workflow and deck outline, a BLOB_ARTIFACT's
+//! retained edit proposals, a CLAIM's Gate decisions (to their skeletons)
+//! and tray row, and its read caches (`member_removal::discard_owned_payload`).
 //! [`purge_left_shared_env_in_txn`] empties a left shared vault's whole
 //! environment the same way (OF-158).
 //!
@@ -31,9 +36,11 @@
 mod left_env;
 mod member_removal;
 
+pub(crate) use member_removal::discard_bundle_payload_in_txn;
+
 #[allow(unused_imports, reason = "L03's OF-158 leave calls these")]
 pub(crate) use left_env::{LEFT_ENV_KEPT_SAMPLE, LeftEnvPurge, purge_left_shared_env_in_txn};
-use member_removal::remove_member;
+use member_removal::{discard_owned_payload, remove_member};
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Bound;
@@ -122,8 +129,13 @@ pub(crate) struct KeepControls {
     /// NOTE requests, with that work and every edge they touch: the owner's
     /// discard of a world copy (FIX 14534, Engine 11-06 08:34). A pending
     /// tombstone, or a delete this vault's markers record, still keeps its
-    /// member, and every other keep rule holds.
+    /// member, and every other keep rule holds. Each member it removes takes
+    /// its document payload with it (call 4 = A).
     pub(crate) release_local_members: bool,
+    /// Keep each removed member's own `FacetOf` edge, the birth facet its
+    /// retained scope stamp names, so the row is admitted again against that
+    /// stamp when its world comes back (FIX 14534).
+    pub(crate) keep_birth_facets: bool,
     /// Most entity rows one call removes.
     pub(crate) max_removals: usize,
 }
@@ -137,6 +149,7 @@ impl Default for KeepControls {
             defer_on_queued_writes: true,
             defer_on_local_members: false,
             release_local_members: false,
+            keep_birth_facets: false,
             max_removals: 1024,
         }
     }
@@ -322,9 +335,20 @@ fn tear_members(
     crate::tagging::demote_tags_in_txn(store, txn, &removal.gone, &removal.partial)?;
     crate::dreamer_wake::demote_in_txn(store, txn, &removal.gone)?;
     let edges = doc.get_map("edges");
+    if keep.release_local_members {
+        discard_owned_payload(store, txn, &removal.order)?;
+    }
     for id in &removal.order {
         let released = members.released.contains(id);
-        remove_member(store, txn, &edges, id, released, report)?;
+        remove_member(
+            store,
+            txn,
+            &edges,
+            id,
+            released,
+            keep.keep_birth_facets,
+            report,
+        )?;
         if released {
             release_local_work(store, txn, window, id)?;
         }

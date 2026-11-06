@@ -291,6 +291,12 @@ side_tables! {
     /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
+    /// Which machine wrote the MESSAGE row this install stores (FIX 12113): the row's BLAKE3
+    /// (32 bytes) when this install's local put wrote it, or the writer's whole proof (the row's
+    /// BLAKE3, the writer machine and its Ed25519 signature, 112 bytes) when the own-device lane
+    /// admitted it. The reverse scan vouches for a row beside it only while its bytes are the
+    /// ones named here. Runtime: never imaged, a restore drops it. Key: hex32 (MESSAGE id).
+    SYNC_MESSAGE_WRITER: SyncState b"mw:" Raw;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
@@ -314,10 +320,11 @@ side_tables! {
     /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
     /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
     OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
-    /// The bytes a federation peer's import brought for one row of a window whose door judges a
-    /// peer's row apart from this vault's own (Docs Q04): their blake3 digest (32 bytes), recorded
-    /// before the import lands them. Local to this vault, never replicated. Key: hex32 (entity
-    /// id) ":" window key.
+    /// Latest peer carrier's wire digest (32 bytes), plus an ASSET logical body digest (32).
+    /// A distinct still-canonical peer ASSET entry (wire + logical, 64 bytes) precedes it:
+    /// pending replacement never erases the stored row's origin. Logical identity survives
+    /// native inline/file/reference echoes; each wire digest binds exact carrier cleanup.
+    /// Local to this vault, never replicated. Key: hex32 (entity id) ":" window key.
     SYNC_PEER_ORIGIN: SyncState b"po:" Raw;
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
@@ -554,6 +561,10 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
+    /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before
+    /// its window brings it back. Key: hex32 (entity id).
+    SYNC_DISCARDED_WORLD_ROW: SyncState b"wd:e:" Raw;
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
     /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
