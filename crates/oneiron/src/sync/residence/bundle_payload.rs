@@ -20,7 +20,9 @@
 //!   those of a world it knows was deleted here or is no longer eligible for
 //!   this holder ([`SEALED_BUNDLE_CARRY_FILTER`]), read here or not: it knows a
 //!   section's world from a key it holds, or from the pad object's index (FIX
-//!   3359). A section of a world it does not know rides on.
+//!   3359). A section of a world it does not know rides on. So does a section
+//!   it reads that does not open, decode or merge here, which the upload
+//!   lists for the owner to repair (FIX 19525).
 //! - A take opens the sections this machine may read and merges each window into
 //!   its mirror. It never reads the base section: base syncs live between the
 //!   owner's machines. A kit restore reads it all, on an install with no machine
@@ -51,8 +53,9 @@ use crate::sync::window::{
 };
 use crate::world_keys::{
     BundleCarry, KitConfirmation, OpenedBundleSection, OpenedVaultBundle, RecoveryRootSeed,
-    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport, WorldKey,
-    pad_body_world, refused, world_keys_destroyed_in_txn,
+    RootRestore, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, UnmergedSection,
+    UnmergedStage, WorldCapsuleImport, WorldKey, pad_body_world, refused,
+    world_keys_destroyed_in_txn,
 };
 
 mod bodies;
@@ -153,6 +156,15 @@ impl WindowManager {
     /// its provenance. `materialize` is a full machine's (effective residence
     /// mode All): the rows of each window `latest` carries land here too, as
     /// its take lands them (FIX 4788).
+    ///
+    /// A section of `latest` this machine may read that does not open, decode
+    /// or merge here is carried unchanged, as one it may not read is, so no
+    /// history of it is lost and no world's publication stops (Engine 22:38,
+    /// FIX 19525). The upload's `unmerged_sections` shows the owner each one:
+    /// the world, the window whose merge failed, the stage and the error's
+    /// kind. The erased-actor cleanup every fresh section takes
+    /// (`reverse_rematerialize_for_sealing`) did not run on it; the owner
+    /// repairs it.
     pub fn assemble_sealed_bundle(
         &self,
         slot: u64,
@@ -172,16 +184,29 @@ impl WindowManager {
             None => Vec::new(),
         };
         let mut fresh = Vec::new();
+        let mut unmerged_sections = Vec::new();
         for &world in &eligible {
-            // A world this machine does not read now, or does not hold whole,
-            // keeps the section it has.
+            // A world this machine does not read now keeps the section it has.
             if vault.world_key(world).is_err() {
                 continue;
             }
             let opened = latest.as_ref().map(|(opened, _)| opened);
-            let Some(held) = self.complete_source(world, &windows, opened, &keys, materialize)
-            else {
-                continue;
+            // So does one whose section does not merge here: it rides on
+            // unchanged, and the owner is shown it (FIX 19525).
+            let held = match self.complete_source(world, &windows, opened, &keys, materialize) {
+                Ok(held) => held,
+                Err(unmerged) => {
+                    tracing::warn!(
+                        world = %world.to_hex(),
+                        window = unmerged.window.as_deref(),
+                        stage = ?unmerged.stage,
+                        kind = ?unmerged.kind,
+                        "a readable world section did not merge here: it rides on unchanged, \
+                         and the erased-actor cleanup did not run on it"
+                    );
+                    unmerged_sections.push(unmerged);
+                    continue;
+                }
             };
             let mut snapshots = Vec::new();
             for window in &held {
@@ -239,7 +264,10 @@ impl WindowManager {
             }
             carry.carried_authority.push(capsule);
         }
-        vault.seal_vault_bundle_carrying(slot, holder, &base, &worlds, &carried, &carry)
+        let mut upload =
+            vault.seal_vault_bundle_carrying(slot, holder, &base, &worlds, &carried, &carry)?;
+        upload.unmerged_sections = unmerged_sections;
+        Ok(upload)
     }
 
     /// Takes `bundle` and its pad object in, read from `holder`: opens every
@@ -382,9 +410,12 @@ impl WindowManager {
     /// an opened-item machine seals what it holds whole. With `materialize`
     /// (a full machine) each window's rows land here too, merged or already
     /// held (FIX 4788); a window whose rows do not land stays in its mirror,
-    /// as an opened-item machine keeps them all, and still rides. `None` when
-    /// that section does not open, decode or merge here: it rides on
-    /// unchanged.
+    /// as an opened-item machine keeps them all, and still rides. When that
+    /// section does not open, decode or merge here, why it stopped (FIX
+    /// 19525): the world, the window whose merge failed, the stage and the
+    /// error's kind, never its message. The caller then carries the section
+    /// unchanged and shows it to the owner to repair; a window merged before
+    /// the failure stays merged in its mirror.
     fn complete_source(
         &self,
         world: EntityId,
@@ -392,20 +423,23 @@ impl WindowManager {
         latest: Option<&OpenedVaultBundle>,
         keys: &[WorldKey],
         materialize: bool,
-    ) -> Option<Vec<WindowKey>> {
+    ) -> std::result::Result<Vec<WindowKey>, UnmergedSection> {
         let mut held: Vec<WindowKey> = windows
             .iter()
             .filter(|window| window.world() == Some(world))
             .cloned()
             .collect();
         let Some(latest) = latest else {
-            return Some(held);
+            return Ok(held);
         };
         for key in keys.iter().filter(|key| key.id().world == world) {
-            let Some(section) = latest.open_section(key).ok()? else {
-                continue;
+            let section = match latest.open_section(key) {
+                Ok(Some(section)) => section,
+                Ok(None) => continue,
+                Err(error) => return Err(unmerged(world, None, UnmergedStage::Open, &error)),
             };
-            let (carried, _) = decode_world_section(&section.payload, world).ok()?;
+            let (carried, _) = decode_world_section(&section.payload, world)
+                .map_err(|error| unmerged(world, None, UnmergedStage::Decode, &error))?;
             for (window, snapshot) in carried {
                 let landed = materialize
                     && self
@@ -413,14 +447,16 @@ impl WindowManager {
                         .is_ok();
                 if !landed {
                     self.merge_bundle_mirror(world, &window, &snapshot, false)
-                        .ok()?;
+                        .map_err(|error| {
+                            unmerged(world, Some(&window), UnmergedStage::Merge, &error)
+                        })?;
                 }
                 if !held.contains(&window) {
                     held.push(window);
                 }
             }
         }
-        Some(held)
+        Ok(held)
     }
 
     /// Merges each window of an opened world `section` into its mirror,
@@ -538,6 +574,23 @@ impl WindowManager {
             return Ok(None);
         };
         without_key_rows(snapshot).map(Some)
+    }
+}
+
+/// Why `world`'s readable section stopped at `stage`, at `window` when one
+/// window's merge failed (FIX 19525): the error's kind alone, since its
+/// message may quote what the section holds.
+fn unmerged(
+    world: EntityId,
+    window: Option<&WindowKey>,
+    stage: UnmergedStage,
+    error: &Error,
+) -> UnmergedSection {
+    UnmergedSection {
+        world,
+        window: window.map(|window| window.as_str().to_owned()),
+        stage,
+        kind: error.kind(),
     }
 }
 

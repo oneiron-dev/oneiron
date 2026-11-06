@@ -1993,7 +1993,11 @@ granted. The answer lists by generation what was `offered`, what is `usable` her
 bundle upkeep last did on this install, each part with its time:
 
 - `relay`: the last relay that reached the home, and what it moved. A tick that did not reach the
-  home changes nothing here.
+  home changes nothing here. `unmerged_sections` lists each world section this install may read
+  that its last upload carried unchanged because it did not open, decode or merge here: the
+  world, the window whose merge failed, the stage and the error's kind. The erased-actor cleanup
+  did not run on that section. The upload keeps the section and still publishes; the section is
+  yours to repair.
 - `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
   counted them.
 - `relay_failure`: the last relay that failed, and its error.

@@ -25,7 +25,9 @@ use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::sync::client::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
 use oneiron::sync::residence::{grant_local_sealed_pad_access_with_kit, sealed_generation_hex};
-use oneiron::world_keys::{PadAdmissionTarget, RecoveryRootSeed, SealedBundleGeneration};
+use oneiron::world_keys::{
+    PadAdmissionTarget, RecoveryRootSeed, SealedBundleGeneration, UnmergedSection,
+};
 use serde::{Deserialize, Serialize};
 
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
@@ -259,6 +261,12 @@ struct RelayView {
     /// Worlds whose last taken/published capsule is sealed to no recovery root
     /// pinned here. Empty when no root is pinned or neither take nor publication occurred.
     awaiting_reader: Vec<String>,
+    /// Readable world sections the last assembled upload carries unchanged because
+    /// they did not open, decode or merge here (FIX 19525): each names its world, the
+    /// window whose merge failed, the stage, the error's kind and that the erased-actor
+    /// cleanup did not run on it. Left out when there is none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unmerged_sections: Vec<UnmergedSection>,
     /// Erased worlds and hard-erased keys stripped from the kept pad objects.
     erased: usize,
     /// Grants this machine sealed for a late joiner that the home took.
@@ -341,6 +349,7 @@ fn relay_views(observation: Option<SealedBundleRelayObservation>) -> RelayViews 
                     .iter()
                     .map(|world| world.to_hex())
                     .collect(),
+                unmerged_sections: relay.unmerged_sections,
                 erased: relay.erased,
                 offered: relay.offered,
             },

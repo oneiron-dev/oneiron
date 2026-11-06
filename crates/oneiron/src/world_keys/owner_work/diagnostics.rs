@@ -18,8 +18,9 @@
 //!   its known profile, what this install's relay last saw when it tried to
 //!   reach that home and of the home's newest generation's outer capsules,
 //!   the worlds whose authority capsule there awaits a reader to seal it to
-//!   the root pinned now (FIX 4496), and the exact attempt it persisted and
-//!   has not resolved.
+//!   the root pinned now (FIX 4496), each section of that generation its
+//!   upload carries unchanged because it did not open, decode or merge here
+//!   (FIX 19525), and the exact attempt it persisted and has not resolved.
 //!
 //! Only the executor observes its own work: any other install answers that
 //! the executor's observation is unavailable here. Pending and progress stay
@@ -34,6 +35,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::world_keys::UnmergedSection;
 use crate::{EntityId, Vault};
 
 use super::DeviceSyncStart;
@@ -344,6 +346,13 @@ pub struct PublishObserved {
     /// 12417). Empty when the pass assembled no upload or sealed every world.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub incomplete_authority: Vec<EntityId>,
+    /// Each section of the home's newest generation that this pass's upload
+    /// carries unchanged because it did not open, decode or merge here (FIX
+    /// 19525): the erased-actor cleanup did not run on it, and the owner
+    /// repairs it. Empty when the pass assembled no upload or merged every
+    /// section it may read.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unmerged_sections: Vec<UnmergedSection>,
 }
 
 /// The exact attempt an executor persisted before its commit and has not

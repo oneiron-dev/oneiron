@@ -516,6 +516,9 @@ impl SlotRelay<'_> {
                     return Err(storage(error));
                 }
             };
+            // The owner sees each readable section this upload carries
+            // unmerged (FIX 19525) once it is assembled, before its commit.
+            relay.unmerged_sections = upload.unmerged_sections;
             let generation = upload.bundle.generation();
             let staged = put_object(
                 rpc,

@@ -41,7 +41,9 @@ use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::SealedBundleObject;
 use crate::sync::transport::TransportError;
-use crate::world_keys::{LatestRead, PublishObserved, PublishReach, sealed_bundle_slot};
+use crate::world_keys::{
+    LatestRead, PublishObserved, PublishReach, SealedVaultUpload, sealed_bundle_slot,
+};
 use crate::{EntityId, Vault};
 
 /// When a publication's request is enacted (CALLS
@@ -72,21 +74,25 @@ pub(super) async fn publish_asked(manager: &Arc<WindowManager>, config: &SyncCli
     }
 }
 
-/// Keeps what this pass saw for `request` (FIX 4784, 4785).
+/// Keeps what this pass saw for `request` (FIX 4784, 4785), with what the
+/// `upload` it assembled, if any, could not seal fresh (FIX 12417) or merge
+/// (FIX 19525).
 fn observe(
     vault: &Vault,
     request: AuthorityEntryHash,
     home: Option<EntityId>,
     reach: PublishReach,
     latest: LatestRead,
-    incomplete_authority: Vec<EntityId>,
+    upload: Option<&SealedVaultUpload>,
 ) {
     let observed = PublishObserved {
         at: vault.store.clock.now_recorded_at(),
         home,
         reach,
         latest,
-        incomplete_authority,
+        incomplete_authority: upload
+            .map_or_else(Vec::new, |upload| upload.incomplete_authority.clone()),
+        unmerged_sections: upload.map_or_else(Vec::new, |upload| upload.unmerged_sections.clone()),
     };
     vault.observe_bundle_publication(request, observed);
 }
@@ -94,14 +100,7 @@ fn observe(
 /// Keeps `reach`, with no home and nothing read, for every request asked.
 fn observe_all(vault: &Vault, asked: &[(AuthorityEntryHash, EntityId)], reach: PublishReach) {
     for (request, _) in asked {
-        observe(
-            vault,
-            *request,
-            None,
-            reach,
-            LatestRead::NotRead,
-            Vec::new(),
-        );
+        observe(vault, *request, None, reach, LatestRead::NotRead, None);
     }
 }
 
@@ -151,7 +150,7 @@ async fn publish_all(
                 Some(home),
                 PublishReach::OtherHome,
                 LatestRead::NotRead,
-                Vec::new(),
+                None,
             );
             continue;
         }
@@ -161,7 +160,7 @@ async fn publish_all(
             Some(home),
             PublishReach::Reached,
             LatestRead::NotRead,
-            Vec::new(),
+            None,
         );
         publish_one(manager, &mut rpc, request, home, materialize).await?;
     }
@@ -223,7 +222,7 @@ async fn publish_one(
         Some(home),
         PublishReach::Reached,
         read.clone(),
-        Vec::new(),
+        None,
     );
     if named {
         return enact(manager, request).await;
@@ -258,14 +257,15 @@ async fn publish_one(
             return Err(storage(error));
         }
     };
-    // The owner sees each world this upload could not seal fresh (FIX 12417).
+    // The owner sees each world this upload could not seal fresh (FIX 12417),
+    // and each readable section it carries unmerged (FIX 19525).
     observe(
         vault,
         request,
         Some(home),
         PublishReach::Reached,
         read,
-        upload.incomplete_authority.clone(),
+        Some(&upload),
     );
     let generation = upload.bundle.generation();
     let staged = put_object(
