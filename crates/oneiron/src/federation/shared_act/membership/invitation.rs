@@ -154,7 +154,7 @@ impl Vault {
                 txn,
                 &key(INVITATION_KEY_PREFIX, &format!("{}:{id}", invitee.to_hex())),
             )?
-            .map(InvitationKeyBinding::decode)
+            .map(|row| InvitationKeyBinding::decode(&row))
             .transpose()
     }
     /// Records `binding` as the key `invitation`'s slips bind, replacing any
