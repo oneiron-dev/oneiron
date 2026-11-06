@@ -16,6 +16,7 @@ mod defaults;
 mod mode;
 mod routes;
 mod usage;
+pub(crate) use usage::NativeUsageProducer;
 pub use usage::VaultUsage;
 mod seat_helpers;
 mod seat_host;
