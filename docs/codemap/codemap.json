@@ -15030,7 +15030,7 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 10,
       "re-export": 4,
@@ -15108,13 +15108,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/weave_digest/loop_decisions.rs",
      "purpose": "A saved weave period's loop-decision rows (OF-499 A2): their saved carrier, the erase index over their refs…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/rerender.rs",
+     "purpose": "A saved period rewritten by erasure needs a new lens over its current report",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -15189,7 +15199,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 4,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 4,
       "struct": 6
      }
@@ -18514,7 +18524,7 @@
      "path": "src/code_run/vault_read/validate.rs",
      "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -43021,7 +43031,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 206,
+      "mod": 207,
       "re-export": 103
      }
     },
@@ -56610,6 +56620,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PhoneLineArrival",
+      "PhoneLineArrivalReceipt",
+      "PhoneLineArrivalRecord",
+      "PhoneLineConfig",
+      "PhoneLineState"
+     ],
+     "path": "src/phone_line/mod.rs",
+     "purpose": "Owner-enabled phone-line arrival metadata",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 4,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -60940,7 +60968,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/payload/rows.rs",
@@ -72718,7 +72746,7 @@
      "path": "src/store/local_replica.rs",
      "purpose": "Local-only removal of one canonical window's replica (OF-534 demotion)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -72729,6 +72757,16 @@
      "purpose": "Local purge of a left shared vault's dedicated environment (OF-158)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/local_replica/member_removal.rs",
+     "purpose": "One member's local leaves for the replica tear: its index, projection, vector and edge rows, then its entity…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74634,6 +74672,16 @@
       "re-export": 1,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/surface_event/handoff/phone_line.rs",
+     "purpose": "Phone arrival metadata's line-bound, atomic admission",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -78311,7 +78359,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VerifiedLeaveNotice"
@@ -78320,7 +78368,7 @@
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "re-export": 1,
       "struct": 1
      }
@@ -89974,7 +90022,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 133,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90764,6 +90812,13 @@
      "layout": "dir",
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
+    "phone_line": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Owner-enabled phone-line arrival metadata"
+    },
     "pipeline": {
      "files": 68,
      "impl_vault": false,
@@ -91115,7 +91170,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 382,
+     "files": 383,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91129,7 +91184,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)"
     },
     "surface_event": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91353,9 +91408,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 162,
+   "over_bar": 163,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6421,
+   "source_files": 6425,
    "test_files": 895
   },
   "oneiron-android": {
@@ -111689,7 +111744,7 @@
      "path": "src/api/context_pack/resolve.rs",
      "purpose": "Route handler plus depth/policy/time/budget resolution for context-pack assembly",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -116492,6 +116547,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/phone_line.rs",
+     "purpose": "Owner phone-line settings and credential-bound arrival metadata; no audio endpoint",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/reactive.rs",
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
@@ -118204,7 +118269,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 13,
       "re-export": 26,
       "struct": 1
@@ -118550,7 +118615,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2,
       "re-export": 8
      }
@@ -119137,7 +119202,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LimitsConfig"
@@ -119268,8 +119333,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 5,
-      "mod": 15,
-      "re-export": 28
+      "mod": 16,
+      "re-export": 29
      }
     },
     {
@@ -119751,6 +119816,19 @@
      "path": "src/config/server_config/debug.rs",
      "purpose": "The redacting `Debug` of [`SyncServerConfig`] and [`ServeConfig`]: a secret prints as redacted, never its…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SharedEnvConfig"
+     ],
+     "path": "src/config/shared_env.rs",
+     "purpose": "`[[shared_env]]`: the dedicated shared-vault envs this host keeps open",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -120317,7 +120395,7 @@
      "path": "src/device_sync/freeze.rs",
      "purpose": "The reap freeze a managed vault's device sync works under (WILL-PLAN L14 row 14, FIX 5127)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -123968,7 +124046,7 @@
      "path": "src/models/hosted_speech.rs",
      "purpose": "Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 5,
       "struct": 2
      }
@@ -124171,7 +124249,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 3
      }
@@ -126474,7 +126552,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 38,
       "fn": 16,
       "re-export": 1,
       "struct": 1
@@ -127182,6 +127260,16 @@
      "path": "src/server/windows/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/shared_envs.rs",
+     "purpose": "The host's dedicated shared-env registry (FIX 2051, FIX 11136): the membership → env map a member device…",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "s",
@@ -128214,7 +128302,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 680,
+     "files": 681,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128298,7 +128386,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -128654,6 +128742,13 @@
      "layout": "dir",
      "purpose": "Sync server state and maintenance jobs, split by concern"
     },
+    "shared_envs": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "The host's dedicated shared-env registry (FIX 2051, FIX 11136): the membership → env map a member device…"
+    },
     "skills_pack": {
      "files": 1,
      "impl_vault": false,
@@ -128725,9 +128820,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 51,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1607,
+   "source_files": 1610,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
