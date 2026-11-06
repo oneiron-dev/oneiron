@@ -117,13 +117,15 @@ impl<'a> RepoKnownCheck<'a> {
         if self.owner_kept {
             return Ok(false);
         }
+        // Every match counts, one overlapping a kept value included: the
+        // owner's ruling on one value never hides another.
         let keep = |value: &[u8]| self.keep(value);
-        if !self.known.spans_except(bytes, keep).is_empty() {
+        if !self.known.holders_except(bytes, keep).is_empty() {
             return Ok(true);
         }
         let mut hit = false;
         let mut visit = |_: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
-            if self.known.spans_except(member, keep).is_empty() {
+            if self.known.holders_except(member, keep).is_empty() {
                 return Ok(());
             }
             hit = true;

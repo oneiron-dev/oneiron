@@ -163,9 +163,8 @@ pub(crate) fn project_repo_blob<F: FnOnce() -> Result<Vec<u8>>>(
         }));
     }
     let bytes = read_exact()?;
-    vault.with_known_values(|known| {
-        let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, marks, bytes, known)
+    vault.with_known_snapshot(|known, txn| {
+        project_repo_bytes_in_txn(vault, txn, marks, bytes, known)
     })
 }
 
@@ -391,14 +390,13 @@ pub(crate) fn materialize_masked_repo_sourced(
     // One known-value pass for the whole tree (FIX 8966): a file no mark
     // names, such as a blob `work.open` captured from Git that no sweep
     // walks, is checked against the values custody knows now all the same.
-    vault.with_known_values(|known| {
-        let txn = vault.store.env.read_txn()?;
-        let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
+    vault.with_known_snapshot(|known, txn| {
+        let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
         let mut out = BTreeMap::new();
         for (path, bytes) in files {
             let sourced = match documents.get(&path) {
-                Some(tested) => sourced_opaque_in_txn(vault, &txn, &facts, &bytes, || {
-                    vault.code_document_source_hashes_in_txn(&txn, tested)
+                Some(tested) => sourced_opaque_in_txn(vault, txn, &facts, &bytes, || {
+                    vault.code_document_source_hashes_in_txn(txn, tested)
                 })?,
                 None => None,
             };
@@ -406,7 +404,7 @@ pub(crate) fn materialize_masked_repo_sourced(
                 Some(opaque) => RepoBodyProjection::Opaque(opaque),
                 None => {
                     let marks = facts.for_hash(blake3::hash(&bytes).as_bytes());
-                    project_repo_bytes_in_txn(vault, &txn, &marks, bytes, known)?
+                    project_repo_bytes_in_txn(vault, txn, &marks, bytes, known)?
                 }
             };
             out.insert(path, body);

@@ -137,11 +137,9 @@ pub(crate) fn masked_asset_body(
 /// # Errors
 /// A store failure, or a mark that does not decode.
 pub(crate) fn project_repo_file(vault: &Vault, bytes: Vec<u8>) -> Result<RepoBodyProjection> {
-    vault.with_known_values(|known| {
-        let txn = vault.store.env.read_txn()?;
-        let marks =
-            repo_secret_marks_for_hash_in_txn(vault, &txn, blake3::hash(&bytes).as_bytes())?;
-        project_repo_bytes_in_txn(vault, &txn, &marks, bytes, known)
+    vault.with_known_snapshot(|known, txn| {
+        let marks = repo_secret_marks_for_hash_in_txn(vault, txn, blake3::hash(&bytes).as_bytes())?;
+        project_repo_bytes_in_txn(vault, txn, &marks, bytes, known)
     })
 }
 
@@ -250,9 +248,8 @@ impl RepoReadMasks {
         }
         drop(txn);
         vault
-            .with_known_values(|known| {
-                let txn = vault.store.env.read_txn()?;
-                project_repo_bytes_in_txn(vault, &txn, &marks, text.into_bytes(), known)
+            .with_known_snapshot(|known, txn| {
+                project_repo_bytes_in_txn(vault, txn, &marks, text.into_bytes(), known)
             })
             .map(ServedText::projection)
     }
@@ -295,9 +292,8 @@ impl RepoReadMasks {
             return Ok(Cow::Borrowed(bytes));
         }
         vault
-            .with_known_values(|known| {
-                let txn = vault.store.env.read_txn()?;
-                project_repo_bytes_in_txn(vault, &txn, &marks, bytes.to_vec(), known)
+            .with_known_snapshot(|known, txn| {
+                project_repo_bytes_in_txn(vault, txn, &marks, bytes.to_vec(), known)
             })
             .map(|projected| match projected {
                 RepoBodyProjection::Exact(_) => Cow::Borrowed(bytes),
