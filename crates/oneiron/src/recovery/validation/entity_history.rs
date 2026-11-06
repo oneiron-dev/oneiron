@@ -255,13 +255,14 @@ impl HistoryValidation {
                     let pin = &history().pins[self.next];
                     let text = &self.texts[pin.version as usize];
                     let (start, end) = (pin.start as usize, pin.end as usize);
-                    if !self.pin_quote.advance(text, start, end) {
+                    if !self.pin_quote.advance(text, start, end, &pin.quote) {
                         return Ok(false);
                     }
                     if start > end
                         || end > self.pin_quote.chars
-                        || self.pin_quote.quote != pin.quote
-                        || blake3::hash(self.pin_quote.quote.as_bytes()).as_bytes() != &pin.hash
+                        || self.pin_quote.quote_mismatch
+                        || self.pin_quote.quote_byte != pin.quote.len()
+                        || self.pin_quote.hasher.finalize().as_bytes() != &pin.hash
                     {
                         return Err(invalid("entity document pin quote"));
                     }
@@ -421,22 +422,40 @@ impl MetadataRows {
     }
 }
 
-#[derive(Default)]
 struct PinQuote {
     byte: usize,
     chars: usize,
-    quote: String,
+    quote_byte: usize,
+    quote_mismatch: bool,
+    hasher: blake3::Hasher,
+}
+
+impl Default for PinQuote {
+    fn default() -> Self {
+        Self {
+            byte: 0,
+            chars: 0,
+            quote_byte: 0,
+            quote_mismatch: false,
+            hasher: blake3::Hasher::new(),
+        }
+    }
 }
 
 impl PinQuote {
-    fn advance(&mut self, text: &str, start: usize, end: usize) -> bool {
+    fn advance(&mut self, text: &str, start: usize, end: usize, quote: &str) -> bool {
         let Some(ch) = text[self.byte..].chars().next() else {
             return true;
         };
+        let next_byte = self.byte + ch.len_utf8();
         if self.chars >= start && self.chars < end {
-            self.quote.push(ch);
+            let bytes = &text.as_bytes()[self.byte..next_byte];
+            let quote_end = self.quote_byte + bytes.len();
+            self.quote_mismatch |= quote.as_bytes().get(self.quote_byte..quote_end) != Some(bytes);
+            self.quote_byte = quote_end;
+            self.hasher.update(bytes);
         }
-        self.byte += ch.len_utf8();
+        self.byte = next_byte;
         self.chars += 1;
         false
     }
