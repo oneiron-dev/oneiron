@@ -22,6 +22,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
+use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
@@ -137,15 +138,29 @@ impl HostSelfDispatcher<'_> {
         let origin = origin
             .with_hook_ask(self.parked_ask(&parked, site)?)
             .with_step(site.map(|_| invocation));
+        // Only the native point-view producer is covered here. Other verbs
+        // keep their existing unknown ledger until their reads are captured.
+        let read_capture =
+            (call.verb == AgentVerb::VaultGet && site.is_some()).then(ReadCapture::default);
+        let origin = match &read_capture {
+            Some(capture) => origin.with_read_capture(capture.clone()),
+            None => origin,
+        };
+        let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            let answer = self.program_door_call(&**door, &call, &origin, invocation)?;
-            return Ok(connector_call_answer(
+            let answer = self.program_door_call(&**door, &call, &origin, invocation);
+            let captured = read_capture.and_then(|capture| capture.finish());
+            let outcome = connector_call_answer(
                 call.verb,
                 worded(
-                    answered(self.keep_no_secret_value(call.verb, answer)),
+                    answered(self.keep_no_secret_value(call.verb, answer?)),
                     &**door,
                 ),
-            ));
+            );
+            if let (Some(site), SelfDispatchOutcome::AgentVerb(answer)) = (read_site, &outcome) {
+                self.note_verb_read_worlds(site, answer, captured);
+            }
+            return Ok(outcome);
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
