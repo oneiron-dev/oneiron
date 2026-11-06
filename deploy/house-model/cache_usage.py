@@ -121,12 +121,18 @@ class BackendIdentity:
     when one was given (FIX 8315): the runtime is then the build the
     supervisor verified before the launch, the build evidence is verified
     artifacts, and every receipt echoes the manifest's digest. Without one,
-    the runtime is the installed versions as reported."""
+    the runtime is the installed versions as reported.
+
+    `draft_digest` is the identity of the draft the Generator loaded, as the
+    launch manifest names it (FIX 14976): a vault's own load set or the
+    stock draft. Every identity names it, so the supervisor's probe checks
+    which draft answers."""
 
     def __init__(self, target_dir, template_source, cache_settings, server_settings,
-                 model_digest=None, launch=None):
+                 model_digest=None, launch=None, draft_digest=None):
         self.epoch = uuid.uuid4().hex
         self.model = model_digest
+        self.draft = draft_digest
         self.template = sha256_hex(template_source.encode("utf-8"))
         self.tokenizer = tokenizer_digest(target_dir)
         if launch is None:
@@ -149,6 +155,7 @@ class BackendIdentity:
     def record(self, execution_mode):
         identity = {
             "model": self.model,
+            "draft_weights_digest": self.draft,
             "tokenizer": self.tokenizer,
             "runtime": self.runtime,
             "template": self.template,

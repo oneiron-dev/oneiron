@@ -9,9 +9,10 @@
 //!
 //! A version's MadeBy names its process's actor: the compartment keeps the
 //! record with the artifact in that place, and the actor is an actor part.
-//! The erased-producer form stays in the record with no actor part (FIX 9619);
-//! any other actor must open on restore or its version stays out. Nothing
-//! calls this until KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED is on.
+//! The erased-producer form stays in the record with no actor part (FIX 9619).
+//! A retired actor can be recovered only from its version's fully bound native
+//! claim during authenticated restore, then scrubbed with that claim before
+//! commit; otherwise the version stays out (FIX 6259).
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -22,7 +23,7 @@ use heed::{RoTxn, RwTxn};
 use super::erase::erased_producer;
 use super::versions::{BlobArtifactVersion, HEAD, VERSIONS};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
@@ -148,4 +149,155 @@ pub(crate) fn restore_in_txn(
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     rows::restore_parts(dbs, txn, &opened, check, join)
+}
+
+/// Leaves only absent-actor version joins for the authenticated continuation.
+/// All other version, head and hosting rows land in their original order.
+pub(crate) fn restore_or_defer_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    mut opened: OpenedOwnerRows,
+) -> Result<Option<OpenedOwnerRows>> {
+    let actor_parts = &opened.actor_parts;
+    let deferred: Vec<_> = opened
+        .rows
+        .extract_if(.., |part| {
+            let rows::RowPart::NoActor { at, value } = part else {
+                return false;
+            };
+            (at.in_table(HEAD.decl()) || at.in_table(VERSIONS.decl()))
+                && !actor_parts.iter().any(|part| part.content_locator == *at)
+                // Failed and already-complete joins keep their original restore path.
+                && join(txn, at, value, &[]).is_ok_and(|joined| joined.is_none())
+        })
+        .collect();
+    rows::restore_parts(dbs, txn, &opened, check, join)?;
+    if deferred.is_empty() {
+        return Ok(None);
+    }
+    opened.rows = deferred;
+    Ok(Some(opened))
+}
+
+/// Lands an authenticated restore's blob bundles after all native claim
+/// dependencies are readable. A recovered original remains private to this
+/// transaction; the existing restore actor scrub runs before its commit.
+pub(crate) fn restore_missing_process_in_txn(
+    restore: &mut crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
+    opened: OpenedOwnerRows,
+) -> Result<Restored> {
+    let (vault, txn, erased) = restore.parts();
+    rows::restore_parts(
+        &vault.store,
+        txn,
+        &opened,
+        check,
+        |txn, at, value, parts| {
+            if let Some(joined) = join(txn, at, value, parts)? {
+                return Ok(Some(joined));
+            }
+            recover_retired_process(vault, txn, at, value, erased, &opened)
+        },
+    )
+}
+
+/// Only the exact native claim can supply the actor omitted from a version
+/// whose actor compartment retired after capture. No attribution is guessed.
+fn recover_retired_process(
+    vault: &crate::Vault,
+    txn: &RoTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+    erased: &std::collections::BTreeSet<EntityId>,
+    opened: &OpenedOwnerRows,
+) -> Result<Option<Vec<u8>>> {
+    use crate::side_table::SideKey;
+    use crate::write_envelope::claim_body::ClaimSubject;
+
+    use super::made_by::{made_by_from_text, made_by_text};
+    use super::provenance::{BLOB_VERSION_CLAIM_PREDICATE, blob_version_claim_value};
+    use super::versions::KEY_MADE_BY;
+
+    let (artifact, mut record, head) = if at.in_table(HEAD.decl()) {
+        let Some(artifact) = at
+            .key
+            .strip_prefix(HEAD.decl().prefix)
+            .and_then(EntityId::decode_key)
+        else {
+            return Ok(None);
+        };
+        (artifact, HEAD.decode_value(value)?, true)
+    } else if at.in_table(VERSIONS.decl()) {
+        let Some((artifact, version)) = at
+            .key
+            .strip_prefix(VERSIONS.decl().prefix)
+            .and_then(<(EntityId, u64)>::decode_key)
+        else {
+            return Ok(None);
+        };
+        let record = VERSIONS.decode_value(value)?;
+        if record.version != version {
+            return Ok(None);
+        }
+        (artifact, record, false)
+    } else {
+        return Ok(None);
+    };
+    let owner = OwnerRef::entity(&artifact);
+    if opened.subtype != owner.subtype
+        || opened.owner32 != owner.owner32
+        || record.made_by.process.actor != artifact
+    {
+        return Ok(None);
+    }
+    let claim = match vault.get_claim_in_txn(txn, &record.claim_id) {
+        Ok(Some(claim)) => claim,
+        Ok(None) => return Ok(None),
+        Err(error @ (Error::Storage(_) | Error::Io(_) | Error::MapFull)) => return Err(error),
+        // An unproved claim cannot repair a row the old join omitted.
+        Err(_) => return Ok(None),
+    };
+    if claim.predicate != BLOB_VERSION_CLAIM_PREDICATE
+        || claim.subject != ClaimSubject::Entity(artifact)
+    {
+        return Ok(None);
+    }
+    let Some(text) = claim.value.as_map().and_then(|entries| {
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(KEY_MADE_BY))
+            .and_then(|(_, value)| value.as_str())
+    }) else {
+        return Ok(None);
+    };
+    let Ok(original) = made_by_from_text(text) else {
+        return Ok(None);
+    };
+    let actor = original.process.actor;
+    if !erased.contains(&actor)
+        || !opened.unavailable.contains(&OwnerRef::entity(&actor))
+        || crate::deletion::names_no_actor(vault, txn, &actor)?
+    {
+        return Ok(None);
+    }
+    record.made_by.process.actor = actor;
+    if record.made_by != original
+        || claim.value
+            != blob_version_claim_value(
+                record.version,
+                &record.content_hash,
+                &record.provenance,
+                record.parent_version,
+                record.fork_of_version,
+                record.calc_engine.as_ref(),
+                &made_by_text(&record.made_by)?,
+            )
+    {
+        return Ok(None);
+    }
+    if head {
+        HEAD.encode_value(&record).map(Some)
+    } else {
+        VERSIONS.encode_value(&record).map(Some)
+    }
 }

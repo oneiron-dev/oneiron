@@ -88,6 +88,7 @@ impl Vault {
             verdict,
             reason,
             SealAuthority::Engine(cause),
+            None,
         )?;
         fact.record_sealed_here(self, wtxn, id)?;
         let seq = self.next_identity_topology_seq_in_txn(wtxn)?;
@@ -116,6 +117,7 @@ impl Vault {
                     end: core.at,
                 },
                 learned_at: core.at,
+                row_version: None,
                 data: super::encode_identity_topology_event_body(&row)?,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

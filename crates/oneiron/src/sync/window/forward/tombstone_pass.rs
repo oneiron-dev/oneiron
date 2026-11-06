@@ -145,7 +145,10 @@ enum Staged<'e> {
         value: &'e [u8],
         id: EntityId,
         hard: bool,
-        replayed: Result<ReplayedTombstoneOutcome>,
+        replayed: Result<(
+            ReplayedTombstoneOutcome,
+            Vec<(crate::attempt_queue::AttemptId, u32)>,
+        )>,
     },
 }
 
@@ -174,6 +177,9 @@ impl Pass<'_> {
         let mut done = chunk.len();
         let committed = vault.store.env.write_txn().and_then(|mut parent| {
             let probes = vault.batch_tombstone_scope_probes_in_txn(&parent, hard_ids)?;
+            // FIX 9398: the chunk's erases drop the rooms' media copies once,
+            // before the commit.
+            let room_media_drops = crate::embed::RoomMediaDrops::open(&vault.store, &parent);
             for (index, (key, value)) in chunk.iter().enumerate() {
                 if let Err(error) = self.stage(&mut parent, key, value, &mut staged) {
                     if out_of_room(&error) {
@@ -184,6 +190,7 @@ impl Pass<'_> {
                     break;
                 }
             }
+            drop(room_media_drops);
             drop(probes);
             parent.commit()?;
             Ok(())
@@ -209,8 +216,11 @@ impl Pass<'_> {
                     hard,
                     replayed,
                 } => {
-                    let replayed =
-                        replayed.and_then(|outcome| collect_after_replay(vault).map(|()| outcome));
+                    let replayed = replayed.and_then(|(outcome, cancelled)| {
+                        crate::attempt_queue::AttemptQueue::new(vault)
+                            .erased_payload_cancellations_committed(&cancelled);
+                        collect_after_replay(vault).map(|()| outcome)
+                    });
                     self.settle(key, value, id, hard, replayed);
                 }
             }
@@ -249,7 +259,7 @@ impl Pass<'_> {
         };
         let replayed = savepoint(vault, parent, |child| {
             quarantine::apply_replayed_tombstone_for_sync_in_txn(vault, child, &id, value)
-                .map(|(outcome, _changed)| outcome)
+                .map(|(outcome, _changed, cancelled)| (outcome, cancelled))
         });
         match replayed {
             Err(err) if out_of_room(&err) => return Err(err),

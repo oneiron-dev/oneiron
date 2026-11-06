@@ -98,6 +98,7 @@ pub(super) fn fold_adopted_in_txn(
                 view: AuthorityView {
                     fold: Arc::new(fold),
                     generation: key.generation,
+                    scope_commitment_mismatches: Arc::default(),
                 },
                 next_deadline_secs,
                 continuation: None,
@@ -127,7 +128,7 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
     required: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<Option<AuthorityHistoryRequest>> {
     let Some(adopted) =
-        crate::authority::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+        crate::authority::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
     else {
         return Ok(None);
     };
@@ -138,7 +139,7 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
             posture,
             txn,
             key,
-            &adopted,
+            adopted.as_ref(),
             required,
             &BTreeMap::new(),
         )? {

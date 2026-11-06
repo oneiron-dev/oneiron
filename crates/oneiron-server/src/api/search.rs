@@ -758,6 +758,9 @@ pub(crate) struct SemanticSearchRequest {
     /// Natural-language query. The server embeds it with the active provider,
     /// prefixed by the model's query instruction; on the one-space preset,
     /// through the text tower of the space the text kind slot binds.
+    /// Original text bytes past `[limits].semantic_query_bytes` (8 MiB
+    /// unless set) raise a row question; this row does not truncate or
+    /// refuse the query. The embedder's input window remains separate.
     #[schema(example = "what did we decide about the embedder slot")]
     pub(crate) text: String,
     /// Maximum number of nearest entities to return. Defaults to `10`.
@@ -834,12 +837,6 @@ pub(crate) struct SemanticSearchRequest {
             content_type = "application/json"
         ),
         (
-            status = 413,
-            description = "Query text exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
-            body = ApiError,
-            content_type = "application/json"
-        ),
-        (
             status = 500,
             description = "Vector search or projection failed.",
             body = ApiError,
@@ -864,12 +861,12 @@ pub(crate) async fn search_semantic(
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;
-    server.check_retrieval_query(
+    server.ask_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchSemantic,
         "text",
         &params.text,
-    )?;
+    );
     let deadline = search_deadline(params.deadline_ms)?;
     let text = params.text.trim();
     if text.is_empty() {

@@ -208,6 +208,7 @@ impl TurnProgramRuntime for ServerTurnPrograms {
                 // Stamped by `run_seat` from the slip's read scope (FIX 11768).
                 worlds: Vec::new(),
                 served: None,
+                learning: None,
             }
         });
         // Its refusal's text can quote the vault: it is not logged.

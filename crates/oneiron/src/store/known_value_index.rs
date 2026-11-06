@@ -37,8 +37,10 @@
 //! stream's open text holds back a value it may still be writing (FIX
 //! 2722, [`KnownValues::growing`]).
 
-mod forms;
+mod entries;
+use oneiron_store::known_value_index::forms;
 mod rolling;
+mod run;
 mod writer_index;
 
 use std::cmp::Reverse;
@@ -57,6 +59,7 @@ use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, S
 use crate::vault::Vault;
 
 pub(crate) use self::forms::{decodings, occurrences};
+pub(crate) use self::run::{PersonValuePrint, RunKnownSource};
 pub(crate) use self::writer_index::known_index_scope;
 
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
@@ -99,6 +102,16 @@ impl Keys {
         }
     }
 
+    fn entry(&self, value: &[u8], len: u32) -> KnownEntry {
+        let window = &value[..value.len().min(TAG_WINDOW)];
+        KnownEntry {
+            len,
+            tag: self.tag(window),
+            rolling: self.rolling.value(window),
+            fingerprint: self.fingerprint(value),
+        }
+    }
+
     fn fingerprint(&self, value: &[u8]) -> [u8; 32] {
         *blake3::keyed_hash(&self.fingerprint, value).as_bytes()
     }
@@ -133,17 +146,9 @@ pub(crate) fn remember_in_txn(
     }
     let len =
         u32::try_from(value.len()).map_err(|_| Error::ArithmeticOverflow("known value length"))?;
-    let window = &value[..value.len().min(TAG_WINDOW)];
     let changed =
         store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
-            let keys = Keys::derive(master);
-            KnownEntry {
-                len,
-                tag: keys.tag(window),
-                // The window the tag keys, as a match rolls it (FIX 12209).
-                rolling: keys.rolling.value(window),
-                fingerprint: keys.fingerprint(value),
-            }
+            Keys::derive(master).entry(value, len)
         })?;
     // A value the history did not hold drops the index this write keeps
     // (FIX 12210).
@@ -158,7 +163,7 @@ pub(crate) fn remember_in_txn(
 struct Known {
     len: usize,
     fingerprint: [u8; 32],
-    custody: EntityId,
+    origin: ValueOrigin,
     handle: String,
 }
 
@@ -217,6 +222,18 @@ pub(crate) struct KnownSpan<'k> {
     pub(crate) handle: &'k str,
 }
 
+#[derive(Clone, Copy)]
+enum ValueOrigin {
+    Custody(EntityId),
+    Person,
+}
+
+struct MatchedSpan<'k> {
+    span: Range<usize>,
+    origin: ValueOrigin,
+    handle: &'k str,
+}
+
 impl KnownValues {
     /// The matcher over `history`, or `None` when it knows no value. A value
     /// two records hold is matched to the first in id order; a record
@@ -225,71 +242,16 @@ impl KnownValues {
         history: &KnownHistory,
         handle_of: impl Fn(&EntityId) -> Result<Option<String>>,
     ) -> Result<Option<Self>> {
-        let mut buckets: Vec<Bucket> = Vec::new();
-        let mut rolling = RollingSets::default();
-        let mut lengths = Vec::new();
-        let mut longest = 0;
+        let mut values = Vec::new();
         for (custody, entries) in &history.holders {
             let Some(handle) = handle_of(custody)? else {
                 continue;
             };
             for entry in entries {
-                let len = usize::try_from(entry.len)
-                    .map_err(|_| Error::ArithmeticOverflow("known value length"))?;
-                // An empty value is absent: it never matches.
-                if len == 0 {
-                    continue;
-                }
-                rolling.insert(len.min(TAG_WINDOW), entry.rolling);
-                let at = match buckets.binary_search_by(|bucket| bucket.tag.cmp(&entry.tag)) {
-                    Ok(at) => at,
-                    Err(at) => {
-                        buckets.insert(
-                            at,
-                            Bucket {
-                                tag: entry.tag,
-                                known: Vec::new(),
-                            },
-                        );
-                        at
-                    }
-                };
-                let bucket = &mut buckets[at];
-                if bucket
-                    .known
-                    .iter()
-                    .any(|known| known.len == len && known.fingerprint == entry.fingerprint)
-                {
-                    continue;
-                }
-                longest = longest.max(len);
-                lengths.push(len);
-                bucket.known.push(Known {
-                    len,
-                    fingerprint: entry.fingerprint,
-                    custody: *custody,
-                    handle: handle.clone(),
-                });
+                values.push((entry, ValueOrigin::Custody(*custody), handle.clone()));
             }
         }
-        if buckets.is_empty() {
-            return Ok(None);
-        }
-        for bucket in &mut buckets {
-            bucket
-                .known
-                .sort_by_key(|known| std::cmp::Reverse(known.len));
-        }
-        lengths.sort_unstable();
-        lengths.dedup();
-        Ok(Some(Self {
-            keys: Keys::derive(&history.master),
-            buckets,
-            windows: rolling.windows().collect(),
-            rolling,
-            lengths,
-            longest,
-        }))
+        Self::of_entries(&history.master, values)
     }
 
     /// The index as the writer `wtxn` reads it, for a pass inside that
@@ -372,6 +334,24 @@ impl KnownValues {
         data: &[u8],
         keep: impl Fn(&[u8]) -> bool,
     ) -> Vec<KnownSpan<'_>> {
+        self.matched_spans_except(data, keep)
+            .into_iter()
+            .filter_map(|hit| match hit.origin {
+                ValueOrigin::Custody(custody) => Some(KnownSpan {
+                    span: hit.span,
+                    custody,
+                    handle: hit.handle,
+                }),
+                ValueOrigin::Person => None,
+            })
+            .collect()
+    }
+
+    fn matched_spans_except(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+    ) -> Vec<MatchedSpan<'_>> {
         let mut spans: Vec<_> = self
             .raw_spans(data)
             .into_iter()
@@ -387,7 +367,7 @@ impl KnownValues {
                     continue;
                 }
                 if let Some(span) = view.source(hit.span) {
-                    spelled.push(KnownSpan { span, ..hit });
+                    spelled.push(MatchedSpan { span, ..hit });
                 }
             }
         }
@@ -399,7 +379,7 @@ impl KnownValues {
                     continue;
                 }
                 if let Some(span) = view.source_mapped(hit.span) {
-                    spelled.push(KnownSpan { span, ..hit });
+                    spelled.push(MatchedSpan { span, ..hit });
                 }
             }
         }
@@ -410,9 +390,9 @@ impl KnownValues {
         for (run, view) in &b64_views {
             if fits(view.bytes.len()) && !keep(&view.bytes) {
                 if let Some(known) = self.whole(&view.bytes) {
-                    spelled.push(KnownSpan {
+                    spelled.push(MatchedSpan {
                         span: run.clone(),
-                        custody: known.custody,
+                        origin: known.origin,
                         handle: &known.handle,
                     });
                 }
@@ -426,7 +406,7 @@ impl KnownValues {
                     continue;
                 }
                 if let Some(span) = view.source(hit.span) {
-                    spelled.push(KnownSpan { span, ..hit });
+                    spelled.push(MatchedSpan { span, ..hit });
                 }
             }
         }
@@ -447,6 +427,11 @@ impl KnownValues {
     }
 
     /// The known value `data` is, whole.
+    /// Exact raw whole-value identity, without exposing its keyed fingerprint.
+    pub(crate) fn is_exact_value(&self, data: &[u8]) -> bool {
+        self.whole(data).is_some()
+    }
+
     fn whole(&self, data: &[u8]) -> Option<&Known> {
         self.longest_at(data)
             .filter(|known| known.len == data.len())
@@ -552,7 +537,7 @@ impl KnownValues {
 
     /// Each known value in `data` as its bytes are, leftmost first, never
     /// overlapping: at each place the longest value there wins.
-    fn raw_spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
+    fn raw_spans(&self, data: &[u8]) -> Vec<MatchedSpan<'_>> {
         let mut spans = Vec::new();
         // FIX 12209: only an offset where some window's rolling value is one
         // the index holds is read; the offset a known value starts at always
@@ -568,9 +553,9 @@ impl KnownValues {
             };
             match known {
                 Some(known) => {
-                    spans.push(KnownSpan {
+                    spans.push(MatchedSpan {
                         span: at..at + known.len,
-                        custody: known.custody,
+                        origin: known.origin,
                         handle: &known.handle,
                     });
                     at += known.len;
@@ -628,20 +613,27 @@ impl KnownValues {
     /// as `limit`: a value that starts before it is replaced whole. Returns
     /// the bytes and where in `data` they end.
     fn replaced_until(&self, data: &[u8], limit: usize) -> (Vec<u8>, usize) {
-        let mut out = Vec::with_capacity(data.len());
-        let mut from = 0;
-        for known in self.spans(data) {
-            if known.span.start >= limit {
-                break;
-            }
-            out.extend_from_slice(&data[from..known.span.start]);
-            out.extend_from_slice(handle_text(known.handle).as_bytes());
-            from = known.span.end;
-        }
-        let end = from.max(limit);
-        out.extend_from_slice(&data[from..end]);
-        (out, end)
+        replace_spans(data, limit, self.matched_spans_except(data, |_| false))
     }
+}
+
+fn replace_spans(data: &[u8], limit: usize, spans: Vec<MatchedSpan<'_>>) -> (Vec<u8>, usize) {
+    let mut out = Vec::with_capacity(data.len());
+    let mut from = 0;
+    for known in spans {
+        if known.span.start >= limit {
+            break;
+        }
+        out.extend_from_slice(&data[from..known.span.start]);
+        match known.origin {
+            ValueOrigin::Custody(_) => out.extend_from_slice(handle_text(known.handle).as_bytes()),
+            ValueOrigin::Person => out.extend_from_slice(known.handle.as_bytes()),
+        }
+        from = known.span.end;
+    }
+    let end = from.max(limit);
+    out.extend_from_slice(&data[from..end]);
+    (out, end)
 }
 
 /// What a stream's sweep reads known values through (KS-3): the ids and
@@ -703,6 +695,23 @@ impl Vault {
         }
         Ok(Some(KnownSource { ids, handles }))
     }
+
+    /// Runs `read` with the values custody knows now (FIX 8966): one pass of
+    /// [`Self::known_source`], its matcher built for this read alone under
+    /// the custody read guard and wiped when `read` returns; `None` when
+    /// custody knows no value. Call it outside any write transaction.
+    ///
+    /// # Errors
+    /// The pass's own, or `read`'s.
+    pub(crate) fn with_known_values<T>(
+        &self,
+        read: impl FnOnce(Option<&KnownValues>) -> Result<T>,
+    ) -> Result<T> {
+        match self.known_source()? {
+            Some(source) => source.pass(read)?,
+            None => read(None),
+        }
+    }
 }
 
 /// A handle as a text stands it in for a value: `[secret sc12]`.
@@ -715,13 +724,18 @@ pub(crate) fn handle_text(handle: &str) -> String {
 enum SweepFrom {
     Source(KnownSource),
     Writer(Arc<KnownValues>),
+    Run(RunKnownSource),
 }
 
 impl SweepFrom {
-    fn pass<T>(&self, use_pass: impl FnOnce(Option<&KnownValues>) -> T) -> Result<T> {
+    fn pass<T>(
+        &self,
+        use_pass: impl FnOnce(Option<&KnownValues>, Option<&KnownValues>) -> T,
+    ) -> Result<T> {
         match self {
-            Self::Source(source) => source.pass(use_pass),
-            Self::Writer(known) => Ok(use_pass(Some(&**known))),
+            Self::Source(source) => source.pass(|known| use_pass(known, None)),
+            Self::Writer(known) => Ok(use_pass(Some(&**known), None)),
+            Self::Run(source) => source.pass(use_pass),
         }
     }
 }
@@ -742,6 +756,14 @@ impl KnownSweep {
         }
     }
 
+    /// A run's custody and delivered PERSON values, refreshed on every frame.
+    pub(crate) fn for_run(source: RunKnownSource) -> Self {
+        Self {
+            from: SweepFrom::Run(source),
+            held: Zeroizing::new(Vec::new()),
+        }
+    }
+
     /// A sweep fed inside the writer `known` was read in
     /// ([`KnownValues::load_in_writer`]), dropped before that writer ends.
     pub(crate) fn in_writer(known: Arc<KnownValues>) -> Self {
@@ -757,16 +779,22 @@ impl KnownSweep {
     pub(crate) fn feed(&mut self, frame: &[u8]) -> Result<Vec<u8>> {
         self.held.extend_from_slice(frame);
         let held = &mut self.held;
-        self.from.pass(|known| {
-            let Some(known) = known else {
+        self.from.pass(|known, person| {
+            if known.is_none() && person.is_none() {
                 return held.drain(..).collect::<Vec<u8>>();
-            };
-            let hold = known.reach().saturating_sub(1);
+            }
+            let hold = known
+                .into_iter()
+                .chain(person)
+                .map(KnownValues::reach)
+                .max()
+                .unwrap_or(0)
+                .saturating_sub(1);
             if held.len() <= hold {
                 return Vec::new();
             }
             let limit = held.len() - hold;
-            let (out, end) = known.replaced_until(&held[..], limit);
+            let (out, end) = run::replaced_until(known, person, &held[..], limit);
             held.drain(..end).for_each(drop);
             out
         })
@@ -774,9 +802,7 @@ impl KnownSweep {
 
     /// What the stream's end lets through: the held bytes, replaced.
     pub(crate) fn tail(&self) -> Result<Vec<u8>> {
-        self.from.pass(|known| match known {
-            Some(known) => known.replaced_until(&self.held, self.held.len()).0,
-            None => self.held.to_vec(),
-        })
+        self.from
+            .pass(|known, person| run::replaced_until(known, person, &self.held, self.held.len()).0)
     }
 }

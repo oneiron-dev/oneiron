@@ -40,6 +40,20 @@ pub(crate) fn open_connector_resume_in_txn(
     super::open_value(&leaf, call_ref, generation, sealed)
 }
 
+/// Validates a retained resume carrier under an activation's forked binding.
+/// The plaintext stays inside the validation callback and is wiped on return.
+pub(crate) fn read_back_connector_resume_for_activation(
+    binding: &crate::store::CustodyBinding,
+    call_ref: &EntityId,
+    generation: u32,
+    sealed: &[u8],
+    validate: impl FnOnce(&[u8]) -> Result<()>,
+) -> Result<()> {
+    let leaf = Store::connector_resume_leaf_in(binding, call_ref, generation)?;
+    let payload = super::open_value(&leaf, call_ref, generation, sealed)?;
+    validate(&payload)
+}
+
 /// Stages retirement of the connector call `call_ref`'s resume leaves in
 /// `wtxn`, the writer that deletes its PENDING_CALLS row; the custody
 /// finisher retires the keys after commit, so a restored pre-erase image

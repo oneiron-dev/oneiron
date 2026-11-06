@@ -189,6 +189,7 @@ impl DreamerWakeDriver<'_> {
             accounting,
             actor,
             invocation,
+            scope: None,
         });
     }
 }

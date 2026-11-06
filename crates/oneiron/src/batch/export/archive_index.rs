@@ -127,6 +127,11 @@ pub(crate) enum Tag {
     Staged,
     /// Run id → (): one archived run row.
     Run,
+    /// Entity id → its birth row (FIX 1178).
+    RowBirth,
+    /// TURN or CONVERSATION id → (): an archived MESSAGE joins it, so it
+    /// comes back stamped imported (FIX 7777).
+    MessageContainer,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,
@@ -532,6 +537,15 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             return Ok(None);
         };
         Ok(Some((at, self.entity_row(&at)?)))
+    }
+
+    /// The birth the archive carries for `id`, when it carries one
+    /// (FIX 1178).
+    pub(crate) fn row_birth(&self, id: &EntityId) -> Result<Option<super::ExportRowBirth>> {
+        self.index
+            .get(Tag::RowBirth, id.as_bytes())?
+            .map(|loc| self.spool.parse(Loc::decode(&loc)?))
+            .transpose()
     }
 
     /// The row at `loc` of a kind holding a source tree. A member stored as

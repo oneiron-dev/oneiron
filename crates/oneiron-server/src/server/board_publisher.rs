@@ -15,36 +15,47 @@
 //! FIX 2879, FIX 6957): each review wakes its reviewed agent's own
 //! connections, naming the review and nothing of it. That loop runs
 //! alongside the TASK loop and never inside it.
+//!
+//! The same pass reads the staged room wakes
+//! (`oneiron::context_board::PendingRoomWake`, FIX 15647): a room turn that
+//! addresses an agent no resident pump runs wakes that agent's own
+//! connections, naming the room and the turn and nothing of the turn. A wake
+//! handed to a connection, or no longer live, is settled; one whose agent has
+//! no connection waits for one.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::AttemptQueue;
-use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview};
+use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview, PendingRoomWake};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-use super::core::SyncServer;
+use super::core::{BroadcastPayload, SyncServer};
 
-/// A serve loop's background tasks: the lifecycle scheduler, then the board
-/// publisher. Stopped together, in that order, once serving ends.
+/// A serve loop's background tasks: the lifecycle scheduler, the board
+/// publisher, and the cloud erase watch. Stopped together, in that order,
+/// once serving ends.
 pub(crate) struct ServeBackground {
     lifecycle: super::lifecycle::LifecycleScheduler,
     board: tokio::task::JoinHandle<()>,
+    cloud_erase_watch: tokio::task::JoinHandle<()>,
 }
 
 impl ServeBackground {
     /// Stops the scheduler, waiting out a housekeeping pass in flight, then
-    /// aborts the publisher and waits for it to end.
+    /// aborts the publisher and the erase watch and waits for both to end.
     pub(crate) async fn stop(self) {
         self.lifecycle.stop().await;
         self.board.abort();
         let _ = self.board.await;
+        self.cloud_erase_watch.abort();
+        let _ = self.cloud_erase_watch.await;
     }
 }
 
 impl SyncServer {
     /// Starts the lifecycle scheduler, its housekeeping passes admitted
-    /// through `admit`, and the board publisher.
+    /// through `admit`, the board publisher, and the cloud erase watch.
     pub(crate) fn spawn_serve_background(
         self: &Arc<Self>,
         admit: super::HousekeepingAdmission,
@@ -52,6 +63,7 @@ impl SyncServer {
         ServeBackground {
             lifecycle: self.spawn_lifecycle_scheduler(admit),
             board: self.spawn_board_publisher(),
+            cloud_erase_watch: self.spawn_cloud_erase_watch(),
         }
     }
 
@@ -71,11 +83,50 @@ impl SyncServer {
         })
     }
 
-    /// One pass over the pending reviews first, then one per commit
-    /// announcement or connection attach. Signals queued meanwhile, or lost
-    /// to lag, fold into the next pass, which reads the whole pending set
-    /// fresh. A failed pass is logged and retried at the next commit or
-    /// attach; it never reaches the write that opened the review.
+    /// Starts the cloud device-flow erase watch (FIX 10947 S1): a pending
+    /// flow whose owner's PERSON hard-erase committed ends on the next
+    /// wake instead of staying for a dead owner. It subscribes before it
+    /// returns, so no erase committed after this call is missed, and its
+    /// first pass revalidates only flows held now. Only exact
+    /// handle-plus-actor pairs take, never the global cancel. Owned like
+    /// the board publisher: aborted in [`ServeBackground::stop`].
+    pub(crate) fn spawn_cloud_erase_watch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let mut inbox = self.broadcast_tx.subscribe();
+        let server = Arc::downgrade(self);
+        tokio::spawn(async move {
+            if !revalidate_cloud_flows(&server, None).await {
+                return;
+            }
+            loop {
+                match inbox.recv().await {
+                    Ok(BroadcastPayload::LocalDocs(entities)) => {
+                        if !revalidate_cloud_flows(&server, Some(entities)).await {
+                            return;
+                        }
+                    }
+                    Ok(BroadcastPayload::Resync { .. }) => {
+                        if !revalidate_cloud_flows(&server, None).await {
+                            return;
+                        }
+                    }
+                    Ok(BroadcastPayload::Frame(..)) => {}
+                    Err(RecvError::Lagged(_)) => {
+                        if !revalidate_cloud_flows(&server, None).await {
+                            return;
+                        }
+                    }
+                    Err(RecvError::Closed) => return,
+                }
+            }
+        })
+    }
+
+    /// One pass over the pending reviews and the staged room wakes first,
+    /// then one per commit announcement or connection attach. Signals queued
+    /// meanwhile, or lost to lag, fold into the next pass, which reads the
+    /// whole pending set fresh. A failed pass is logged and retried at the
+    /// next commit or attach; it never reaches the write that opened the
+    /// review or minted the room turn.
     async fn publish_reviews_forever(
         self: Arc<Self>,
         mut commits: tokio::sync::broadcast::Receiver<()>,
@@ -88,6 +139,7 @@ impl SyncServer {
             .attach_notifier();
         loop {
             self.publish_pending_reviews().await;
+            self.publish_staged_room_wakes().await;
             tokio::select! {
                 commit = commits.recv() => match commit {
                     Ok(()) | Err(RecvError::Lagged(_)) => {}
@@ -118,6 +170,59 @@ impl SyncServer {
                 tracing::warn!(
                     panicked = error.is_panic(),
                     "board publisher review read did not finish"
+                );
+            }
+        }
+    }
+
+    /// One pass over the staged room wakes (FIX 15647): each live wake of an
+    /// agent no resident pump runs reaches that agent's subscribed
+    /// connections, and each one handed over, or no longer live, is settled.
+    /// A wake whose agent has no connection stays staged for a later pass.
+    async fn publish_staged_room_wakes(&self) {
+        let vault = Arc::clone(self.vault());
+        let read = tokio::task::spawn_blocking(move || PendingRoomWake::read_all(&vault)).await;
+        let read = match read {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not read staged room wakes; it reads them again at the next commit or attach");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher room wake read did not finish"
+                );
+                return;
+            }
+        };
+        // A live wake stays staged however many queues it reached, so a
+        // connection that attaches later (the bridge's own instance) still
+        // hears it; only a wake no longer live is settled (FIX 15647).
+        let settle = read.spent;
+        self.mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .publish_room_wakes(read.pending);
+        if settle.is_empty() {
+            return;
+        }
+        let vault = Arc::clone(self.vault());
+        let settled = tokio::task::spawn_blocking(move || {
+            let now = vault.now_recorded_at();
+            vault.settle_room_wakes(&settle, now)
+        })
+        .await;
+        match settled {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not settle room wakes; the next pass hands them over again");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher room wake settle did not finish"
                 );
             }
         }
@@ -188,6 +293,43 @@ impl SyncServer {
             }
         }
     }
+}
+
+/// One cloud erase-watch pass over this server's held device flows:
+/// `None` revalidates every held flow (startup, lag, resync); `Some`
+/// intersects the held actors with the woken entities first. The
+/// snapshot, the committed-marker probes and the exact takes all run on
+/// the blocking pool: never the flows guard across a vault read, and
+/// never sync LMDB work on an async worker. `false` means the server is
+/// gone and the watch ends.
+async fn revalidate_cloud_flows(
+    server: &std::sync::Weak<SyncServer>,
+    filter: Option<Vec<oneiron::EntityId>>,
+) -> bool {
+    let Some(server) = server.upgrade() else {
+        return false;
+    };
+    let outcome = tokio::task::spawn_blocking(move || {
+        let held = server.cloud_registration.snapshot_held_flows();
+        for (handle, actor) in held {
+            if let Some(want) = &filter {
+                if !want.contains(&actor) {
+                    continue;
+                }
+            }
+            server
+                .cloud_registration
+                .take_flow_if_owner_erased(server.vault(), &handle, &actor);
+        }
+    })
+    .await;
+    if let Err(error) = outcome {
+        tracing::warn!(
+            panicked = error.is_panic(),
+            "cloud erase watch pass did not finish"
+        );
+    }
+    true
 }
 
 /// Whether a pumped run's own board reader may be told about `task` now

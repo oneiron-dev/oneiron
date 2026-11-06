@@ -530,6 +530,22 @@ impl Vault {
         stamped_actor_in_txn(self, &txn, id)
     }
 
+    /// The native program actor at the caller's revision, when its stamp
+    /// names this attempt and carries a known actor class.
+    pub(crate) fn program_actor_for_attempt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<WriteActor>> {
+        Ok(ATTEMPT
+            .get(self, txn, &id)?
+            .filter(|stamp| stamp.attempt_id == *id.as_bytes())
+            .and_then(|stamp| {
+                EdgeActorClass::try_from_u8(stamp.actor_class)
+                    .map(|class| WriteActor::new(stamp.actor, class))
+            }))
+    }
+
     /// Binds a program attempt for one entry (DOOR-141 PR2): its stamp, the
     /// admission it names and the authority that admission sealed, judged
     /// again against the live vault, and the pinned program, which must
@@ -640,12 +656,9 @@ pub(crate) enum TurnProgramBound {
 
 /// The actor `id`'s stamp names, in `txn`.
 fn stamped_actor_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<WriteActor> {
-    let stamp = ATTEMPT.get(vault, txn, &id)?.ok_or_else(invalid)?;
-    if stamp.attempt_id != *id.as_bytes() {
-        return Err(invalid());
-    }
-    let class = EdgeActorClass::try_from_u8(stamp.actor_class).ok_or_else(invalid)?;
-    Ok(WriteActor::new(stamp.actor, class))
+    vault
+        .program_actor_for_attempt_in_txn(txn, id)?
+        .ok_or_else(invalid)
 }
 
 /// `envelope` as `actor` wrote it: the same source, provenance and approval.

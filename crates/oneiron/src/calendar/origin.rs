@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::memory::MemoryResult;
 use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityStore, EntityStoreRead};
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -192,7 +192,7 @@ impl Vault {
         let at = self.store.clock.now_recorded_at();
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
-                self.stage_calendar_event(txn, input, occurred, actor, event, at)?;
+                self.stage_calendar_event(txn, input, None, occurred, actor, event, at)?;
                 Ok(event)
             })
     }
@@ -201,6 +201,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         input: &CalendarEventInput,
+        readable_evidence: Option<&[EntityId]>,
         occurred: TimeRange,
         actor: WriteActor,
         event: EntityId,
@@ -215,6 +216,19 @@ impl Vault {
         for evidence in &input.evidence_turn_ids {
             if self.get_entity_type_in_txn(txn, evidence)? != Some(ENTITY_TYPE_TURN) {
                 return Err(invalid("calendar evidence must be a live TURN"));
+            }
+        }
+        let mut frontier_observations = Vec::new();
+        if let Some(evidence) = readable_evidence {
+            for turn in evidence {
+                let frontier = crate::entity_doc::source_frontier_in_txn(&self.store, txn, turn)?;
+                frontier_observations.push(Value::Map(vec![
+                    (Value::from("turn"), Value::from(turn.to_hex())),
+                    (
+                        Value::from("frontier"),
+                        frontier.map(Value::Binary).unwrap_or(Value::Nil),
+                    ),
+                ]));
             }
         }
         let stub = encode(&Value::Map(vec![(
@@ -233,14 +247,39 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         // Recorded projector fact, not a user-authored assertion about origin.
-        claim.evidence = Some(Value::Map(vec![
+        let mut evidence = vec![
             (Value::from("kind"), Value::from("calendar_projector")),
             (Value::from("write_class"), Value::from("recorded")),
             (
                 Value::from("actor"),
                 Value::from(actor.entity_ref().to_hex()),
             ),
-        ]));
+        ];
+        if !frontier_observations.is_empty() {
+            evidence.push((
+                Value::from("source_frontier_observations"),
+                Value::Array(frontier_observations),
+            ));
+        }
+        claim.evidence = Some(Value::Map(evidence));
+        // Blind-review P1a (REVIEW-4389): the constructor's scope_facet is
+        // the EVENT's substrate id — a derived id, not a stored FACET — so
+        // the CLAIM birth edge the put stamps would fail InvalidFacet. The
+        // engine-generated origin claim takes the EVENT's own stored birth
+        // facet (its put above wrote the FacetOf edge in this txn), else the
+        // vault default, as the provenance wrappers do (FIX 7757).
+        let event_facet = crate::federation::record_scope::birth_facet(&self.store, txn, event)?;
+        claim.scope_facet = match event_facet {
+            Some(facet)
+                if self
+                    .store
+                    .port_entity_record(txn, &facet)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_FACET) =>
+            {
+                facet
+            }
+            _ => crate::claim::default_facet_in(&self.store, txn)?,
+        };
         self.put_reserved_claim_in_txn(txn, &self.store.clock.entity_id()?, &claim, occurred, at)?;
         self.batch_in()
             .put(&event, ENTITY_TYPE_EVENT, occurred, at, &body)

@@ -279,6 +279,7 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         container,
         mut wakes,
         assertions,
+        mut model_call,
     } = producer;
     let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
@@ -348,7 +349,9 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
             // The run settled the answer before it arrived: the provider
             // spent it whether or not the answer is saved. It asserts the
             // records this host gathered, never the ones it came with.
-            if let Err(error) = bus.publish(assertions.stamp(event)) {
+            let event = assertions.stamp(event);
+            model_call.record(&vault, &credential, container, &event);
+            if let Err(error) = bus.publish(event) {
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {

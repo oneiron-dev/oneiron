@@ -7,8 +7,8 @@
 //! the line its other state kept between frames is charged to, before the
 //! bytes are allocated, and the charge goes with the stage. A stage whose
 //! line has no room is dropped, and its machine starts again on a later
-//! pass: that line, the memory floor, is the one refusal. The image's size is
-//! bounded only by the image cap. A stage no part reached for the idle bound
+//! pass: that line, the memory floor, is the one refusal. The image has no
+//! total-image policy cap. A stage no part reached for the idle bound
 //! goes at the next part any machine sends, and a stage goes when the socket
 //! that sent it closes ([`Vault::drop_countersign_stage`]), so a machine that
 //! stops mid-upload holds nothing until its next start.
@@ -76,7 +76,8 @@ impl Vault {
     /// that the linked machine `peer` sends this home to countersign (FIX
     /// 4882): see the module notes. A part at offset zero starts the image
     /// again, under a new charge `charge` makes. Refused for any other peer,
-    /// a part that is not the next one, and a length past the image size cap.
+    /// a part that is not the next one, and a malformed length. There is no
+    /// total-image policy cap.
     pub fn stage_countersign_part(
         &self,
         peer: PeerMachine,
@@ -95,11 +96,16 @@ impl Vault {
         let PeerMachine::Proven { machine, .. } = peer else {
             return Err(peer_refused());
         };
-        let end = offset.saturating_add(part.len() as u64);
+        let Ok(part_len) = u64::try_from(part.len()) else {
+            return Err(attest_refused("the countersign part is malformed"));
+        };
+        let Some(end) = offset.checked_add(part_len) else {
+            return Err(attest_refused("the countersign part is malformed"));
+        };
         if part.is_empty()
             || part.len() > AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX
             || end > total
-            || total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
+            || usize::try_from(total).is_err()
         {
             return Err(attest_refused("the countersign part is malformed"));
         }

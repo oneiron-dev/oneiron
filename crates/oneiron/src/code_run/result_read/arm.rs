@@ -1,9 +1,11 @@
-//! A shadow arm's reads of its own results (PR-S1, FIX 1661/2144): the
-//! card, the verdict and the facets a run's reads answer, over the arm's
-//! own body store and the taint each result was frozen with before the arm
-//! started (`shadow_runner`). The arm's program meets the answers a read of
-//! its run would give; no vault is read here, and a result that is not
-//! clean shows nothing of its body, as anywhere else.
+//! A shadow arm's reads of its results (PR-S1, FIX 1661/2144): the card,
+//! the verdict and the facets a run's reads answer, over the arm's own body
+//! store and the taint each result was frozen with before the arm started
+//! (`shadow_runner`). A result of another run the step's read context names
+//! (a reader child's source, a child's finding, FIX 6352) is read for its
+//! owner, as a run's read of it is. The arm's program meets the answers a
+//! read of its run would give; no vault is read here, and a result that is
+//! not clean shows nothing of its body, as anywhere else.
 
 use serde_json::{Value, json};
 
@@ -47,6 +49,10 @@ impl ResultBody for ArmBody<'_> {
     }
 
     fn line_index(&self) -> Option<Vec<u64>> {
+        // Arm windows stay scan-only; a whole arm keeps its index.
+        if self.base != 0 {
+            return None;
+        }
         self.store.line_index(self.output.output_ref())
     }
 
@@ -56,17 +62,20 @@ impl ResultBody for ArmBody<'_> {
 }
 
 impl ResultRead {
-    /// An arm's read of `output`, one of the results of the arm's run `run`
-    /// as `name` binds it, narrowed to `range`, under `taint`: the state and
-    /// secret reason it was frozen with, or its own scan gave it in the arm.
-    /// A range that is not inside the body is refused, as a run's read
-    /// refuses it.
+    /// An arm's read of `output`, a result of run `owner` as `name` binds it,
+    /// narrowed to `range`, under `taint`: the state and secret reason it was
+    /// frozen with, or its own scan gave it in the arm. `foreign` says the
+    /// owner is not the arm's run (a delegated source or a finding, FIX
+    /// 6352), whose refs keep the caller's names or the owner's occurrence,
+    /// as a run's read of it does. A range that is not inside the body is
+    /// refused, as a run's read refuses it.
     pub(crate) fn in_arm(
-        run: EntityId,
+        owner: EntityId,
         output: CodeRunRawOutput,
         name: Option<String>,
         range: Option<(u64, u64)>,
         taint: (ArtifactTaintState, Option<String>),
+        foreign: bool,
     ) -> std::result::Result<Self, Value> {
         if let Some((start, end)) = range
             && (start >= end || end > output.raw_len)
@@ -77,15 +86,16 @@ impl ResultRead {
         }
         let (state, secret) = taint;
         Ok(Self {
-            owner: run,
+            owner,
             output,
             name,
             range,
             state,
             secret,
-            // The arm's own results: an arm reads for its own run, never
-            // for another caller, so its refs name the occurrence.
-            foreign: false,
+            foreign,
+            // The arm reads for no scoped child: no live cutoff applies
+            // (FIX 8233).
+            live_cutoff: None,
         })
     }
 

@@ -263,6 +263,21 @@ def launch_identity(manifest_path):
     return cache_usage.sha256_hex(data), runtime
 
 
+def launch_draft_identity(manifest_path):
+    """The identity of the draft the supervisor's launch manifest names
+    (`draft_weights_digest`, FIX 14976): what every answer's identity echoes
+    while a draft is loaded. None without a manifest or without the field;
+    a manifest that cannot be read is already warned of by
+    `launch_identity`."""
+    if not manifest_path:
+        return None
+    try:
+        value = json.loads(Path(manifest_path).read_bytes()).get("draft_weights_digest")
+    except Exception:  # identity never stops the server
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -354,7 +369,8 @@ def load(args):
                         "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
         server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                          "max_in_flight": batch},
-        model_digest=model_digest, launch=launch)
+        model_digest=model_digest, launch=launch,
+        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -1235,15 +1251,22 @@ class Scheduler:
                 work=req.work,
                 execution=req.execution,
             )
+            # An evaluator's call (exl3_evaluator.py, FIX 14975) records what
+            # its Jobs take; every other call runs as before.
+            evaluation = getattr(req, "evaluation", None)
             if req.branch is not None and self.sessions is not None:
                 # A working branch's Job, attached where its session's state
                 # matches these ids; a thinking call's reasoning pass leaves
                 # its answer pass a carry.
                 plan = self.sessions.plan(req.branch, ids, carry=phase == "reason")
                 job = FrontierJob(plan=plan, **fields)
+            elif evaluation is not None:
+                job = evaluation.job(PlainJob, fields, phase)
             else:
                 job = PlainJob(**fields)
             serial = self.generator.enqueue(job)
+            if evaluation is not None:
+                evaluation.enqueued(job, phase)
         except Exception as e:
             self._fail(req, e)
             return
@@ -1676,6 +1699,7 @@ def serve(args, state):
                 created = int(time.time())
                 model = body.get("model") or state.model_id
                 reasoning, content = [], []
+                req = state.prepare(body, request_id, accepted_ns)
                 if streaming:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -1689,7 +1713,6 @@ def serve(args, state):
                     return {"id": request_id, "object": "chat.completion.chunk", "created": created,
                             "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
 
-                req = state.prepare(body, request_id, accepted_ns)
                 # A streamed answer to a request with tools is held from its
                 # first tool-call marker on (FIX 8328).
                 splitter = exl3_tools.StreamSplitter(req.tools) if streaming and req.tools else None

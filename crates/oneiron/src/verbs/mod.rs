@@ -5,6 +5,7 @@ mod agents;
 mod anonymous_chat;
 mod asr;
 mod authority_history;
+mod board_layout;
 mod browser;
 mod calendar;
 mod campaign_archive;
@@ -84,6 +85,8 @@ mod skill_fork;
 mod skills;
 mod standing;
 mod support_grant;
+#[cfg(feature = "sync")]
+mod sync_quarantine;
 mod trusted_contact;
 mod voice_bank;
 mod weave;
@@ -399,6 +402,11 @@ pub struct BoardWakeRequest {}
 #[serde(deny_unknown_fields)]
 pub struct BoardWakeReply {
     pub wakes: Vec<crate::context_board::WakeEnvelope>,
+    /// The wake opener the woken session appends after its own log, rendered
+    /// at this delivery and never stored with a wake (FIX 15011). Absent when
+    /// no wake is delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<String>,
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
@@ -423,6 +431,7 @@ pub use self::agents::*;
 pub use self::anonymous_chat::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
+pub use self::board_layout::*;
 pub use self::browser::*;
 pub use self::calendar::*;
 pub use self::campaign_archive::*;
@@ -503,6 +512,8 @@ pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
 pub use self::support_grant::*;
+#[cfg(feature = "sync")]
+pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;
 pub use self::voice_bank::*;
 pub use self::weave::*;

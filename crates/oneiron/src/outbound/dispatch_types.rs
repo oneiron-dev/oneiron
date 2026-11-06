@@ -116,6 +116,8 @@ pub struct OutboundDispatchRequest {
     /// minute from, with the vault clock reading taken alongside
     /// `occurred_at`. The window door reads the clock again for this send.
     pub(crate) delivery_window_clock: Option<DeliveryWindowClock>,
+    /// Frozen IANA label replayed from the TASK; the door re-resolves it at delivery.
+    pub(crate) delivery_window_iana_timezone: Option<String>,
     /// A human selected this exact instant; policy is observed but cannot park it.
     pub delivery_window_human_explicit_instant: bool,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
@@ -213,6 +215,7 @@ impl OutboundDispatchRequest {
             delivery_window_apns_interruption_level: None,
             delivery_window_resolved_level: None,
             delivery_window_clock: None,
+            delivery_window_iana_timezone: None,
             delivery_window_human_explicit_instant: false,
             context_receipt: None,
             linkedin_sandbox_policy: None,
@@ -344,6 +347,13 @@ impl OutboundDispatchRequest {
             utc_offset_minutes,
             anchor_recorded_at,
         });
+        self
+    }
+
+    /// Replay the TASK's frozen IANA label for delivery-time resolution.
+    #[must_use]
+    pub(crate) fn delivery_window_iana_timezone(mut self, zone: impl Into<String>) -> Self {
+        self.delivery_window_iana_timezone = Some(zone.into());
         self
     }
 
