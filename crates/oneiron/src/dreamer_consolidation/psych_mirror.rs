@@ -41,7 +41,7 @@ use crate::psych_profile::{
     PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileSourceWords,
     psych_profile_entity_id,
 };
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_PSYCH_PROFILE};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use oneiron_model::llm::{
@@ -480,33 +480,33 @@ pub(crate) fn psych_mirror_key_of_input(input: &rmpv::Value) -> Result<PsychProf
 
 /// Queues the profile attempt of every key whose inputs moved since its
 /// stored profile, or that has none: at most daily for a stored profile, at
-/// once for a missing or withdrawn one. A stored profile whose key has no
-/// eligible claim left (each retracted, hidden or restricted) is withdrawn
-/// at once: it stands on nothing. Runs at the start of every Dreamer wake
-/// pass.
+/// once for a missing or withdrawn one. A stored profile of a person whose
+/// key has no eligible claim left (each retracted, hidden or restricted, or
+/// gone) is withdrawn at once: it stands on nothing. The stored profiles are
+/// read for this on their own, never through the claims the Dreamer may
+/// read, which a retracted claim has left. Runs at the start of every
+/// Dreamer wake pass.
 pub(crate) fn enqueue_psych_mirror_on_wake(vault: &Vault, now: u64) -> Result<()> {
     let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
     if persons.is_empty() {
         return Ok(());
     }
+    let profiles = vault.entities_by_type(ENTITY_TYPE_PSYCH_PROFILE)?;
     let read = dreamer_read(vault)?;
     let (mut due, mut withdrawn) = (Vec::new(), Vec::new());
     {
         let txn = snapshot(vault)?;
         let default_facet = vault.default_facet_in_txn(&txn)?;
-        for person in persons {
-            for (key, sources) in person_inputs(vault, &read, &txn, person, default_facet)? {
+        // The profiles some eligible claim still stands under.
+        let mut standing = BTreeSet::new();
+        for person in &persons {
+            for (key, sources) in person_inputs(vault, &read, &txn, *person, default_facet)? {
                 let sources = selected(sources, now)?;
-                let id = psych_profile_entity_id(&key);
                 if sources.is_empty() {
-                    if matches!(
-                        stored_state(vault, &txn, &id, &sources)?,
-                        StoredProfile::Current | StoredProfile::Behind { .. }
-                    ) {
-                        withdrawn.push(id);
-                    }
                     continue;
                 }
+                let id = psych_profile_entity_id(&key);
+                standing.insert(id);
                 let regenerate = match stored_state(vault, &txn, &id, &sources)? {
                     StoredProfile::Current => false,
                     StoredProfile::Missing | StoredProfile::Withdrawn => true,
@@ -517,6 +517,19 @@ pub(crate) fn enqueue_psych_mirror_on_wake(vault: &Vault, now: u64) -> Result<()
                 if regenerate {
                     due.push((key, inputs_digest(&sources)));
                 }
+            }
+        }
+        let persons: BTreeSet<EntityId> = persons.into_iter().collect();
+        for id in profiles {
+            if standing.contains(&id) || crate::ports::stale_in_txn(&vault.store, &txn, &id)? {
+                continue;
+            }
+            // A row that does not decode is left as it stands.
+            let Ok(Some(profile)) = vault.get_psych_profile_in_txn(&txn, &id) else {
+                continue;
+            };
+            if persons.contains(&profile.subject_ref) {
+                withdrawn.push(id);
             }
         }
     }
