@@ -1333,7 +1333,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -1345,6 +1346,17 @@
      "purpose": "Durable result TURNs and the bodies their records hold",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/resident/room_wake.rs",
+     "purpose": "A settled resident's room wakes (FIX 15647): a room turn that addresses the resident, or whose thread's open…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -18079,7 +18091,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 41
      }
     },
     {
@@ -19077,7 +19089,24 @@
      "purpose": "MicroVM execution lane for foreign and ingested guest code",
      "surface": {
       "crate-vis": 1,
-      "re-export": 7
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MicroVmOutputBodies",
+      "MicroVmOutputSink",
+      "MicroVmOutputSpool",
+      "MicroVmOutputStreamBodies"
+     ],
+     "path": "src/code_sandbox/microvm/output.rs",
+     "purpose": "Caller-owned destinations for an isolated step's streamed output",
+     "surface": {
+      "fn": 3,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -19293,7 +19322,7 @@
      "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
      "purpose": "Internal bounded JSON bridge between typed WIT and the borrowed engine host",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -23304,7 +23333,7 @@
      "purpose": "Board streaming frames, routing and the pending-wake queue",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -23313,13 +23342,14 @@
      "notable": [
       "ChildEvent",
       "VerifiedDiaryReviewEvent",
-      "VerifiedOwnTaskEvent"
+      "VerifiedOwnTaskEvent",
+      "VerifiedRoomWakeEvent"
      ],
      "path": "src/context_board/stream/provenance.rs",
      "purpose": "Verified own-task and child event minting for routed board events",
      "surface": {
-      "crate-vis": 16,
-      "struct": 3
+      "crate-vis": 20,
+      "struct": 4
      }
     },
     {
@@ -23363,6 +23393,21 @@
       "crate-vis": 2,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingRoomWake",
+      "RoomWakeRead"
+     ],
+     "path": "src/context_board/stream/room_wake.rs",
+     "purpose": "The room wake producer's STREAM half (FIX 15647): a room turn that addresses an agent an external harness…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -23507,11 +23552,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "TurnWake"
+     ],
      "path": "src/context_board/turn_opener.rs",
      "purpose": "The now-time turn opener (ARCH-0067 §2: the log closes with a now-time turn opener the model completes; I1 =…",
      "surface": {
-      "fn": 2
+      "const": 1,
+      "enum": 1,
+      "fn": 5
      }
     },
     {
@@ -31927,7 +31976,7 @@
      "path": "src/dreamer_wake/observation.rs",
      "purpose": "The wake observation (DOOR-144): what one wake pass recorded of itself",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 10
      }
     },
@@ -34227,7 +34276,7 @@
      "path": "src/embed.rs",
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 9,
       "re-export": 14,
       "struct": 3
@@ -34441,6 +34490,7 @@
      "path": "src/embed/session_media.rs",
      "purpose": "The session-aware media door (OF-370): a media vector written while a room is off record stays in the room",
      "surface": {
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -48295,6 +48345,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/foreign_code/outputs.rs",
+     "purpose": "Materialization at the existing public foreign-code owned-return boundary",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/graph_fs_doors/mod.rs",
      "purpose": "Typed read-only file-face verbs",
      "surface": {
@@ -52949,7 +53009,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 12,
       "struct": 2
      }
@@ -60676,7 +60736,7 @@
      "path": "src/recovery/canonical/capture.rs",
      "purpose": "One coordinated capture of a quiescent canonical window",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -61944,7 +62004,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/work.rs",
@@ -77821,18 +77881,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "IndexPage",
-      "WindowIndexEntry"
-     ],
+     "notable": [],
      "path": "src/sync/residence.rs",
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
       "crate-vis": 17,
-      "fn": 14,
-      "re-export": 24,
-      "struct": 2
+      "fn": 10,
+      "re-export": 26
      }
     },
     {
@@ -77844,7 +77900,7 @@
      "path": "src/sync/residence/admission.rs",
      "purpose": "One residence request's admission for the machine at the other end of the connection (OF-534 G6)",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -78146,6 +78202,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ContentWorld"
+     ],
+     "path": "src/sync/residence/content_world.rs",
+     "purpose": "The content-world witness a home gives with each read-only copy it serves (FIX 14534, Engine 11-06 08:34…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/sync/residence/custody.rs",
      "purpose": "The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target",
@@ -78297,7 +78367,7 @@
      "path": "src/sync/residence/prune.rs",
      "purpose": "Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
      }
@@ -78352,6 +78422,20 @@
      "path": "src/sync/residence/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IndexPage",
+      "WindowIndexEntry"
+     ],
+     "path": "src/sync/residence/window_index.rs",
+     "purpose": "A window's metadata-only index: the listing a residence read serves one page at a time, each entry with the…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -87292,7 +87376,7 @@
      "surface": {
       "crate-vis": 30,
       "mod": 1,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -88262,7 +88346,7 @@
       "crate-vis": 42,
       "enum": 2,
       "fn": 6,
-      "re-export": 20,
+      "re-export": 22,
       "struct": 6
      }
     },
@@ -88385,7 +88469,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 1
      }
     },
@@ -88431,6 +88515,20 @@
      "purpose": "Replicated room join, offer and response merging",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomSpeakingClaim"
+     ],
+     "path": "src/workspace_roster/rooms/speaking.rs",
+     "purpose": "Who holds the next turn in a room, as the board's ROOM section renders it (FIX 15646; ARCH-0067 §8: \"the…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -88547,6 +88645,23 @@
      "purpose": "What a room host's upkeep voice must still hold in the write it lands in (OF-417)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomWake",
+      "RoomWakeTurn",
+      "StagedRoomWake"
+     ],
+     "path": "src/workspace_roster/rooms/wake.rs",
+     "purpose": "The room wake producer (FIX 15647): a committed room turn wakes each agent it addresses, and each agent…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -90404,7 +90519,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90642,7 +90757,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90761,7 +90876,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91258,7 +91373,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 365,
+     "files": 366,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91762,7 +91877,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 355,
+     "files": 357,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91958,7 +92073,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 126,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91974,7 +92089,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6467,
+   "source_files": 6475,
    "test_files": 895
   },
   "oneiron-android": {
@@ -103296,7 +103411,7 @@
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 22
      }
     },
     {
@@ -127249,7 +127364,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/board_publisher.rs",
@@ -128545,7 +128660,7 @@
      "path": "src/wake_adapters/board_stream.rs",
      "purpose": "STREAM frames for the production host wake handoff",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
