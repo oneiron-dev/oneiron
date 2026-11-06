@@ -148,14 +148,19 @@ struct Walk {
 }
 
 impl GraphFsResolver<'_, '_> {
-    pub(super) fn find_walk(&self, path: &str, cursor: Option<&str>) -> Result<WalkOutput> {
+    pub(super) fn find_walk(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<WalkOutput> {
         self.walk(
             path,
             true,
             WalkVerb::Find,
             &format!("find {path}"),
             cursor,
-            &crate::batch::secret_scan::ContainerReader::default(),
+            reader,
         )
     }
 

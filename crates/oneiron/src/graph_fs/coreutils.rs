@@ -168,13 +168,28 @@ impl GraphFsResolver<'_, '_> {
         newer_than: Option<u64>,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.find_with_reader(
+            path,
+            newer_than,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn find_with_reader(
+        &self,
+        path: &str,
+        newer_than: Option<u64>,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
         if let Some(newer_than) = newer_than {
             if self.snapshot.is_some() {
                 let walk = if self.snapshot_newer_than(newer_than)? {
-                    Some(self.find_walk(&normalized, cursor)?)
+                    Some(self.find_walk(&normalized, cursor, reader)?)
                 } else {
                     None
                 };
@@ -211,7 +226,7 @@ impl GraphFsResolver<'_, '_> {
             );
         }
 
-        let walk = self.find_walk(&normalized, cursor)?;
+        let walk = self.find_walk(&normalized, cursor, reader)?;
         self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Find,
             started,
