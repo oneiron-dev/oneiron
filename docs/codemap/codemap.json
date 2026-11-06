@@ -3602,7 +3602,7 @@
      "path": "src/authority/checkpoint_image/replay.rs",
      "purpose": "An image's replay evidence (OF-469, FIX 3007): the fold state at each covered row off the frontier, as the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -60929,7 +60929,7 @@
      "path": "src/recovery/canonical/row_births.rs",
      "purpose": "The row births a window carries (ARCH-0035 Rule A), through canonical capture and rebuild (FIX 3069)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "struct": 1
      }
     },
@@ -60985,7 +60985,7 @@
      "path": "src/recovery/canonical/withdrawn_cutoffs.rs",
      "purpose": "The withdrawal fences and session epoch floors a window carries (OF-013, FIX 2867), through canonical…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1
      }
     },
@@ -62166,7 +62166,7 @@
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -62175,6 +62175,26 @@
      "notable": [],
      "path": "src/recovery/validation/documents.rs",
      "purpose": "Ordered NOTE document row checks over one immutable canonical snapshot",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/validation/entity_documents.rs",
+     "purpose": "Generic EntityDoc validation with owned indexes over one canonical snapshot",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/validation/manifest.rs",
+     "purpose": "Owned resumable manifest and order checks over one immutable canonical snapshot",
      "surface": {
       "crate-vis": 3
      }
@@ -91778,7 +91798,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 121,
+     "files": 123,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92277,7 +92297,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6492,
+   "source_files": 6494,
    "test_files": 895
   },
   "oneiron-android": {
