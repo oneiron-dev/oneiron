@@ -31,7 +31,8 @@ mod wire;
 mod work_context;
 
 pub use admission::{
-    RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
+    RawDispatch, RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied,
+    UNRESOLVED_SELECTOR,
 };
 pub use allocation::{
     AllocationCallKey, AllocationCommit, AllocationServingFence, AllocationStoreError,
@@ -52,7 +53,7 @@ pub use job_maximum::{
     MaximumShown, MaximumStop, ResumeOffer, ResumeRefused, StopRefused,
 };
 pub use media::{MediaGate, MediaStreamLease};
-pub use permit::RunPermit;
+pub use permit::{RunPermit, offer_is_free_work};
 pub use person_billing::{
     BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
 };
