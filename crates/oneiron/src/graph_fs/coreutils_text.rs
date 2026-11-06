@@ -34,7 +34,9 @@ pub(super) fn page_lines(
             ),
             None => (rest, bytes.len()),
         };
-        if let Some(rendered) = render(&String::from_utf8_lossy(line)) {
+        let mut text = String::new();
+        lossy_for_each(line, reader, scan_bytes, |chunk| text.push_str(chunk))?;
+        if let Some(rendered) = render(&text) {
             if let Some(printed) = out.push_line(&rendered, at.printed) {
                 at.printed = printed;
                 return Ok((finished, Some(at)));
@@ -68,6 +70,50 @@ fn line_end(bytes: &[u8], reader: &ContainerReader, scan_bytes: usize) -> Result
     Ok(None)
 }
 
+/// Emits whole-input lossy UTF-8 without splitting a sequence at a scan boundary.
+fn lossy_for_each(
+    bytes: &[u8],
+    reader: &ContainerReader,
+    scan_bytes: usize,
+    mut emit: impl FnMut(&str),
+) -> Result<()> {
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let mut offset = 0;
+    while offset < bytes.len() {
+        checkpoint(reader)?;
+        let end = offset.saturating_add(quantum).min(bytes.len());
+        while offset < end {
+            match std::str::from_utf8(&bytes[offset..end]) {
+                Ok(text) => {
+                    emit(text);
+                    offset = end;
+                }
+                Err(error) => {
+                    let valid_end = offset + error.valid_up_to();
+                    emit(
+                        std::str::from_utf8(&bytes[offset..valid_end])
+                            .expect("UTF-8 error prefix is valid"),
+                    );
+                    offset = valid_end;
+                    match error.error_len() {
+                        Some(len) => {
+                            emit("\u{fffd}");
+                            offset += len;
+                        }
+                        None if end == bytes.len() => {
+                            emit("\u{fffd}");
+                            offset = end;
+                        }
+                        // Keep the incomplete sequence in the source for the next quantum.
+                        None => break,
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Counts the same lossy text as `str::lines` and `str::split_whitespace`,
 /// yielding between byte quanta even within one long line or word.
 pub(super) fn text_counts(
@@ -76,27 +122,23 @@ pub(super) fn text_counts(
     scan_bytes: usize,
 ) -> Result<(usize, usize)> {
     checkpoint(reader)?;
-    let text = String::from_utf8_lossy(bytes);
-    let (mut lines, mut words, mut scanned) = (0, 0, 0);
+    let (mut lines, mut words) = (0, 0);
     let mut in_word = false;
-    for ch in text.chars() {
-        if ch == '\n' {
-            lines += 1;
+    lossy_for_each(bytes, reader, scan_bytes, |text| {
+        for ch in text.chars() {
+            if ch == '\n' {
+                lines += 1;
+            }
+            if ch.is_whitespace() {
+                in_word = false;
+            } else if !in_word {
+                words += 1;
+                in_word = true;
+            }
         }
-        if ch.is_whitespace() {
-            in_word = false;
-        } else if !in_word {
-            words += 1;
-            in_word = true;
-        }
-        scanned += ch.len_utf8();
-        if scanned >= scan_bytes {
-            checkpoint(reader)?;
-            scanned = 0;
-        }
-    }
+    })?;
     // A nonempty last line needs no newline; CR stripping never changes the count.
-    if !text.is_empty() && !text.ends_with('\n') {
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         lines += 1;
     }
     Ok((lines, words))
