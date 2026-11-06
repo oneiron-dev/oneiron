@@ -238,3 +238,13 @@ bytes; nonempty opaque retained segments and field-removal receipts are
 unchanged. This is a source-only whole-paragraph correction, not full 17480,
 whole OF-509 or PowerPoint fidelity proof, and no Office runtime, full-feature
 or build comparison is claimed.
+
+The same-count field-free inter-paragraph gap carry (2026-11-06, FIX 17480) keeps
+each original gap's exact bytes between same-count rebuilt lines when zero DrawingML
+`fld` nodes sit wholly inside that gap, using the existing source spans and body scope.
+Gaps holding any direct or nested field keep the existing drop so the existing
+field-removal receipts stay truthful, and count-changing output keeps its exact previous
+bytes. Paragraph gates, rendering, alignment, defaults, opaque/static carries, cut paths
+and receipts are unchanged. This is a source-only same-count gap correction, part of the
+existing 17480/residual 18510 pack, not full 17480, full-feature, whole OF-509 or
+PowerPoint fidelity proof, and no Office runtime comparison is claimed.
