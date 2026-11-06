@@ -37,7 +37,6 @@ pub(crate) use crate::room_codec::carrier_parts;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;
 pub mod client;
-mod isolated_receiver;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
@@ -48,6 +47,7 @@ pub mod federation_burst;
 pub(crate) mod home_handoff;
 pub mod home_proof;
 mod ingest;
+mod isolated_receiver;
 pub mod lease;
 mod local_claims;
 pub(crate) mod loro_support;
@@ -103,6 +103,7 @@ pub use connection::{
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
 pub(crate) use ingest::{SelectedRecordDocument, VerifiedOwnDeviceLane};
+pub(crate) use ingest::{forget_message_writer_in_txn, note_message_put_in_txn};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,

@@ -16,15 +16,19 @@
 //!
 //! A federation peer's row stays the peer's on whichever own machine relays
 //! it: federation admission files its digest in the window's peer origin map
-//! (`peer_import`), and the door reads that record before it mints. Nothing
-//! here outlives the import or travels in the window: recovery, window open
-//! and every later pass replay persisted bytes with no live proof of who sent
-//! them, so none of them mints a lane.
+//! (`peer_import`), and the door reads that record before it mints. That map
+//! and the row are two LWW registers, so a race can leave a peer's bytes with
+//! no origin beside them (FIX 12113): the lane also asks for the writer's
+//! proof of the exact bytes (`message_writer`), which the import carries in
+//! the window beside the row, and names the machine that proof verifies.
+//! Nothing here outlives the import: recovery, window open and every later
+//! pass replay persisted bytes with no live proof of who sent them, so none
+//! of them mints a lane.
 
 pub(in crate::sync) mod record_document;
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use loro::json::{JsonOpContent, MapOp};
@@ -41,25 +45,33 @@ use crate::sync::types::WindowKey;
 use crate::{EntityId, Vault};
 
 /// A replicated MESSAGE row's proof that one of the owner's own machines
-/// sent its exact bytes, over a connection that proved that machine (FIX
-/// 9600). Only an own-device import's span mints one, in the door that lands
-/// the row, and it vouches for that row's body alone. It names the machine
-/// at the other end of that connection, the home that relayed the row, not
-/// the device or actor that wrote it.
+/// wrote its exact bytes and another sent them, over a connection that
+/// proved the sender (FIX 9600, FIX 12113). Only an own-device import's span
+/// mints one, in the door that lands the row, and it vouches for that row's
+/// body alone. It names the machine whose writer proof verified, the machine
+/// that wrote the row, not the home that relayed it nor the actor who spoke.
 #[derive(Debug)]
 pub(crate) struct VerifiedOwnDeviceLane {
     machine: EntityId,
     row: EntityId,
     /// The blake3 digest of the body the row's put lands.
     body: [u8; 32],
+    /// The writer proof that verified, which the put records so this
+    /// machine passes it on beside the row.
+    proof: Vec<u8>,
 }
 
 impl VerifiedOwnDeviceLane {
-    /// The own machine whose proven connection sent `data` as the body of
-    /// row `id`, or `None` when this lane vouches for another row or other
-    /// bytes.
+    /// The own machine that wrote `data` as the body of row `id`, or `None`
+    /// when this lane vouches for another row or other bytes.
     pub(crate) fn machine_for(&self, id: &EntityId, data: &[u8]) -> Option<EntityId> {
         (self.row == *id && self.body == digest(data)).then_some(self.machine)
+    }
+
+    /// The writer proof of row `id` with body `data`, or `None` when this
+    /// lane vouches for another row or other bytes.
+    pub(crate) fn proof_for(&self, id: &EntityId, data: &[u8]) -> Option<&[u8]> {
+        (self.row == *id && self.body == digest(data)).then_some(self.proof.as_slice())
     }
 }
 
@@ -69,12 +81,13 @@ thread_local! {
 
 /// One own-device import's span: the vault and window it lands in, the own
 /// machine that sent it, and each MESSAGE row its own bytes insert, with the
-/// digest of the whole entity blob it inserts.
+/// digest of the whole entity blob it inserts and the writer proof the
+/// window carries beside it once the import lands, if any.
 struct OwnDeviceSpan {
     vault: PathBuf,
     window: String,
     machine: EntityId,
-    rows: BTreeSet<(EntityId, [u8; 32])>,
+    rows: BTreeMap<(EntityId, [u8; 32]), Option<Vec<u8>>>,
 }
 
 /// Puts back the span an outer import installed, on every exit.
@@ -137,7 +150,8 @@ pub fn with_own_device_push<T>(
 }
 
 /// Each MESSAGE row `update` itself inserts into the window `key` whose live
-/// document is `doc`, with the digest of the bytes it inserts: a snapshot's
+/// document is `doc`, with the digest of the bytes it inserts and the writer
+/// proof the window carries beside the row once `update` lands: a snapshot's
 /// rows as it holds them, an update's as its own operations write them, not
 /// those of another import its operations complete. An update that does not
 /// decode, or whose history `doc` lacks, inserts none here; its import fails.
@@ -147,9 +161,9 @@ fn inserted_messages(
     key: &WindowKey,
     doc: &LoroDoc,
     update: &[u8],
-) -> BTreeSet<(EntityId, [u8; 32])> {
+) -> BTreeMap<(EntityId, [u8; 32]), Option<Vec<u8>>> {
     let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
-        return BTreeSet::new();
+        return BTreeMap::new();
     };
     let mut rows = BTreeSet::new();
     let mut note = |key: &str, blob: &[u8]| {
@@ -159,6 +173,9 @@ fn inserted_messages(
             rows.insert((id, digest(blob)));
         }
     };
+    // The window as it stands once the import lands: the writer proofs beside
+    // the rows are read there, whichever import brought them.
+    let mut landed = None;
     if meta.mode.is_snapshot() {
         if let Ok(sent) = LoroDoc::from_snapshot(update) {
             map_for_each_value_bytes(&sent.get_map("entities"), |key, blob| {
@@ -166,6 +183,7 @@ fn inserted_messages(
                     note(key, blob);
                 }
             });
+            landed = Some(sent);
         }
     } else if may_insert_message(key, doc, &meta) {
         let candidate = doc.fork();
@@ -185,9 +203,17 @@ fn inserted_messages(
                     note(&key, &blob);
                 }
             }
+            landed = Some(candidate);
         }
     }
-    rows
+    rows.into_iter()
+        .map(|row| {
+            let proof = landed
+                .as_ref()
+                .and_then(|landed| super::message_writer::carried_proof(landed, &row.0));
+            (row, proof)
+        })
+        .collect()
 }
 
 /// Whether `update`, not a snapshot, may insert a MESSAGE row into the window
@@ -202,9 +228,11 @@ fn may_insert_message(key: &WindowKey, doc: &LoroDoc, meta: &ImportBlobMetadata)
 
 /// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: an
 /// own-device import on this thread brought exactly these bytes into the
-/// window `ctx` lands, and no federation peer's import brought them. A
-/// trusted recovery pass, a ladder run outside a window's own passes, and a
-/// put of other bytes than the ones sent take none.
+/// window `ctx` lands, no federation peer's import brought them, and the
+/// writer proof the window carries beside them verifies (FIX 12113). A
+/// trusted recovery pass, a ladder run outside a window's own passes, a put
+/// of other bytes than the ones sent, and a row with no proof that verifies
+/// take none.
 pub(super) fn lane_in_txn(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -221,13 +249,17 @@ pub(super) fn lane_in_txn(
     }
     let sent = (*id, digest(blob));
     let vault = ctx.vault.store.env.path();
-    let machine = OWN_DEVICE_SPAN.with(|slot| {
-        slot.borrow().as_ref().and_then(|span| {
-            (span.vault == vault && span.window == ctx.window_key && span.rows.contains(&sent))
-                .then_some(span.machine)
-        })
+    let relayed = OWN_DEVICE_SPAN.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|span| span.vault == vault && span.window == ctx.window_key)
+            .and_then(|span| {
+                span.rows
+                    .get(&sent)
+                    .map(|proof| (span.machine, proof.clone()))
+            })
     });
-    let Some(machine) = machine else {
+    let Some((relay, proof)) = relayed else {
         return Ok(None);
     };
     // A federation peer's row stays the peer's, whichever own machine relays
@@ -235,9 +267,25 @@ pub(super) fn lane_in_txn(
     if super::peer_row_in_txn(ctx.vault, wtxn, ctx.window_key, id, blob)? {
         return Ok(None);
     }
+    // And only the machine that wrote these exact bytes vouches for them: a
+    // connection proves who relayed them, never who wrote them.
+    let writer = match &proof {
+        Some(proof) => {
+            super::message_writer::verified_writer_in_txn(ctx.vault, wtxn, id, blob, proof)?
+        }
+        None => None,
+    };
+    let (Some(machine), Some(proof)) = (writer, proof) else {
+        tracing::debug!(
+            ?relay,
+            "an own machine relayed a MESSAGE row with no writer proof that verifies"
+        );
+        return Ok(None);
+    };
     Ok(Some(VerifiedOwnDeviceLane {
         machine,
         row: *id,
         body: digest(data),
+        proof,
     }))
 }
