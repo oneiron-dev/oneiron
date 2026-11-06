@@ -236,6 +236,74 @@ impl EntityMaterialization {
     }
 }
 
+fn publish_entity_effects(
+    vault: &Vault,
+    applied_ops: &[(EntityId, Vec<u8>)],
+    born: &[(EntityId, Vec<u8>)],
+    floor_written: bool,
+    claims_written: bool,
+) {
+    if claims_written {
+        vault.verb_hook_bindings_changed();
+    }
+    for (id, blob) in born {
+        note_born(vault, *id, blob);
+    }
+    if floor_written {
+        vault.apply_pending_rebinds_after_commit();
+    }
+    // The savepoint has no postcommit owner: an authority row this batch
+    // landed, an owner's origin cut among them, reaches the live mirror
+    // here, so a repo manifest waiting in any loaded window for a proven
+    // writer is judged again against the new fold (FIX 15740).
+    vault.note_committed_rows(
+        applied_ops
+            .iter()
+            .filter(|(_, blob)| is_authority_row(blob))
+            .map(|(id, _)| *id)
+            .collect(),
+    );
+}
+
+/// An isolated candidate's entity effects, retained until its root commits.
+pub(in crate::sync) struct EntityImportEffects {
+    staged: EntityMaterialization,
+}
+
+impl EntityImportEffects {
+    pub(in crate::sync) fn publish_after_commit(
+        self,
+        vault: &Vault,
+    ) -> Vec<crate::vault::EntityRevisionChange> {
+        let EntityMaterialization {
+            applied_ops,
+            revision_changes,
+            born,
+            floor_written,
+            claims_written,
+        } = self.staged;
+        publish_entity_effects(vault, &applied_ops, &born, floor_written, claims_written);
+        revision_changes
+    }
+}
+
+/// Runs the native entity ladder on an isolated candidate, never opening a writer.
+pub(in crate::sync) fn stage_isolated_entities_in_txn(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> crate::Result<EntityImportEffects> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
+        .with_residence(Residence::Quarantine(doc));
+    let mut staged = EntityMaterialization::default();
+    staged.stage_in_txn(doc, delta, vault, window_key, &ingest, wtxn)?;
+    Ok(EntityImportEffects { staged })
+}
+
 /// Revision receipts are retained only after the nested savepoint and outer
 /// materialization transaction have both committed.
 pub(super) fn materialize_entities_with_changes(
@@ -268,26 +336,7 @@ pub(super) fn materialize_entities_with_changes(
     } = staged;
 
     if result.is_ok() {
-        if claims_written {
-            vault.verb_hook_bindings_changed();
-        }
-        for (id, blob) in &born {
-            note_born(vault, *id, blob);
-        }
-        if floor_written {
-            vault.apply_pending_rebinds_after_commit();
-        }
-        // The savepoint has no postcommit owner: an authority row this batch
-        // landed, an owner's origin cut among them, reaches the live mirror
-        // here, so a repo manifest waiting in any loaded window for a proven
-        // writer is judged again against the new fold (FIX 15740).
-        vault.note_committed_rows(
-            applied_ops
-                .iter()
-                .filter(|(_, blob)| is_authority_row(blob))
-                .map(|(id, _)| *id)
-                .collect(),
-        );
+        publish_entity_effects(vault, &applied_ops, &born, floor_written, claims_written);
     }
     // An earlier ChildOf or SpawnedBy can have arrived before this body's
     // endpoint and been deferred by the edge observer. Re-present only the

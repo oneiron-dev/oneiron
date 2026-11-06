@@ -193,7 +193,35 @@ impl State {
     }
 
     pub(super) fn write(&self, doc: &LoroDoc) -> Result<bool> {
-        let mut maps: BTreeMap<&str, BTreeMap<String, Vec<u8>>> = MAPS
+        let mut changed = false;
+        for (name, values) in self.carrier_rows()? {
+            let map = doc.get_map(name);
+            let mut keys = Vec::new();
+            map.for_each(|key, _| {
+                keys.push(key.to_owned());
+            });
+            for key in keys {
+                if !values.contains_key(&key) {
+                    crate::sync::loro_support::map_delete(&map, &key)?;
+                    changed = true;
+                }
+            }
+            for (key, bytes) in values {
+                if crate::sync::loro_support::map_get_bytes(&map, &key).as_deref()
+                    != Some(bytes.as_slice())
+                {
+                    crate::sync::loro_support::map_insert_bytes(&map, &key, &bytes)?;
+                    changed = true;
+                }
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Every row of the five NOTE maps this state holds, by map then key,
+    /// encoded as [`Self::write`] writes them.
+    pub(super) fn carrier_rows(&self) -> Result<BTreeMap<&'static str, BTreeMap<String, Vec<u8>>>> {
+        let mut maps: BTreeMap<&'static str, BTreeMap<String, Vec<u8>>> = MAPS
             .into_iter()
             .map(|name| (name, BTreeMap::new()))
             .collect();
@@ -234,28 +262,6 @@ impl State {
                 .or_default()
                 .insert(carrier.bundle.id.to_hex(), pack(carrier)?);
         }
-        let mut changed = false;
-        for (name, values) in maps {
-            let map = doc.get_map(name);
-            let mut keys = Vec::new();
-            map.for_each(|key, _| {
-                keys.push(key.to_owned());
-            });
-            for key in keys {
-                if !values.contains_key(&key) {
-                    crate::sync::loro_support::map_delete(&map, &key)?;
-                    changed = true;
-                }
-            }
-            for (key, bytes) in values {
-                if crate::sync::loro_support::map_get_bytes(&map, &key).as_deref()
-                    != Some(bytes.as_slice())
-                {
-                    crate::sync::loro_support::map_insert_bytes(&map, &key, &bytes)?;
-                    changed = true;
-                }
-            }
-        }
-        Ok(changed)
+        Ok(maps)
     }
 }
