@@ -41,6 +41,13 @@ impl PreparedSyncFrame {
         &self.frame
     }
 
+    pub(crate) fn into_batch_parts(mut self) -> (Vec<u8>, Option<WindowClaimCopyRelease>) {
+        if let Some(release) = &mut self.release {
+            release.stage(&mut self.frame);
+        }
+        (self.frame, self.release)
+    }
+
     pub(crate) fn release(mut self, vault: &Vault, peer: PeerMachine) -> Option<Vec<u8>> {
         if let Some(release) = &mut self.release {
             release.stage(&mut self.frame);
