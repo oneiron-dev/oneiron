@@ -59,6 +59,8 @@ use crate::write_envelope::thread_claim::{
 mod adapter;
 mod plan_store;
 
+pub(crate) use adapter::replay_completed_send_recorded;
+
 /// Prefix of every Gmail send plan's content ref.
 pub const GMAIL_SEND_PLAN_REF_PREFIX: &str = "gmail:plan:v1:";
 /// Prefix of the content ref of a Gmail send plan with files (fix list row
@@ -158,7 +160,7 @@ pub struct GmailSendPlan {
     /// renders at egress.
     message: Option<MailMessageIdentity>,
     /// The ref of the carrier its host holds that message in; `None` for a
-    /// send without files. Its kept row names it beside the manifest's
+    /// send without files. Its kept stub names it beside the manifest's
     /// digest, and the plan stands only beside that carrier's holder.
     carrier: Option<String>,
     content_ref: String,

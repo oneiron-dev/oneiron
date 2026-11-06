@@ -34,6 +34,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_REPLY_DEPENDENCY, LIVE),
     // A drafted reply stands as the vault held it: its state and its approval.
     (&t::MAIL_PACK_REPLY_DRAFT, LIVE),
+    // So do its files' manifest and the kept plan its send dispatches: an
+    // older image neither drops the live ones nor brings back retired ones.
+    (&t::MAIL_PACK_REPLY_MANIFEST, LIVE),
+    (&t::MAIL_PACK_REPLY_PLAN_STUB, LIVE),
     // A source's owner, custody name and settings are live configuration.
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),

@@ -50,6 +50,7 @@ mod send_as;
 pub use self::http::HttpGmailSendWire;
 pub use self::http_read::HttpGmailReadWire;
 pub use self::run::GmailReadAuthority;
+pub(crate) use self::send::replay_completed_send_recorded;
 pub use self::send::{
     GMAIL_SEND_PLAN_REF_PREFIX, GmailReplyThread, GmailSendAuthority, GmailSendPlan, GmailSendSink,
     GmailSendWire, GmailSendWireError, GmailSentMessage,
