@@ -36,7 +36,7 @@ mod standing;
 mod storage;
 mod window;
 
-pub use log::{ChatLog, ChatLogLine, read_chat_log};
+pub use log::{ChatLog, ChatLogLine, read_action_pinned_log, read_chat_log};
 pub(crate) use order::validate_conversation_window_in_txn;
 pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
