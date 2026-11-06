@@ -1631,28 +1631,298 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
   }
 });
 
-/* HOOKS-06 — Host compaction wake and budget hooks should work. OF-581.
- * Canon: ARCH-0080 #host-verbs/#verb-outcomes; ARCH-0067 #what.
- * Canonical host args (design, not callable routes):
- *   host.compact(window, keep_list, token_ceiling)
- *   host.wake(wake_kind, queue_head)
- *   host.budget.hit(seat, policy)
- * Skip {kind:"skip",reason} cannot stop compact. Rewrite {kind:"rewrite",
- * args} may only ADD word-for-word keep pins, never remove an existing pin.
- * Wake Skip must retain its reason. Budget Enqueue {kind:"enqueue",task:
- * {title,body,assignee?,due_at?}} must retain the ORIGINAL accounting lineage.
- *
- * Host attach points exist in core, but none of these three has a generated
- * typed HTTP/MCP/SDK trigger/result. CLI wake reads/acks a host inbox, not
- * host.wake; generic consolidation.enqueue does not become compact or budget.
- * On activation install the three hooks, attempt compact Skip, then add the
- * fixture pin and require both old/new pins in the actual compacted result.
- * Trigger quiet-hours wake and inspect its skipped receipt/reason. Reach an
- * explicitly declared public budget cap, observe budget.hit and its enqueued
- * followup, then inspect the original seat/payer/spend/lineage and unchanged
- * cap. Never tick queues privately or lower engine defaults for this flow.
+/* HOOKS-06 — OF-581, ARCH-0080 host-verbs/verb-outcomes.
+ * A real public sitting owns three newly witnessed windows. Independent
+ * replies exercise the native compaction gate and the native spend meter.
+ * The child has a pinned 8000-unit budget; the provider declares 8320 units.
+ * These are fixture inputs, not engine defaults or inferred prompt usage.
  */
-suite.todo(test, "HOOKS-06", "waits on typed host.compact, host.wake and host.budget.hit trigger/results — Host compaction wake and budget hooks should work");
+interface HostHookCorpus {
+  packName: string;
+  hookNames: { compact: string; wake: string; budget: string };
+  conversationId: string;
+  oldPin: string;
+  addedPin: string;
+  quietReason: string;
+  pageBound: number;
+  tokenCeiling: number;
+  budget: { intentKey: string; need: string; prompt: string; capUnits: number;
+    inputTokens: number; outputTokens: number; spentUnits: number; taskTitle: string };
+  compactCases: { mode: "skip" | "add" | "remove"; turnNumber: number; turnId: string;
+    messageId: string; content: string; tokens: number; expectedPins: string[]; expectedSummary: string }[];
+  packFiles: Record<string, string>;
+  prompts: { packagePath: string; wire: string; compaction: string };
+  calls: { chatProvider: string; chatModel: string; compactProvider: string;
+    compactModel: string; revision: string };
+}
+
+suite.test(test, "HOOKS-06", "Host compaction wake and budget hooks should work", async () => {
+  const { ScriptedProviders, openaiText } = await import("./support/providers.ts");
+  const catalog = await loadFixtures();
+  const spec = await catalog.readJson<HostHookCorpus>("hooks-host-scenario");
+  const providers = await ScriptedProviders.start({ id: "hooks06-host", steps: [
+    ...spec.compactCases.map(row => ({
+      id: `hooks06-compact-${row.mode}`, origin: "compact", role: "checker",
+      purpose: `native host compact ${row.mode}`,
+      request: { method: "POST" as const, path: "/v1/chat/completions", model: spec.calls.compactModel },
+      response: openaiText(`hooks06-compact-${row.mode}`, spec.calls.compactModel,
+        JSON.stringify({ from: row.turnNumber, through: row.turnNumber, summary: row.expectedSummary }),
+        { inputTokens: 512, outputTokens: spec.tokenCeiling }),
+    })),
+    {
+      id: "hooks06-budget-first", origin: "chat", role: "generative_reasoner",
+      purpose: "native child first step charges its declared usage",
+      request: { method: "POST", path: "/v1/chat/completions", model: spec.calls.chatModel },
+      // The executor's wire is bare JavaScript. This valid no-effect step
+      // ends normally; the following admission meets the already-spent cap.
+      response: openaiText("hooks06-budget-first", spec.calls.chatModel, "0;", {
+        inputTokens: spec.budget.inputTokens, outputTokens: spec.budget.outputTokens,
+      }),
+    },
+  ] });
+  const model = `${spec.calls.chatProvider}/${spec.calls.chatModel}@${spec.calls.revision}`;
+  const engine = await EngineFixture.start({ id: "HOOKS-06", profile, serverConfig: `
+[models]
+extraction_egress = true
+[models.providers.${spec.calls.chatProvider}]
+kind = "openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "${spec.calls.revision}"
+[models.providers.${spec.calls.compactProvider}]
+kind = "openai-compat"
+base_url = "${providers.urls.compact}"
+revision = "${spec.calls.revision}"
+[models.providers.hooks06dreamer]
+kind = "local-openai-compat"
+base_url = "${providers.urls.compact}"
+revision = "${spec.calls.revision}"
+[models.roles.generative_reasoner]
+model = "${spec.calls.chatProvider}:${spec.calls.chatModel}"
+[models.roles.checker]
+model = "${spec.calls.compactProvider}:${spec.calls.compactModel}"
+[models.roles.extraction_teacher]
+model = "hooks06dreamer:hooks06-extract"
+[models.roles.dreamer_current]
+model = "hooks06dreamer:hooks06-summary"
+[models.dreamer]
+enabled = true
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, spec.prompts.packagePath))}
+[models.code_mode.compaction]
+role = "checker"
+[[models.planner.seats]]
+model = "${model}"
+agent = "sys.team_lead"
+` });
+  try {
+    const startedAt = Math.floor(Date.now() / 1_000);
+    const bodyOf = (row: Facade.EntityView): Record<string, unknown> => {
+      if (row.body === null || typeof row.body !== "object" || Array.isArray(row.body)) {
+        throw new Error(`Expected public ${row.kind} body`);
+      }
+      return row.body as Record<string, unknown>;
+    };
+    // Temporal search includes container records; default recall intentionally
+    // omits SESSION and cannot establish whether this sitting exists.
+    const publicViews = async (): Promise<Facade.EntityView[]> => {
+      const page = await engine.client.call("vault.search.temporal", {
+        start: startedAt, end: Math.floor(Date.now() / 1_000),
+        sigma_secs: 0, limit: spec.pageBound,
+      });
+      expect(page.value.hits.length).toBeLessThan(spec.pageBound);
+      const rows: Facade.EntityView[] = [];
+      for (const hit of page.value.hits) {
+        const row = (await engine.client.call("vault.get", { entity_ref: hit.entity_ref })).value;
+        if (row !== null) rows.push(row);
+      }
+      return rows;
+    };
+    const hookReceipts = async (hook: string, verb: string, phase: string) =>
+      (await readHookReceipts(input => engine.client.call("vault.receipts", input), spec.pageBound))
+        .filter(row => row.fields?.hook === `${spec.packName}/${hook}`
+          && row.fields?.verb === verb && row.fields?.phase === phase);
+
+    const installed = await engine.client.call("vault.packs.put", await packInput(catalog, spec.packFiles));
+    expect(installed.outcome).toBe("installed");
+    const bindings = (await engine.client.call("vault.packs.hooks.list", {}))
+      .filter(row => row.binding.pack === spec.packName);
+    expect(bindings.map(row => row.binding.hook).sort())
+      .toEqual(Object.values(spec.hookNames).sort());
+    for (const row of bindings) {
+      expect(row.binding.enabled).toBe(true);
+      expect(row.binding.owner).toBe(engine.pairedActor.principalRef);
+    }
+    await engine.kill();
+    const grant = await engine.cli.run(["dreamer", "grant", "--config",
+      resolve(engine.root, "oneiron.toml"), "--extraction-route", "own_server"]);
+    expect(grant.exitCode).toBe(0);
+    await engine.restart();
+    const opened = await engine.client.request("POST", "/v1/ai/session", { event: "open" });
+    expect(opened.status).toBe(202);
+    const sessions = await awaitPublic(async () => (await publicViews()).filter(row => row.kind === "SESSION"),
+      rows => rows.length !== 0, { label: "HOOKS-06 publicly applied open sitting" });
+    expect(sessions).toHaveLength(1);
+    const session = sessions[0]!;
+    await engine.client.call("vault.conversations.create", {
+      id: spec.conversationId,
+      body: { v: 1, kind: "direct", member_ids: [engine.pairedActor.principalRef], title: "Host hook handover" },
+      text: [{ field: "title", value: "Host hook handover" }],
+    });
+    const compacted: Facade.HostCompactResult[] = [];
+    const compactReceipts: Facade.MemoryReceipt[] = [];
+    for (const row of spec.compactCases) {
+      const witnessed = await engine.client.call("vault.witness", {
+        conversation_ref: spec.conversationId, turn_ref: row.turnId,
+        occurred_at: Math.floor(Date.now() / 1_000),
+        messages: [{ id: row.messageId, author: "user", message_type: "dialogue",
+          content: row.content, is_visible: true, order: 0 }],
+      });
+      expect(witnessed.turn?.id).toBe(row.turnId);
+      const previous = await hookReceipts(spec.hookNames.compact, "host.compact", "pre");
+      const result = await engine.client.call("host.compact", {
+        session_ref: session.id_hex,
+        window: [{ message_id: row.messageId, turn_id: row.turnId, content: row.content,
+          turn: row.turnNumber, tokens: row.tokens }],
+        keep_list: [spec.oldPin], token_ceiling: spec.tokenCeiling,
+      });
+      expect(result.keep_list).toEqual(row.expectedPins);
+      expect(result.text).toBe(row.expectedSummary);
+      for (const pin of row.expectedPins) expect(result.text).toContain(pin);
+      expect(result.first_turn).toBe(row.turnNumber);
+      expect(result.last_turn).toBe(row.turnNumber);
+      if (compacted.length !== 0) expect(result.epoch).toBeGreaterThan(compacted.at(-1)!.epoch);
+      compacted.push(result);
+      const summary = (await engine.client.call("vault.get", { entity_ref: result.summary })).value;
+      expect(summary?.kind).toBe("SUMMARY");
+      expect(summary).not.toBeNull();
+      const summaryBody = bodyOf(summary!);
+      expect(summaryBody.text).toBe(row.expectedSummary);
+      expect(summaryBody.epoch).toBe(result.epoch);
+      expect(summaryBody.turn_start).toBe(row.turnNumber);
+      expect(summaryBody.turn_end).toBe(row.turnNumber);
+      const receipts = (await hookReceipts(spec.hookNames.compact, "host.compact", "pre"))
+        .filter(item => !previous.some(old => old.receipt_ref === item.receipt_ref));
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]!.outcome).toBe(row.mode === "add" ? "rewrite" : "refused");
+      if (row.mode === "remove") {
+        expect(receiptField(receipts[0]!, "reason")).toContain("only adds");
+      }
+      compactReceipts.push(receipts[0]!);
+    }
+
+    const beforeWake = await hookReceipts(spec.hookNames.wake, "host.wake", "pre");
+    let wakeRefusal: PublicHttpError | undefined;
+    try {
+      await engine.client.call("host.wake", { wake_kind: "timer", queue_head: [] });
+    } catch (error) {
+      if (!(error instanceof PublicHttpError)) throw error;
+      wakeRefusal = error;
+    }
+    expect(wakeRefusal).toBeDefined();
+    const wakeRows = (await hookReceipts(spec.hookNames.wake, "host.wake", "pre"))
+      .filter(row => !beforeWake.some(previous => previous.receipt_ref === row.receipt_ref));
+    expect(wakeRows).toHaveLength(1);
+    const wakeReceipt = wakeRows[0]!;
+    expect(wakeReceipt.outcome).toBe("skip");
+    expect(receiptField(wakeReceipt, "reason")).toBe(spec.quietReason);
+
+    // A current explicit type and fully pinned solo plan need no placement or
+    // planning model reply. The real native child, not a private budget tick,
+    // owns the paid call and its attempt scope.
+    const tree = (await engine.client.call("vault.task_types.get", {})).tree;
+    expect(tree).not.toBeNull();
+    if (!tree) throw new Error("Fresh vault has no task-type tree");
+    expect(tree.nodes.some(row => row.node_id === tree.root.node_id && row.live)).toBe(true);
+    const spawned = await engine.client.call("vault.agents.spawn", {
+      intent_key: spec.budget.intentKey, prompt: spec.budget.prompt, need: spec.budget.need,
+      requested_type: tree.root, care: "light",
+      model: { mode: "pin", value: model }, width: { mode: "pin", value: 1 },
+      pattern: { mode: "pin", value: "solo" },
+      budget_cap_units: { mode: "pin", value: spec.budget.capUnits },
+    });
+    expect(spawned.phase).toBe("launched");
+    expect(spawned.refusal ?? null).toBeNull();
+    expect(spawned.root_attempt).toMatch(/^[a-f0-9]{32}$/);
+    const seat = spawned.root_attempt!;
+    const readLease = () => engine.client.call("vault.budgets.lease", { scope: seat });
+    const atCap = await awaitPublic(readLease, value => value.spend.available_units === 0,
+      { label: "HOOKS-06 native child spend reaches its pinned cap" });
+    expect(atCap.lease.cap_units).toBe(spec.budget.capUnits);
+    expect(atCap.lease.hard).toBe(true);
+    expect(atCap.lease.parent ?? null).toBeNull();
+    expect(atCap.lease.payer ?? null).toBeNull();
+    expect(atCap.spend.spent_units).toBe(spec.budget.spentUnits);
+    expect(atCap.spend.cap_units).toBe(spec.budget.capUnits);
+    expect(atCap.spend.signal?.signal).toBe("at_cap");
+    const invocation = secretHex(16);
+    const hitInput: FacadeInput<"host.budget.hit"> = { seat, policy: { kind: "suspend" } };
+    const hit = (await engine.client.request<FacadeResult<"host.budget.hit">>(
+      "POST", "/v1/core/facade/host.budget.hit", hitInput, { "x-oneiron-invocation": invocation },
+    )).body;
+    expect(hit.seat).toBe(seat);
+    expect(hit.policy).toEqual({ kind: "suspend" });
+    expect(hit.accounting.line.scope).toBe(atCap.lease.scope);
+    expect(hit.accounting.root.scope).toBe(atCap.lease.scope);
+    expect(hit.accounting.root.parent ?? null).toBeNull();
+    expect(hit.accounting.root.payer ?? null).toBeNull();
+    expect(hit.accounting.line.cap_units).toBe(spec.budget.capUnits);
+    expect(hit.accounting.root.cap_units).toBe(spec.budget.capUnits);
+    expect(hit.accounting.spend.spent_units).toBe(spec.budget.spentUnits);
+    expect(hit.accounting.spend.available_units).toBe(0);
+    const budgetRows = await awaitPublic(async () =>
+      (await hookReceipts(spec.hookNames.budget, "host.budget.hit", "post"))
+        .filter(row => row.fields?.invocation === invocation), rows => rows.length !== 0,
+      { label: "HOOKS-06 original public budget-hit Hook receipt" });
+    expect(budgetRows).toHaveLength(1);
+    const budgetReceipt = budgetRows[0]!;
+    expect(budgetReceipt.outcome).toBe("enqueue");
+    expect(receiptField(budgetReceipt, "run_key")).toMatch(/^[a-f0-9]{64}$/);
+    expect(budgetReceipt.receipt_ref).toBe(`hook:${receiptField(budgetReceipt, "run_key")}`);
+    const taskRows = await awaitPublic(async () => (await publicViews()).filter(row => {
+      if (row.kind !== "TASK") return false;
+      const body = bodyOf(row);
+      return typeof body.spec === "object" && body.spec !== null && "run_key" in body.spec
+        && body.spec.run_key === budgetReceipt.receipt_ref;
+    }), rows => rows.length !== 0, { label: "HOOKS-06 publicly landed Enqueue task" });
+    expect(taskRows).toHaveLength(1);
+    const task = taskRows[0]!;
+    const taskSpec = bodyOf(task).spec as Record<string, unknown>;
+    expect(taskSpec.title).toBe(spec.budget.taskTitle);
+    expect(taskSpec.hook).toBe(receiptField(budgetReceipt, "binding"));
+    expect(taskSpec.run_key).toBe(budgetReceipt.receipt_ref);
+    expect(typeof taskSpec.body).toBe("string");
+    expect(JSON.parse(taskSpec.body as string)).toEqual({ seat, accounting: hit.accounting });
+    const afterHit = await readLease();
+    expect(afterHit.lease.scope).toBe(atCap.lease.scope);
+    expect(afterHit.lease.cap_units).toBe(atCap.lease.cap_units);
+    expect(afterHit.lease.parent ?? null).toBe(atCap.lease.parent ?? null);
+    expect(afterHit.lease.payer ?? null).toBe(atCap.lease.payer ?? null);
+    expect(afterHit.spend.spent_units).toBe(atCap.spend.spent_units);
+    expect(afterHit.spend.available_units).toBe(0);
+    await engine.artifacts.json("host-compact-wake-budget.json", {
+      session, compacted, compactReceipts, wakeRefusal: wakeRefusal!.reply.body,
+      wakeReceipt, spawned, atCap, hit, budgetReceipt, task, afterHit,
+      payerProof: "owner-root None preserved; not a non-owner payer test",
+    });
+    await engine.kill();
+    await engine.restart();
+    const durableWake = (await hookReceipts(spec.hookNames.wake, "host.wake", "pre"))
+      .find(row => row.receipt_ref === wakeReceipt.receipt_ref);
+    expect(durableWake).toEqual(wakeReceipt);
+    expect(receiptField(durableWake!, "reason")).toBe(spec.quietReason);
+    expect((await engine.client.call("vault.get", { entity_ref: task.id_hex })).value).toEqual(task);
+    const durableLease = await readLease();
+    expect(durableLease.lease.cap_units).toBe(spec.budget.capUnits);
+    expect(durableLease.spend.spent_units).toBe(spec.budget.spentUnits);
+    expect(durableLease.lease.payer ?? null).toBeNull();
+    await engine.artifacts.json("host-restart.json", { durableWake, task, durableLease });
+  } finally {
+    await engine.artifacts.json("host-provider-calls.json", providers.seenFixtureCalls);
+    try { await engine.stop(); } finally { await providers.close(); }
+  }
+});
 
 /* HOOKS-07 — Pinned hook update and block scope should work. OF-581/580.
  * Canon: ARCH-0080 #blocks/#updates/#regen; ARCH-0053 #r4b-hubs.
