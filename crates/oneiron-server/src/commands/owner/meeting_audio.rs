@@ -261,7 +261,7 @@ pub fn meeting_transcript(args: MeetingTranscriptArgs) -> anyhow::Result<()> {
         &AudioFile {
             bytes: &bytes,
             source_name: &source_name,
-            capture_started_at: args.capture_started_at,
+            capture_started_at: args.capture_started_at.map(|millis| millis / 1_000),
             language_hint: args.language.as_deref(),
         },
         &options,

@@ -189,7 +189,7 @@ def provenance(model, body, **details):
 def vad_bundle_model():
     """Actual installed silero_vad ONNX bundle identity, or None if unavailable.
 
-    Metadata/hash only; never loads or runs the model. Name is silero-vad,
+    Metadata/hash only; never loads or runs the model. Name is silero/vad,
     digest is SHA-256 of the canonical relative-file -> SHA-256 map of the
     package's real ONNX bytes (not package version or guessed rev).
     """
@@ -216,7 +216,7 @@ def vad_bundle_model():
                     value.update(chunk)
             manifest[path.relative_to(package_dir).as_posix()] = value.hexdigest()
         canonical = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        return "silero-vad@" + hashlib.sha256(canonical).hexdigest()
+        return "silero/vad@" + hashlib.sha256(canonical).hexdigest()
     except OSError:
         return None
 
