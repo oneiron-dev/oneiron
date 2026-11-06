@@ -45,6 +45,11 @@ pub const COMM_PROJECTED_CLAIM: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 /// Parts: normalized connector class.
 pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
 
+/// The synced TASK that carries one agent run across machines
+/// (`agent_dispatch::agent_run_task_id`, FIX 4747). Parts: the run's attempt
+/// id (16 bytes).
+pub const AGENT_RUN_TASK: &[u8] = b"oneiron.agent_run_task.v0\0";
+
 /// The embedded default owner actor (`vault::embedded_owner_actor_id`, ONE-1441
 /// WIRE-P1). No parts. It must stay the same text as the domain behind
 /// `oneiron_vault_contract::embedded_owner_holder_hex`, the supervisor's copy

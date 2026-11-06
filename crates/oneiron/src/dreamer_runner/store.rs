@@ -1091,6 +1091,8 @@ impl<'a> DreamerRunnerStore<'a> {
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
+        // FIX 4747: a parking agent run keeps its executor lease.
+        crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, record.attempt_id)?;
         Ok(record)
     }
 
@@ -1146,6 +1148,9 @@ impl<'a> DreamerRunnerStore<'a> {
         super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        // FIX 4747: a resuming agent run keeps its executor lease until its
+        // next claim takes it.
+        crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, attempt_id)?;
         if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
             // Callers pass their own clock (the trap layer's counts
             // milliseconds); the queue row keeps the vault's seconds.

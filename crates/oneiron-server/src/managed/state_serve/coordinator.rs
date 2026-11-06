@@ -688,9 +688,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             mesh.end_streams().await;
         }
         upgrades.await;
-        // This machine's send executor leases go to another machine while
-        // the device-sync link can still carry the release (FIX 4747).
+        // This machine's send executor and agent run leases go to another
+        // machine while the device-sync link can still carry the release
+        // (FIX 4747).
         sync_server.release_send_executor_leases().await;
+        sync_server.release_agent_run_leases().await;
         // Its channel detaches before the mesh it rides closes.
         if let Some(device_sync) = device_sync {
             device_sync.stop().await;

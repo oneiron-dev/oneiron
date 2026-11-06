@@ -30,6 +30,7 @@ pub(super) async fn stop_serving(
     }
     upgrades.await;
     server.release_send_executor_leases().await;
+    server.release_agent_run_leases().await;
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
     }

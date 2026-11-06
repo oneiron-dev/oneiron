@@ -768,7 +768,7 @@ pub(super) fn take_send_executor_lease(
     let mut take = SendExecutorLeaseTake::Closed;
     // A closing process released its leases: it takes none again.
     if vault
-        .send_executor_leases_released
+        .executor_leases_released
         .load(std::sync::atomic::Ordering::SeqCst)
     {
         return Ok(SendExecutorLeaseTake::Closing);
@@ -1071,7 +1071,7 @@ pub(super) fn renew_send_executor_lease_in_txn(
     now: u64,
 ) -> Result<(), Error> {
     if vault
-        .send_executor_leases_released
+        .executor_leases_released
         .load(std::sync::atomic::Ordering::SeqCst)
     {
         return Ok(());
