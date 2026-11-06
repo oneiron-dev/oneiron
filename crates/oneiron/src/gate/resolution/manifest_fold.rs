@@ -63,10 +63,10 @@ pub(crate) fn resolve_credential_lifetimes(
 }
 
 /// The stored manifests [`resolve_policy_manifest`] folds on `txn`, by id:
-/// each row it reads into the resolution, trusted or not, and each one whose
-/// shape only sets a diagnostic. A quarantined manifest and a project-depth
-/// row its own causal fold resolves contribute nothing, so they are left
-/// out. A listing door names these as the rows a resolved frontier is read
+/// each trusted row it reads into the resolution, and each one whose shape
+/// only sets a diagnostic. A quarantined or untrusted manifest (a proposal,
+/// FIX 8780) and a project-depth row its own causal fold resolves contribute
+/// nothing, so they are left out. A listing door names these as the rows a resolved frontier is read
 /// from; the frontier's hash is no row.
 ///
 /// # Errors
@@ -100,6 +100,8 @@ pub(crate) fn policy_manifest_contributors(
                     continue;
                 }
             } else if crate::gate::manifest_authenticity::manifest_is_quarantined(
+                store, txn, &id, &raw.body,
+            )? || !crate::gate::manifest_authenticity::manifest_is_trusted(
                 store, txn, &id, &raw.body,
             )? {
                 continue;
