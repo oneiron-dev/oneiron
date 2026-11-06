@@ -323,6 +323,21 @@ impl Vault {
                     waits_on.push(facet);
                 }
             }
+            // FIX 8741 review: an ASSET_TEXT the archive carries with
+            // `DerivedFrom` sources waits on them, so its birth below finds
+            // its source ASSETs placed and takes their facet. A source the
+            // archive does not carry blocks nothing (it is never Waiting).
+            if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+                for source in super::evidence_import::archived_targets(
+                    &archive.index,
+                    &id,
+                    EdgeKind::DerivedFrom,
+                )? {
+                    if !waits_on.contains(&source) {
+                        waits_on.push(source);
+                    }
+                }
+            }
             // FIX 7777: a MESSAGE lands after the TURN and CONVERSATION it
             // joins, which come back stamped imported.
             if row.entity_type == ENTITY_TYPE_MESSAGE {
@@ -660,29 +675,58 @@ fn insert_ready_row<R: Read + Seek>(
             } else {
                 None
             };
-            let mut batch = vault.batch_in().mask(mask).put(
-                &id,
-                row.entity_type,
-                occurred,
-                row.learned_at,
-                &body,
-            );
-            if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+            let sources = if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+                super::evidence_import::archived_targets(
+                    &archive.index,
+                    &id,
+                    EdgeKind::DerivedFrom,
+                )?
+            } else {
+                Vec::new()
+            };
+            // FIX 8741 review: a text whose archived sources are all placed
+            // ASSETs here is restored through facet rule C's birth door, so
+            // its put is stamped with its sources' facet and the archived
+            // FacetOf edge then reads as that birth. A source this vault
+            // does not hold keeps today's put beside the archived edges.
+            let placed = !sources.is_empty()
+                && sources.iter().try_fold(true, |all, source| {
+                    Ok::<_, Error>(all && stored_asset_in_txn(vault, wtxn, source)?)
+                })?;
+            if placed {
                 let weight =
                     EdgeKind::DerivedFrom
                         .default_weight()
                         .ok_or(Error::InvariantViolation(
                             "derived_from has no weight prior",
                         ))?;
-                for source in super::evidence_import::archived_targets(
-                    &archive.index,
+                let weighted: Vec<(EntityId, f32)> =
+                    sources.iter().map(|source| (*source, weight)).collect();
+                vault
+                    .batch_in()
+                    .asset_text_birth(&id, occurred, row.learned_at, &body, &weighted)
+                    .apply(wtxn)
+            } else {
+                let mut batch = vault.batch_in().mask(mask).put(
                     &id,
-                    EdgeKind::DerivedFrom,
-                )? {
-                    batch = batch.edge(&id, EdgeKind::DerivedFrom, &source, weight);
+                    row.entity_type,
+                    occurred,
+                    row.learned_at,
+                    &body,
+                );
+                if !sources.is_empty() {
+                    let weight =
+                        EdgeKind::DerivedFrom
+                            .default_weight()
+                            .ok_or(Error::InvariantViolation(
+                                "derived_from has no weight prior",
+                            ))?;
+                    for source in &sources {
+                        batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
+                    }
                 }
+                batch.apply(wtxn)
             }
-            batch.apply(wtxn)
         }
     };
     landed?;
@@ -1608,6 +1652,19 @@ fn archived_source_free_text<R: Read + Seek>(
     Ok(entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
         && super::evidence_import::archived_targets(&archive.index, id, EdgeKind::DerivedFrom)?
             .is_empty())
+}
+
+/// Whether `id` is a stored ASSET in `wtxn` (FIX 8741 review): a derived
+/// ASSET_TEXT is restored through its birth door only over placed sources.
+fn stored_asset_in_txn(vault: &Vault, wtxn: &heed::RwTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, id)?.is_some_and(
+            |raw| {
+                EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_ASSET)
+            },
+        ),
+    )
 }
 
 /// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive
