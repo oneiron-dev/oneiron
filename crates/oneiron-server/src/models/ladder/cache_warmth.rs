@@ -2,12 +2,14 @@
 //! which reusable prefix each route still holds warm in its provider's
 //! prompt cache. It is a hint for `auto`'s choice between a live fork and
 //! the cheap writer, never proof that a provider will hit. A rung's answer
-//! notes a prefix only on its provider's own usage (FIX 6493): the one
-//! block its request marked, when the provider reports a cache write, from
-//! the instant it was dispatched, for the lifetime its provider keeps that
-//! tier ([`cache_profile`], the one table). A self agent's compaction
-//! under a row on `auto` reads the note when its breakpoint captures the
-//! live request, and again right before its live fork's first dispatch.
+//! notes a prefix only on its provider's own usage: the one block its
+//! request marked, when the provider reports a cache write (FIX 6493), and,
+//! refreshed, a prefix noted before whose extent alone the provider's cache
+//! read names (FIX 6494). Each is warm from the instant that send was
+//! dispatched, for the lifetime its provider keeps its tier
+//! ([`cache_profile`], the one table). A self agent's compaction under a
+//! row on `auto` reads the note when its breakpoint captures the live
+//! request, and again right before its live fork's first dispatch.
 //! Nothing is kept in the vault or across a restart, and no key is read: a
 //! route the table does not know, a T0 offer (FIX 6495), a rebuilt provider
 //! client, or a prefix no answer showed written reads cold. Warmth never
@@ -189,11 +191,11 @@ fn route_key(rung: &LadderRung) -> Option<impl Fn(&Prefix) -> WarmKey> {
 /// lifetime its tier keeps, the prefix's extent in the provider's own
 /// tokens (FIX 6493), and the client it went out through, held weakly so
 /// that client's place is never another's while the note stands.
+#[derive(Clone)]
 struct Observation {
     client: Weak<dyn SingleRouteBackend>,
     sent: Instant,
     lifetime: Duration,
-    #[expect(dead_code, reason = "a hit's refresh reads it (FIX 6494)")]
     tokens: u64,
 }
 
@@ -227,6 +229,19 @@ impl CacheWarmth {
         }
     }
 
+    /// Each of `keys` still warm now, with its note (FIX 6494).
+    fn held(&self, keys: impl IntoIterator<Item = WarmKey>) -> Vec<(WarmKey, Observation)> {
+        let now = Instant::now();
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        held.retain(|_, seen| seen.warm(now));
+        keys.into_iter()
+            .filter_map(|key| {
+                let seen = held.get(&key)?.clone();
+                Some((key, seen))
+            })
+            .collect()
+    }
+
     /// The first of `keys` still warm now.
     fn first_warm(&self, keys: impl IntoIterator<Item = WarmKey>) -> Option<WarmKey> {
         let now = Instant::now();
@@ -240,87 +255,142 @@ impl CacheWarmth {
     }
 }
 
-/// The one prefix a send marked, as it went out (FIX 6493).
+/// The one prefix a send marked (FIX 6493): its key, the client it went
+/// out through and the lifetime its tier keeps.
 struct Marked {
     key: WarmKey,
     client: Weak<dyn SingleRouteBackend>,
-    sent: Instant,
     lifetime: Duration,
 }
 
-/// What a rung's send notes as warm once it answers, taken right before its
-/// bound request goes out, so its instant is no later than its dispatch.
-pub(super) struct Sending(Option<Marked>);
+/// What a rung's send may note once it answers, taken right before its
+/// bound request goes out, so its instant is no later than its dispatch:
+/// the one prefix it marked (FIX 6493), and each prefix noted warm then
+/// that its provider may read for it, with its note (FIX 6494).
+pub(super) struct Sending {
+    sent: Instant,
+    marked: Option<Marked>,
+    held: Vec<(WarmKey, Observation)>,
+}
 
 impl Sending {
-    /// `bound` as `rung` sends it: nothing on a route the table does not
-    /// know, or for a request that does not mark exactly one message block.
-    pub(super) fn of(rung: &LadderRung, bound: &LlmRequest) -> Self {
-        Self(marked(rung, bound))
+    /// `bound` as `rung` sends it, against `rests`' notes now: nothing on a
+    /// route the table does not know, or for a request that marks no
+    /// message block.
+    pub(super) fn of(rests: &OfferCooldowns, rung: &LadderRung, bound: &LlmRequest) -> Self {
+        let sent = Instant::now();
+        dispatched(rests, rung, bound, sent).unwrap_or_else(|| Self {
+            sent,
+            marked: None,
+            held: Vec::new(),
+        })
     }
 
     /// The rung answered with `usage`, the provider's own, before a receipt
-    /// is stamped on it (FIX 6493). The one prefix its request marked is
-    /// warm from its dispatch for the lifetime its tier keeps, whatever its
-    /// settlement, only when the provider reports a cache write. Its extent
-    /// is the tokens the provider read and wrote: the prefix through that
-    /// one block. An answer with no cache write notes nothing.
+    /// is stamped on it, whatever its settlement. Each note runs from this
+    /// send's dispatch.
+    ///
+    /// FIX 6493: the one prefix its request marked is warm for the lifetime
+    /// its tier keeps only when the provider reports a cache write. Its
+    /// extent is the tokens the provider read and wrote: the prefix through
+    /// that one block. An answer with no cache write does not note it.
+    ///
+    /// FIX 6494: a prefix noted warm at dispatch is refreshed when the
+    /// provider's cache read is its extent and no other's. The provider
+    /// read it, so keeps it for its own tier's lifetime from this send. A
+    /// read that names no held prefix, or more than one, refreshes nothing.
     pub(super) fn answered(self, rests: &OfferCooldowns, usage: &LlmUsage) {
-        let Some(marked) = self.0 else {
-            return;
-        };
         let input = &usage.input;
-        if input.cache_write == 0 {
+        if input.cache_write > 0
+            && let Some(marked) = self.marked
+        {
+            let seen = Observation {
+                client: marked.client,
+                sent: self.sent,
+                lifetime: marked.lifetime,
+                tokens: input.cache_read.saturating_add(input.cache_write),
+            };
+            rests.warmth.note(marked.key, seen);
+        }
+        if input.cache_read == 0 {
             return;
         }
-        let seen = Observation {
-            client: marked.client,
-            sent: marked.sent,
-            lifetime: marked.lifetime,
-            tokens: input.cache_read.saturating_add(input.cache_write),
-        };
-        rests.warmth.note(marked.key, seen);
+        let mut read = self
+            .held
+            .into_iter()
+            .filter(|(_, seen)| seen.tokens == input.cache_read);
+        if let (Some((key, seen)), None) = (read.next(), read.next()) {
+            let seen = Observation {
+                sent: self.sent,
+                ..seen
+            };
+            rests.warmth.note(key, seen);
+        }
     }
 }
 
-/// `bound`'s one marked prefix as `rung` sends it (FIX 6493). A provider
-/// reports one cache write for the whole send, and writes nothing for a
-/// prefix shorter than its model's minimum, so a write names a prefix only
-/// when the send marks one block. A request whose descriptor names more
-/// than one, a tool's or a system block's included, or whose own options
-/// carry a `cache_control`, notes nothing. Neither does one whose one block
-/// is a tool's or a system block, which no prefix here ends at.
-fn marked(rung: &LadderRung, bound: &LlmRequest) -> Option<Marked> {
-    let sent = Instant::now();
+/// What `bound`, as `rung` sends it at `sent`, may show held: its one
+/// marked prefix (FIX 6493), and each prefix `rests` notes warm now within
+/// its provider's lookback of a message block it marks, with its note (FIX
+/// 6494). `None` on a route the table does not know, or for a request that
+/// marks no message block.
+///
+/// A provider reports one cache write for the whole send, and writes
+/// nothing for a prefix shorter than its model's minimum, so a write names
+/// a prefix only when the send marks one block. A request whose descriptor
+/// names more than one, a tool's or a system block's included, or whose own
+/// options carry a `cache_control`, has no marked prefix. Neither has one
+/// whose one block is a tool's or a system block, which no prefix here ends
+/// at.
+fn dispatched(
+    rests: &OfferCooldowns,
+    rung: &LadderRung,
+    bound: &LlmRequest,
+    sent: Instant,
+) -> Option<Sending> {
     let profile = cache_profile(rung, bound)?;
-    let CacheBoundary::Message { message, part } = sole_boundary(bound)? else {
+    let boundaries: BTreeSet<CacheBoundary> = cache_boundaries(bound).ok()?.into_iter().collect();
+    if !boundaries
+        .iter()
+        .any(|boundary| matches!(boundary, CacheBoundary::Message { .. }))
+    {
         return None;
-    };
+    }
     let key = route_key(rung)?;
-    let prefix = prefixes(bound)?
-        .into_iter()
-        .find(|prefix| (prefix.message, prefix.part) == (message, part))?;
-    Some(Marked {
-        key: key(&prefix),
-        client: Arc::downgrade(&rung.offer.backend),
-        sent,
-        lifetime: profile.lifetime,
-    })
-}
-
-/// The one block `request` marks on its wire, when it marks exactly one
-/// (FIX 6493): its descriptor names that one boundary alone, and its own
-/// options carry no `cache_control`.
-fn sole_boundary(request: &LlmRequest) -> Option<CacheBoundary> {
-    if options_mark(request) {
+    let prefixes = prefixes(bound)?;
+    let ends: Vec<usize> = prefixes
+        .iter()
+        .enumerate()
+        .filter(|(_, prefix)| {
+            boundaries.contains(&CacheBoundary::Message {
+                message: prefix.message,
+                part: prefix.part,
+            })
+        })
+        .map(|(at, _)| at)
+        .collect();
+    if ends.is_empty() {
         return None;
     }
-    let boundaries: BTreeSet<CacheBoundary> = cache_boundaries(request).ok()?.into_iter().collect();
-    let mut boundaries = boundaries.into_iter();
-    match (boundaries.next(), boundaries.next()) {
-        (Some(boundary), None) => Some(boundary),
+    let marked = match ends.as_slice() {
+        [end] if boundaries.len() == 1 && !options_mark(bound) => Some(Marked {
+            key: key(&prefixes[*end]),
+            client: Arc::downgrade(&rung.offer.backend),
+            lifetime: profile.lifetime,
+        }),
         _ => None,
-    }
+    };
+    // The provider looks back from each block the request marks, that
+    // block included.
+    let reach = profile.lookback.saturating_sub(1);
+    let read: BTreeSet<usize> = ends
+        .iter()
+        .flat_map(|&end| end.saturating_sub(reach)..=end)
+        .collect();
+    let held = rests
+        .warmth
+        .held(read.into_iter().map(|at| key(&prefixes[at])));
+    Some(Sending { sent, marked, held })
 }
 
 /// Whether `request`'s own Anthropic options carry a `cache_control` at any
@@ -434,7 +504,7 @@ impl OfferLadder {
             return Ok(None);
         };
         let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-        let warmth = Sending::of(rung, &bound);
+        let warmth = Sending::of(&self.rests, rung, &bound);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
                 warmth.answered(&self.rests, &response.usage);
