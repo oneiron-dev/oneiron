@@ -1,17 +1,7 @@
-//! Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode.
+//! Core half of `skill_attribution::codec`: its store-layer items live in `oneiron_store::skill_attribution::codec` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::io::Cursor;
-
-use rmpv::Value;
-use serde::{Deserialize, Serialize};
-
-use crate::Vault;
-use crate::attempt_queue::ManifestEntry;
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::limit_ask::EngineLimit;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::skill::SkillRecord;
+pub(crate) use oneiron_store::skill_attribution::codec::*;
 
 use super::audit::AttributionAuditReport;
 use super::calibration::AuditBatch;
@@ -19,6 +9,18 @@ use super::types::{
     AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
     OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
 };
+use crate::Vault;
+use crate::attempt_queue::ManifestEntry;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::skill::SkillRecord;
+pub(super) use crate::store::skill_attribution_evidence::{EVIDENCE, EvidenceRow};
+pub(super) use crate::store::skill_attribution_judgments::{EDIT_PROPOSAL, JUDGMENT};
+use rmpv::Value;
+use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 
 impl RawValue for EvidenceRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -31,26 +33,6 @@ impl RawValue for EvidenceRow {
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         let (sequence, evidence) = decode_evidence(bytes)?;
         Ok(Self { sequence, evidence })
-    }
-}
-
-impl RawValue for AttributionJudgment {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&encode_judgment(self))?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_judgment(bytes)?)
-    }
-}
-
-impl RawValue for SkillEditProposal {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&encode_edit_proposal(self))?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_edit_proposal(bytes)?)
     }
 }
 
@@ -95,9 +77,6 @@ impl RawValue for AuditRow {
 const EVIDENCE_SEQUENCE: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE);
 
-pub(super) use crate::store::skill_attribution_evidence::{EVIDENCE, EvidenceRow};
-pub(super) use crate::store::skill_attribution_judgments::{EDIT_PROPOSAL, JUDGMENT};
-
 /// Persisted audit run of a judge (its report and batch), keyed by run time then
 /// evidence sequence. Key: u64be `at` + u64be sequence.
 pub(super) const AUDIT: SideTable<(u64, u64), AuditRow, Raw> =
@@ -106,10 +85,6 @@ pub(super) const AUDIT: SideTable<(u64, u64), AuditRow, Raw> =
 /// Highest evidence sequence the attribution projector has already routed. Key: ().
 pub(super) const CURSOR: SideTable<(), u64, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_CURSOR);
-
-const KEY_SCHEMA_VERSION: &str = "schema_version";
-
-const KEY_SEQUENCE: &str = "sequence";
 
 const KEY_RECEIPT_REF: &str = "receipt_ref";
 
@@ -128,20 +103,6 @@ const KEY_REASON: &str = "reason";
 const KEY_CAUSE: &str = "cause";
 
 const KEY_SKILL_COVERED_STEP: &str = "skill_covered_step";
-
-const KEY_AT: &str = "at";
-
-const KEY_VERDICT: &str = "verdict";
-
-const KEY_SUBJECT: &str = "subject";
-
-const KEY_EVIDENCE_RECEIPTS: &str = "evidence_receipts";
-
-const KEY_ROW_ID: &str = "row_id";
-
-const fn invalid(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
-}
 
 // ---------------------------------------------------------------------------
 // Storage
@@ -296,10 +257,6 @@ pub(super) fn evidence_after_in_txn(
     Ok(out)
 }
 
-fn optional_entity(id: Option<EntityId>) -> Value {
-    id.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec()))
-}
-
 fn optional_bool(flag: Option<bool>) -> Value {
     flag.map_or(Value::Nil, Value::Boolean)
 }
@@ -443,190 +400,4 @@ fn decode_evidence(raw: &[u8]) -> Result<(u64, OutcomeEvidence)> {
         sequence.ok_or(invalid("attribution evidence missing sequence"))?,
         evidence,
     ))
-}
-
-fn encode_judgment(judgment: &AttributionJudgment) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(SKILL_ATTRIBUTION_SCHEMA_VERSION),
-        ),
-        (Value::from(KEY_SEQUENCE), Value::from(judgment.sequence)),
-        (
-            Value::from(KEY_ROW_ID),
-            Value::Binary(judgment.row_id.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_VERDICT),
-            Value::from(judgment.verdict.as_str()),
-        ),
-        (Value::from(KEY_SUBJECT), optional_entity(judgment.subject)),
-        (
-            Value::from(KEY_EVIDENCE_RECEIPTS),
-            Value::Array(
-                judgment
-                    .evidence_receipts
-                    .iter()
-                    .map(|receipt| Value::from(receipt.as_str()))
-                    .collect(),
-            ),
-        ),
-        (Value::from(KEY_AT), Value::from(judgment.at)),
-    ])
-}
-
-fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
-    let value = decode_value(raw)?;
-    let entries = expect_map(&value)?;
-    let mut sequence = None;
-    let mut row_id = None;
-    let mut verdict = None;
-    let mut subject = None;
-    let mut evidence_receipts = None;
-    let mut at = None;
-    for (key, value) in entries {
-        match expect_key(key)? {
-            KEY_SCHEMA_VERSION => require_schema_version(value)?,
-            KEY_SEQUENCE => sequence = value.as_u64(),
-            KEY_ROW_ID => row_id = Some(decode_entity(value)?),
-            KEY_VERDICT => verdict = value.as_str().and_then(AttributionVerdict::parse),
-            KEY_SUBJECT => subject = Some(decode_optional_entity(value)?),
-            KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
-            KEY_AT => at = value.as_u64(),
-            _ => return Err(invalid("attribution judgment key is not pinned")),
-        }
-    }
-    Ok(AttributionJudgment {
-        sequence: sequence.ok_or(invalid("attribution judgment missing sequence"))?,
-        row_id: row_id.ok_or(invalid("attribution judgment missing row id"))?,
-        verdict: verdict.ok_or(invalid("attribution judgment missing verdict"))?,
-        subject: subject.ok_or(invalid("attribution judgment missing subject"))?,
-        evidence_receipts: evidence_receipts
-            .ok_or(invalid("attribution judgment missing evidence"))?,
-        at: at.ok_or(invalid("attribution judgment missing timestamp"))?,
-    })
-}
-
-fn decode_receipt_array(value: &Value) -> Result<Vec<String>> {
-    let rows = value
-        .as_array()
-        .ok_or(invalid("attribution evidence citation must be an array"))?;
-    let mut receipts = Vec::with_capacity(rows.len());
-    for row in rows {
-        receipts.push(
-            row.as_str()
-                .ok_or(invalid("attribution evidence citation must be strings"))?
-                .to_owned(),
-        );
-    }
-    Ok(receipts)
-}
-
-fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(SKILL_ATTRIBUTION_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_SEQUENCE),
-            Value::from(proposal.judgment_sequence),
-        ),
-        (
-            Value::from(KEY_ROW_ID),
-            Value::Binary(proposal.row_id.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_SUBJECT),
-            Value::Binary(proposal.skill.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_EVIDENCE_RECEIPTS),
-            Value::Array(
-                proposal
-                    .evidence_receipts
-                    .iter()
-                    .map(|receipt| Value::from(receipt.as_str()))
-                    .collect(),
-            ),
-        ),
-        (Value::from(KEY_AT), Value::from(proposal.at)),
-    ])
-}
-
-fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
-    let value = decode_value(raw)?;
-    let entries = expect_map(&value)?;
-    let mut judgment_sequence = None;
-    let mut row_id = None;
-    let mut skill = None;
-    let mut evidence_receipts = None;
-    let mut at = None;
-    for (key, value) in entries {
-        match expect_key(key)? {
-            KEY_SCHEMA_VERSION => require_schema_version(value)?,
-            KEY_SEQUENCE => judgment_sequence = value.as_u64(),
-            KEY_ROW_ID => row_id = Some(decode_entity(value)?),
-            KEY_SUBJECT => skill = Some(decode_entity(value)?),
-            KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
-            KEY_AT => at = value.as_u64(),
-            _ => return Err(invalid("skill edit proposal key is not pinned")),
-        }
-    }
-    Ok(SkillEditProposal {
-        judgment_sequence: judgment_sequence
-            .ok_or(invalid("skill edit proposal missing judgment sequence"))?,
-        row_id: row_id.ok_or(invalid("skill edit proposal missing row id"))?,
-        skill: skill.ok_or(invalid("skill edit proposal missing skill"))?,
-        evidence_receipts: evidence_receipts
-            .ok_or(invalid("skill edit proposal missing evidence"))?,
-        at: at.ok_or(invalid("skill edit proposal missing timestamp"))?,
-    })
-}
-
-fn require_schema_version(value: &Value) -> Result<()> {
-    if value.as_u64() == Some(SKILL_ATTRIBUTION_SCHEMA_VERSION) {
-        return Ok(());
-    }
-    Err(invalid("unsupported skill attribution schema"))
-}
-
-fn decode_entity(value: &Value) -> Result<EntityId> {
-    let bytes: [u8; 16] = value
-        .as_slice()
-        .ok_or(invalid("attribution entity ref must be binary"))?
-        .try_into()
-        .map_err(|_| invalid("attribution entity ref must be 16 bytes"))?;
-    EntityId::from_bytes(bytes)
-}
-
-fn decode_optional_entity(value: &Value) -> Result<Option<EntityId>> {
-    if matches!(value, Value::Nil) {
-        return Ok(None);
-    }
-    decode_entity(value).map(Some)
-}
-
-fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, value)
-        .map_err(|_| invalid("skill attribution MessagePack encode failed"))?;
-    Ok(encoded)
-}
-
-fn decode_value(raw: &[u8]) -> Result<Value> {
-    rmpv::decode::read_value(&mut Cursor::new(raw))
-        .map_err(|_| invalid("skill attribution MessagePack decode failed"))
-}
-
-fn expect_map(value: &Value) -> Result<&Vec<(Value, Value)>> {
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(invalid("skill attribution row must be a MessagePack map")),
-    }
-}
-
-fn expect_key(key: &Value) -> Result<&str> {
-    key.as_str()
-        .ok_or(invalid("skill attribution keys must be strings"))
 }

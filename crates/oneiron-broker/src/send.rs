@@ -8,6 +8,7 @@
 //! follow or reply guard (OF-603).
 
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -49,6 +50,7 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
     /// Whether gzip request bodies still go: on, until a gzip-sent body is
@@ -59,7 +61,7 @@ pub(crate) struct Sender {
 }
 
 impl Sender {
-    pub(crate) fn new(policy: &SendPolicy) -> Result<Self, reqwest::Error> {
+    pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
         let mut builder = Client::builder()
             .use_rustls_tls()
             .https_only(true)
@@ -74,12 +76,15 @@ impl Sender {
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
             .timeout(policy.timeout);
         for pem in &policy.extra_roots {
-            for root in Certificate::from_pem_bundle(pem)? {
+            for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
                 builder = builder.add_root_certificate(root);
             }
         }
+        let client = builder.build().map_err(io::Error::other)?;
+        let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
-            client: builder.build()?,
+            client,
+            ws_tls,
             timeout: policy.timeout,
             gzip: AtomicBool::new(true),
         })
@@ -174,7 +179,14 @@ impl Sender {
     ) -> io::Result<()> {
         if call.shape == crate::Shape::OpenAiResponses {
             return crate::responses::responses_to(
-                call, checked, body, whole, secret, writer, deadline,
+                &self.ws_tls,
+                call,
+                checked,
+                body,
+                whole,
+                secret,
+                writer,
+                deadline,
             )
             .await;
         }
@@ -435,6 +447,32 @@ impl Sender {
         let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
     }
+}
+
+/// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
+/// The HTTPS client has already validated every configured PEM bundle.
+fn ws_client_config(extra_roots: &[Vec<u8>]) -> io::Result<Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    for pem in extra_roots {
+        for cert in CertificateDer::pem_reader_iter(io::BufReader::new(pem.as_slice())) {
+            let cert = cert.map_err(io::Error::other)?;
+            roots.add(cert).map_err(io::Error::other)?;
+        }
+    }
+    // Match reqwest: respect an installed provider, otherwise use ring.
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
 }
 
 /// The origin whose Messages API takes a gzip request body (ARCH-0081 §6).
