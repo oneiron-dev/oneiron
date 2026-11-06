@@ -120,40 +120,38 @@ impl Vault {
 
     /// The archive of exactly `records` and the graph between them, for a
     /// reader off this device: an export-first removal's export (OF-163),
-    /// in the same shape as a whole-vault archive and re-importable alike.
-    /// No run's results go with it; a run names no world to scope it by.
-    /// Each record's side rows and stored files go with it as they do in the
-    /// whole-vault archive, never past `records`, and no vault-wide row does
-    /// (FIX 3681). Its diary reads are `reader`'s, the owner who receives it.
-    /// `freeze` reads in the archive's own snapshot, before its rows, so
-    /// what it answers (the removal's frozen positions, FIX-LIST 8224) and
-    /// the bytes archived are one state.
-    pub(crate) fn export_records_archive<T>(
+    /// in the same shape as a whole-vault archive and re-importable alike,
+    /// written to `sink` as it is built (FIX 3679): no archive is read back
+    /// whole. No run's results go with it; a run names no world to scope it
+    /// by. Each record's side rows and stored files go with it as they do in
+    /// the whole-vault archive, never past `records`, and no vault-wide row
+    /// does (FIX 3681). Its diary reads are `reader`'s, the owner who
+    /// receives it. `freeze` reads in the archive's own snapshot, before its
+    /// rows, so what it answers (the removal's frozen positions, FIX-LIST
+    /// 8224) and the bytes archived are one state.
+    pub(crate) fn export_records_archive<W: Write + Seek, T>(
         &self,
         records: &BTreeSet<EntityId>,
         reader: WriteActor,
         freeze: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
-    ) -> Result<(WholeVaultExport, T)> {
+        sink: W,
+    ) -> Result<(W, WholeVaultExportReceipt, T)> {
         let mut frozen = None;
-        let archive = self.export_in_memory(|vault, spool| {
-            vault
-                .export_archive_snapshot(
-                    CallerLocality::OffDevice,
-                    Some(records),
-                    ExportCut::Archive,
-                    false,
-                    reader,
-                    false,
-                    |rtxn| {
-                        frozen = Some(freeze(rtxn)?);
-                        Ok::<_, Error>(())
-                    },
-                    spool,
-                )
-                .map(|(_, receipt)| receipt)
-        })?;
+        let (sink, receipt) = self.export_archive_snapshot(
+            CallerLocality::OffDevice,
+            Some(records),
+            ExportCut::Archive,
+            false,
+            reader,
+            false,
+            |rtxn| {
+                frozen = Some(freeze(rtxn)?);
+                Ok::<_, Error>(())
+            },
+            sink,
+        )?;
         let frozen = frozen.ok_or(Error::InvariantViolation("records archive froze nothing"))?;
-        Ok((archive, frozen))
+        Ok((sink, receipt, frozen))
     }
 
     /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
