@@ -600,6 +600,13 @@ impl SyncClient {
         }
         let vv_before = window.doc.oplog_vv();
         let key = WindowKey::new(window_key);
+        let positions = crate::sync::origin_positions::prepare(
+            &self.vault,
+            own_device,
+            &key,
+            &window.doc,
+            payload,
+        );
         // FIX 11709: the MESSAGE rows an own machine's proven connection sent
         // take the own-device lane in the doors this import and its retained
         // world pass run, and no others.
@@ -610,6 +617,11 @@ impl SyncClient {
             payload,
             || self.land_window_update(window, &key, payload),
         )?;
+        if let Some(positions) = positions
+            && let Err(error) = positions.finish(&self.vault, &window.doc)
+        {
+            tracing::warn!(%error, "optional own-device position import did not settle");
+        }
         // A no-op import can still reveal a same-process durability gap:
         // compare the live doc with exactly what restart would load from
         // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
