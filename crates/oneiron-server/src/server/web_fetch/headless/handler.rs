@@ -9,7 +9,9 @@
 //! here before it is sent, and a named one's origin is checked here too: a
 //! listed private name is reached only at an origin the operator lists
 //! (FIX 7657). A same-site crawl's render admits a navigation only at the
-//! crawl's pinned origin, before anything resolves or sends it (FIX 4734).
+//! crawl's pinned origin, before anything resolves or sends it (FIX 4734):
+//! the main frame's refused navigation ends the render, and an in-page
+//! frame's refused document fails unsent while the page renders on.
 //! A refusal is kept for the render and answered as the host's destination
 //! refusal, by its reason and in the engine's words; any other failure fails
 //! only its request.
@@ -25,7 +27,9 @@ use std::sync::Arc;
 use oneiron::web_fetch::{
     CROSS_SITE_REDIRECT_REASON, HostedEgressRefusal, RendererError, hosted_dns_resolver,
 };
-use oneiron_browser::{BrowserError, BrowserRequestHandler, DestinationRefusal, SpooledResponse};
+use oneiron_browser::{
+    BrowserError, BrowserRequestHandler, DestinationRefusal, NavigationFrame, SpooledResponse,
+};
 use oneiron_container::{HttpRequest, HttpResponse};
 use reqwest::Url;
 
@@ -237,10 +241,12 @@ impl PageRequests {
 
 impl BrowserRequestHandler for PageRequests {
     /// A navigation to an origin other than a same-site crawl's pinned one
-    /// is refused before it is sent (FIX 4734), and the render keeps the
-    /// refusal; a render with no pin admits every navigation here, and its
-    /// guard still checks each request as it is sent.
-    fn admit_navigation(&self, url: &str) -> Result<(), BrowserError> {
+    /// is refused before it is sent (FIX 4734). The render keeps a
+    /// main-frame refusal, which ends it; an in-page frame's refused
+    /// document fails alone, and the page renders on without it. A render
+    /// with no pin admits every navigation here, and its guard still checks
+    /// each request as it is sent.
+    fn admit_navigation(&self, url: &str, frame: NavigationFrame) -> Result<(), BrowserError> {
         let Some(pin) = &self.operation.pin else {
             return Ok(());
         };
@@ -254,6 +260,9 @@ impl BrowserRequestHandler for PageRequests {
         let Err(refused) = checked else {
             return Ok(());
         };
+        if frame == NavigationFrame::Sub {
+            return Err(BrowserError::Navigation(refused.message));
+        }
         let refusal = DestinationRefusal {
             reason: CROSS_SITE_REDIRECT_REASON.to_owned(),
             message: refused.message.clone(),

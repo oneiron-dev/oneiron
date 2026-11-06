@@ -117,9 +117,11 @@ pub trait HeadlessRenderer: Send + Sync {
     /// browser holds each navigation it makes (the page's load, each
     /// redirect hop, a script's or a meta refresh's move) to the context's
     /// pinned origin before it is sent, failing one outside with
-    /// [`RendererError::cross_site_redirect`] (FIX 4734); and on a managed
-    /// (hosted) node checks every navigation, redirect and request it makes
-    /// by the address it connects to ([`HostedEgressGuard::check_request`])
+    /// [`RendererError::cross_site_redirect`] (FIX 4734), and refuses an
+    /// in-page frame's document outside it unsent while the page renders on;
+    /// and on a managed (hosted) node checks every navigation, redirect and
+    /// request it makes by the address it connects to
+    /// ([`HostedEgressGuard::check_request`])
     /// with the context's egress guard, failing a refused one with
     /// [`RendererError::hosted`] (SCAN C447, FIX 6101). A browser that cannot
     /// do both refuses the work before it navigates.
