@@ -76,6 +76,23 @@ pub(super) fn discard_owned_payload(
     crate::sync::residence::erase_item_caches_in_txn(store, txn, ids)
 }
 
+/// The bundles the owner's discard of a world copy takes once every member
+/// they name is among `discarded`, the members all its writes removed (FIX
+/// 14534, Engine 11-06 08:34 calls 1 and 4 = A): a Gate bundle becomes its
+/// retention skeleton and a NOTE review bundle's explainer reads "redacted".
+/// Each write's own pass ([`discard_owned_payload`]) sees its members only,
+/// so a bundle whose members sit in two windows or batches waits for this
+/// one, run once after the last of them. A bundle that names a member that
+/// stays, or one only an earlier discard took, keeps its content.
+pub(crate) fn discard_bundle_payload_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    discarded: &BTreeSet<EntityId>,
+) -> Result<()> {
+    store.discard_claim_gate_payload_in_txn(txn, discarded, store.clock.now_recorded_at())?;
+    crate::note::discard_bundle_explainers_in_txn(store, txn, discarded)
+}
+
 /// Tears one member's local rows. Every step is a local index or projection
 /// leaf of the physical tear; custody, provenance, document and control rows
 /// stay. A released member takes every edge it touches with it.

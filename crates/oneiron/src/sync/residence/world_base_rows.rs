@@ -50,7 +50,8 @@ const BASE_ROW_BATCH: usize = 256;
 /// What the discard took from BASE windows.
 #[derive(Default)]
 pub(super) struct BaseRows {
-    pub(super) removed: usize,
+    /// The rows removed.
+    pub(super) removed: Vec<EntityId>,
     pub(super) kept: usize,
     pub(super) windows_busy: usize,
 }
@@ -116,7 +117,7 @@ pub(super) fn discard_base_rows(vault: &Vault, world: EntityId) -> Result<BaseRo
                 rows.windows_busy += 1;
                 break;
             }
-            rows.removed += step.removed.len();
+            rows.removed.extend_from_slice(&step.removed);
             rows.kept += step.kept.len();
         }
     }
@@ -133,7 +134,13 @@ fn base_rows_of_world(
 ) -> Result<HashMap<WindowKey, Vec<EntityId>>> {
     let mut by_window: HashMap<WindowKey, Vec<EntityId>> = HashMap::new();
     let mut notes = Vec::new();
-    for row in store.port_edges(txn, &world, EdgeDirection::In, Some(EdgeKind::InWorld), None)? {
+    for row in store.port_edges(
+        txn,
+        &world,
+        EdgeDirection::In,
+        Some(EdgeKind::InWorld),
+        None,
+    )? {
         notes.push(row?.target);
     }
     for id in notes {
