@@ -326,14 +326,15 @@ impl<'v> DocumentWriter<'v> {
         let withheld = match body.body {
             Err(reason) => Some(reason),
             Ok(reader) => {
-                let files = &mut self.files;
-                let staged = files.stage(body.bytes, |out| reader.copy_checked(out))?;
-                let found = files.scan_staged(&staged, |spooled| {
+                let mut staged = self
+                    .files
+                    .stage(body.bytes, |out| reader.copy_checked(out))?;
+                let found = staged.scan(|spooled| {
                     crate::batch::secret_scan::scan_file_content_from("", spooled)
                 })?;
                 match found {
                     Some(_) => {
-                        files.discard_staged(staged)?;
+                        staged.discard()?;
                         Some("credential")
                     }
                     None => {
@@ -373,8 +374,8 @@ impl<'v> DocumentWriter<'v> {
         }
         if let Some(staged) = clean {
             match keep {
-                Some(named) => self.files.commit_staged(named, staged)?,
-                None => self.files.discard_staged(staged)?,
+                Some(named) => staged.commit(named)?,
+                None => staged.discard()?,
             }
         }
         self.bodies.insert(hex, row);
