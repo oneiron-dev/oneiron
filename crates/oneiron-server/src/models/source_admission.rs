@@ -40,6 +40,16 @@ pub(crate) trait SourceAdmission: Sync {
     /// holds, read again right before the rung is sent; `None` while it
     /// holds.
     fn recheck(&self, destination: &ReadDestination) -> Option<&'static str>;
+
+    /// Optional input-row attribution for the view retained by `offer` for
+    /// this destination. Outer `None` preserves the run's existing facts;
+    /// `Some(None)` is an explicitly unknown set, never a read grant.
+    fn source_rows(
+        &self,
+        _destination: &ReadDestination,
+    ) -> Option<Option<Vec<oneiron::EntityId>>> {
+        None
+    }
 }
 
 /// The request the rung of `offer` is sent with `sources`: `Ok(None)` with no

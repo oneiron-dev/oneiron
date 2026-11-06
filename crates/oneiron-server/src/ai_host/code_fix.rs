@@ -271,7 +271,7 @@ impl<'a> HostModels<'a> {
                 None,
                 sources,
             ))
-            .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
+            .map_err(|_| Error::InvalidConfig("a source-admitted Coach call failed".into()))?;
         let text = response
             .message
             .content

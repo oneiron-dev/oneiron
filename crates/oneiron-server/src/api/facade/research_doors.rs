@@ -160,3 +160,32 @@ pub(crate) async fn vault_evals_repair_cohorts_setup(
         Err(error) => (Err(error), rows),
     }
 }
+
+/// Queue a new Repair pass under this authenticated request's original reader.
+/// No serialized reader context is accepted from the caller.
+pub(crate) async fn vault_evals_repair_authoring_request(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_optimize::EvalRepairNominationRequest,
+) -> Listed<oneiron::skill_optimize::eval_doors::EvalAuthoringRef> {
+    const VERB: &str = "vault.evals.repair.authoring.request";
+    let clock_server = Arc::clone(server);
+    owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
+        memory.request_eval_repair_authoring(owner, &input, clock_server.vault().now_recorded_at())
+    })
+    .await
+}
+
+/// Public queue state only, filtered to the new source-bound facet.
+pub(crate) async fn vault_evals_repair_authoring_result(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_optimize::eval_doors::EvalAuthoringRef,
+) -> Listed<Option<oneiron::skill_optimize::eval_doors::EvalAuthoringResult>> {
+    const VERB: &str = "vault.evals.repair.authoring.result";
+    owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
+        oneiron::skill_optimize::eval_doors::repair_authoring_result(memory.vault(), owner, input)
+            .map_err(oneiron::memory::MemoryError::from)
+    })
+    .await
+}

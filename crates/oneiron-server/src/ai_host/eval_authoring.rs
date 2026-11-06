@@ -7,6 +7,9 @@
 //! cohorts to retire. The engine checks the plan against the inventory and
 //! applies it through the eval-set doors. No skill, no model, or no plan
 //! that parses changes nothing.
+mod repair;
+pub(super) use repair::run as run_repair;
+
 use oneiron::attempt_queue::ReadSetProducer;
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::skill_optimize::{

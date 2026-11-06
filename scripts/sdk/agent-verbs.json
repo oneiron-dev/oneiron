@@ -7143,6 +7143,39 @@
       "openapi": true
     },
     {
+      "name": "vault.evals.repair.authoring.request",
+      "description": "The owner queues a new Coach Repair authoring pass with the authenticated request's original source reader. Returns only its attempt ref; no caller-supplied context, plan, grader or source grant.",
+      "input": "crate::skill_optimize::EvalRepairNominationRequest",
+      "output": "crate::skill_optimize::eval_doors::EvalAuthoringRef",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.repair.authoring.request\", &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.repair.authoring.result",
+      "description": "Read the explicit source-bound Repair authoring job's actual queue state and terminal error. A completed pass may author nothing; its private reader context is never served.",
+      "input": "crate::skill_optimize::eval_doors::EvalAuthoringRef",
+      "output": "Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.repair.authoring.result\", &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.evals.repair.cohorts.setup",
       "description": "The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses.",
       "input": "crate::skill_optimize::EvalRepairCohortSetup",

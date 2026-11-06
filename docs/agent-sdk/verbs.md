@@ -461,6 +461,8 @@ both bindings and their export-census tests in one change.
 - `vault.evals.repair.nominate`
 - `vault.evals.repair.prepare`
 - `vault.evals.repair.record`
+- `vault.evals.repair.authoring.request`
+- `vault.evals.repair.authoring.result`
 - `vault.evals.repair.cohorts.setup`
 - `vault.evals.measurements.request`
 - `vault.evals.cohorts.setup`

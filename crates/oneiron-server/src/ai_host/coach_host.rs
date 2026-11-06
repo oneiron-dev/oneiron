@@ -268,6 +268,9 @@ pub(super) fn run_one(
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
+        oneiron::skill_optimize::COACH_EVAL_REPAIR_AUTHORING_FACET => {
+            super::eval_authoring::run_repair(server, admitted, now)
+        }
         COACH_BROWSER_PROGRAMS_FACET => super::coach_browser_programs::run(server, admitted, now),
         COACH_SITE_SKILLS_FACET => super::coach_site_skills::run(server, admitted, now),
         COACH_FEEDBACK_SWEEP_FACET => super::feedback_triage::run_sweep(server, admitted, now),

@@ -459,6 +459,8 @@ pub enum AgentVerb {
     VaultEvalsRepairNominate,
     VaultEvalsRepairPrepare,
     VaultEvalsRepairRecord,
+    VaultEvalsRepairAuthoringRequest,
+    VaultEvalsRepairAuthoringResult,
     VaultEvalsRepairCohortsSetup,
     VaultEvalsMeasurementsRequest,
     VaultEvalsCohortsSetup,
@@ -1751,6 +1753,8 @@ impl AgentVerb {
         Self::VaultEvalsRepairNominate,
         Self::VaultEvalsRepairPrepare,
         Self::VaultEvalsRepairRecord,
+        Self::VaultEvalsRepairAuthoringRequest,
+        Self::VaultEvalsRepairAuthoringResult,
         Self::VaultEvalsRepairCohortsSetup,
         Self::VaultEvalsMeasurementsRequest,
         Self::VaultEvalsCohortsSetup,
@@ -3056,6 +3060,8 @@ impl AgentVerb {
             Self::VaultEvalsRepairNominate => "vault.evals.repair.nominate",
             Self::VaultEvalsRepairPrepare => "vault.evals.repair.prepare",
             Self::VaultEvalsRepairRecord => "vault.evals.repair.record",
+            Self::VaultEvalsRepairAuthoringRequest => "vault.evals.repair.authoring.request",
+            Self::VaultEvalsRepairAuthoringResult => "vault.evals.repair.authoring.result",
             Self::VaultEvalsRepairCohortsSetup => "vault.evals.repair.cohorts.setup",
             Self::VaultEvalsMeasurementsRequest => "vault.evals.measurements.request",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
@@ -4374,6 +4380,8 @@ impl AgentVerb {
                 | Self::VaultEvalsRepairNominate
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairAuthoringRequest
+                | Self::VaultEvalsRepairAuthoringResult
                 | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
@@ -5695,6 +5703,8 @@ impl AgentVerb {
                 | Self::VaultEvalsRepairNominate
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairAuthoringRequest
+                | Self::VaultEvalsRepairAuthoringResult
                 | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
@@ -7165,6 +7175,8 @@ impl AgentVerb {
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairAuthoringRequest
+                | Self::VaultEvalsRepairAuthoringResult
                 | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
@@ -8200,6 +8212,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsRepairRecord
+                | Self::VaultEvalsRepairAuthoringRequest
                 | Self::VaultEvalsRepairCohortsSetup
                 | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
@@ -9191,6 +9204,8 @@ impl AgentVerb {
             Self::VaultEvalsRepairNominate => &["spec"],
             Self::VaultEvalsRepairPrepare => &["spec"],
             Self::VaultEvalsRepairRecord => &["spec"],
+            Self::VaultEvalsRepairAuthoringRequest => &["spec"],
+            Self::VaultEvalsRepairAuthoringResult => &["spec"],
             Self::VaultEvalsRepairCohortsSetup => &["spec"],
             Self::VaultEvalsMeasurementsRequest => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
@@ -10484,6 +10499,8 @@ impl AgentVerb {
             Self::VaultEvalsRepairNominate => &["spec"],
             Self::VaultEvalsRepairPrepare => &["spec"],
             Self::VaultEvalsRepairRecord => &["spec"],
+            Self::VaultEvalsRepairAuthoringRequest => &["spec"],
+            Self::VaultEvalsRepairAuthoringResult => &["spec"],
             Self::VaultEvalsRepairCohortsSetup => &["spec"],
             Self::VaultEvalsMeasurementsRequest => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
@@ -12671,6 +12688,12 @@ impl AgentVerb {
             }
             Self::VaultEvalsRepairRecord => {
                 "The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."
+            }
+            Self::VaultEvalsRepairAuthoringRequest => {
+                "The owner queues a new Coach Repair authoring pass with the authenticated request's original source reader. Returns only its attempt ref; no caller-supplied context, plan, grader or source grant."
+            }
+            Self::VaultEvalsRepairAuthoringResult => {
+                "Read the explicit source-bound Repair authoring job's actual queue state and terminal error. A completed pass may author nothing; its private reader context is never served."
             }
             Self::VaultEvalsRepairCohortsSetup => {
                 "The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses."

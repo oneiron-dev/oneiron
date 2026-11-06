@@ -123,11 +123,19 @@ the ordinary case counters still count only receipt-derived decisions. Actual
 Repair/audit rows remain listed when a later stage fails. Stages keep their
 existing separate transactions, not a whole-plan rollback.
 
-This is a native source/write interface, not a published automatic-authoring
-endpoint. The server's loaded-skill input/output and attempt read-set integration
-still need a consumer for this explicit job. Existing manual owner calls and
-receipt-based nightly authoring are unchanged. No new source ledger, training
-permission, label, or read grant is created.
+`vault.evals.repair.authoring.request` queues this explicit pass through the
+existing owner-host facade. It captures that authenticated request's original
+reader; the caller supplies a nomination filter, not a serialized context or a
+plan. `vault.evals.repair.authoring.result` reads only this new facet's actual
+queue state and terminal error. The ordinary authoring-result door continues
+to recognize only the nightly facet. A completed job may author nothing.
+
+The server dispatches this facet to the loaded `eval-authoring` skill. The
+skill receives the nested Repair input and returns the nested ordinary plan
+and exact Repair selections. The native source applies that plan, including
+scoped audits and real Skill-attributed cuts and retirements. Existing manual
+owner calls and receipt-based nightly authoring are unchanged. No new source
+ledger, training permission, label, or read grant is created.
 
 ### Actual model destinations
 
@@ -146,6 +154,17 @@ original context and destination. A newer discovery page does not displace a
 still-readable recipe during this recheck. Changed or withheld sources do not
 stand in for the exact source and complete task hash that were offered.
 
-This admits the Repair source choices only. The ordinary authoring inventory,
-the loaded skill and their model release still need their own native admission;
-this API is not proof that the automatic server consumer is connected.
+The server keeps each offered source handle, its exact inventory and input
+rows before sending. The source hook overlays those exact rows on that rung's
+run admission; callers without the opt-in hook keep their original row facts. After the ladder answers, it validates and applies the
+plan against that answering offer's view, not an earlier unfiltered source
+list. The call retains the actual answering model binding, including fallback;
+the skill load leaves the executor unknown until that answer is known.
+
+Repair source admission does not turn ledger ids into scoped entities. Ordinary
+Coach inventory metadata keeps its existing native reader and model admission.
+The loaded skill and package carriers keep their actual load-source rows. An
+unknown source set remains unknown, never a new refusal. The attempt read set
+unions actual input reads and later Repair/audit rows even when plan application
+returns an error. A read-set recording failure does not stop the pass and does
+not turn a partial set into a complete one.

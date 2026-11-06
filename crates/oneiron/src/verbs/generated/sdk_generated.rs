@@ -2430,6 +2430,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.evals.repair.authoring.request",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::EvalRepairNominationRequest,
+                >(),
+            ),
+            (
+                "vault.evals.repair.authoring.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalAuthoringRef,
+                >(),
+            ),
+            (
                 "vault.evals.repair.cohorts.setup",
                 crate::code_run::vault_read::request_schema::<
                     crate::skill_optimize::EvalRepairCohortSetup,
@@ -7614,6 +7626,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.evals.repair.nominate",
     "vault.evals.repair.prepare",
     "vault.evals.repair.record",
+    "vault.evals.repair.authoring.request",
+    "vault.evals.repair.authoring.result",
     "vault.evals.repair.cohorts.setup",
     "vault.evals.measurements.request",
     "vault.evals.cohorts.setup",
@@ -9166,6 +9180,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.evals.repair.record" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalRepairCaseReference,
+        >(),
+        "vault.evals.repair.authoring.request" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::eval_doors::EvalAuthoringRef,
+        >(),
+        "vault.evals.repair.authoring.result" => crate::code_run::vault_read::request_schema::<
+            Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>,
         >(),
         "vault.evals.repair.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalRepairCohortReport,
@@ -14103,6 +14123,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.evals.repair.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.repair.authoring.request" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.repair.authoring.result" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21265,6 +21299,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.evals.repair.record" => {
             let _input: crate::skill_optimize::EvalRepairCaseRequest = decode(value.clone())?;
         }
+        "vault.evals.repair.authoring.request" => {
+            let input: crate::skill_optimize::EvalRepairNominationRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
+        "vault.evals.repair.authoring.result" => {
+            let _input: crate::skill_optimize::eval_doors::EvalAuthoringRef =
+                decode(value.clone())?;
+        }
         "vault.evals.repair.cohorts.setup" => {
             let _input: crate::skill_optimize::EvalRepairCohortSetup = decode(value.clone())?;
         }
@@ -25090,6 +25132,13 @@ pub fn invoke(
         }
         "vault.evals.repair.prepare" => encode(vault_evals_repair_prepare(memory, decode(value)?)?),
         "vault.evals.repair.record" => encode(vault_evals_repair_record(memory, decode(value)?)?),
+        "vault.evals.repair.authoring.request" => encode(vault_evals_repair_authoring_request(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.evals.repair.authoring.result" => {
+            encode(vault_evals_repair_authoring_result(memory, decode(value)?)?)
+        }
         "vault.evals.repair.cohorts.setup" => {
             encode(vault_evals_repair_cohorts_setup(memory, decode(value)?)?)
         }
@@ -30616,6 +30665,19 @@ pub fn vault_evals_repair_record(
     memory
         .record_eval_repair_case(&memory.embedded_owner("vault.evals.repair.record")?, &input)
         .map(crate::skill_optimize::EvalRepairCaseReference::from)
+}
+pub fn vault_evals_repair_authoring_request(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalRepairNominationRequest,
+) -> MemoryResult<crate::skill_optimize::eval_doors::EvalAuthoringRef> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    crate::task_verb::sdk::host_only(memory, "vault.evals.repair.authoring.request", &input)
+}
+pub fn vault_evals_repair_authoring_result(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalAuthoringRef,
+) -> MemoryResult<Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>> {
+    crate::task_verb::sdk::host_only(memory, "vault.evals.repair.authoring.result", &input)
 }
 pub fn vault_evals_repair_cohorts_setup(
     memory: &Memory<'_>,

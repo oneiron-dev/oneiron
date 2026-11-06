@@ -1536,6 +1536,11 @@ impl OfferLadder {
             context.physical = physical_for(&rung.offer.binding);
             context
         });
+        let rung_run =
+            match sources.and_then(|source| source.source_rows(&rung.offer.destination())) {
+                Some(rows) => rung_run.sourced(rows),
+                None => rung_run,
+            };
         loop {
             if !may_send() {
                 return Ok(Sent::Stopped);

@@ -3203,8 +3203,20 @@ class Oneiron:
             """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""
             return json.loads(_translate(lambda: self._client.vault_evals_repair_record(json.dumps(spec))))
         @property
+        def authoring(self) -> "Oneiron._VaultEvalsRepairAuthoringVerbs":
+            return Oneiron._VaultEvalsRepairAuthoringVerbs(self._client)
+        @property
         def cohorts(self) -> "Oneiron._VaultEvalsRepairCohortsVerbs":
             return Oneiron._VaultEvalsRepairCohortsVerbs(self._client)
+    class _VaultEvalsRepairAuthoringVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def request(self, spec):
+            """The owner queues a new Coach Repair authoring pass with the authenticated request's original source reader. Returns only its attempt ref; no caller-supplied context, plan, grader or source grant."""
+            return json.loads(_translate(lambda: self._client.vault_evals_repair_authoring_request(json.dumps(spec))))
+        def result(self, spec):
+            """Read the explicit source-bound Repair authoring job's actual queue state and terminal error. A completed pass may author nothing; its private reader context is never served."""
+            return json.loads(_translate(lambda: self._client.vault_evals_repair_authoring_result(json.dumps(spec))))
     class _VaultEvalsRepairCohortsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

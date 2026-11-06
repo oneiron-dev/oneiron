@@ -193,6 +193,33 @@ pub fn authoring_result(
     }))
 }
 
+/// Completion for an explicit source-bound Repair job, not the nightly facet.
+/// The private source context is never part of its public status.
+pub fn repair_authoring_result(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: EvalAuthoringRef,
+) -> Result<Option<EvalAuthoringResult>> {
+    owner.revalidate(vault)?;
+    let id = AttemptId::from_bytes(input.attempt.as_bytes())?;
+    let Some(status) = DreamerRunnerStore::new(vault).status(id)? else {
+        return Ok(None);
+    };
+    if status.attempt.kind != COACH_HOST_QUEUE_KIND
+        || status.payload.attempt_type != super::COACH_EVAL_REPAIR_AUTHORING_FACET
+    {
+        return Err(Error::InvalidConfig(
+            "the attempt is not a source-bound Repair authoring pass".into(),
+        ));
+    }
+    Ok(Some(EvalAuthoringResult {
+        attempt: input.attempt,
+        state: status.attempt.state,
+        terminal: status.attempt.state.is_terminal(),
+        last_error: status.attempt.last_error,
+    }))
+}
+
 pub fn assign_family(
     vault: &Vault,
     owner: &AuthenticatedOwner,
