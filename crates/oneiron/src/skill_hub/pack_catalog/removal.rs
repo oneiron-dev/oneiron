@@ -52,10 +52,15 @@ impl Vault {
                     PACK_PREDICATE.delete(&self.store, txn, predicate)?;
                 }
             }
+            let model_pack_before = if receipt.kind == super::PackKind::Model {
+                self.model_pack_in_effect_in_txn(txn)?
+            } else {
+                None
+            };
             admission::PACK_INSTALL.delete(&self.store, txn, &name)?;
             // Removing a model pack may change the pack the vault follows.
             if receipt.kind == super::PackKind::Model {
-                self.note_active_model_pack_in_txn(txn)?;
+                self.note_active_model_pack_in_txn(txn, model_pack_before)?;
             }
             if let Some(candidate) = super::builtin::reseeded_candidate(&receipt) {
                 admission::PACK_CANDIDATE.put(

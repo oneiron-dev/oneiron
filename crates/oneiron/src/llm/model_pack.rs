@@ -443,34 +443,61 @@ impl Vault {
                 ));
             }
         }
+        let before = self.model_pack_in_effect_in_txn(&txn)?;
         PREFERENCE.put(&self.store, &mut txn, &(), &preference)?;
-        self.note_active_model_pack_in_txn(&mut txn)?;
+        self.note_active_model_pack_in_txn(&mut txn, before)?;
         let setting = self.model_pack_setting_in_txn(&txn)?;
         txn.commit()?;
         Ok(setting)
     }
 
-    /// Records a change of the pack the vault follows, in the caller's
-    /// transaction: when the active pack differs from the one last recorded,
-    /// the record keeps the one it replaced as `previous` (FIX 5367; FIX
-    /// 5369's way back reads it). The install, removal and preference doors
-    /// call it.
-    pub(crate) fn note_active_model_pack_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        let active = self
+    /// The receipt of the pack in effect now, as routing selects it: what a
+    /// change's caller reads before it installs, removes or re-prefers, so
+    /// the change it records keeps the pack the vault really followed.
+    pub(crate) fn model_pack_in_effect_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<ModelPackReceipt>> {
+        Ok(self
             .active_model_pack_in_txn(txn)?
-            .map(|installed| ModelPackReceipt::of(&installed));
-        let prior = ACTIVE.get(&self.store, txn, &())?;
-        let recorded = prior.as_ref().and_then(|change| change.active.as_ref());
-        let unchanged = match (recorded, active.as_ref()) {
-            (Some(recorded), Some(active)) => recorded.same_pack(active),
-            (None, None) => true,
-            _ => false,
+            .map(|installed| ModelPackReceipt::of(&installed)))
+    }
+
+    /// Records a change of the pack the vault follows, in the caller's
+    /// transaction (FIX 5367; FIX 5369's way back reads `previous`).
+    /// `before` is the pack in effect just before the caller's change
+    /// ([`Self::model_pack_in_effect_in_txn`]). When the change moves the
+    /// pack in effect, `previous` is `before`. When it does not, but a
+    /// retirement had already moved the selection off the recorded pack
+    /// (FIX 5368's day pass records that on the day itself), the record
+    /// catches up with `previous` the recorded pack. The install, removal
+    /// and preference doors call it.
+    pub(crate) fn note_active_model_pack_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        before: Option<ModelPackReceipt>,
+    ) -> Result<()> {
+        let active = self.model_pack_in_effect_in_txn(txn)?;
+        let recorded = ACTIVE
+            .get(&self.store, txn, &())?
+            .and_then(|change| change.active);
+        let same =
+            |left: Option<&ModelPackReceipt>, right: Option<&ModelPackReceipt>| match (left, right)
+            {
+                (Some(left), Some(right)) => left.same_pack(right),
+                (None, None) => true,
+                _ => false,
+            };
+        let previous = if same(before.as_ref(), active.as_ref()) {
+            if same(recorded.as_ref(), active.as_ref()) {
+                return Ok(());
+            }
+            recorded
+        } else {
+            before
         };
-        if unchanged {
-            return Ok(());
-        }
         let change = ModelPackChange {
-            previous: prior.and_then(|change| change.active),
+            previous,
             active,
             changed_at: crate::unix_seconds_now(),
         };
