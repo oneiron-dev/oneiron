@@ -206,6 +206,12 @@ fn answer(
     };
     result.outcome = Some(dispatched.outcome.as_str().to_owned());
     result.gate_reason_codes = dispatched.gate_reason_codes;
+    // FIX 11026: a requeue waits for the edge the receipt names.
+    result.retry_at = dispatched
+        .receipt
+        .fields
+        .get("retry_at")
+        .and_then(|edge| edge.parse().ok());
     // Only words that reached the channel join the conversation: a held,
     // degraded, suppressed, let-go, failed or ambiguous reply was not said,
     // and a later run that delivers it witnesses it then. The kept words,

@@ -19,6 +19,18 @@ measurement IDs, reasons and answer bodies remain. The erased subject leaves
 the provenance list; the other subjects remain discoverable for later erases.
 The capsule actor eraser still releases the actor's answer bodies and marks.
 
+Outcome receipt references remain opaque caller-supplied strings, not authority
+or verified entity references. Their full entity-id hex spellings are captured
+as erase metadata using the same case-insensitive spelling match as CHECK.
+No delimiter or receipt grammar is invented, and ordinary receipt strings stay
+accepted. If an erase names one of those spellings, the pair moves as above
+and only the matched scoring reference becomes a fresh opaque `erased:`
+reference. Both forks with the same original reference reuse its replacement.
+Scores, anchor digests, scoring identity, answer bodies and their owner joins
+stay unchanged. The captured spellings also reach the existing same-writer
+late-publication fence; a provider or scorer finishing after that erase cannot
+restore the original reference. This adds no new format, limit or setting.
+
 Provider and scorer work can finish after an erase. Their original subjects
 are checked in the publishing writer. Scoring also requires the exact receipt
 to still exist at the original pair key; it never inserts a missing row. A
