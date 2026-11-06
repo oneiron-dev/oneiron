@@ -456,6 +456,10 @@ pub(super) fn set_cell(
 /// gate. Gaps holding any such field, crossing added lines or nonconsecutive
 /// original paragraphs, and other unmatched gaps keep the existing drop so
 /// field-removal receipts stay truthful.
+/// Zero-text whole direct children with zero actual DrawingML `fld` (own or
+/// descendant) strictly inside a retained head/tail interval carry their original
+/// span bytes as-is under the same rebuilt paragraph tag and body ancestors;
+/// edited, boundary, leading, trailing or field-holding empties keep the existing drop.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -551,20 +555,16 @@ fn rebuilt(
         let segments: Vec<(usize, &Node, Vec<char>)> = tree
             .children(para)
             .filter(|(_, node)| !node.is(DML, "pPr") && !node.is(DML, "endParaRPr"))
-            .filter_map(|(at, node)| {
-                if node.is(DML, "br") {
-                    Some((at, node, vec!['\u{b}']))
+            .map(|(at, node)| {
+                let text = if node.is(DML, "br") {
+                    vec!['\u{b}']
                 } else {
-                    let text: Vec<char> = within(tree, at)
+                    within(tree, at)
                         .filter(|(_, node)| node.is(DML, "t"))
                         .flat_map(|(_, node)| node.text.chars())
-                        .collect();
-                    if node.is(DML, "r") || node.is(DML, "fld") || !text.is_empty() {
-                        Some((at, node, text))
-                    } else {
-                        None
-                    }
-                }
+                        .collect()
+                };
+                (at, node, text)
             })
             .collect();
         let old: Vec<char> = within(tree, para)
@@ -609,7 +609,11 @@ fn rebuilt(
             for (at, node, text) in &segments {
                 let start = position;
                 let end = position + text.len();
-                if !node.is(DML, "r") && !node.is(DML, "fld") && !node.is(DML, "br") {
+                if !node.is(DML, "r")
+                    && !node.is(DML, "fld")
+                    && !node.is(DML, "br")
+                    && !text.is_empty()
+                {
                     if within(tree, *at).any(|(_, node)| node.is(DML, "fld")) {
                         return None;
                     }
@@ -626,7 +630,14 @@ fn rebuilt(
             for (at, node, text) in &segments {
                 let start = position.max(from);
                 let end = (position + text.len()).min(to);
-                if start < end {
+                if text.is_empty()
+                    && from < position
+                    && position < to
+                    && !node.is(DML, "fld")
+                    && !within(tree, *at).any(|(_, node)| node.is(DML, "fld"))
+                {
+                    runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
+                } else if start < end {
                     if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
                         runs.push_str(&run_xml(Some((*at, *node)), para_node, &part).ok()?);

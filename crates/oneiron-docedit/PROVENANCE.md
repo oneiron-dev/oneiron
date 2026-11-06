@@ -275,3 +275,21 @@ rendering, BREAK, cut paths and receipts are unchanged. This is a source-only
 paired-prefix gap correction, part of the existing 17480/residual 18510 pack, not full
 17480, full-feature, whole OF-509/OF-510 or PowerPoint fidelity proof, and no Office
 runtime comparison is claimed.
+
+The zero-text direct-child raw carry (2026-11-06, FIX 17480) keeps every direct child
+except `pPr`/`endParaRPr` in segments, including zero-char ones, with the existing `br`
+special case unchanged; the unknown overlap/refusal gate runs only for nonempty text, so a
+newly recorded zero-char unknown in the edited middle keeps the existing drop. One new raw
+branch in the shared retained loop carries a zero-text child strictly inside a retained
+head/tail interval (`from < position < to`) with zero actual DrawingML `fld` (own root
+check plus no descendant `fld`) as its original span bytes as-is under the same rebuilt
+paragraph qualified tag with its own `xmlns`/default-undeclare bindings and the same body
+ancestors, with no binding materialization into a self-closing tag. Old nonempty static and
+opaque bytes are unchanged; edited, boundary, leading, trailing or field-holding empties keep
+the existing drop, known empty `r` qualifies only under the same strict internal field-free
+rule, empty `fld` is never raw-restored, and same-position multiple zero children preserve
+original order once. No paragraph-wide field refusal, matching map, default, cap, API, DTO,
+schema, authority, config, dependency, BC, policy or deploy changes. Raw comment/PI/whitespace
+gaps are not implemented in this slice. This is a source-only direct-child correction, part of
+the existing 17480/residual 18510 pack, not full 17480, full-feature, whole OF-509/OF-510 or
+PowerPoint fidelity proof, and no compiler, runtime, Office runtime or build comparison is claimed.
