@@ -119,9 +119,12 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
-        self.mark_secret(&finished.output, owner, finished.secret)?;
-        self.put_output_row(&finished, &finished.output, owner)?;
-        Ok(finished.output)
+        self.session
+            .with_released_body_collection(finished.output.raw_blake3, move || {
+                self.mark_secret(&finished.output, owner, finished.secret)?;
+                self.put_output_row(&finished, &finished.output, owner)?;
+                Ok(finished.output)
+            })
     }
 
     /// Marks the occurrence of a body the secret scan hit that run `owner`
@@ -164,13 +167,16 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
-        if finished.output != *output {
-            return Err(invalid_code_run_replay(
-                "raw output metadata does not match bytes",
-            ));
-        }
-        self.mark_secret(output, owner, finished.secret)?;
-        self.put_output_row(&finished, output, owner)
+        self.session
+            .with_released_body_collection(finished.output.raw_blake3, move || {
+                if finished.output != *output {
+                    return Err(invalid_code_run_replay(
+                        "raw output metadata does not match bytes",
+                    ));
+                }
+                self.mark_secret(output, owner, finished.secret)?;
+                self.put_output_row(&finished, output, owner)
+            })
     }
 
     /// The row of the body `finished` holds, as `output`, and the
@@ -266,24 +272,27 @@ impl SessionBinding<'_> {
 
     pub(super) fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let _pin = self.session.pin_result_body(output.raw_blake3);
-        // Before the snapshot, through the key's last use (FIX 6019).
-        let _custody = self.session.custody_read_guard()?;
-        let Some((body, key)) = self.answered(|| {
-            self.session.read_composed(|view, rtxn| {
-                let Some(body) = RAW_OUTPUTS.get(view, rtxn, &output.handle)? else {
+        self.session
+            .with_released_body_collection(output.raw_blake3, || {
+                let _pin = self.session.pin_result_body(output.raw_blake3);
+                // Before the snapshot, through the key's last use (FIX 6019).
+                let _custody = self.session.custody_read_guard()?;
+                let Some((body, key)) = self.answered(|| {
+                    self.session.read_composed(|view, rtxn| {
+                        let Some(body) = RAW_OUTPUTS.get(view, rtxn, &output.handle)? else {
+                            return Ok(None);
+                        };
+                        Ok(Some((
+                            body,
+                            body_key_row_in_txn(view, rtxn, &output.raw_blake3)?,
+                        )))
+                    })
+                })?
+                else {
                     return Ok(None);
                 };
-                Ok(Some((
-                    body,
-                    body_key_row_in_txn(view, rtxn, &output.raw_blake3)?,
-                )))
+                load_whole_body(output, body, key.as_ref(), || self.session.body_dirs()).map(Some)
             })
-        })?
-        else {
-            return Ok(None);
-        };
-        load_whole_body(output, body, key.as_ref(), || self.session.body_dirs()).map(Some)
     }
 
     pub(super) fn read_raw_output_range(
@@ -293,19 +302,23 @@ impl SessionBinding<'_> {
         len: usize,
     ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let _pin = self.session.pin_result_body(output.raw_blake3);
-        let _custody = self.session.custody_read_guard()?;
-        self.answered(|| {
-            self.session.read_composed(|view, rtxn| {
-                let Some(row) = RAW_OUTPUTS.get_borrowed(view, rtxn, &output.handle)? else {
-                    return Ok(None);
-                };
-                let key = body_key_row_in_txn(view, rtxn, &output.raw_blake3)?;
-                read_body_row_range(output, &row, key.as_ref(), offset, len, || {
-                    self.session.body_dirs()
+        self.session
+            .with_released_body_collection(output.raw_blake3, || {
+                let _pin = self.session.pin_result_body(output.raw_blake3);
+                let _custody = self.session.custody_read_guard()?;
+                self.answered(|| {
+                    self.session.read_composed(|view, rtxn| {
+                        let Some(row) = RAW_OUTPUTS.get_borrowed(view, rtxn, &output.handle)?
+                        else {
+                            return Ok(None);
+                        };
+                        let key = body_key_row_in_txn(view, rtxn, &output.raw_blake3)?;
+                        read_body_row_range(output, &row, key.as_ref(), offset, len, || {
+                            self.session.body_dirs()
+                        })
+                        .map(Some)
+                    })
                 })
-                .map(Some)
             })
-        })
     }
 }
