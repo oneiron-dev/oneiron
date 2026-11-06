@@ -107,6 +107,7 @@ impl ExportTransfers {
             bytes: receipt.bytes,
             digest: receipt.digest.clone(),
             holder_requests: receipt.holder_requests.clone(),
+            notices: receipt.notices.clone(),
         };
         let kept = KeptExport {
             exporter: exporter_of(auth),
