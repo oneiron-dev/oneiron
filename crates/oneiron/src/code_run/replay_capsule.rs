@@ -11,7 +11,12 @@
 //! the thread that made the call ([`note_answering_rung`]), and the capture
 //! site finalizes once the call is done ([`finalize_step_captures`]). A
 //! capture that fails, or a call no rung answered, leaves no replayable
-//! capsule, and the live step goes on as if none was asked.
+//! capsule, and the live step goes on as if none was asked. The route prompt
+//! is written as a body the run owns, as the wall admits it, in the writer
+//! that finalizes the capsule (FIX 6255): the capsule names it by ref, with
+//! the digest of the prompt as sent ([`StoredRungBinding`]). A replay reads
+//! it from that body and sends it on the one rung's own call, never through
+//! a shared rung's prompt.
 //!
 //! An executor step's capsule also holds the run's state before the step
 //! (FIX 3694): its replay row as stored, with the config and teaching it ran
@@ -52,7 +57,8 @@ pub use crate::team::task_exposure::TaskExposure;
 
 pub use crate::dreamer_runner::step_replay::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, StepContextRef, StepReplayCapsule, StoredSpan,
+    ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
+    StoredRungBinding, StoredSpan, route_prompt_digest,
 };
 
 /// The body an [`ExecutorStepStart`] names: the run's replay row as stored

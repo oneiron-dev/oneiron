@@ -69,13 +69,94 @@ pub enum CapsuleHost {
     WorkflowStep,
 }
 
-/// The rung that answered a captured call: its model, where it ran and the
-/// route prompt it put first.
+/// The rung that answered a call, as it answered: its model, where it ran
+/// and the route prompt it put first. A live value: a capsule keeps its
+/// rung as a [`StoredRungBinding`], its prompt in a body (FIX 6255).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapsuleRungBinding {
     pub model: ModelId,
     pub locality: ModelLocality,
     pub prompt: Option<String>,
+}
+
+/// The rung that answered a captured call, as its capsule keeps it (FIX
+/// 6255): its model, where it ran, and its route prompt as a body the run
+/// owns, by ref. `prompt` is `None` when the rung put no prompt. Its `Kept`
+/// body is the prompt's canonical JSON string as the side-row wall admitted
+/// it, each secret in it its custody handle; `Withheld` keeps no copy, for
+/// the wall's reasons. `prompt_digest` is the digest of the prompt as it
+/// was sent ([`route_prompt_digest`], FIX 6356): a replay checks the route
+/// configured now against it before the stored prompt takes its place.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredRungBinding {
+    pub model: ModelId,
+    pub locality: ModelLocality,
+    pub prompt: Option<CapsuleRequest>,
+    pub prompt_digest: [u8; 32],
+}
+
+impl StoredRungBinding {
+    /// Whether the route prompt as stored is the prompt as sent: the rung
+    /// put none, or the wall placed no handle in it, so its stored JSON
+    /// hashes to the digest it was sent under. A withheld prompt has no
+    /// copy.
+    #[must_use]
+    pub fn prompt_as_sent(&self) -> bool {
+        match &self.prompt {
+            None => true,
+            Some(CapsuleRequest::Kept { stored_hash, .. }) => *stored_hash == self.prompt_digest,
+            Some(CapsuleRequest::Withheld { .. }) => false,
+        }
+    }
+
+    /// The hash of the route prompt's body as stored (FIX 6255): what a
+    /// contribution fork's receipt names its prompt by, and what its proof
+    /// reads back. `None` for a rung that put no prompt, and for a withheld
+    /// one, which no fork is sent under.
+    #[must_use]
+    pub fn stored_prompt_hash(&self) -> Option<[u8; 32]> {
+        match &self.prompt {
+            Some(CapsuleRequest::Kept { stored_hash, .. }) => Some(*stored_hash),
+            None | Some(CapsuleRequest::Withheld { .. }) => None,
+        }
+    }
+}
+
+/// A capsule's answering rung as a replay sends on it again (FIX 6255):
+/// the rung with the route prompt read from the capsule's body, each secret
+/// in it its custody handle, and the digest of the prompt as it was sent,
+/// which the route configured now must match before the stored prompt
+/// takes its place. It lives for one call and is never stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayRung {
+    pub binding: CapsuleRungBinding,
+    pub prompt_digest: [u8; 32],
+}
+
+impl ReplayRung {
+    /// `stored`'s rung with `prompt`, the route prompt its body holds.
+    #[must_use]
+    pub fn of(stored: &StoredRungBinding, prompt: Option<String>) -> Self {
+        Self {
+            binding: CapsuleRungBinding {
+                model: stored.model.clone(),
+                locality: stored.locality,
+                prompt,
+            },
+            prompt_digest: stored.prompt_digest,
+        }
+    }
+}
+
+/// The digest a route prompt is pinned by (FIX 6356, CALLS "route prompt
+/// digest"): BLAKE3 of the prompt as JSON, `null` for a rung that puts
+/// none, so no prompt and an empty one differ. The one producer: a route
+/// pin and a capsule's stored rung both take it from here.
+#[must_use]
+pub fn route_prompt_digest(prompt: Option<&str>) -> [u8; 32] {
+    // A string always encodes as JSON; nothing here can fail.
+    let json = serde_json::to_vec(&prompt).unwrap_or_default();
+    *blake3::hash(&json).as_bytes()
 }
 
 /// The route the rung that answered a captured call went out on (PR-S1):
@@ -92,11 +173,14 @@ pub struct ReplayRoutePin {
     /// The model id the provider was sent.
     pub wire_model: String,
     /// BLAKE3 of the rung's route prompt as JSON: `null` for a rung that
-    /// puts none, so no prompt and an empty one differ.
+    /// puts none, so no prompt and an empty one differ
+    /// ([`route_prompt_digest`]).
     pub route_prompt_digest: [u8; 32],
 }
 
-/// What a capsule keeps of its step's request (FIX 6254).
+/// What a capsule keeps of its step's request (FIX 6254), and of its
+/// answering rung's route prompt (FIX 6255): there the body is the prompt's
+/// canonical JSON string.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapsuleRequest {
@@ -125,9 +209,9 @@ pub enum CapsuleContent {
     /// actor its host stamped on the step's writes, which an erase of that
     /// actor finds the capsule by.
     Kept { actor: EntityId },
-    /// Its actor was erased. Its request, start and fork answers are
-    /// released, its route prompt is cleared and it names no actor; what the
-    /// step was stays, and every read of its content is unavailable.
+    /// Its actor was erased. Its request, start, route prompt and fork
+    /// answers are released and it names no actor; what the step was stays,
+    /// and every read of its content is unavailable.
     Erased,
 }
 
@@ -167,9 +251,9 @@ pub struct StepReplayCapsule {
     pub exposures: Vec<ExposureSlot>,
     /// The sampling seed the request carried, if any.
     pub seed: Option<u64>,
-    /// The rung that answered; `None` while staged, and for good when no
-    /// rung answered it.
-    pub binding: Option<CapsuleRungBinding>,
+    /// The rung that answered, its route prompt by its body (FIX 6255);
+    /// `None` while staged, and for good when no rung answered it.
+    pub binding: Option<StoredRungBinding>,
     /// The route that rung went out on (PR-S1), written with it; `None`
     /// while staged, and for good when no rung pinned its route.
     pub route_pin: Option<ReplayRoutePin>,
@@ -189,13 +273,20 @@ pub struct StepReplayCapsule {
 impl StepReplayCapsule {
     /// Whether the request as stored is the request as sent (FIX 6144): the
     /// wall placed no handle in it. A replay of a masked copy says so, and a
-    /// withheld request has no copy (FIX 6254).
+    /// withheld request has no copy (FIX 6254). Its answering rung's route
+    /// prompt counts too (FIX 6255): a replay that sends a masked prompt is
+    /// no call as sent, though its request is.
     #[must_use]
     pub fn as_sent(&self) -> bool {
-        matches!(
+        let request = matches!(
             &self.request,
             CapsuleRequest::Kept { stored_hash, .. } if *stored_hash == self.request_hash
-        )
+        );
+        request
+            && self
+                .binding
+                .as_ref()
+                .is_none_or(StoredRungBinding::prompt_as_sent)
     }
 }
 
@@ -232,15 +323,13 @@ pub struct StepContextRef {
 /// locality that answered it, both request hashes and its messages digest,
 /// its exposures' skills, revisions and spans, its seed, its time, its
 /// start's ref, digest and bridge count, its replay context's ref and
-/// digest, and the route its rung went out on, which holds the route
-/// prompt's digest only), its content Erased, naming no actor, with its
-/// route prompt cleared. Its bodies are released beside it; its fork
-/// receipts and scores stay in their own rows.
+/// digest, its route prompt's ref and digest (FIX 6255), and the route its
+/// rung went out on, which holds the route prompt's digest only), its
+/// content Erased, naming no actor. Its bodies are released beside it, its
+/// route prompt's among them; its fork receipts and scores stay in their
+/// own rows.
 pub(crate) fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
     capsule.content = CapsuleContent::Erased;
-    if let Some(binding) = &mut capsule.binding {
-        binding.prompt = None;
-    }
     capsule
 }
 

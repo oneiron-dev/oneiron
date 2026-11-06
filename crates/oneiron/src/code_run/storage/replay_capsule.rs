@@ -2,8 +2,9 @@
 //! capsule's metadata keyed by its attempt, lease generation and step, each
 //! matched pair's fork receipts or the reason it is unavailable, and the
 //! request, start and response bodies they name, an engine step's fork's
-//! executed bodies too ([`execution`], FIX 3607), and the replay context its
-//! step's checkpoint committed ([`context`], FIX 6351), owned by the
+//! executed bodies too ([`execution`], FIX 3607), the replay context its
+//! step's checkpoint committed ([`context`], FIX 6351), and the route prompt
+//! its answering rung put first ([`route_prompt`], FIX 6255), owned by the
 //! original run.
 //!
 //! Each body is written as the side-row wall admits it, in the writer that
@@ -18,6 +19,7 @@ mod erase;
 mod execution;
 mod fork_erase;
 mod restore;
+mod route_prompt;
 mod spawn_erase;
 mod start_parts;
 
@@ -27,9 +29,7 @@ use super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::replay_capsule::{
-    CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule,
-};
+use super::super::replay_capsule::{CapsuleRequest, StepReplayCapsule};
 use super::records::body_drifted;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
@@ -47,6 +47,7 @@ pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
+pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -159,33 +160,6 @@ fn held_body(
         return Ok(None);
     }
     held_body_in_txn(vault, &rtxn, owner, path, body)
-}
-
-/// Records the rung that answered the capsule at `key`, and the route it
-/// went out on when it pinned one (PR-S1), once and in one write: a capsule
-/// already finalized keeps its rung and its pin. An erased capsule, or one
-/// whose actor is gone by now, takes neither: its route prompt is content an
-/// erase clears (FIX 6144).
-pub(crate) fn finalize_capsule(
-    vault: &Vault,
-    key: &(EntityId, u64, u64),
-    binding: CapsuleRungBinding,
-    route_pin: Option<ReplayRoutePin>,
-) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let Some(mut capsule) = CAPSULES.get(&vault.store, txn, key)? else {
-            return Ok(());
-        };
-        let Some(actor) = capsule.content.actor() else {
-            return Ok(());
-        };
-        if capsule.binding.is_some() || erase::actor_gone_in_txn(vault, txn, &actor) {
-            return Ok(());
-        }
-        capsule.binding = Some(binding);
-        capsule.route_pin = route_pin;
-        CAPSULES.put(vault, txn, key, &capsule)
-    })
 }
 
 /// Every capsule of `attempt`, in lease generation then step order.

@@ -1,8 +1,12 @@
 //! A pair's inputs, settled before either fork is paid for, and each
-//! fork generated once and kept before it is scored.
+//! fork generated once and kept before it is scored. A fork's call reads
+//! the capsule's route prompt from its body just before it is sent, and
+//! lends it to that call alone (FIX 6255): a prompt that does not read is
+//! no fork, paid for nothing, and is never sent as some other prompt.
 
-use super::super::replay_capsule::{CapsuleRequest, ExposureSlot, StepReplayCapsule};
-use super::super::storage::{capsule_request, store_fork_response};
+use super::super::replay_capsule::{CapsuleRequest, ExposureSlot, ReplayRung, StepReplayCapsule};
+use super::super::shadow_runner::{ShadowUnavailable, ShadowUnavailableReason};
+use super::super::storage::{capsule_request, capsule_route_prompt, store_fork_response};
 use super::ancestor::target_slots;
 use super::execution::freeze_program_step;
 use super::{
@@ -121,10 +125,12 @@ impl Runner<'_> {
             ForkTreatment::WithSkill => (&prepared.with_skill, prepared.with_skill_hash),
             ForkTreatment::WithoutSkill => (&prepared.without_skill, prepared.without_skill_hash),
         };
-        let Some(response) = self
-            .model
-            .generate(request, &prepared.binding, self.clock)?
-        else {
+        // The route prompt, read again from its body before the call.
+        let rung = match capsule_route_prompt(self.vault, &prepared.capsule)? {
+            Ok(prompt) => ReplayRung::of(&prepared.binding, prompt),
+            Err(unavailable) => return Ok(Err(prompt_unavailable(&unavailable))),
+        };
+        let Some(response) = self.model.generate(request, &rung, self.clock)? else {
             return Ok(Err(ContributionReplayUnavailable::ModelUnavailable));
         };
         let capsule = &prepared.capsule;
@@ -150,11 +156,7 @@ impl Runner<'_> {
                 capsule_request: capsule.request_hash,
                 request: hash,
                 model: prepared.binding.model.clone(),
-                route_prompt: prepared
-                    .binding
-                    .prompt
-                    .as_deref()
-                    .map(|prompt| *blake3::hash(prompt.as_bytes()).as_bytes()),
+                route_prompt: prepared.binding.stored_prompt_hash(),
                 seed: capsule.seed,
                 seed_unsupported: capsule.seed.is_none(),
                 response: response_ref,
@@ -172,5 +174,15 @@ impl Runner<'_> {
             return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         Ok(Ok(fork))
+    }
+}
+
+/// Why a pair is unavailable when its capsule's route prompt does not read
+/// (FIX 6255): `Erased` once a restore retired its body, `Unreadable` for a
+/// prompt withheld, released, marked or no longer its hash.
+fn prompt_unavailable(unavailable: &ShadowUnavailable) -> ContributionReplayUnavailable {
+    match unavailable.reason {
+        ShadowUnavailableReason::SourceErased => ContributionReplayUnavailable::Erased,
+        _ => ContributionReplayUnavailable::Unreadable,
     }
 }

@@ -25,10 +25,10 @@ use super::types::{
     ShadowUnavailableReason as Reason,
 };
 use crate::code_run::{
-    CapsuleRequest, CapsuleRungBinding, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
-    ExecutorStepStart, ReplayRoutePin, SelfDispatchOutcome, StepReplayCapsule, StepStartBody,
+    CapsuleRequest, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStepStart,
+    ReplayRoutePin, SelfDispatchOutcome, StepReplayCapsule, StepStartBody, StoredRungBinding,
     capsule_context_body, capsule_request, capsule_start_body, decode_code_run_replay_record,
-    resolve_result, step_replay_capsules_in_txn,
+    resolve_result, route_prompt_at, step_replay_capsules_in_txn,
 };
 use crate::engine_executor::{JsResultRef, is_result_output_path};
 use crate::limit_ask::EngineLimit;
@@ -70,7 +70,9 @@ pub struct PreparedShadowStep {
     pub(crate) source_actor: EntityId,
     pub(crate) request: LlmRequest,
     pub(crate) request_digest: ShadowRequestDigest,
-    pub(crate) binding: Option<CapsuleRungBinding>,
+    /// The answering rung, its route prompt by its capsule's body only (FIX
+    /// 6255): the model call reads the prompt then ([`shadow_route_prompt`]).
+    pub(crate) binding: Option<StoredRungBinding>,
     pub(crate) route_pin: Option<ReplayRoutePin>,
     pub(crate) seed: Option<u64>,
     pub(crate) start: ExecutorStepStart,
@@ -119,7 +121,7 @@ impl PreparedShadowStep {
 
     /// The rung that answered the captured call, when one did.
     #[must_use]
-    pub const fn binding(&self) -> Option<&CapsuleRungBinding> {
+    pub const fn binding(&self) -> Option<&StoredRungBinding> {
         self.binding.as_ref()
     }
 
@@ -538,6 +540,24 @@ fn freeze_body(
         secret,
         bytes,
     }))
+}
+
+/// The route prompt the rung `binding` names put first on the captured call
+/// `step` (FIX 6255), read from its capsule's body at the arm's model call,
+/// never before and never kept on the step: each secret in it its custody
+/// handle, `Ok(None)` when the rung put none. Withheld, marked, released or
+/// unreadable is `SourceWithheld`, retired by a restore `SourceErased`.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub fn shadow_route_prompt(
+    vault: &Vault,
+    step: &ShadowStepIdentity,
+    binding: &StoredRungBinding,
+) -> Result<Outcome<Option<String>>> {
+    let key = (step.attempt, u64::from(step.lease_generation), step.step);
+    route_prompt_at(vault, &key, step.run, binding)
 }
 
 /// Whether `actor`, the actor an arm's source run is for, is gone here

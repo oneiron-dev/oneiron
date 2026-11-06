@@ -19,7 +19,7 @@ mod program;
 use std::sync::Weak;
 
 use oneiron::code_run::{
-    CapsuleRungBinding, ContributionForkModel, ContributionForkScorer, ReplayAnchor, ScoredFork,
+    ContributionForkModel, ContributionForkScorer, ReplayAnchor, ReplayRung, ScoredFork,
     run_contribution_forks,
 };
 use oneiron::dreamer_runner::maintenance::{ContributionForks, ContributionReplayHost};
@@ -120,6 +120,9 @@ impl ContributionReplayHost for HostContributionReplay {
 
 /// A fork's call: the capsule's model alone, by its own one-model ladder,
 /// under the route prompt the capsule was answered under, paid by the Coach.
+/// The prompt sent is the one the capsule's body holds, each secret in it
+/// its custody handle (FIX 6255), once the configured route is the one the
+/// capsule's call was sent on, by its prompt digest (FIX 6356).
 struct ExactFork<'a> {
     server: &'a SyncServer,
     vault: &'a Vault,
@@ -131,13 +134,13 @@ impl ContributionForkModel for ExactFork<'_> {
     fn generate(
         &self,
         request: &LlmRequest,
-        binding: &CapsuleRungBinding,
+        rung: &ReplayRung,
         clock: &RetrievalDeadline,
     ) -> oneiron::Result<Option<LlmResponse>> {
         let runtime = self.server.ai.model_runtime();
         let mut request = request.clone();
-        request.model = binding.model.clone();
-        request.envelope.locality = binding.locality;
+        request.model = rung.binding.model.clone();
+        request.envelope.locality = rung.binding.locality;
         // The two forks are compared with each other: each runs alone on an
         // own server that batches (INF 1). The fork's request hash is its
         // unmarked request's.
@@ -148,9 +151,10 @@ impl ContributionForkModel for ExactFork<'_> {
         let Ok(call) = runtime.admit_seat_bound(self.vault, CHAT_ROLE, request) else {
             return Ok(None);
         };
-        // Its rung puts its route prompt first, once: the replay runs only
-        // while that is the prompt the capsule's call was answered under.
-        if call.ladder.exact_prompt() != Some(binding.prompt.as_deref()) {
+        // The replay runs only while the rung's configured prompt is the one
+        // the capsule's call was answered under, by its digest; the stored
+        // prompt then takes its place, put first once.
+        if call.ladder.exact_prompt_digest() != Some(rung.prompt_digest) {
             return Ok(None);
         }
         let run_id = format!("coach-contribution-fork:{}", EntityId::now().to_hex());
@@ -165,10 +169,11 @@ impl ContributionForkModel for ExactFork<'_> {
         let may_send = || !clock.decision_time_left().is_zero();
         let response = self
             .handle
-            .block_on(call.ladder.generate_exact_within(
+            .block_on(call.ladder.generate_exact_masked_within(
                 &run,
                 call.request,
                 None,
+                rung.binding.prompt.as_deref(),
                 &may_send,
                 clock.decision_time_left(),
             ))

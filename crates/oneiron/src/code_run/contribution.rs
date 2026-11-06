@@ -38,7 +38,7 @@ pub use self::execution::{
     ForkExecutionPin, ForkScore, execute_contribution_fork,
 };
 use self::execution::{ProgramStep, pair_evidence_mode, retry_pending, scored_in};
-use super::replay_capsule::{CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
+use super::replay_capsule::{ExposureSlot, ReplayRung, StepReplayCapsule, StoredRungBinding};
 use super::shadow_runner::ShadowUnavailable;
 use super::storage::{
     ForkProvenance, ForkRows, fork_response, fork_rows, put_fork, put_unavailable,
@@ -217,7 +217,9 @@ pub struct ContributionForkReceipt {
     /// prompt.
     pub request: [u8; 32],
     pub model: ModelId,
-    /// BLAKE3 of the route prompt it was sent under, if any.
+    /// The hash of the route prompt's body it was sent under, as its
+    /// capsule stores it (FIX 6255): its canonical JSON, each secret in it
+    /// its custody handle. `None` when the rung put no prompt.
     pub route_prompt: Option<[u8; 32]>,
     /// The captured seed both forks carried.
     pub seed: Option<u64>,
@@ -247,9 +249,11 @@ pub struct ContributionForkReceipt {
 /// The model call a fork makes: the capsule's model alone, by its captured
 /// route, never a fallback.
 pub trait ContributionForkModel {
-    /// `request`'s answer from `binding`'s model under `binding`'s route
-    /// prompt and no other, stopping by `clock`; `None` when that model or
-    /// that route prompt is not served now.
+    /// `request`'s answer from `rung`'s model, stopping by `clock`, with the
+    /// route prompt the capsule's body holds put first in place of the one
+    /// configured (FIX 6255); `None` when that model is not served now, or
+    /// its configured prompt is not the one the capsule's call was sent
+    /// under, by `rung`'s digest (FIX 6356).
     ///
     /// # Errors
     ///
@@ -257,7 +261,7 @@ pub trait ContributionForkModel {
     fn generate(
         &self,
         request: &LlmRequest,
-        binding: &CapsuleRungBinding,
+        rung: &ReplayRung,
         clock: &RetrievalDeadline,
     ) -> Result<Option<LlmResponse>>;
 }
@@ -398,7 +402,9 @@ type Outcome<T> = Result<std::result::Result<T, ContributionReplayUnavailable>>;
 /// One pair's inputs, settled before any fork is paid for.
 struct Prepared {
     capsule: StepReplayCapsule,
-    binding: CapsuleRungBinding,
+    /// The answering rung as the capsule keeps it: its route prompt by ref,
+    /// read again before each fork's call (FIX 6255).
+    binding: StoredRungBinding,
     with_skill: LlmRequest,
     with_skill_hash: [u8; 32],
     without_skill: LlmRequest,
