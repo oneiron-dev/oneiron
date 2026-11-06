@@ -325,6 +325,14 @@ impl AssetBodySession {
         self.owed.is_empty() && self.receiving.is_none()
     }
 
+    /// The bytes the body coming in has spooled so far; `None` when none
+    /// comes in. Only Data of the current attempt, in order, advances it.
+    pub(crate) fn receiving_bytes(&self) -> Option<u64> {
+        self.receiving
+            .as_ref()
+            .map(|receiving| receiving.spool.received())
+    }
+
     /// Owes `body`, which `window` binds `carrier` with, unless a tombstone
     /// or a delete here keeps the carrier from landing, this side holds the
     /// body, or it is owed already.

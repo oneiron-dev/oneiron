@@ -55,8 +55,8 @@ use crate::sync::types::WindowKey;
 /// How long after a pass begins the next may begin.
 const STAGED_BODY_PULL_RETRY: Duration = Duration::from_secs(30);
 
-/// How long a pass waits with no body data, bind or copy coming before it
-/// ends.
+/// How long a pass waits with no bind, no copy, and no Data the current
+/// attempt takes in order, before it ends.
 const STAGED_BODY_PULL_IDLE: Duration = Duration::from_secs(60);
 
 /// How long the socket to a producer may take to open.
@@ -303,17 +303,17 @@ impl SyncClient {
                 }
             }
             transport::TAG_ASSET_BODY_WANT..=transport::TAG_ASSET_BODY_RECEIPT if pull.admitted => {
-                if tag == transport::TAG_ASSET_BODY_DATA {
-                    pull.idle_until = Instant::now() + STAGED_BODY_PULL_IDLE;
-                }
                 self.staged_body_transfer_frame(tag, payload)
             }
             _ => Ok(Vec::new()),
         }
     }
 
-    /// Owes the pass's bodies in its session, against the live window the
-    /// confirmation imported them into.
+    /// Owes the pass's bodies in its session as the digest-pinned admitted
+    /// part names them, never as the live window does: the session asks for
+    /// a body, and its landing takes it, only while the live window still
+    /// binds that same body, so a newer copy that replaced it is never
+    /// fetched or landed under this receipt.
     fn owe_staged_pull_bodies(&mut self) -> std::result::Result<(), TransportError> {
         let Some(key) = self
             .staged_body_pulls
@@ -323,17 +323,23 @@ impl SyncClient {
         else {
             return Ok(());
         };
-        let window = self.ensure_window(key.as_str())?;
+        // The session reads the live window through the manager's loaded
+        // windows.
+        self.ensure_window(key.as_str())?;
         let Some(pull) = self.staged_body_pulls.active.as_mut() else {
             return Ok(());
         };
+        let admitted = crate::sync::schema::create_window_doc("federation-staged-bodies", &key);
+        admitted
+            .import(&pull.part.update)
+            .map_err(|_| TransportError::InvalidPayload("admitted body references unreadable"))?;
         let session = pull
             .session
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
         let owed = &pull.owed;
         with_manager_peer(&self.manager, pull.lane, |peer| {
-            session.note_rows(peer, &key, &window.doc, owed)
+            session.note_rows(peer, &key, &admitted, owed)
         })
     }
 
@@ -406,10 +412,22 @@ impl SyncClient {
             .session
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        let (mut out, births) = with_manager_peer(&self.manager, pull.lane, |peer| {
+        let before = session.receiving_bytes();
+        let (mut out, births, advanced) = with_manager_peer(&self.manager, pull.lane, |peer| {
             let out = session.handle_frame(peer, tag, payload)?;
-            Ok::<_, TransportError>((out, session.take_federated_births()))
+            // Only Data the current attempt took in order keeps the pass
+            // alive; any other frame leaves its idle deadline as it was.
+            let advanced = tag == transport::TAG_ASSET_BODY_DATA
+                && before.is_some_and(|before| {
+                    session
+                        .receiving_bytes()
+                        .is_some_and(|after| after > before)
+                });
+            Ok::<_, TransportError>((out, session.take_federated_births(), advanced))
         })?;
+        if advanced {
+            pull.idle_until = Instant::now() + STAGED_BODY_PULL_IDLE;
+        }
         if !births.is_empty() {
             self.finish_staged_pull_births(&births)?;
         }
