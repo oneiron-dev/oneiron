@@ -26,10 +26,11 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<ProactivityDigestView>> {
         Ok(match &input.id {
             Some(raw) => {
-                let mut id = [0; 32];
-                hex::decode_to_slice(raw, &mut id).map_err(|_| {
-                    MemoryError::bad_request("id must be a 64-hex proactivity digest locator")
-                })?;
+                let id = crate::task_verb::decode_hex::<32>(raw)
+                    .filter(|_| raw.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                    .ok_or_else(|| {
+                        MemoryError::bad_request("id must be a 64-hex proactivity digest locator")
+                    })?;
                 self.vault.proactivity_digest_view(owner, id)?
             }
             None => self.vault.latest_proactivity_digest_view(owner)?,
