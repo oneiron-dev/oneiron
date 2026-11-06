@@ -13,7 +13,7 @@
 //! key_id = "KEYID12345"
 //! topic = "com.example.app"
 //! environment = "production"
-//! signing_key_ref = "apns-key-main"
+//! signing_key_ref = "<immutable SECRET record id>"
 //! ```
 
 use oneiron::outbound::ApnsAppConfig;
