@@ -120,6 +120,14 @@ Presence text and non-owner ordering are unchanged. The four-byte control
 scratch is UTF-8 scalar storage, not an engine size limit. Final strings and
 any reallocations still occur before the response's capacity capture.
 
+The `ai.reply` request fingerprint no longer needs a deep-cloned request. Its
+owned message vector temporarily includes the exact route prompt for the
+canonical request hash and ordered system-message digest. Both reads finish
+before that one inserted message is removed. The ladder then receives the same
+original request and still prepends its route prompt once. A fingerprint error
+still ends the call before any provider send. Lower ladder request clones,
+prompt strings and independent JSON values remain outside this custody slice.
+
 This is output custody, not pre-allocation admission. Serialization may still
 allocate before its capacity is recorded, and reallocation may temporarily
 hold old and new backing. Independent MEMORIES disclosure clones, reply JSON
