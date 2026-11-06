@@ -49,9 +49,10 @@ impl Memory<'_> {
     }
 
     /// `vault.code.merge_queue.requeue_survivors`: enqueues the proposals a
-    /// diagnosed red batch did not quarantine as a new batch, through the
-    /// unchanged `MergeQueue::requeue_survivors`. The red batch and its
-    /// quarantine are kept. A moved head refuses; nothing rebases.
+    /// diagnosed red batch did not quarantine as a new batch, through
+    /// `MergeQueue::requeue_survivors`. The red batch and its quarantine are
+    /// kept, and the two batches link to each other once (FIX 4362): a
+    /// retry answers the same batch. A moved head refuses; nothing rebases.
     pub fn merge_queue_requeue_survivors_as(
         &self,
         owner: &AuthenticatedOwner,
