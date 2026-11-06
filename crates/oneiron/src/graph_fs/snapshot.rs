@@ -84,18 +84,6 @@ impl GraphFsResolver<'_, '_> {
 
     /// Binds a public continuation even when the underlying coreutil uses a
     /// byte offset or a fixed-directory name internally.
-    pub(crate) fn open_public_cursor(
-        &self,
-        call: &str,
-        cursor: Option<&str>,
-    ) -> Result<Option<String>> {
-        self.cursor_scope(call).open(cursor)
-    }
-
-    pub(crate) fn seal_public_cursor(&self, call: &str, cursor: &str) -> String {
-        self.cursor_scope(call).seal(&cursor.to_owned())
-    }
-
     pub(crate) fn open_public_cursor_with_reader(
         &self,
         call: &str,

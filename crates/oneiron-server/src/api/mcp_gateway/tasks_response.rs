@@ -838,7 +838,7 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 
 /// One MCP file read on its owned native stack. Hooks stay in the caller's
 /// existing pre/post chain; the worker returns the rows its read listed.
-async fn mcp_graph_fs_bytes<I: Send + 'static>(
+async fn mcp_graph_fs_bytes<I: Send + 'static, O: Send + 'static>(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     surface: McpRowSurface,
@@ -847,17 +847,10 @@ async fn mcp_graph_fs_bytes<I: Send + 'static>(
         &oneiron::Memory<'_>,
         I,
         &oneiron::batch::ReadPacing,
-    )
-        -> oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>
+    ) -> oneiron::memory::MemoryResult<O>
     + Send
     + 'static,
-) -> Result<
-    (
-        oneiron::memory::MemoryResult<oneiron::memory::graph_fs_doors::GraphFsOutput>,
-        Vec<oneiron::EntityId>,
-    ),
-    McpGatewayError,
-> {
+) -> Result<(oneiron::memory::MemoryResult<O>, Vec<oneiron::EntityId>), McpGatewayError> {
     let (server, actor) = (Arc::clone(server), actor.clone());
     let run_writes = surface
         .run

@@ -21125,22 +21125,14 @@ async fn graph_fs_readdir(
     call: &FacadeCall<'_>,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
-    let auth = call.auth();
-    auth.require(CoreScope::Read)?;
-    auth.require_lane_record_scope()?;
-    let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    super::graph_fs_doors::graph_fs_bytes(
         server,
         call,
-        actor,
-        class,
+        input,
         "graph_fs.readdir",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+        move |memory, input, pacing| memory.graph_fs_readdir_with_pacing(input, pacing),
+    )
+    .await
 }
 async fn graph_fs_read_file(
     server: &Arc<SyncServer>,
