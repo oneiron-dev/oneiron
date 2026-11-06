@@ -128,6 +128,9 @@ async fn reply(
         .standing
         .as_mut()
         .map(|prefix| std::mem::take(&mut prefix.compiled));
+    if let Some(pack) = context.pack.as_mut() {
+        pack.discard_reply_entity_payload();
+    }
     let mut dynamic = serde_json::to_value(&context).map_err(|_| internal())?;
     let standing = standing_compiled.as_deref().unwrap_or("");
     dynamic

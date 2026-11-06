@@ -746,6 +746,14 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
 }
 
 impl CoreContextPackResponse {
+    /// Release field maps and vectors omitted with `ai.reply`'s whole pack JSON.
+    pub(crate) fn discard_reply_entity_payload(&mut self) {
+        for entity in self.results.iter_mut().chain(&mut self.neighbors) {
+            entity.fields = None;
+            entity.vector = None;
+        }
+    }
+
     pub(super) fn retain_disclosure_output(&mut self, memory: &crate::machine::MachineMemory) {
         self.disclosure_memory
             .get_or_insert_with(|| super::output_memory::RetainedDisclosureOutput::new(memory))
