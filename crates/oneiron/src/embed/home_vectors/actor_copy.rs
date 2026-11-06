@@ -208,6 +208,21 @@ impl ReceivedHomeClaimVector {
 }
 
 impl PreparedHomeClaimActors {
+    /// Stores only the optional copy under this writer's already pending job.
+    /// The holder must outlive the actual outer commit, not just its callback.
+    pub(crate) fn retain_in_txn(&self, vault: &Vault, txn: &mut RwTxn<'_>) -> Result<bool> {
+        let Some(copy) = self.copy_for_current_source_in_txn(vault, txn)? else {
+            return Ok(false);
+        };
+        let bytes = rmp_serde::to_vec_named(copy).map_err(|_| invalid())?;
+        crate::sync::queue::retain_embed_job_home_claim_copy_in_txn(
+            &vault.store,
+            txn,
+            &copy.entity_id,
+            &bytes,
+        )
+    }
+
     /// Borrows the ciphertext only in the writer that materialized the exact
     /// original source. The caller still owns the real outer commit and carrier.
     pub(crate) fn copy_for_current_source_in_txn(
@@ -245,6 +260,10 @@ impl PreparedHomeClaimActors {
 }
 
 impl RetainedHomeClaimActors {
+    pub(crate) fn entity_id(&self) -> EntityId {
+        self.entity_id
+    }
+
     fn aad(&self, index: usize) -> Result<Vec<u8>> {
         rmp_serde::to_vec(&(
             COPY_DOMAIN,

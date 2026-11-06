@@ -6,6 +6,7 @@ use heed::RoTxn;
 
 use super::{EMBED_PREFIX, checkpoint, codec};
 use crate::embed::home_vectors::retained::RetainedHomeClaimResponse;
+use crate::embed::home_vectors::retained_copy::RetainedHomeClaimCopy;
 use crate::store::{ResponseDb, Store, response_carrier, response_instance_owner_in_txn};
 use crate::{EntityId, Error, Result};
 
@@ -45,7 +46,12 @@ pub(crate) fn capture_home_claim_copy(
     let Some(bytes) = copy else {
         return Ok(None);
     };
-    let copy = RetainedHomeClaimResponse::decode(store, &job.entity_id, bytes)?;
+    let RetainedHomeClaimCopy::Response(copy) =
+        RetainedHomeClaimCopy::decode(&job.entity_id, bytes)?
+    else {
+        return Ok(None);
+    };
+    copy.validate(store, &job.entity_id)?;
     let carrier = response_carrier(ResponseDb::Entities, job.entity_id.as_bytes());
     if !response_instance_owner_in_txn(store, txn, job.entity_id, copy.response.instance, &carrier)?
     {

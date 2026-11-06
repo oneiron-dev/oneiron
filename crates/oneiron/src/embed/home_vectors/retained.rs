@@ -202,17 +202,22 @@ impl RetainedHomeClaimResponse {
     pub(crate) fn decode(store: &crate::store::Store, id: &EntityId, bytes: &[u8]) -> Result<Self> {
         let copy: Self = rmp_serde::from_slice(bytes)
             .map_err(|_| Error::CorruptedIndex("retained home CLAIM response"))?;
-        if copy.vector.entity_id != *id || copy.response.owners.as_slice() != [*id] {
+        copy.validate(store, id)?;
+        Ok(copy)
+    }
+
+    pub(crate) fn validate(&self, store: &crate::store::Store, id: &EntityId) -> Result<()> {
+        if self.vector.entity_id != *id || self.response.owners.as_slice() != [*id] {
             return Err(Error::CorruptedIndex("retained home CLAIM response"));
         }
-        let Some(carriage) = step_claim_carriage(store, id, &copy.vector.source) else {
+        let Some(carriage) = step_claim_carriage(store, id, &self.vector.source) else {
             return Err(Error::CorruptedIndex("retained home CLAIM response"));
         };
-        if blake3::hash(&copy.vector.source[carriage.keep..]).as_bytes()
-            != &copy.response.source_digest
+        if blake3::hash(&self.vector.source[carriage.keep..]).as_bytes()
+            != &self.response.source_digest
         {
             return Err(Error::CorruptedIndex("retained home CLAIM response"));
         }
-        Ok(copy)
+        Ok(())
     }
 }
