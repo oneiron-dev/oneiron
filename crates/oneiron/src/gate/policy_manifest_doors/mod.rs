@@ -3,7 +3,8 @@
 //! composition and validation remain the existing manifest resolver's.
 mod agent_verb_classes;
 pub(crate) use agent_verb_classes::{
-    AGENT_VERB_CLASSES_KEY, agent_verb_class_rows_for_store_in_txn, decode_agent_verb_classes,
+    AGENT_VERB_CLASSES_KEY, agent_verb_class_rows_for_store_in_txn, agent_verb_class_rows_of_body,
+    decode_agent_verb_classes, verb_classes_narrow,
 };
 pub use agent_verb_classes::{
     AgentVerbClassRow, AgentVerbClassesConfigureRequest, AgentVerbClassesReceipt,
