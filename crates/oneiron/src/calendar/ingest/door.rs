@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::admission::{PollAdmission, VerdictFold, connector_event_ref};
-use super::feed_door::inbound_safeguard_enabled;
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
 use crate::calendar::passport::{admitted_passport_for_in_txn, resolve_admitted_event_by_uid};
 use crate::calendar::safeguard::CalendarBodyScreener;
@@ -136,7 +135,6 @@ pub fn import_ics_as_owner(
 /// The owner applies one sourced instance move. The original key must name an
 /// admitted occurrence; the uploaded component must actually carry that key
 /// and the requested new interval. No synthetic imported evidence is minted.
-/// The move's admissions are screened as an upload's are.
 pub fn move_instance_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -241,9 +239,6 @@ pub fn move_instance_as_owner(
     )
 }
 
-/// Applies one uploaded feed under the owner's live CAL-09 dial, read here
-/// once for the whole upload.
-#[allow(clippy::too_many_arguments)]
 fn apply_upload(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -255,7 +250,7 @@ fn apply_upload(
     screener: Option<&dyn CalendarBodyScreener>,
 ) -> MemoryResult<CalendarIcsImportReceipt> {
     owner.revalidate(memory.vault())?;
-    let safeguard_enabled = inbound_safeguard_enabled(memory)?;
+    let safeguard_enabled = super::feed_door::inbound_safeguard_enabled(memory)?;
     let vault = memory.vault();
     let blob_ref = format!("{}#v{version}", source.to_hex());
     let mut admission = PollAdmission {
