@@ -95,6 +95,7 @@ mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
+pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
