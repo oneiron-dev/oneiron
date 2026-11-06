@@ -484,13 +484,32 @@ fn rebuilt(
                 String::new(),
             ),
         };
+        let static_run = |part: &str| {
+            format!(
+                "<{r}{run_bindings}>{r_pr}<{t}>{}</{t}></{r}>",
+                escape_text(part)
+            )
+        };
         if text.is_empty() {
             Ok(String::new())
+        } else if !text.contains('\u{b}') {
+            Ok(static_run(text))
         } else {
-            Ok(format!(
-                "<{r}{run_bindings}>{r_pr}<{t}>{}</{t}></{r}>",
-                escape_text(text)
-            ))
+            let br = match selected {
+                Some((_, node)) => node.child_name("br"),
+                None => para_node.child_name("br"),
+            };
+            let line_break = format!("<{br}{run_bindings}>{r_pr}</{br}>");
+            let mut out = String::new();
+            for (index, part) in text.split('\u{b}').enumerate() {
+                if index > 0 {
+                    out.push_str(&line_break);
+                }
+                if !part.is_empty() {
+                    out.push_str(&static_run(part));
+                }
+            }
+            Ok(out)
         }
     };
     let render = |paragraph: (usize, &Node),

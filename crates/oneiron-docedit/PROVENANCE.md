@@ -187,3 +187,13 @@ the global run template, with direct first-template fallback on unknown coverage
 or copied-property errors. Unpaired added lines keep the first template. Static
 field conversion, fallbacks and field-removal receipts are unchanged. This is a
 source-only correction, not a PowerPoint fidelity proof.
+
+The rebuilt-break serialization (2026-11-06, FIX 17480) writes each requested
+U+000B in a rebuilt fallback line as a qualified DrawingML `br` carrying the
+same selected static run's `rPr` and namespace bindings, with surrounding
+nonempty text as static `r`/`t` runs with those same properties. Empty and
+BREAK-free text keep their exact previous bytes, and consecutive, leading or
+trailing breaks emit each `br` with no empty run. No field wrapper survives and
+field-removal receipts are unchanged. This serializes only the requested break,
+not the original break's properties, and claims no PowerPoint or global
+fidelity proof.
