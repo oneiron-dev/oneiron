@@ -144,8 +144,13 @@ component. A bare row that is also a root (`reveal`, with `reveal.wait` and
 `reveal.describe`) is one global, the verb carrying the root's verbs; each
 global is installed once, and a second value under a set name refuses the
 component. A verb that also holds child verbs is guarded as a namespace:
-missing children use the same host refusal path as other namespaces, while
-the parent and its known children stay callable.
+missing children use the same host refusal path as other namespaces, except
+for the connector tool shorthand below. The parent and its known children
+stay callable.
+`connector.answer(input)` remains the run answer verb. Missing properties
+such as `connector.answer.some_tool(args)` use `connector.call` with catalog
+name `answer`, tool `some_tool`, and arguments `args`. Existing callable
+properties and registered children keep their meaning.
 A verb input is encoded once and the call sends that text. One holding a
 non-finite number, boxed or not, is refused before the call
 (`non_finite_verb_input`), since JSON would carry it as null; one JSON
