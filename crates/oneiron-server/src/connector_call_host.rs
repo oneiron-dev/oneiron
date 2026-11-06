@@ -759,9 +759,9 @@ impl<'a> Exchange<'a> {
                 Ok(Reply::Stream(stream)) => stream,
             };
         loop {
-            match stream.next(CALL_ID) {
+            match stream.next_spooled(CALL_ID, self.vault) {
                 Ok(StreamEvent::Answer(message, body)) => {
-                    return self.call_answered(message, body.into(), live, value);
+                    return self.call_answered(message, body, live, value);
                 }
                 Ok(StreamEvent::Request(request)) => {
                     let declared = self

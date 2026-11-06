@@ -25,8 +25,20 @@ Raw JSON clearing still uses the value released by this send's original
 credential callback. Strings and keys are cleared through native
 `SentValue::clear_json`, including decoded escapes and the raw-then-trimmed
 replacement order. Unchanged JSON keeps its original bytes. Changed JSON
-uses the native compact serialization. Inline event and question bodies
-still use `SentValue::clear_bytes`.
+uses the native compact serialization. Byte-backed event and question
+bodies still use `SentValue::clear_bytes`.
+
+The first `tools/call` SSE read places each complete normalized event in
+that spool before parsing its typed message. On successful placement it
+drops the event String before parsing from the spool, and an answer carries
+the same raw owner into the credential clear. If placement fails, the
+original String and byte-backed parse path remain. A spool-read I/O error
+uses the existing unreadable-reply carrier; invalid JSON still skips that
+event. The line reader, event accumulation, field joins, event ids and
+request classification are unchanged. This removes overlap between the
+complete event String and its parsed Value on successful placement, not
+the event's initial accumulation or its whole typed Value. Control and later
+stream reads retain their original in-memory path.
 
 For a file-backed top-level JSON array, clearing first parses, clears and
 wipes one complete message at a time, and validates the entire array and
@@ -118,9 +130,9 @@ are not selected by this early publisher.
 
 This is not a bounded-memory implementation of the full connector result
 path. Individual typed JSON messages and credential-clearing comparisons
-still hold whole Values, as do non-array clearing inputs. SSE events,
-control replies and later retry responses
-still use their native in-memory readers. The stored STEP body is still an
+still hold whole Values, as do non-array clearing inputs. SSE event
+accumulation, control replies and later retry responses still use their
+native in-memory readers. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
 JSON clearing within each message, and spool-aware stored replay admission remain separate
 work. This transaction repair selects only delivered connector answers,
