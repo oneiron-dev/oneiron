@@ -87,9 +87,37 @@ pub struct LabelReadResponse {
     pub usage: LlmUsage,
 }
 
+/// A completed label pack or a generation allowance cut after a settled prefix.
+pub enum LabelReadGenerationOutcome {
+    Complete(LabelReadResponse),
+    /// No complete pack exists; this usage includes every generation already answered.
+    StoppedPaidPrefix {
+        usage: LlmUsage,
+    },
+}
+
+/// A reader that can honor a caller's allowance at its actual generation boundaries.
+pub trait LabelReadGenerationReader: Send + Sync {
+    /// The caller admitted the first generation before its paid gate. Check
+    /// `admit_next` before each additional generation, not a transport retry.
+    /// The same lease and credential guard cover every physical request.
+    fn read_admitted(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        may_send: Option<&(dyn Fn() -> bool + Sync)>,
+        admit_next: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LabelReadGenerationOutcome>;
+}
+
 /// A host model in decision-read mode. One call reads every question of the pack, each
 /// over its own labels or joint labels, and generates no text.
 pub trait LabelReadModel: Send + Sync {
+    /// Available only when this reader exposes every native generation boundary.
+    fn generation_reader(&self) -> Option<&dyn LabelReadGenerationReader> {
+        None
+    }
+
     /// The exact model this reader serves.
     fn model(&self) -> &str;
     /// The exact revision (weights and read recipe) this reader serves.

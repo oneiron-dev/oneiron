@@ -87,8 +87,8 @@ pub struct DecisionCallContext<'a> {
 }
 
 /// Admission for one logical generation, not one returned receipt or whole pack.
-/// A native packed provider checks this once per request; a sequential provider
-/// checks it before each of its requests. A memo replay starts no generation.
+/// A provider checks each native generation start, including a packed reader's
+/// additional generations. A memo replay starts no generation.
 pub trait DecisionGenerationAdmission: Send + Sync {
     /// False keeps this generation unstarted; it is not a provider failure.
     fn admit(&self) -> bool;
@@ -106,6 +106,8 @@ impl DecisionCallContext<'_> {
 /// stronger read leaves the ladder's prior answer available for its normal cut rule.
 pub enum DecisionReadOutcome<T> {
     NotStarted,
+    /// A generation answered, but the allowance stopped the read before a complete result.
+    Stopped,
     Answered(T),
 }
 
@@ -114,6 +116,7 @@ impl<T> DecisionReadOutcome<T> {
     pub fn map<U>(self, answer: impl FnOnce(T) -> U) -> DecisionReadOutcome<U> {
         match self {
             Self::NotStarted => DecisionReadOutcome::NotStarted,
+            Self::Stopped => DecisionReadOutcome::Stopped,
             Self::Answered(value) => DecisionReadOutcome::Answered(answer(value)),
         }
     }
