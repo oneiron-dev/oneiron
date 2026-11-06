@@ -10,7 +10,7 @@ use oneiron::lens::WeaveLensRequest;
 use super::{
     AgentVerb, Arc, BriefHostFacts, DescribeRequest, EntityId, HostWriteOrigin, InvocationId,
     MemoryResult, PoisonError, RunAdmission, RunHostDoor, StreamConnectionId, SyncServer, Value,
-    WriteActor, agent_memory, decode, encode, sdk, verb_hook_boundary,
+    VerifiedSlip, WriteActor, agent_memory, decode, encode, sdk, verb_hook_boundary,
 };
 use crate::ai_host::{WeaveLensCaller, render_live_weave_lens_for_run};
 use crate::lens_frames::CardOwner;
@@ -19,9 +19,10 @@ impl RunHostDoor {
     /// What this door holds for its run's `describe(self)` (FIX 17594): the
     /// run ceiling its host bound for the entry in flight, and, for a turn
     /// program a verified slip woke, that slip's credential ceiling beside
-    /// the read key it admits on this door. An ordinary pumped run holds no
-    /// slip, so no credential ceiling; a read key that does not resolve
-    /// leaves the credential ceiling unavailable, logged.
+    /// the read key it admits on this door, and its comm reach. An ordinary
+    /// pumped run holds no slip, so neither credential value; a read key
+    /// that does not resolve leaves the credential ceiling unavailable,
+    /// logged.
     pub(super) fn brief_host_facts(&self) -> BriefHostFacts {
         let run_ceiling = self
             .run_ceiling
@@ -43,6 +44,7 @@ impl RunHostDoor {
         BriefHostFacts {
             run_ceiling,
             credential_ceiling,
+            communication_credential_ceiling: self.proof.as_ref().map(VerifiedSlip::comm),
         }
     }
 }

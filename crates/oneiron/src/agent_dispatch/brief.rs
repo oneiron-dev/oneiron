@@ -1,15 +1,20 @@
 //! The self brief's reads of a run's own dispatch (FIX 17594, Engine ruling
-//! 21:47): the parent ceiling, each delegation ancestor's live bounds.
+//! 21:47): the parent ceiling, each delegation ancestor's live bounds, and
+//! the run's effective comm reach.
 //!
 //! Each read takes one snapshot of the exact attempt the host bound the run
 //! to, and only while that attempt dispatched the host's own agent; it never
 //! picks one of the agent's dispatches by its id. It evaluates no Gate and
-//! writes nothing: no approval, notice, receipt or scan count.
+//! calls no widening, approval or notice writer. The parent read records
+//! nothing. The reach read takes the existing reach computation whole, so,
+//! as for every reader of it, an ancestry walk past its scan row parks a
+//! scan check in memory, which the vault's next write keeps.
 
 use std::collections::HashSet;
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use crate::authority::CommReach;
 use crate::context_board::{
     BriefBranchBound, BriefContextBound, BriefParentBound, BriefParentCeiling,
 };
@@ -95,6 +100,44 @@ impl Vault {
             row = parent_row;
         }
         Ok(Some(BriefParentCeiling { ancestors }))
+    }
+
+    /// The comm reach of the run the host bound to dispatch attempt
+    /// `attempt` for its agent `actor`, read in one snapshot: the reach that
+    /// run addresses with now, as the message evaluator reads it
+    /// (`effective_comm_in_txn`). That is its stored dial or the reach its
+    /// parent approved, the wider, widened by an ancestor's standing
+    /// approval to stop asking, and never wider than any ancestor's own live
+    /// reach. `None` when `attempt` is no dispatch of `actor`'s. It is no
+    /// recipient list and no target admission.
+    ///
+    /// # Errors
+    /// A store failure, a dispatch input that does not decode, or a failure
+    /// the effective-reach read returns: with an approval of its own, a
+    /// failed ancestry read is an error, as it is to the evaluator.
+    pub fn self_brief_comm_reach(
+        &self,
+        actor: WriteActor,
+        attempt: AttemptId,
+    ) -> Result<Option<CommReach>> {
+        let txn = self.store.env.read_txn()?;
+        self.self_brief_comm_reach_in_txn(&txn, actor, attempt)
+    }
+
+    /// [`Self::self_brief_comm_reach`] in the caller's read transaction.
+    ///
+    /// # Errors
+    /// As [`Self::self_brief_comm_reach`].
+    pub(crate) fn self_brief_comm_reach_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: WriteActor,
+        attempt: AttemptId,
+    ) -> Result<Option<CommReach>> {
+        let Some((row, input)) = bound_dispatch_in_txn(self, txn, actor, attempt)? else {
+            return Ok(None);
+        };
+        super::comm_widen::effective_comm_in_txn(self, txn, row.id, &input).map(Some)
     }
 }
 

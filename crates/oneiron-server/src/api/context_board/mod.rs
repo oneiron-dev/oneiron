@@ -978,11 +978,12 @@ pub(crate) async fn describe_self_for_auth(
         // FIX 11461: no host installed a snapshot for this session, so the
         // brief is resolved as a pumped run's is: the agent (an agent, as
         // checked above), the person its subject anchor names, the owner's
-        // agent Grants that stand for it, the credential ceiling of the slip
-        // it presented beside the read key it was admitted on, the clock and
-        // the skills this session loaded, with every field no host resolves
-        // named on one unavailable line, never stated as a value. A session
-        // label binds no dispatch attempt, so the run and parent ceilings
+        // agent Grants that stand for it, the credential ceiling and the
+        // comm reach of the slip it presented, the first beside the read key
+        // it was admitted on, the clock and the skills this session loaded,
+        // with every field no host resolves named on one unavailable line,
+        // never stated as a value. A session label binds no dispatch
+        // attempt, so the run and parent ceilings and the run's comm reach
         // are among them, as is the budget, as no run line binds a
         // credential's call.
         None => {
@@ -992,6 +993,9 @@ pub(crate) async fn describe_self_for_auth(
                 credential_ceiling: auth.verified_slip().map(|proof| {
                     oneiron::context_board::brief_credential_ceiling(proof, read.actor_key())
                 }),
+                communication_credential_ceiling: auth
+                    .verified_slip()
+                    .map(oneiron::authority::VerifiedSlip::comm),
             };
             let state = run_self::resolved_state(server, agent, None, &read_set, &host).map_err(
                 |error| {

@@ -8,12 +8,13 @@
 //! and goes when that connection does. Without one, the brief is resolved
 //! from the run itself: the agent, the person its subject anchor names, the
 //! owner's agent Grants that stand for the agent, the run, credential and
-//! parent ceilings its host holds the facts for ([`BriefHostFacts`]), the
-//! line the run's entry spends on, the clock and the skills the run's own
-//! session loaded. Every field no host resolves is left out of the brief
-//! and named on one unavailable line
+//! parent ceilings and the communication limits its host holds the facts
+//! for ([`BriefHostFacts`]), the line the run's entry spends on, the clock
+//! and the skills the run's own session loaded. Every field no host
+//! resolves is left out of the brief and named on one unavailable line
 //! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
+use oneiron::authority::CommReach;
 use oneiron::context_board::{
     BriefCredentialCeiling, BriefRunCeiling, BriefWorkingSet, CommunicationLimits, SelfBriefState,
     SessionReadSet, StreamConnectionId,
@@ -27,13 +28,17 @@ use crate::server::SyncServer;
 /// What the host that resolves a brief holds for it (FIX 17594, Engine
 /// ruling 21:47), each `None` where it holds none: the run ceiling of the
 /// dispatch attempt its run's entry in flight serves, and the credential
-/// ceiling of the verified slip it admitted. A credential's call is bound
-/// to no attempt, so it holds no run ceiling; an ordinary pumped run holds
-/// no verified slip, so it holds no credential ceiling.
+/// ceiling and signed comm reach of the verified slip it admitted. A
+/// credential's call is bound to no attempt, so it holds no run ceiling;
+/// an ordinary pumped run holds no verified slip, so it holds neither
+/// credential value.
 #[derive(Debug, Default)]
 pub(crate) struct BriefHostFacts {
     pub(crate) run_ceiling: Option<BriefRunCeiling>,
     pub(crate) credential_ceiling: Option<BriefCredentialCeiling>,
+    /// The verified slip's comm reach, every caveat met
+    /// ([`oneiron::authority::VerifiedSlip::comm`]).
+    pub(crate) communication_credential_ceiling: Option<CommReach>,
 }
 
 /// Answers a pumped run's `describe(self)` for its agent `actor`, over the
@@ -82,12 +87,13 @@ pub(crate) async fn describe_self_for_run(
 /// `actor`, with the ceilings its host holds the facts for (`host`). Each
 /// field no host produces for a run (FIX-LIST: the self-brief producers) is
 /// `None`; so is the principal when no subject anchor names the person
-/// behind the agent, so are the grants and the parent ceiling when their
-/// read fails, so are the run and parent ceilings when the host bound no
-/// dispatch attempt, so is the credential ceiling when it verified no slip,
-/// and so are the budget lease and budget when no line binds the run's
-/// entry. [`oneiron::context_board::SelfBrief::render`] leaves each `None`
-/// field out and names it unavailable. A credentialed agent's
+/// behind the agent, so are the grants, the parent ceiling and the comm
+/// reach when their read fails, so are the run and parent ceilings and the
+/// comm reach when the host bound no dispatch attempt, so are the
+/// credential ceiling and the credential's comm reach when it verified no
+/// slip, and so are the budget lease and budget when no line binds the
+/// run's entry. [`oneiron::context_board::SelfBrief::render`] leaves each
+/// `None` field out and names it unavailable. A credentialed agent's
 /// describe(self) with no installed snapshot resolves its brief here too,
 /// over its own session's reads and with no line (FIX 11461).
 pub(super) fn resolved_state(
@@ -145,6 +151,22 @@ pub(super) fn resolved_state(
             .ok()
             .flatten()
     });
+    // COMM (FIX 17594): the reach the run the host bound addresses with
+    // now, read in one snapshot of its exact attempt. A host bound to no
+    // attempt has no run reach; a failed read leaves it unavailable.
+    let reach = host.run_ceiling.as_ref().and_then(|run| {
+        server
+            .vault
+            .self_brief_comm_reach(actor, run.attempt)
+            .inspect_err(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the self brief's comm reach did not read; the brief names it unavailable"
+                );
+            })
+            .ok()
+            .flatten()
+    });
     Ok(SelfBriefState {
         self_ref,
         principal,
@@ -153,8 +175,8 @@ pub(super) fn resolved_state(
         credential_ceiling: host.credential_ceiling.clone(),
         parent_ceiling,
         communication: CommunicationLimits {
-            reach: None,
-            credential_ceiling: None,
+            reach,
+            credential_ceiling: host.communication_credential_ceiling,
         },
         ceilings: None,
         budget_lease_id: line.map(|line| line.run().to_owned()),
