@@ -1,10 +1,52 @@
-//! Reader sources, findings and summaries bound by the recording host.
+//! Reader sources, findings and summaries bound by the recording host, and
+//! the source bytes a scoped child's reads were shown (FIX 7735).
 //! Entry: `RecordingJsHost::spawn_reader`.
 //! Reader request and receipt definitions belong to `code_run`.
 
 use super::*;
+use crate::code_run::DeliveredRanges;
 
 impl RecordingJsHost<'_, '_> {
+    /// Commits to this run's job witness the ranges of its primary source
+    /// that `read`'s reply shows (`delivered`), when this run is a scoped
+    /// child and `read` is of that source (FIX 7735). Its caller commits a
+    /// reply only once the reply passed its secret, taint and final
+    /// live-cutoff checks, and before the reply leaves: a storage error fails
+    /// the read before any byte of it leaves. A read of any other result, or
+    /// by any other run, commits nothing. A job no longer live at the claimed
+    /// generation keeps its witness as it is, and the reply is unchanged.
+    pub(super) fn commit_source_delivery(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        read: &ResultRead,
+        delivered: &DeliveredRanges,
+    ) -> Result<()> {
+        let Some(child) = self
+            .gated_write
+            .reader_child()
+            .filter(|child| child.scoped.is_some())
+        else {
+            return Ok(());
+        };
+        let (source, output) = (&child.source, read.output());
+        if delivered.ranges().is_empty()
+            || read.owner() != source.owner
+            || output.path != source.path
+            || output.handle != source.handle
+        {
+            return Ok(());
+        }
+        storage.commit_source_delivery(
+            child.task,
+            child.generation,
+            read.owner(),
+            output,
+            delivered.ranges(),
+            crate::unix_millis_now(),
+        )?;
+        Ok(())
+    }
+
     /// The source of a `self.spawn`: one of this run's own results, read as
     /// every read of it is, its range the ref's or the whole body. A source
     /// the run may not read now is refused as that read would be. Its

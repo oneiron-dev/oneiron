@@ -23,6 +23,7 @@ mod shape;
 mod slice;
 mod unplaced;
 
+pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
 use self::run_body::{LiveCutoff, RunBody};
 pub(crate) use self::unplaced::unplaced_answer;
