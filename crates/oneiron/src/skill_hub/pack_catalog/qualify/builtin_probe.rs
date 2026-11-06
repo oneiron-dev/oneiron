@@ -161,8 +161,8 @@ fn probe_connection(
     let failed = |failure: QualificationFailure| failure.to_string();
     let mut first = connector.connect().map_err(failed)?;
     let mut second = connector.connect().map_err(failed)?;
-    let tools = first.tools_list().map_err(failed)?;
-    if tools != second.tools_list().map_err(failed)? {
+    let tools = first.tools_list().map_err(failed)?.tools;
+    if tools != second.tools_list().map_err(failed)?.tools {
         return Err("the probe's connections list different tools".to_owned());
     }
     let [tool] = tools.as_slice() else {

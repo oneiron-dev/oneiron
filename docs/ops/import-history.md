@@ -100,6 +100,24 @@ landed`. A file with no Copilot or Cursor record at all is refused, with its
 line count, and nothing lands. Re-reading a grown log lands only what is new,
 as for every source; hand it over again at each stop.
 
+## Generic ingest registry projection
+
+The registry's `hook-transcript` source accepts the same file snapshot envelope as
+other directory exports: `{ "files": [{ "path": "<session>.jsonl", "content": "<log text>" }] }`.
+Each `.jsonl` file uses the Copilot or Cursor reader above. Its file name supplies
+the session id when needed; `session/events.jsonl` uses the parent session folder.
+The parser reads only the supplied strings, never the filesystem. Non-JSONL
+snapshot files still normalize as document text. Other registry sources keep
+their own layouts.
+
+This generic projection keeps message and conversation ids, user/assistant roles,
+text, the source's speaker marker, and source times in seconds when present. It is
+not the full history-import report: tool names, parent/alias links, conversation
+metadata and `not_kept` counts have no field on generic ingest records. Use
+`oneiron import hook-transcript` for that history metadata and reporting. A bare
+JSONL string without the file envelope is not accepted by the generic registry;
+the direct history-import path above reads a named file.
+
 ## What lands
 
 - Each source conversation becomes a conversation in the vault; each message a

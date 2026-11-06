@@ -53,6 +53,25 @@ fn denied() -> Error {
     Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
 }
 
+/// The durable UPDATE journal write of one canonical edit (FIX12419): the
+/// SAME `encode_document` UPDATE, `journal_key`, and `QD_E.put` the edit
+/// writer has always done, with the exact error, order, and 8 MiB wire format.
+/// Both [`EntityDocument::edit_record`] and the copy-settlement setter call it.
+pub(super) fn journal_update_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    sequence: u64,
+    update: &[u8],
+) -> Result<Vec<u8>> {
+    let frame = encode_document(id, document_sub_tags::UPDATE, update)
+        .into_result()
+        .map_err(|_| Error::InvariantViolation("document edit exceeds wire limit"))?;
+    let key = journal_key(id, sequence)?;
+    QD_E.put(&vault.store, txn, &key, &frame)?;
+    Ok(frame)
+}
+
 impl EntityDocument {
     /// The writer of [`Self::edit_text`]: the edit, its journal row and its
     /// frame commit together; the notice and its prose receipts follow.
@@ -62,11 +81,8 @@ impl EntityDocument {
             eligible(&self.vault, txn, self.id)?;
             let edited =
                 crate::entity_doc::edit_sync_text_in_txn(&self.vault, txn, &self.id, edit)?;
-            let frame = encode_document(self.id, document_sub_tags::UPDATE, &edited.update)
-                .into_result()
-                .map_err(|_| Error::InvariantViolation("document edit exceeds wire limit"))?;
-            let key = journal_key(self.id, edited.sequence)?;
-            QD_E.put(&self.vault.store, txn, &key, &frame)?;
+            let frame =
+                journal_update_in_txn(&self.vault, txn, self.id, edited.sequence, &edited.update)?;
             Ok((frame, edited))
         })?;
         let _ = self.notices.send(frame.clone());

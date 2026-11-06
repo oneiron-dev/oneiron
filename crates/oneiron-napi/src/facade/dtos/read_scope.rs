@@ -6,6 +6,8 @@ use napi_derive::napi;
 /// Recall scoping (S5): narrowing only; unset = vault floor.
 #[napi(object)]
 pub struct NapiRecallScope {
+    /// Explicit world selection, with camelCase fields; excludes `world_ref`.
+    pub worlds: Option<serde_json::Value>,
     /// WORLD entity ref; scopes to that world plus base reality.
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.

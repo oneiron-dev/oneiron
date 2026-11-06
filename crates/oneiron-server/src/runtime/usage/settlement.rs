@@ -4,8 +4,8 @@
 
 use super::{
     AdmittedCall, Payer, PayerAccount, RunEvent, RunReceipt, UnpricedReason, UsageAllocation,
-    UsageEvent, UsageEventOrigin, UsageEventType, UsageMode, UsageRun, UsageTokenCounts,
-    VaultUsage, pricing,
+    UsageEvent, UsageEventOrigin, UsageEventType, UsageMode, UsageRun, UsageServiceCost,
+    UsageTokenCounts, VaultUsage, pricing,
 };
 
 impl VaultUsage {
@@ -52,6 +52,7 @@ impl VaultUsage {
                             custom_endpoint,
                             price_sources,
                             owner,
+                            service_cost: None,
                         },
                     );
             }
@@ -80,6 +81,7 @@ impl VaultUsage {
                     custom_endpoint,
                     price_sources,
                     owner,
+                    service_cost,
                 }) = facts.filter(|_| *dispatched)
                 else {
                     return;
@@ -122,33 +124,48 @@ impl VaultUsage {
                         || usage.input.cache_read != 0
                         || usage.input.cache_write != 0
                 }) || service_quantity.is_some();
-                // A reservation is not measured provider usage. A call left
-                // without a price is never priced at zero, and its record
-                // says why, the first that holds: it measured no tokens; it
-                // went out on the owner's own key to a custom endpoint (FIX
-                // 7765); no rates were frozen on it at admission; they name
-                // no currency and are not free in any (FIX 9534); or they
-                // quote no rate for cache dimensions it measured, named.
-                let measured = usage_reported && usage.is_some();
-                let unpriced = match &rates {
-                    Some(rates) if measured && rates.prices(&token_counts) && rates.priced() => {
-                        None
+                // Known service cost is independent of model token usage.
+                let service_amount = service_cost.as_ref().map(UsageServiceCost::nano_usd);
+                let (rates, unpriced, service_amount) = match service_amount {
+                    Some(amount) => (
+                        service_cost.as_ref().map(UsageServiceCost::rates),
+                        amount.as_ref().err().map(|_| UnpricedReason::PriceOverflow),
+                        amount.unwrap_or(0),
+                    ),
+                    None => {
+                        // A reservation is not measured provider usage. A call left
+                        // without a price is never priced at zero, and its record
+                        // says why, the first that holds: it measured no tokens; it
+                        // went out on the owner's own key to a custom endpoint (FIX
+                        // 7765); no rates were frozen on it at admission; they name
+                        // no currency and are not free in any (FIX 9534); or they
+                        // quote no rate for cache dimensions it measured, named.
+                        let measured = usage_reported && usage.is_some();
+                        let unpriced = match &rates {
+                            Some(rates)
+                                if measured && rates.prices(&token_counts) && rates.priced() =>
+                            {
+                                None
+                            }
+                            _ if token_counts == UsageTokenCounts::default() => {
+                                Some(UnpricedReason::NoUsage)
+                            }
+                            None if custom_endpoint => Some(UnpricedReason::CustomEndpoint),
+                            None => Some(UnpricedReason::UnpricedModel),
+                            Some(rates) if !rates.priced() => Some(UnpricedReason::UnknownCurrency),
+                            Some(rates) => Some(UnpricedReason::UnquotedCache {
+                                dimensions: rates.unquoted_cache(&token_counts),
+                            }),
+                        };
+                        // A priced call keeps the rates it is priced at; one unpriced
+                        // for their unknown currency keeps them too, their snapshot
+                        // and digest with them.
+                        let rates = rates.filter(|_| {
+                            matches!(unpriced, None | Some(UnpricedReason::UnknownCurrency))
+                        });
+                        (rates, unpriced, 0)
                     }
-                    _ if token_counts == UsageTokenCounts::default() => {
-                        Some(UnpricedReason::NoUsage)
-                    }
-                    None if custom_endpoint => Some(UnpricedReason::CustomEndpoint),
-                    None => Some(UnpricedReason::UnpricedModel),
-                    Some(rates) if !rates.priced() => Some(UnpricedReason::UnknownCurrency),
-                    Some(rates) => Some(UnpricedReason::UnquotedCache {
-                        dimensions: rates.unquoted_cache(&token_counts),
-                    }),
                 };
-                // A priced call keeps the rates it is priced at; one unpriced
-                // for their unknown currency keeps them too, their snapshot
-                // and digest with them.
-                let rates = rates
-                    .filter(|_| matches!(unpriced, None | Some(UnpricedReason::UnknownCurrency)));
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();
@@ -180,7 +197,7 @@ impl VaultUsage {
                     token_counts,
                     cost_rates: rates,
                     unpriced,
-                    service_amount: 0,
+                    service_amount,
                     run: Some(UsageRun {
                         instance: receipt.instance.to_hex(),
                         run: receipt.run.clone(),
@@ -205,6 +222,7 @@ impl VaultUsage {
                         unit: unit.as_str().to_owned(),
                         usage_reported,
                         service_quantity: *service_quantity,
+                        service_cost,
                         allocation,
                         settlement_refused: error.is_some(),
                     }),
@@ -212,30 +230,19 @@ impl VaultUsage {
                 // The call's identity, for its log line once the event moves
                 // into the ledger.
                 let idempotency_key = event.idempotency_key.clone();
-                match self.ledger.record_event_sourced(
+                match crate::usage::UsageLedger::prepare_settlement(
                     event,
                     source,
                     UsageEventOrigin::Engine,
                     source_rows,
                 ) {
-                    // Recorded with its counts and frozen rates, and no price:
-                    // its price at them does not fit in an amount (FIX 6407).
-                    Ok(recorded) if recorded.unpriced == Some(UnpricedReason::PriceOverflow) => {
-                        tracing::warn!(
-                            vault_id = %self.vault_id,
-                            %idempotency_key,
-                            replayed = recorded.replayed,
-                            reason = "price_overflow",
-                            "a settled call was recorded without a representable price"
-                        );
-                    }
-                    Ok(_) => {}
+                    Ok(raw) => self.record_settlement(raw, &idempotency_key),
                     Err(error) => {
                         tracing::error!(
                             vault_id = %self.vault_id,
                             %idempotency_key,
                             ?error,
-                            "served run usage could not be persisted"
+                            "served run usage could not be prepared"
                         );
                     }
                 }

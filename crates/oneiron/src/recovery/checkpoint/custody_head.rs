@@ -23,6 +23,8 @@
 mod backup_folder;
 mod drain;
 mod home_fetch;
+mod issuer_transfer;
+pub use issuer_transfer::IssuerSeedTransferReport;
 mod pad_worlds;
 mod status;
 
@@ -47,9 +49,9 @@ use crate::store::custody_protocol::{
     CustodyVaultId, HostedKind, PendingCode, TargetId, TargetKind, TargetPending, TargetSpec,
 };
 use crate::store::{
-    CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
-    FileAnchor, FolderTarget, OutboxTarget, Publication, TakeoverRefusal, TargetRecipients,
-    route_custody, standing_retirements_in_txn,
+    CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients, CustodyRoute, CustodySourceAt, FileAnchor,
+    FolderTarget, OutboxTarget, Publication, TakeoverRefusal, TargetRecipients, route_custody,
+    standing_retirements_in_txn,
 };
 use crate::{EntityId, Result, Vault, VaultConfig};
 
@@ -334,7 +336,7 @@ impl Vault {
                 return self.custody_status_of(publication);
             }
         };
-        self.store.note_custody_policy(&recipients, &policy)?;
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
             .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
@@ -357,9 +359,9 @@ impl Vault {
         targets.extend(shipped.iter().map(|target| target as &dyn CustodyTarget));
         targets.extend(declared.iter().map(|target| target as &dyn CustodyTarget));
         let outboxes: Vec<&OutboxTarget> = shipped.iter().collect();
-        let publication = self
-            .store
-            .publish_custody(&recipients, &targets, &outboxes, anchor)?;
+        let publication =
+            self.store
+                .publish_custody(&recipients, &standing, &targets, &outboxes, anchor)?;
         self.custody_status_of(publication)
     }
 
@@ -437,8 +439,9 @@ impl Vault {
                 return Ok(None);
             }
         };
-        self.store.note_custody_policy(&recipients, &policy)?;
-        self.store.custody_batch_for(spec, recipients.of(spec))
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
+        self.store
+            .custody_batch_for(spec, recipients.of(spec), &standing)
     }
 
     /// Accepts a member's acknowledgement of `batch`, once it names exactly
@@ -452,97 +455,28 @@ impl Vault {
         self.store.note_custody_pending(target, pending)
     }
 
-    /// The custody steps an erase of the records `erased` (their 16-byte
-    /// ids) still owes, for its receipt's read: `None` when none of their
-    /// keys was ever in custody here. Their claim keys, the body instances
-    /// the erase retired or owes (KS-2A) and a custody record's known-value
-    /// history (KS-3) count alike, and so do an erased credential's
-    /// discovery and every key its id names (KS-6 part 2): its discovery
-    /// owed reads pending, even with nothing in custody here. Each
-    /// handed-off retirement is complete once the watermark passed it;
-    /// until then, every member behind it and the anchor are owed (with no
-    /// anchor configured, every member's ack completes it, rollback not
-    /// proven). An intent not handed off yet is `custody_retirement_pending`,
-    /// and a body another holder still keeps is `body_shared_owner_retained`.
+    /// Where the receipt's bound custody retirements stand, read-only (FIX
+    /// 9149): `None` only when it bound none, else the shared final
+    /// predicate's complete or one coarse generic pending step.
     pub(crate) fn erase_custody_in_txn(
         &self,
         txn: &RoTxn<'_>,
-        erased: &[[u8; 16]],
+        names: &[String],
     ) -> Result<Option<(&'static str, Vec<String>, Option<&'static str>)>> {
-        let mut owed = EraseOwed::default();
-        for record in erased {
-            let Some(subject) = self
-                .store
-                .custody_subject(CustodyKind::ClaimDecision, record)?
-            else {
-                // Unbound: no key was ever in custody here, but an erased
-                // credential's owed discovery still reads pending.
-                for record in erased {
-                    owed.credential(&self.store, txn, record);
-                }
-                let pending = owed.steps.iter().map(CustodyPendingStep::name).collect();
-                return Ok(owed
-                    .found
-                    .then_some((CUSTODY_RETIREMENT_PENDING, pending, None)));
-            };
-            owed.subject(&self.store, txn, &subject)?;
-            owed.credential(&self.store, txn, record);
-            // An erased actor's erasable keys (FIX 8875): each one's
-            // retirement, then each holder whose copy is not verified
-            // retired. The erase never waits on them.
-            for (key, holders) in self.store.erasable_holders_of(record)? {
-                owed.subject(&self.store, txn, &key)?;
-                owed.found = true;
-                for holder in holders {
-                    owed.remote(holder.to_hex());
-                }
-            }
-            if let Some(history) = self
-                .store
-                .custody_subject(CustodyKind::KnownValueEntry, record)?
-            {
-                owed.subject(&self.store, txn, &history)?;
-            }
-            #[cfg(unix)]
-            for instance in self
-                .store
-                .erased_body_instances_in_txn(txn, &crate::EntityId::from_bytes(*record)?)?
-            {
-                owed.found = true;
-                if self
-                    .store
-                    .body_erase_waits_on_holder_in_txn(txn, &instance)?
-                {
-                    owed.step(BODY_SHARED_OWNER_RETAINED);
-                    continue;
-                }
-                if let Some(binding) = self.store.body_custody() {
-                    let id = crate::store::instance_id(&binding, &instance)?;
-                    owed.subject(&self.store, txn, id.subject())?;
-                }
-            }
+        if names.is_empty() {
+            return Ok(None);
         }
+        let retired = self.store.erase_custody_retired_in_txn(txn, names)?;
         let publication = self.store.custody_publication()?;
-        if let Some(newest) = owed.newest
-            && let Some(progress) = self.store.custody_retirement()?
-            && progress
-                .completed
-                .is_none_or(|completed| completed < newest)
-        {
-            owed.steps
-                .extend(status::owed(&progress, &publication, newest));
-        }
-        Ok(owed.found.then(|| {
+        let (state, pending) = if retired {
+            (CUSTODY_RETIREMENT_COMPLETE, Vec::new())
+        } else {
             (
-                if owed.steps.is_empty() {
-                    CUSTODY_RETIREMENT_COMPLETE
-                } else {
-                    CUSTODY_RETIREMENT_PENDING
-                },
-                owed.steps.iter().map(CustodyPendingStep::name).collect(),
-                status::rollback_note(&publication),
+                CUSTODY_RETIREMENT_PENDING,
+                vec![CUSTODY_RETIREMENT_PENDING.to_owned()],
             )
-        }))
+        };
+        Ok(Some((state, pending, status::rollback_note(&publication))))
     }
 
     /// [`Vault::restore_checkpoint_finishing`], recovering the image's key
@@ -705,85 +639,3 @@ impl AnchorStore for CustodyAnchorRoot {
 /// An erased body whose instance another holder still keeps: its key
 /// retires with that holder's release (KS-2A).
 pub const BODY_SHARED_OWNER_RETAINED: &str = "body_shared_owner_retained";
-
-/// What an erase's receipt read has found its keys still owe.
-#[derive(Default)]
-struct EraseOwed {
-    found: bool,
-    steps: Vec<CustodyPendingStep>,
-    newest: Option<u64>,
-}
-
-impl EraseOwed {
-    /// Notes `holder`'s copy owed once (FIX 8875).
-    fn remote(&mut self, holder: String) {
-        if !self.steps.iter().any(|step| {
-            step.state == CUSTODY_REMOTE_RETIREMENT_PENDING
-                && step.target_id.as_deref() == Some(holder.as_str())
-        }) {
-            self.steps.push(status::remote_step(holder));
-        }
-    }
-
-    /// Notes `state` once.
-    fn step(&mut self, state: &'static str) {
-        if self.steps.iter().all(|step| step.state != state) {
-            self.steps.push(CustodyPendingStep {
-                state,
-                target_id: None,
-                reason: None,
-            });
-        }
-    }
-
-    /// Notes what erased credential `record` still owes (KS-6 part 2): its
-    /// discovery while owed, and each key its id names. A read that faults
-    /// is warned and reads pending, never complete.
-    fn credential(&mut self, store: &crate::store::Store, txn: &RoTxn<'_>, record: &[u8; 16]) {
-        let read = (|| -> Result<()> {
-            let credential = EntityId::from_bytes(*record)?;
-            let Some((discovery_owed, subjects)) =
-                store.credential_erase_debt_in_txn(txn, &credential)?
-            else {
-                return Ok(());
-            };
-            if discovery_owed {
-                self.found = true;
-                self.step(CUSTODY_RETIREMENT_PENDING);
-            }
-            for subject in &subjects {
-                self.subject(store, txn, subject)?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = read {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "an erased credential's custody did not read; its erase reads pending"
-            );
-            self.found = true;
-            self.step(CUSTODY_RETIREMENT_PENDING);
-        }
-    }
-
-    /// Notes what `subject`'s retirement still owes: an intent not handed
-    /// off, or the newest obligation not complete.
-    fn subject(
-        &mut self,
-        store: &crate::store::Store,
-        txn: &RoTxn<'_>,
-        subject: &crate::store::CustodySubject,
-    ) -> Result<()> {
-        if crate::store::retirement_in_txn(store, txn, subject)?.is_some() {
-            self.found = true;
-            self.step(CUSTODY_RETIREMENT_PENDING);
-        }
-        for (seq, done) in store.custody_obligations_of(subject)? {
-            self.found = true;
-            if !done {
-                self.newest = self.newest.max(Some(seq));
-            }
-        }
-        Ok(())
-    }
-}

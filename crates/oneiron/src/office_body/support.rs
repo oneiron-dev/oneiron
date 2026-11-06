@@ -6,6 +6,31 @@ use super::holder_ask::LIVE_EDIT_GROUPS;
 use super::*;
 use crate::provenance::made_by::{MadeByClass, MadeByProcess};
 
+/// Clears the words `artifact`'s export records keep, for the owner's
+/// discard of a world copy that takes the artifact (FIX 14534): the author
+/// each export showed and what its projection adapted. Each record's
+/// version, frontiers, actor, token and clock stay, as do the revision
+/// author rows and the token index.
+pub(crate) fn discard_export_payload_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+) -> Result<()> {
+    let mut cleared = Vec::new();
+    for (key, mut record) in EXPORTS.scan_from(store, txn, artifact.as_bytes())? {
+        if record.artifact != *artifact || (record.author.is_empty() && record.effects.is_empty()) {
+            continue;
+        }
+        record.author.clear();
+        record.effects.clear();
+        cleared.push((key, record));
+    }
+    for (key, record) in cleared {
+        EXPORTS.put(store, txn, &key, &record)?;
+    }
+    Ok(())
+}
+
 /// Removes `artifact`'s office rows: its format record, its deck forks'
 /// office records, its proposals and its export and revision-author records. The body itself, a Loro document in
 /// every format, goes with its forks in the typed body's own eraser.
@@ -13,13 +38,33 @@ use crate::provenance::made_by::{MadeByClass, MadeByProcess};
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     consent::erase_in_txn(store, txn, entity)?;
+    // The token lookup's refs to this artifact's rows go in the same writer
+    // (FIX 12403): a token-keyed row is not artifact-prefixed, so collect
+    // the doomed rows first, delete, then unref.
+    let mut doomed_exports = Vec::new();
+    for (key, record) in EXPORTS.scan_from(store, txn, entity.as_bytes())? {
+        if let Some(token) = record.token {
+            doomed_exports.push((token, key));
+        }
+    }
+    let mut doomed_authors = Vec::new();
+    for (key, record) in EXPORT_AUTHORS.scan_from(store, txn, entity.as_bytes())? {
+        doomed_authors.push((record.token, key));
+    }
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
     EXPORT_AUTHORS.delete_from(store, txn, entity.as_bytes())?;
+    for (token, key) in &doomed_exports {
+        author_token::index::unref_export(store, txn, token, key)?;
+    }
+    for (token, key) in &doomed_authors {
+        author_token::index::unref_author(store, txn, token, key)?;
+    }
     for (group, route) in LIVE_EDIT_GROUPS.scan(store, txn)? {
         if route.artifact == *entity {
             LIVE_EDIT_GROUPS.delete(store, txn, &group)?;
         }
     }
+    consent::revoke_office_edit_grants_naming_in_txn(store, txn, entity)?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }

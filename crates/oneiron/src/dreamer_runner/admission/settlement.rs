@@ -114,7 +114,7 @@ impl DreamerRunnerStore<'_> {
         crate::llm::model_step::step_terminal_claim_in_txn(vault, txn, attempt_id, step_hash)
     }
 
-    /// Retire paid-step receipts, and the listing its extraction pinned,
+    /// Retire paid-step receipts, the pinned listing and the narrowed hold
     /// when their attempt can no longer replay.
     pub(crate) fn cleanup_step_receipts_in_txn(
         &self,
@@ -122,7 +122,8 @@ impl DreamerRunnerStore<'_> {
         attempt_id: AttemptId,
     ) -> Result<()> {
         BUDGET_STEP_CHARGE.delete_from(&self.vault.store, wtxn, attempt_id.as_bytes())?;
-        crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, wtxn, attempt_id)
+        crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, wtxn, attempt_id)?;
+        crate::dreamer_consolidation::delete_running_buckets_in_txn(self.vault, wtxn, attempt_id)
     }
 
     /// Settle real usage and pin the paid receipts of `step_hashes` in one

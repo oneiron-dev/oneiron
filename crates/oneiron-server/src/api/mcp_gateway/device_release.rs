@@ -72,9 +72,30 @@ pub(super) fn mcp_release_result(
     continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
+    release_result(server, actor, Some(rows), continued, result)
+}
+
+/// An action's listed dependencies, or its truthful unknown set, under the
+/// same named-reference and byte release checks as before.
+pub(super) fn mcp_release_action_result(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    rows: Option<&[oneiron::EntityId]>,
+    result: Value,
+) -> Result<Value, McpGatewayError> {
+    release_result(server, actor, rows, false, result)
+}
+
+fn release_result(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    rows: Option<&[oneiron::EntityId]>,
+    continued: bool,
+    result: Value,
+) -> Result<Value, McpGatewayError> {
     // A claimed call keeps the result it is about to judge, for the calls
     // waiting on it (FIX 7914).
-    super::claimed_release::record(&result, Some(rows));
+    super::claimed_release::record(&result, rows);
     let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -92,7 +113,7 @@ pub(super) fn mcp_release_result(
     else {
         return Err(refused(ReleaseHold::Placement));
     };
-    named.extend_from_slice(rows);
+    named.extend_from_slice(rows.unwrap_or(&[]));
     let bytes = serde_json::to_vec(&result).map_err(|_| refused(ReleaseHold::Placement))?;
     if let Some(hold) =
         crate::device_local::retained_hold(&server.vault, &destination, &named, &bytes)
@@ -122,7 +143,7 @@ pub(super) fn mcp_release_error(
     if !destination.is_off_device() {
         return error;
     }
-    let words = serde_json::to_string(&(
+    let mut words = serde_json::to_string(&(
         &error.message,
         &error.field,
         &error.successor_short_id,
@@ -130,6 +151,10 @@ pub(super) fn mcp_release_error(
         &error.effective_scope,
     ))
     .ok();
+    if let (Some(notice), Some(words)) = (error.hook_notice.as_deref(), words.as_mut()) {
+        words.push('\n');
+        words.push_str(notice);
+    }
     let hold = match (rows, words) {
         (None, _) => Some(ReleaseHold::ProducersUnknown),
         (Some(_), None) => Some(ReleaseHold::Placement),
@@ -207,6 +232,7 @@ pub(super) fn mcp_rerelease_refusal(
                 "schemaRef",
                 "row_receipt",
                 "legal_hold",
+                "hook_notice",
             ] {
                 data.remove(field);
             }

@@ -108,6 +108,7 @@ fn land_pad(vault: &Vault, pad: &PadRow) -> crate::Result<()> {
                 end: pad.header.occurred_end,
             },
             learned_at: pad.header.learned_at,
+            row_version: pad.header.row_version,
             body: &pad.raw[ENTITY_METADATA_HEADER_LEN..],
         },
         ImportTier::OwnDevice,

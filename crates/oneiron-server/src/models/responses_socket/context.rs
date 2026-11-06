@@ -46,12 +46,12 @@ impl ResponsesContext {
     }
 
     /// Whether this server's owner keeps responses at the provider.
-    pub(super) fn store(&self) -> bool {
+    pub(crate) fn store(&self) -> bool {
         self.held.store.load(Ordering::Relaxed)
     }
 
     /// The vault this server keeps its stored chains in, while it is open.
-    pub(super) fn chain_vault(&self) -> Option<Arc<Vault>> {
+    pub(crate) fn chain_vault(&self) -> Option<Arc<Vault>> {
         self.held
             .vault
             .read()

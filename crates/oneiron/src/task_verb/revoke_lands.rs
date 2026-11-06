@@ -30,6 +30,7 @@
 //! stays the hooks' to change.
 
 mod payload;
+mod pins;
 
 use std::fmt;
 
@@ -172,7 +173,7 @@ const ROWS: &[Row] = &[
     ),
     always!(
         "vault.notes.history_purge_execute",
-        [pin(&["act_id"], typed)],
+        [pin(&["act_id"], entity)],
     ),
     // A hook's reason code or review date that breaks the answer's shape
     // (one on a delete choice, or a bad one on any other) is ignored, not a
@@ -193,7 +194,10 @@ const ROWS: &[Row] = &[
     },
     always!(
         "vault.skill_hubs.publishers.revoke",
-        [pin(&["hub"], typed), pin(&["identity"], typed)],
+        [
+            pin(&["hub"], typed),
+            pin(&["identity"], pins::publisher_identity)
+        ],
     ),
     always!("vault.packs.remove", [pin(&["pack"], typed)]),
     Row {
@@ -215,7 +219,7 @@ const ROWS: &[Row] = &[
         [
             pin(&["vault_id"], typed),
             pin(&["member"], entity),
-            pin(&["invitation"], typed),
+            pin(&["invitation"], entity),
         ],
     ),
     always!(
@@ -232,17 +236,23 @@ const ROWS: &[Row] = &[
     ),
     always!(
         "self.secrets.teardown",
-        [pin(&["live_run"], typed), pin(&["spec", "grant"], entity)],
+        [
+            pin(&["live_run"], pins::live_run_handle),
+            pin(&["spec", "grant"], entity)
+        ],
     ),
     Row {
         verb: "vault.voices.render_consent",
         when: When::Holds(&["state"], withdrawn),
-        pins: &[pin(&["voice_id"], typed), pin(&["state"], typed)],
+        pins: &[pin(&["voice_id"], pins::voice_ref), pin(&["state"], typed)],
         check: None,
     },
     always!(
         "vault.voices.targets.evict",
-        [pin(&["voice_id"], typed), pin(&["target"], typed)],
+        [
+            pin(&["voice_id"], pins::voice_ref),
+            pin(&["target"], pins::voice_ref)
+        ],
     ),
     always!("vault.consent.graduation.demote", [pin(&["scope"], typed)]),
     always!("self.consent.graduation.demote", [pin(&["scope"], typed)]),
@@ -250,7 +260,7 @@ const ROWS: &[Row] = &[
         "self.focus.unsubscribe",
         [
             pin(&["scopes"], typed),
-            pin(&["live_run"], typed),
+            pin(&["live_run"], pins::live_run_handle),
             pin(&["spec", "scopes"], typed),
         ],
     ),
@@ -280,7 +290,10 @@ const ROWS: &[Row] = &[
     always!("vault.code.symbols.release", [pin(&["task"], typed)]),
     always!(
         "vault.artifacts.unpublish",
-        [pin(&["artifact"], typed), pin(&["channel"], typed)],
+        [
+            pin(&["artifact"], pins::artifact_id),
+            pin(&["channel"], typed)
+        ],
     ),
     always!(
         "calendar.connector.kill",
@@ -666,6 +679,21 @@ pub fn settle(pre: &mut VerbHookPre, decodes: &dyn Fn(&Value) -> bool) {
 #[must_use]
 pub fn decodes<T: DeserializeOwned>(value: &Value) -> bool {
     <T as serde::Deserialize>::deserialize(value).is_ok()
+}
+
+/// A call-scoped notice of the restrictive target changes its hooks made or
+/// ignored. Transports can return it beside the typed result, including when
+/// a post hook refuses that result. It carries no invocation or caller id.
+#[must_use]
+pub fn caller_notice(pre: &VerbHookPre) -> Option<String> {
+    let landing = pre
+        .landing
+        .as_ref()
+        .filter(|landing| !landing.notes.is_empty())?;
+    Some(clip(
+        &format!("{}: {}", pre.call().verb, landing.notes.join("; ")),
+        NOTICE_DETAIL_MAX,
+    ))
 }
 
 /// Tells the vault's owners, in their inbox, what hooks changed or what was

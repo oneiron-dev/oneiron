@@ -55,6 +55,7 @@ fn output(
         GraphFsCoreutilsDecision::Pushdown => GraphFsPlan::Pushdown,
         GraphFsCoreutilsDecision::Walk => GraphFsPlan::Walk,
     };
+    let read_receipt = result.read_receipt().cloned();
     let (output, encoding) = match String::from_utf8(result.into_bytes()) {
         Ok(text) => (text, GraphFsEncoding::Utf8),
         Err(bytes) => (
@@ -69,6 +70,7 @@ fn output(
         encoding,
         next_cursor,
         plan,
+        read_receipt,
     }
 }
 
@@ -118,6 +120,7 @@ impl Memory<'_> {
             next_cursor: page
                 .next_cursor()
                 .map(|cursor| tree.seal_public_cursor(&call, cursor)),
+            read_receipt: page.read_receipt().cloned(),
         })
     }
 

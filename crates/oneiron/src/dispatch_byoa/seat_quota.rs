@@ -24,6 +24,25 @@ use super::error::ByoaResult;
 use super::owner_doors::RunnerSeatTopUpEffect;
 use super::record::{append_record_in_txn, head_record, head_record_checked};
 use super::seat::{RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatSpent};
+use super::work_binding::{capture_hop_seat_quota_in_txn, capture_seat_in_txn};
+
+/// Records quota for the actual terminal attempt, with or without an artifact.
+pub(super) fn record_runner_quota_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    policy: &RunnerSeatPolicy,
+    attempt: &AttemptRecord,
+    fallback: usize,
+    spent: Option<&SeatSpent>,
+) -> ByoaResult<Option<usize>> {
+    let seat = capture_seat_in_txn(vault, txn, policy, attempt, fallback)?;
+    let quota = match seat {
+        Some(index) => seat_quota_id(policy.seat(index)?)?,
+        None => EntityId::from_bytes(capture_hop_seat_quota_in_txn(vault, txn, attempt)?.1)?,
+    };
+    record_seat_quota_by_id_in_txn(vault, txn, quota, attempt, spent)?;
+    Ok(seat)
+}
 
 /// Domain a seat's quota record id is derived under.
 const SEAT_QUOTA_DOMAIN: &[u8] = b"oneiron:byoa-runner-seat-quota:v1";

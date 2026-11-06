@@ -42,10 +42,10 @@ use crate::server::SyncServer;
 const SLIP_PREFIX: &str = "v2.slip.";
 
 /// The header an MCP connector names its credential in.
-const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 /// The header a slip's holder proof rides in.
-const BINDING_HEADER: &str = "x-oneiron-binding";
+use oneiron_vault_contract::BINDING_HEADER;
 
 /// The caller the binding door admitted on a managed vault (FIX 4559): the
 /// auth its consuming admission of the request's slip returned, the slip

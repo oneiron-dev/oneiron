@@ -1,3 +1,6 @@
+//! Overlay snapshots: staged-row views merged over durable state for one read.
+//! Entry [`OverlaySnapshot`]; built from `journal` rows for `overlay_db::merge`.
+//! Owned by `session_overlay`; a snapshot never writes, it only stages.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -24,6 +27,9 @@ use oneiron_contracts::error::OffRecordError;
 pub struct OverlaySnapshot {
     pub(super) state: Arc<OverlayState>,
     pub(super) lease: Lease,
+    /// The write segment whose preview this view was captured from, by its
+    /// install nonce; `None` for a view of the published state (FIX 10004).
+    pub(super) segment: Option<u64>,
 }
 
 pub enum SnapshotLookup {
@@ -58,8 +64,15 @@ pub struct SnapshotMergePlan {
 }
 
 impl OverlaySnapshot {
-    /// A live value staged in this snapshot alone, borrowed without copying
-    /// its bytes. A tombstone or a base-only key has no overlay value.
+    fn retain(&self) -> Result<Self> {
+        Ok(Self {
+            state: Arc::clone(&self.state),
+            lease: self.lease.retain()?,
+            segment: self.segment,
+        })
+    }
+
+    /// Borrows a row this snapshot stages, without copying its body or reading base.
     pub fn staged_value(&self, keyspace: OverlayKeyspace, key: &[u8]) -> Option<&[u8]> {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { rows, .. } => match rows.get(key) {
@@ -402,6 +415,7 @@ impl OverlaySnapshot {
             turn,
             conversation,
             appends,
+            source_snapshot: self.retain()?,
             charge: None,
         };
         // The copies are the room's memory while the promotion runs.

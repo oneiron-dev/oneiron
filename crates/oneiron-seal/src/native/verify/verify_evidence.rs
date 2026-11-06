@@ -82,7 +82,7 @@ pub(super) fn evaluate_envelope(
     } else {
         SignatureKind::Signature
     };
-    let mut checks = Checks::new();
+    let mut checks = Checks::new(ctx.limits);
     let mut covered = Vec::new();
     let (signer_chain, token) = if entry.is_doc_ts {
         (
@@ -146,6 +146,12 @@ pub(super) fn evaluate_envelope(
     } else {
         None
     };
+    let id_bytes = entry.field_name.len().saturating_add(1).saturating_add(
+        index
+            .checked_ilog10()
+            .map_or(1, |digits| digits as usize + 1),
+    );
+    memory.admit_len::<u8>(id_bytes)?;
     Ok(EnvelopeEvidence {
         index,
         id: format!("{}:{index}", entry.field_name),

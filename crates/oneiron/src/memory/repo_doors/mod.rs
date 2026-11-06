@@ -27,7 +27,7 @@ mod work;
 
 pub use custody::{
     REPO_PUBLICATION_POLICY_REQUIRED, RepoCheckoutBindInput, RepoCheckoutBindOutput,
-    RepoExportInput, RepoExportOutput,
+    RepoExportInput, RepoExportOutput, with_host_door_base,
 };
 pub use host::repo_provenance_unwitnessed;
 pub use proposals::{

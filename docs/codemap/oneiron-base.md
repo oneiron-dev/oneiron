@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/posterior.rs` | src | s | 2 re-export | — | Shared Beta posterior bandit seam |
 | `src/registry.rs` | src | s | 1 mod · 10 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `src/registry/pack_namespaces.rs` | src | s | 3 const | — | Stable pack provenance and structural-kind short-id namespaces |
-| `src/request_limits.rs` | src | s | 13 fn · 14 const | — | Request boundary limits and pure validators |
+| `src/request_limits.rs` | src | s | 12 fn · 13 const | — | Request boundary limits and pure validators |
 | `src/retrieval_quality.rs` | src | s | 1 re-export | — | Retrieval quality report vocabulary |
 | `src/skill_invocations.rs` | src | s | 2 struct · 4 fn | InvocationGuard, SkillInvocations | The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an… |
 | `src/step_cancellation.rs` | src | s | 1 struct · 6 fn · 1 const | StepCancellation | The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to… |

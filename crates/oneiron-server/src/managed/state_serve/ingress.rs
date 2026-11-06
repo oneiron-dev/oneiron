@@ -4,9 +4,9 @@
 
 use super::{
     Arc, Body, CarriedConnection, CarrierPaused, IntoResponse, Json, ManagedCarrierContext,
-    ManagedError, ManagedIngress, ManagedState, ManagedWidenAction, ManagedWidenHolder, Method,
-    Next, Request, Response, Router, State, StatusCode, Surface, SyncServer, UPGRADE, WriteKind,
-    build_app, is_read_only, middleware, owner_attestable, to_bytes, writes_frozen_body,
+    ManagedError, ManagedIngress, ManagedState, ManagedWidenAction, McpLifecycleObservation,
+    Method, Next, Request, Response, Router, State, StatusCode, Surface, SyncServer, UPGRADE,
+    WriteKind, build_app, is_read_only, middleware, owner_attestable, to_bytes, writes_frozen_body,
 };
 
 impl ManagedCarrierContext {
@@ -124,20 +124,21 @@ async fn freeze_gate(
         {
             let assertion = request
                 .headers()
-                .get("x-oneiron-managed-widen-action")
+                .get(oneiron_vault_contract::MANAGED_WIDEN_ACTION_HEADER)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|text| serde_json::from_str::<ManagedWidenAction>(text).ok());
             if let Some(assertion) = assertion {
-                let (parts, body) = request.into_parts();
-                let Ok(bytes) = to_bytes(body, 2 * 1024 * 1024).await else {
-                    return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-                };
-                request = Request::from_parts(parts, Body::from(bytes.clone()));
-                if state.ledger.verify_widen_action(&assertion, &bytes)
-                    && let Ok(holder) = oneiron::EntityId::from_hex(&assertion.holder_ref)
+                request = match super::owner_stage::verify_widen(
+                    &state.server,
+                    &state.ledger,
+                    &assertion,
+                    request,
+                )
+                .await
                 {
-                    request.extensions_mut().insert(ManagedWidenHolder(holder));
-                }
+                    Ok(request) => request,
+                    Err(refusal) => return refusal,
+                };
             }
         }
         // A person's own act at a member door, his `/mcp` call or the upgrade
@@ -206,7 +207,7 @@ async fn freeze_gate(
         }
         request
             .headers_mut()
-            .remove("x-oneiron-managed-widen-action");
+            .remove(oneiron_vault_contract::MANAGED_WIDEN_ACTION_HEADER);
         request
             .headers_mut()
             .remove(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER);
@@ -355,9 +356,14 @@ async fn run_admitted_request(
     // transition so their completion receipt reports what they actually did.
     let lifecycle_observation = match (request.method().as_str(), request.uri().path()) {
         ("GET", "/api/health") => true,
-        ("POST", path) => path
-            .strip_prefix("/v1/core/facade/")
-            .is_some_and(crate::api::is_slim_lifecycle_observation),
+        ("POST", path) => {
+            path.strip_prefix("/v1/core/facade/")
+                .is_some_and(crate::api::is_slim_lifecycle_observation)
+                || request
+                    .extensions()
+                    .get::<McpLifecycleObservation>()
+                    .is_some()
+        }
         _ => false,
     };
     if !lifecycle_observation && let Err(error) = state.server.vault().resume_from_slim_on_inbound()

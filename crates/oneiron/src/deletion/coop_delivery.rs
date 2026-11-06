@@ -32,11 +32,16 @@ use crate::{EntityId, Error, Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
+mod redact;
 mod refresh;
+mod restrict;
 mod types;
 
 pub use types::{
-    CooperativeDeleteOperation, CooperativeDeleteRecord, CooperativeDeleteRecordState,
+    CooperativeClaimValueRedaction, CooperativeDeleteOperation, CooperativeDeleteRecord,
+    CooperativeDeleteRecordState, CooperativeDeletionAnswer, CooperativeDeletionDisposition,
+    CooperativeDeletionDispositionKind, CooperativeDeletionRetention, CooperativeLocalRedaction,
+    CooperativeRestrictionLiftAttestation, IncomingCooperativeDeletion,
 };
 
 /// The queue kind carrying both legs: the ask and the answer.
@@ -181,91 +186,6 @@ pub struct CooperativeDeletionNotice {
     pub status: CooperativeDeletionDeliveryStatus,
     pub created_at: u64,
     pub updated_at: u64,
-}
-
-/// The recipient owner's menu (BIZ-LEGAL-0004 B2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CooperativeDeletionDispositionKind {
-    Delete,
-    Redact,
-    RestrictPendingReview,
-    RetainUnderBasis,
-    LegalHold,
-    Decline,
-}
-
-impl CooperativeDeletionDispositionKind {
-    /// What the requester learns of this choice.
-    #[must_use]
-    pub const fn reply_outcome(self) -> CooperativeDeletionReplyOutcome {
-        match self {
-            Self::Decline => CooperativeDeletionReplyOutcome::Declined,
-            _ => CooperativeDeletionReplyOutcome::Acknowledged,
-        }
-    }
-}
-
-/// The owner's recorded choice on one filed ask.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CooperativeDeletionDisposition {
-    pub kind: CooperativeDeletionDispositionKind,
-    /// A concise reason code for any choice but delete; never free text.
-    pub reason_code: Option<String>,
-    /// When a choice other than delete comes up for review, unix seconds.
-    pub review_at: Option<u64>,
-    /// The records the owner's delete choice removed, hex.
-    pub deleted: Vec<String>,
-    pub recorded_at: u64,
-    /// The customer hold a legal hold choice placed or kept (FIX 2924).
-    pub hold_ids: Vec<EntityId>,
-    /// The records a legal hold choice named that are no copy this ask
-    /// covers, hex: left out of its hold (FIX 2927).
-    pub excluded: Vec<String>,
-    /// A delete choice's operation and each record's state (FIX 2926).
-    pub delete_operation: Option<CooperativeDeleteOperation>,
-}
-
-/// One filed ask, for the recipient owner's review.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct IncomingCooperativeDeletion {
-    /// The ask's nonce, hex.
-    pub request_id: String,
-    /// The pact, hex.
-    pub connection_id: String,
-    pub requester_vault_id: String,
-    /// The worlds named, hex; none asks about everything the pact delivered.
-    pub worlds: Vec<String>,
-    pub epoch_cutoff: u64,
-    /// The requester's clock when it signed.
-    pub requested_at: u64,
-    pub received_at: u64,
-    /// The signed ask exactly as received.
-    pub request: Vec<u8>,
-    pub disposition: Option<CooperativeDeletionDisposition>,
-    /// Delivery of the owner's answer back to the requester, once one is queued.
-    pub reply_status: Option<CooperativeDeletionDeliveryStatus>,
-    pub reply_started_at: Option<u64>,
-    /// Every customer hold an answer to this ask placed or kept, a later
-    /// choice's and an earlier one's alike (FIX 2924).
-    pub courtesy_hold_ids: Vec<EntityId>,
-}
-
-/// What the owner chose for one filed ask.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CooperativeDeletionAnswer {
-    pub kind: CooperativeDeletionDispositionKind,
-    pub reason_code: Option<String>,
-    pub review_at: Option<u64>,
-    /// Under a delete choice, the records to hard-delete, each once in the
-    /// order first named. Each goes through the owner's delete rail, one by
-    /// one, once no legal hold keeps any of them.
-    pub delete: Vec<EntityId>,
-    /// Under a legal hold choice, this vault's records to hold, each once.
-    /// They take one customer hold, written with the answer.
-    pub hold: Vec<EntityId>,
 }
 
 /// Where a peer-facing POST landed.
@@ -516,6 +436,9 @@ impl Vault {
                     reply_status: None,
                     reply_started_at: None,
                     courtesy_hold_ids: Vec::new(),
+                    courtesy_restriction_records: Vec::new(),
+                    restriction_lifts: Vec::new(),
+                    local_redactions: Vec::new(),
                 };
                 INCOMING.put(&self.store, txn, &key, &filed)?;
                 Ok(CooperativeDeletionIngress::Filed)

@@ -6,6 +6,8 @@
 //! native wire record shape so untrusted `EphemeralStore` bytes can be bounded
 //! and timestamp-validated before apply.
 
+pub use crate::store::framing::TransportError;
+use crate::store::framing::checked_encoded_frame_len;
 use crate::sync::types::parse_window_key_str;
 use loro::LoroValue;
 use serde::{Deserialize, Serialize};
@@ -26,10 +28,10 @@ pub use asset_bodies::{
 mod codec;
 mod leaf_keys;
 pub use codec::{
-    CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
-    MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket, codec_ids,
-    decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
-    process_link_bytes,
+    CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, DECODED_FRAME_KIND_IDS, LinkBytes,
+    MAX_CODEC_INNER_BYTES, MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket,
+    codec_ids, decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame,
+    encode_http_body, frame_kind_ids, process_link_bytes,
 };
 pub use leaf_keys::{
     LEAF_KEY_RETRY, TAG_LEAF_KEY_ANSWER, TAG_LEAF_KEY_FAILURE, TAG_LEAF_KEY_REQUEST,
@@ -40,10 +42,21 @@ mod unsplit_frame;
 pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
 pub use window_pads::{
-    WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
-    WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadReadiness, WindowPadReceipt,
-    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member, window_pad_frame_id,
-    window_pad_frame_payload, window_pad_part_id, window_pad_refs_digest,
+    ReceivedWindowPadEnvelope, WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly,
+    WindowPadBinding, WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadPayload,
+    WindowPadReadiness, WindowPadReceipt, WindowPadSidecar, decode_window_pad_envelope,
+    validate_window_pad_member, window_pad_frame_id, window_pad_frame_payload, window_pad_part_id,
+    window_pad_refs_digest,
+};
+mod sealed_updates;
+pub use sealed_updates::{
+    SEALED_UPDATE_EPOCH_LEN, SEALED_UPDATE_FRAME_ID_LEN, SealedUpdateFrame, TAG_SEALED_UPDATE,
+    decode_sealed_update_frame, encode_sealed_update_frame, sealed_update_sub_tags,
+};
+mod document_parts;
+pub use document_parts::{
+    DocumentAssembly, DocumentPartFrames, JoinedDocument, decode_unsplit_document,
+    encode_unsplit_document,
 };
 mod documents;
 pub use documents::{
@@ -249,6 +262,9 @@ pub mod window_sub_tags {
     /// A window pad receipt for an owner-lane `UPDATE` that came sealed, or a receiver's
     /// `NotReady` for one it could not install.
     pub const WINDOW_PAD_RECEIPT: u8 = 16;
+    /// The home held this residence update without persisting or importing it.
+    /// The same window pad receipt binds the reply; the queued row stays owed.
+    pub const RESIDENCE_HELD: u8 = 17;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).
@@ -644,25 +660,6 @@ fn checked_bulk_transfer_done_capacity(
     checked_encoded_frame_len(prefix_len, state_len)
 }
 
-fn checked_encoded_frame_len(
-    prefix_len: usize,
-    payload_len: usize,
-) -> Result<usize, TransportError> {
-    let size = prefix_len
-        .checked_add(payload_len)
-        .ok_or(TransportError::FrameTooLarge {
-            size: usize::MAX,
-            max: MAX_ENCODED_FRAME_BYTES,
-        })?;
-    if size > MAX_ENCODED_FRAME_BYTES {
-        return Err(TransportError::FrameTooLarge {
-            size,
-            max: MAX_ENCODED_FRAME_BYTES,
-        });
-    }
-    Ok(size)
-}
-
 /// Decodes a BulkTransferDone payload (after tag byte has been consumed).
 pub fn decode_bulk_transfer_done(data: &[u8]) -> Result<(&str, &[u8]), TransportError> {
     if data.is_empty() {
@@ -710,68 +707,6 @@ pub fn encode_lfs_chunk_sync(payload: &[u8]) -> EncodedFrame {
     frame.extend_from_slice(payload);
     EncodedFrame::ok(frame)
 }
-
-// ─── Transport Error ──────────────────────────────────────────────────────────
-
-/// Transport-level errors for the sync wire protocol.
-#[derive(Debug)]
-pub enum TransportError {
-    InvalidWindowKey,
-    InvalidPayload(&'static str),
-    /// A paged, grant-scoped metadata projection changed; restart at page one.
-    IndexRevisionChanged,
-    UnknownTag(u8),
-    FrameTooLarge {
-        size: usize,
-        max: usize,
-    },
-    /// Inbound version-vector bytes failed Loro binary decoding.
-    /// Fail-closed: malformed VVs are NEVER treated as an empty VV.
-    VersionVectorDecode,
-    WebSocket(String),
-    ConnectionClosed,
-    /// Engine/storage failure surfaced at the transport boundary (LMDB
-    /// write, window open/recovery). The wire payload itself was valid.
-    Storage(String),
-    /// A Gate door refused the inbound bytes on policy grounds, carrying the
-    /// door's own typed taxonomy. Distinct from [`Self::Storage`] on purpose:
-    /// a denial needs owner approval and is never retried, while a storage
-    /// failure is retriable, and a caller must be able to tell them apart
-    /// without reading a message.
-    AdmissionDenied(crate::error::GateDenial),
-}
-
-impl std::fmt::Display for TransportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidWindowKey => write!(f, "invalid window key"),
-            Self::InvalidPayload(msg) => write!(f, "invalid payload: {msg}"),
-            Self::IndexRevisionChanged => write!(f, "window index revision changed"),
-            Self::UnknownTag(tag) => write!(f, "unknown tag: {tag}"),
-            Self::FrameTooLarge { size, max } => write!(f, "frame too large: {size} (max {max})"),
-            Self::VersionVectorDecode => write!(f, "version vector decode failure"),
-            Self::WebSocket(msg) => write!(f, "websocket error: {msg}"),
-            Self::ConnectionClosed => write!(f, "connection closed"),
-            Self::Storage(msg) => write!(f, "storage error: {msg}"),
-            Self::AdmissionDenied(denial) => {
-                write!(
-                    f,
-                    "admission denied: outcome={}, reasons=",
-                    denial.outcome()
-                )?;
-                for (index, reason) in denial.reason_codes().iter().enumerate() {
-                    if index > 0 {
-                        f.write_str(",")?;
-                    }
-                    write!(f, "{reason}")?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl std::error::Error for TransportError {}
 
 #[cfg(test)]
 mod tests;

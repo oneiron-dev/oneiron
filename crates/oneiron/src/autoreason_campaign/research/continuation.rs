@@ -533,9 +533,8 @@ fn run_answer_text(vault: &Vault, record: &AttemptRecord) -> Result<Option<Strin
     let Some(output) = replay.outputs.iter().find(|output| output.handle == handle) else {
         return Ok(None);
     };
-    let txn = vault.store.env.read_txn()?;
     Ok(vault
-        .code_run_result_body_in_txn(&txn, output)?
+        .get_code_run_raw_output(output)?
         .map(|body| String::from_utf8_lossy(&body).into_owned()))
 }
 
