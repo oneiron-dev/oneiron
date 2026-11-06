@@ -127,14 +127,47 @@ rolls the metadata back with the snapshot; an after-commit error does not
 imply rollback. Observers and registry publication remain last.
 
 Raw/public replacement, sealed relay and kit restore supply no live proof
-and do not enter this optional path. This does not activate deferred or
-body-later position import.
+and do not enter this optional path. Its persistence-bound holder is not a
+deferred socket proof.
+
+## Client body-later arrival
+
+Only a complete successful live own-device client UPDATE may retain selected
+incoming values in that connection's existing body session. Registration
+follows all native no-op, healing and persistence success returns. The
+selected owner carrier and file reference must still match; missing root
+values deliberately removed by strong scrubs are not restored or exported.
+Known births and at least one native file reference are required for this
+optional deferred slice.
+
+A weak handle binds each selected witness to the SAME registered window
+object, without keeping a window open or delaying replacement. Eviction or
+replacement invalidates it. Reconnecting resets the body session, including
+all selected values and local-land effects. New selected values supersede
+older values only for the same owner keys; an obsolete window's values leave.
+
+Only the native local close path, after a complete spool really lands, emits
+an own-device local-body-land effect. A remote Receipt cannot emit one. A
+selected owner or source reference must equal that effect's entire native
+encoded reference before the value becomes ready. Earlier local landings in
+the same connection also wake matching later selected values. This routing
+works across source residence windows; it is not just an owed-window match.
+
+The existing frame/poll housekeeping retries ready values, including after a
+caption materializes later than its body. Each retry still requires the live
+original window/carrier, ORIGINAL key, complete current canonical facts,
+known births, each row's own residence and peer exclusion, and immutable
+prior semantics in the dedicated writer, with bodies pinned before it opens.
+The local effect schedules a retry; it replaces none of those predicates.
+Optional metadata errors leave the working body and raw import paths intact.
+No new timer, operating cap, wire tag, retry authority or body plane is added.
 
 ## Remaining cases
 
 The live client UPDATE, server push and live own-device bounded-replacement
-boundaries are wired. Deferred/body-later arrival, recovery and later replay
-do not mint an import proof. Raw, held, staged, missing or unknown evidence
-keeps its existing behavior. Those cases and a runtime demonstration remain separate
-work; this does not close all of FIX40. The older
-foreign-Connect proposal is not enabled by this path.
+boundaries are wired. Client body-later completion stays within its original
+live connection. Server-push body-later completion, recovery and later replay
+do not mint a deferred import proof. Raw, held, staged, missing or unknown
+evidence keeps its existing behavior. Broader modes and a runtime
+demonstration remain separate work; this does not close all of FIX40. The
+older foreign-Connect proposal is not enabled by this path.
