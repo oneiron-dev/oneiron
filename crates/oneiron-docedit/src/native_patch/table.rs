@@ -441,6 +441,8 @@ pub(super) fn set_cell(
 /// later lines, then first; same-count first, count-changed outer and paired
 /// middle lines fall to first.
 /// Copied properties keep namespace bindings; removed field types are reported.
+/// Whole field-free opaque retained segments keep their original XML and
+/// namespace bindings.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -535,16 +537,20 @@ fn rebuilt(
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
         let segments: Vec<(usize, &Node, Vec<char>)> = tree
             .children(para)
-            .filter(|(_, node)| node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br"))
-            .map(|(at, node)| {
+            .filter(|(_, node)| !node.is(DML, "pPr") && !node.is(DML, "endParaRPr"))
+            .filter_map(|(at, node)| {
                 if node.is(DML, "br") {
-                    (at, node, vec!['\u{b}'])
+                    Some((at, node, vec!['\u{b}']))
                 } else {
-                    let text = within(tree, at)
+                    let text: Vec<char> = within(tree, at)
                         .filter(|(_, node)| node.is(DML, "t"))
                         .flat_map(|(_, node)| node.text.chars())
                         .collect();
-                    (at, node, text)
+                    if node.is(DML, "r") || node.is(DML, "fld") || !text.is_empty() {
+                        Some((at, node, text))
+                    } else {
+                        None
+                    }
                 }
             })
             .collect();
@@ -578,6 +584,22 @@ fn rebuilt(
         {
             suffix += 1;
         }
+        {
+            let mut position = 0;
+            for (at, node, text) in &segments {
+                let start = position;
+                let end = position + text.len();
+                if !node.is(DML, "r") && !node.is(DML, "fld") && !node.is(DML, "br") {
+                    if within(tree, *at).any(|(_, node)| node.is(DML, "fld")) {
+                        return None;
+                    }
+                    if end > prefix && start < old.len() - suffix {
+                        return None;
+                    }
+                }
+                position = end;
+            }
+        }
         let retained_runs = |from: usize, to: usize| -> Option<String> {
             let mut runs = String::new();
             let mut position = 0;
@@ -585,8 +607,16 @@ fn rebuilt(
                 let start = position.max(from);
                 let end = (position + text.len()).min(to);
                 if start < end {
-                    let part: String = text[start - position..end - position].iter().collect();
-                    runs.push_str(&run_xml(Some((*at, *node)), para_node, &part).ok()?);
+                    if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
+                        let part: String = text[start - position..end - position].iter().collect();
+                        runs.push_str(&run_xml(Some((*at, *node)), para_node, &part).ok()?);
+                    } else {
+                        let raw = std::str::from_utf8(&bytes[node.span.clone()]).ok()?;
+                        let mut owned = raw.to_owned();
+                        let bindings = crate::edit::xml::inherited_bindings(bytes, tree, *at);
+                        owned.insert_str(node.open_end - node.span.start - 1, &bindings);
+                        runs.push_str(&owned);
+                    }
                 }
                 position += text.len();
             }
