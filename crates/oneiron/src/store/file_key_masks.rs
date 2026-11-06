@@ -40,6 +40,7 @@ use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 use oneiron_authority::federation::Sensitivity;
+use oneiron_store::batch::secret_scan::container::{ReadProgress, withheld};
 
 /// The band a file with keys in it carries.
 pub(crate) const MASKED_FILE_BAND: Sensitivity = Sensitivity::Restricted;
@@ -214,6 +215,21 @@ pub(crate) fn sighted_bytes_in_txn(
     )
 }
 
+fn hash_bytes_with_reader(
+    bytes: &[u8],
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<blake3::Hash> {
+    let mut hash = blake3::Hasher::new();
+    for chunk in bytes.chunks(blake3::CHUNK_LEN) {
+        reader
+            .pacing
+            .checkpoint(ReadProgress::Member)
+            .map_err(withheld)?;
+        hash.update(chunk);
+    }
+    Ok(hash.finalize())
+}
+
 pub(crate) fn sighted_bytes_in_txn_with_reader(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -229,12 +245,12 @@ pub(crate) fn sighted_bytes_in_txn_with_reader(
     let hash = match digest {
         Some(digest) => {
             debug_assert!(
-                blake3::hash(&bytes).as_bytes() == digest,
+                hash_bytes_with_reader(&bytes, reader)?.as_bytes() == digest,
                 "a caller's digest names other bytes"
             );
             *digest
         }
-        None => *blake3::hash(&bytes).as_bytes(),
+        None => *hash_bytes_with_reader(&bytes, reader)?.as_bytes(),
     };
     let Some(file) = masked_file_in_txn(store, txn, &hash)? else {
         // Bytes that lead as no container are none to the walk, so none is
