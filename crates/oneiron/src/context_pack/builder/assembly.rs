@@ -248,7 +248,12 @@ impl ContextPackBuilder<'_> {
             .telemetry_memory
             .as_ref()
             .map(crate::host_memory::MachineMemory::empty_lease);
-        let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config, tokenizer);
+        let (bytes, telemetry) = serialize_pack_with_telemetry(
+            &run.pack,
+            &config,
+            tokenizer,
+            surfaced_memory.as_mut(),
+        );
         if let Some(memory) = surfaced_memory.as_mut() {
             memory.materialized(
                 0,
