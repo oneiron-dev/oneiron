@@ -689,10 +689,10 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                     max_reply_bytes: request.max_reply_bytes,
                 });
                 let frame = request.request.encode();
+                drop(request.request);
                 if let Err(error) = socket.send(Message::Binary(frame.into())).await {
                     break format!("the MCP socket broke: {error}");
                 }
-                drop(request.request);
                 let _ = waiting[&id].chunks.send(Inbound::Sent);
             }
             frame = socket.next() => {
