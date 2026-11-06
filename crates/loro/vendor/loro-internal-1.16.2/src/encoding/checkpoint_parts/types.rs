@@ -38,12 +38,44 @@ pub enum Field<'a> {
 /// but it must not edit the captured document.
 pub trait Classify {
     /// Whether `key` of root map `root` is an opaque id or a fixed schema name.
-    /// Keys stay plaintext in the skeleton, so any other key must answer false.
+    /// Plain keys stay plaintext in the skeleton, so any other key must answer
+    /// false.
     fn plain_key(&mut self, root: &str, key: &str) -> bool;
 
     /// Every rightful holder of one value or message. `None` or an empty list
     /// leaves the document Unclassified.
     fn holders(&mut self, field: Field<'_>) -> Option<Vec<OwnerId>>;
+
+    /// Every rightful holder of `key` of root map `root`, a key that is not
+    /// plain. The key is then withheld: the skeleton spells it as its atom's
+    /// placeholder ([`key_placeholder`]) and a [`Payload::Key`] atom those
+    /// holders hold carries it. `None` (the default) or an empty list leaves
+    /// the document Unclassified, as a key that is not plain always did.
+    fn key_holders(&mut self, _root: &str, _key: &str) -> Option<Vec<OwnerId>> {
+        None
+    }
+}
+
+/// How the skeleton spells a withheld key: this prefix, then the decimal id
+/// of the [`SlotKind::Key`] atom that carries it. No plain or withheld key
+/// may begin with it.
+pub const KEY_PLACEHOLDER_PREFIX: &str = "\u{0}key:";
+
+/// The skeleton's spelling of the key that atom `atom` carries.
+pub fn key_placeholder(atom: AtomId) -> String {
+    format!("{KEY_PLACEHOLDER_PREFIX}{atom}")
+}
+
+/// The atom a skeleton key names, when the key is a placeholder; `None` for a
+/// plain key. A placeholder of no canonical decimal id is `Some(None)`.
+pub fn placeholder_atom(key: &str) -> Option<Option<AtomId>> {
+    let digits = key.strip_prefix(KEY_PLACEHOLDER_PREFIX)?;
+    Some(
+        digits
+            .parse::<AtomId>()
+            .ok()
+            .filter(|atom| atom.to_string() == digits),
+    )
 }
 
 /// Why a document stays Unclassified. This is not an error: the caller keeps
@@ -81,6 +113,8 @@ pub struct Parts {
 pub enum SlotKind {
     Value,
     Message,
+    /// A withheld map key ([`Classify::key_holders`]).
+    Key,
 }
 
 /// The skeleton's record of one atom: its kind and rightful holders, no payload.
@@ -91,6 +125,7 @@ pub struct Slot {
 }
 
 /// One map winner of a captured state: the entry of `key` in root map `root`.
+/// A withheld key is spelled as its placeholder ([`key_placeholder`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Winner {
     pub root: u32,
@@ -132,8 +167,9 @@ pub struct ShallowRoot {
     pub winners: Vec<Winner>,
 }
 
-/// The payload-free part of a capture. Keys are plaintext; values and
-/// messages are atom ids into [`Skeleton::slots`].
+/// The payload-free part of a capture. Plain keys are plaintext and a withheld
+/// key is its placeholder; values, messages and withheld keys are atom ids
+/// into [`Skeleton::slots`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Skeleton {
     /// Root map names; every `root` field indexes this list.
@@ -158,6 +194,19 @@ pub struct Skeleton {
 pub enum Payload {
     Value(LoroValue),
     Message(String),
+    /// A withheld map key.
+    Key(String),
+}
+
+impl Payload {
+    /// The kind of slot this payload fills.
+    pub fn kind(&self) -> SlotKind {
+        match self {
+            Self::Value(_) => SlotKind::Value,
+            Self::Message(_) => SlotKind::Message,
+            Self::Key(_) => SlotKind::Key,
+        }
+    }
 }
 
 /// One value or message with its rightful holders.
@@ -180,7 +229,8 @@ pub struct Joined {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JoinReport {
     /// Every survivor op keeps its id, lamport, timestamp, deps, message, key
-    /// and value; every erased value is a delete at its original id; every
+    /// and value; every erased value is a delete at its original id, and every
+    /// op on an erased key a delete of its placeholder at its original id; every
     /// shallow-root winner keeps its peer, lamport and opened value; the
     /// latest state holds the skeleton's latest winners' opened values; the
     /// latest and shallow version vectors and frontiers are unchanged. A join

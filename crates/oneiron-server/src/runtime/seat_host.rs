@@ -204,11 +204,11 @@ impl SyncServer {
     }
 
     /// The owner's runner-seat policy (`[models.dreamer] runner_seats`) a
-    /// bound runner work's end is routed under (FIX 9320). The server keeps
-    /// no models config yet: until the AI host hands it on, none is named and
-    /// every run is captured plain, as before.
+    /// bound runner work's end is routed under (FIX 9320), as the AI host
+    /// keeps it from the models config (FIX 10625); with none named, every
+    /// run is captured plain.
     fn seat_runner_policy(&self) -> Option<RunnerSeatPolicySettings> {
-        None
+        self.ai.runner_seats().cloned()
     }
 }
 

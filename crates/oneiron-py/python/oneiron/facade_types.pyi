@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1234 facade rows, 4497 declarations.
-Inputs: 1165 of 1234 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1069 of 1234 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1250 facade rows, 4532 declarations.
+Inputs: 1181 of 1250 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1085 of 1250 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -2274,7 +2274,7 @@ class AttemptLanding(TypedDict):
     status: NotRequired[str | None]
 AttemptCancelReceiptKind = Literal["soft_requested", "landing_accepted", "soft_rejected", "resume_point_recorded", "reserve_spent", "landed", "force_cancelled"]
 CancelStanding = Literal["peer_agent", "healer", "automation", "authority", "none"]
-ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality"]
+ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality", "erased_payload"]
 class AttemptResumePoint(TypedDict):
     marker: str
     artifact_ref: NotRequired[str | None]
@@ -8074,6 +8074,15 @@ class OffRecordNoteRequest(TypedDict):
     session_ref: str
     note: CreateNoteRequest
     evidence_turn_refs: NotRequired[list[str]]
+class OffRecordArtifactSaveRequest(TypedDict):
+    session_ref: str
+    artifact_ref: str
+class OffRecordRoomShortIdPair(TypedDict):
+    room: str
+    vault: str
+class OffRecordArtifactSaved(TypedDict):
+    replayed: list[str]
+    short_ids: list[OffRecordRoomShortIdPair]
 class OffRecordClaimRequest(TypedDict):
     session_ref: str
     claim: ScopedClaimInput
@@ -8247,7 +8256,7 @@ class OffRecordWaitAnswered(TypedDict):
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
-OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
+OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saved_artifact", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
 class OffRecordRoomNotice(TypedDict):
     act: OffRecordNoticeAct
     by: str
@@ -8274,9 +8283,6 @@ class OffRecordRoomWitnessRequest(TypedDict):
     session_ref: str
     turn: WitnessTurn
     summary: NotRequired[str | None]
-class OffRecordRoomShortIdPair(TypedDict):
-    room: str
-    vault: str
 class OffRecordRoomSavedTurn(TypedDict):
     turn: str
     replayed: list[str]
@@ -8298,6 +8304,7 @@ class MessageResultAttachment(TypedDict):
     kind: str
     lines: int
     complete: bool
+    erased: bool
     preview: str
     preview_truncated: bool
     more: list[ResultFacet]
@@ -16785,6 +16792,7 @@ class LlmStreamEventReasoningDelta(TypedDict):
 class LlmStreamEventReasoningEnd(TypedDict):
     event: Literal["reasoning_end"]
     part_id: str
+    signature: NotRequired[str | None]
 class LlmStreamEventToolCallStart(TypedDict):
     event: Literal["tool_call_start"]
     part_id: str
@@ -22111,12 +22119,17 @@ class FoldUnfoldRequest(TypedDict):
 class FoldReplyRefused(TypedDict):
     error: str
 FoldReply = T | FoldReplyRefused
-FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str]})
-FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+FoldKind = Literal["repl_output"]
+class FoldedOutput(TypedDict):
+    step: int
+    handles: list[str]
+    ids: list[str]
+FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str], "kind": NotRequired[FoldKind | None], "note": NotRequired[str | None], "outputs": NotRequired[list[FoldedOutput]]})
+FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 FoldDescription = FoldDescriptionFolded | FoldDescriptionPending
 FoldHistoryRequest = TypedDict("FoldHistoryRequest", {"live_run": str, "from": int, "limit": int})
-FoldSpan = TypedDict("FoldSpan", {"fold": str, "from": int, "through": int})
-FoldPending = TypedDict("FoldPending", {"fold": str, "from": int, "through": int, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+FoldSpan = TypedDict("FoldSpan", {"fold": str, "from": int, "through": int, "kind": NotRequired[FoldKind | None]})
+FoldPending = TypedDict("FoldPending", {"fold": str, "from": int, "through": int, "note": NotRequired[str | None], "failed": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 class FoldList(TypedDict):
     folds: list[FoldSpan]
     pending: list[FoldPending]
@@ -22432,6 +22445,136 @@ class CustodyMemberReenrolRequest(TypedDict):
     target_id: NotRequired[str | None]
     folder: NotRequired[str | None]
     scope: NotRequired[TargetScope | None]
+MailProvider = Literal["google_workspace", "google", "microsoft365", "imap", "caldav", "ics"]
+MailSourceKind = Literal["personal_mailbox", "group_address", "calendar"]
+class MailCopySettingRecentMonthsBody(TypedDict):
+    months: int
+class MailCopySettingRecentMonths(TypedDict):
+    recent_months: MailCopySettingRecentMonthsBody
+MailCopySetting = Literal["all", "search_only"] | MailCopySettingRecentMonths
+MailProviderDeleteSetting = Literal["keep_in_memory", "forget_too"]
+CalendarDetailSetting = Literal["busy_free_only", "shared"]
+class MailSourceConnectRequest(TypedDict):
+    provider: MailProvider
+    kind: MailSourceKind
+    address: str
+    provider_account: str
+    custody_ref: str
+    members: NotRequired[list[str]]
+    channel_identity_ref: NotRequired[str | None]
+    copy: NotRequired[MailCopySetting | None]
+    on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
+    calendar_details: NotRequired[CalendarDetailSetting | None]
+MailSourceStatus = Literal["active", "paused", "disconnected"]
+class MailSourceView(TypedDict):
+    source_ref: str
+    provider: MailProvider
+    kind: MailSourceKind
+    address: NotRequired[str | None]
+    owner_ref: NotRequired[str | None]
+    reads: bool
+    members: NotRequired[list[str]]
+    copy: MailCopySetting
+    on_provider_delete: MailProviderDeleteSetting
+    calendar_details: CalendarDetailSetting
+    status: MailSourceStatus
+    connected_at: int
+    updated_at: int
+class MailSourceConnectReceipt(TypedDict):
+    source: MailSourceView
+    resumed: bool
+class MailSourceSettingsRequest(TypedDict):
+    source_ref: str
+    copy: NotRequired[MailCopySetting | None]
+    on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
+    calendar_details: NotRequired[CalendarDetailSetting | None]
+    status: NotRequired[MailSourceStatus | None]
+class MailSourceMembersRequest(TypedDict):
+    source_ref: str
+    members: list[str]
+class MailSourceRef(TypedDict):
+    source_ref: str
+SourceAudienceOp = Literal["reader_added", "reader_removed", "shared", "unshared", "opened", "closed"]
+class SourceAudienceEventView(TypedDict):
+    revision: int
+    op: SourceAudienceOp
+    person_ref: NotRequired[str | None]
+    by_ref: NotRequired[str | None]
+    at: int
+class MailThreadShareRequest(TypedDict):
+    record_ref: str
+    person_ref: str
+class MailThreadShareReceipt(TypedDict):
+    thread_ref: str
+    person_ref: str
+    shared: bool
+    changed: bool
+    shared_with: list[str]
+class MailComplianceSettingView(TypedDict):
+    enabled: bool
+    set_by_ref: NotRequired[str | None]
+    set_at: NotRequired[int | None]
+class MailComplianceSetRequest(TypedDict):
+    enabled: bool
+    purpose: str
+MailComplianceEventKind = Literal["enabled", "disabled", "search"]
+class MailComplianceEventView(TypedDict):
+    sequence: int
+    kind: MailComplianceEventKind
+    by_ref: NotRequired[str | None]
+    at: int
+    purpose: str
+    query_digest: NotRequired[str | None]
+    result_count: NotRequired[int | None]
+class MailSyncStatusView(TypedDict):
+    source_ref: str
+    live: bool
+    copy_done: bool
+    landed: int
+    bodies: int
+    bodies_waiting: int
+    deleted_at_provider: int
+    last_step_at: NotRequired[int | None]
+    last_error: NotRequired[str | None]
+class MailInboxRequest(TypedDict):
+    source_ref: NotRequired[str | None]
+    include_source_deleted: NotRequired[bool]
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+MailStage = Literal["headers", "body"]
+class MailPresenceSourceDeletedBody(TypedDict):
+    at: int
+class MailPresenceSourceDeleted(TypedDict):
+    source_deleted: MailPresenceSourceDeletedBody
+class MailPresenceForgottenBody(TypedDict):
+    at: int
+class MailPresenceForgotten(TypedDict):
+    forgotten: MailPresenceForgottenBody
+MailPresence = Literal["present"] | MailPresenceSourceDeleted | MailPresenceForgotten
+MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool})
+class MailInboxPage(TypedDict):
+    items: list[MailInboxItem]
+    next_cursor: NotRequired[str | None]
+class MailThreadRequest(TypedDict):
+    thread_ref: str
+class MailThreadView(TypedDict):
+    thread_ref: str
+    source_ref: str
+    messages: list[MailInboxItem]
+    shared_with: NotRequired[list[str]]
+class MailComplianceSearchRequest(TypedDict):
+    query: str
+    purpose: str
+    limit: NotRequired[int | None]
+class MailComplianceHit(TypedDict):
+    source_ref: str
+    thread_ref: str
+    message_ref: str
+    score: float
+    text: NotRequired[str | None]
+class MailComplianceSearchReply(TypedDict):
+    log_sequence: int
+    hits: list[MailComplianceHit]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
@@ -23186,8 +23329,8 @@ class MemorySupersedeInput(TypedDict):
     now: int
 class MemoryWriteOutput(TypedDict):
     id: EntityId
-FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None]})
-FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool})
+FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
+FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool, "kind": NotRequired[FoldKind | None]})
 class FoldCompactRequest(TypedDict):
     live_run: str
     note: NotRequired[str | None]
