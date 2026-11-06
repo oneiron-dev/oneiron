@@ -15,8 +15,8 @@ use crate::store::sandbox_import::SandboxLinkedImport;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::model::{
-    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntry, GraphFsFile, GraphFsMount,
-    GraphFsOptions, GraphFsPage, GraphFsResolver,
+    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntry, GraphFsFile, GraphFsOptions,
+    GraphFsPage, GraphFsResolver,
 };
 
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
@@ -111,7 +111,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 if *world == "base" || EntityId::from_hex(world).is_ok() {
                     Ok(page)
                 } else {
-                    Ok(empty_page(&normalized, self.options.mount))
+                    empty_page(&normalized, self.options, reader)
                 }
             }
             ["worlds", world, "claims"] => {
@@ -119,7 +119,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             ["worlds", world, "backlinks"] => {
                 if *world == "base" {
-                    Ok(empty_page(&normalized, self.options.mount))
+                    empty_page(&normalized, self.options, reader)
                 } else {
                     self.listdir_backlinks(&normalized, &parse_entity_id(world)?, cursor, reader)
                 }
@@ -144,7 +144,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                         reader,
                     )?
                 } else {
-                    empty_page(&normalized, self.options.mount)
+                    empty_page(&normalized, self.options, reader)?
                 };
                 Ok(page.with_read_receipt(body.receipt))
             }
@@ -175,7 +175,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["backlinks", entity] => {
                 self.listdir_backlinks(&normalized, &parse_entity_id(entity)?, cursor, reader)
             }
-            _ => Ok(empty_page(&normalized, self.options.mount)),
+            _ => empty_page(&normalized, self.options, reader),
         }
     }
 
@@ -350,7 +350,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         if !self.scoped_read.every_lane_in(&rtxn, |lane| {
             Ok(lane.proof_live_in(&rtxn)? && lane_reads_some_row(lane, &policy))
         })? {
-            return Ok(empty_page(path, self.options.mount));
+            return empty_page(path, self.options, reader);
         }
         let listing = copy_text_parts(&[path], reader, self.options.page_byte_cap)?;
         let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
@@ -577,7 +577,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
         if !self.scoped_read.is_entity_readable(target)? {
-            return Ok(empty_page(path, self.options.mount));
+            return empty_page(path, self.options, reader);
         }
         let listing = copy_text_parts(&[path], reader, self.options.page_byte_cap)?;
         let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
@@ -865,16 +865,20 @@ fn lane_reads_some_row(lane: &ScopedRead<'_>, policy: &PolicyManifestResolution)
         .reads_some_row()
 }
 
-pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
-    GraphFsPage {
-        path: path.to_owned(),
-        mount,
+pub(super) fn empty_page(
+    path: &str,
+    options: GraphFsOptions,
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<GraphFsPage> {
+    Ok(GraphFsPage {
+        path: copy_text_parts(&[path], reader, options.page_byte_cap)?,
+        mount: options.mount,
         entries: Vec::new(),
         next_cursor: None,
         byte_count: 0,
         read_receipt: None,
         entry_cursors: Vec::new(),
-    }
+    })
 }
 
 pub(super) fn parse_entity_id(value: &str) -> Result<EntityId> {

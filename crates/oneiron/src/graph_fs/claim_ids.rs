@@ -44,7 +44,7 @@ impl GraphFsResolver<'_, '_> {
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
         if !self.scoped_read.is_entity_readable(subject)? {
-            return Ok(empty_page(path, self.options.mount));
+            return empty_page(path, self.options, reader);
         }
         let vault = self.scoped_read.vault();
         self.claim_id_page(
