@@ -253,6 +253,7 @@ where
                     Token::Tag(tag!(</body> | </html> | </br>)) => anything_else(token),
 
                     Token::Tag(tag @ tag!(<template>)) => {
+                        stop_on_none!(self.reserve_active_formatting(1));
                         self.active_formatting
                             .borrow_mut()
                             .push(FormatEntry::Marker);
@@ -762,6 +763,7 @@ where
                 Token::Tag(tag @ tag!(<applet> | <marquee> | <object>)) => {
                     stop_on_none!(self.reconstruct_active_formatting_elements());
                     stop_on_none!(self.insert_element_for(tag));
+                    stop_on_none!(self.reserve_active_formatting(1));
                     self.active_formatting
                         .borrow_mut()
                         .push(FormatEntry::Marker);
@@ -1038,6 +1040,7 @@ where
 
                 Token::Tag(tag @ tag!(<caption>)) => {
                     self.pop_until_current(table_scope);
+                    stop_on_none!(self.reserve_active_formatting(1));
                     self.active_formatting
                         .borrow_mut()
                         .push(FormatEntry::Marker);
@@ -1320,6 +1323,7 @@ where
                     self.pop_until_current(table_row_context);
                     stop_on_none!(self.insert_element_for(tag));
                     self.mode.set(InsertionMode::InCell);
+                    stop_on_none!(self.reserve_active_formatting(1));
                     self.active_formatting
                         .borrow_mut()
                         .push(FormatEntry::Marker);

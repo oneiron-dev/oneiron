@@ -46,6 +46,9 @@ pub(super) type PendingTableTextReservation = Box<dyn Fn(&mut StrTendril, usize)
 pub(super) type OpenElementsReservation<Handle> =
     Box<dyn Fn(&mut Vec<Handle>, usize) -> bool + Send>;
 
+pub(super) type ActiveFormattingReservation<Handle> =
+    Box<dyn Fn(&mut super::active_formatting::ActiveFormatting<Handle>, usize) -> bool + Send>;
+
 impl<Handle, Sink> TreeBuilder<Handle, Sink> {
     pub(crate) fn set_tag_attributes_hooks(&mut self, hooks: TagAttributesHooks<Handle, Sink>) {
         self.tag_attributes_hooks = Some(hooks);
@@ -140,6 +143,22 @@ impl<Handle, Sink> TreeBuilder<Handle, Sink> {
         let mut destination = StrTendril::new();
         self.append_pending_table_text(&mut destination, &text)
             .then_some(destination)
+    }
+
+    pub(crate) fn set_active_formatting_reservation(
+        &mut self,
+        reservation: ActiveFormattingReservation<Handle>,
+    ) {
+        self.active_formatting_reservation = Some(reservation);
+    }
+
+    pub(super) fn reserve_active_formatting(&self, additional: usize) -> Option<()> {
+        self.active_formatting_reservation
+            .as_ref()
+            .is_none_or(|reservation| {
+                reservation(&mut self.active_formatting.borrow_mut(), additional)
+            })
+            .then_some(())
     }
 
     pub(crate) fn set_open_elements_reservation(

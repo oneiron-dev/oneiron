@@ -108,6 +108,49 @@ where
         self
     }
 
+    /// Install before input to admit private active-formatting vector backing.
+    /// Native entry size and capacity determine the byte charge. The vector
+    /// retains its owned reservation through removals and parser drop.
+    /// A refusal uses this parser's existing first-error channel.
+    pub fn with_active_formatting_reservation<R, G, S, M>(
+        mut self,
+        reserve: G,
+        settle: S,
+        map_error: M,
+    ) -> Self
+    where
+        E: Send + 'static,
+        R: Send + 'static,
+        G: Fn(usize) -> Result<R, E> + Send + 'static,
+        S: Fn(&mut R, usize) -> Result<(), E> + Send + 'static,
+        M: Fn(ReserveError<E>) -> E + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .sink
+            .sink
+            .set_active_formatting_reservation(Box::new(move |entries, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match entries.try_reserve(additional, &reserve, &settle) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert_with(|| map_error(refusal));
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
     /// Reserve the spec temporary buffer's UTF-8 String before growth.
     /// The callback owns its admission and is dropped after the live String.
     /// Copies emitted as native tendrils have separate, unadmitted backing.
