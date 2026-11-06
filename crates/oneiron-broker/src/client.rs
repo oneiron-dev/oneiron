@@ -169,7 +169,7 @@ pub struct BrokerStream {
     received: usize,
     /// How the body ended, once it has: clean (`None`) or cut.
     ended: Option<Option<Failure>>,
-    /// Present only when this Responses call requires daemon release checks.
+    /// Present only when this call requires daemon release checks.
     dispatch: Option<crate::frame::dispatch::DispatchState>,
 }
 

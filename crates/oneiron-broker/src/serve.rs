@@ -297,7 +297,15 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
     let (outcome, body) = match call.header.check(&call.body) {
         Ok(url) => {
             sender
-                .send(&call.header, url, call.body, &call.secret, deadline)
+                .send(
+                    &call.header,
+                    url,
+                    call.body,
+                    &call.secret,
+                    &mut stream,
+                    call.released,
+                    deadline,
+                )
                 .await
         }
         Err(reason) => (Outcome::Refused { reason }, Zeroizing::new(Vec::new())),

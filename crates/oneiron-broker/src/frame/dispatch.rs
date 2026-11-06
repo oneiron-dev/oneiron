@@ -1,4 +1,4 @@
-//! Same-call release checks before Responses provider writes.
+//! Same-call release checks before physical provider writes.
 
 use std::io;
 
@@ -8,7 +8,7 @@ use tokio::time::Instant;
 use zeroize::Zeroizing;
 
 use super::{MAX_HEADER, read_len, read_segment, read_sized, write_segment};
-use crate::{BrokerError, CallHeader};
+use crate::{BrokerError, CallHeader, Shape};
 
 /// A broker transport failure, or the caller's original release error.
 #[derive(Debug)]
@@ -39,6 +39,23 @@ const DISPATCH_CHECK: u32 = u32::MAX - 1;
 pub(crate) enum DispatchPoint {
     Initial,
     WholeRetry,
+    PlainRetry,
+    Redirect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DispatchPhase {
+    BeforeHeader,
+    Body,
+}
+
+impl DispatchPoint {
+    fn phase(self) -> DispatchPhase {
+        match self {
+            Self::WholeRetry => DispatchPhase::Body,
+            Self::Initial | Self::PlainRetry | Self::Redirect => DispatchPhase::BeforeHeader,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +71,7 @@ pub(crate) struct DispatchState {
     call: String,
     digest: String,
     next: Option<DispatchPoint>,
+    retry: Option<DispatchPoint>,
 }
 
 impl DispatchState {
@@ -62,6 +80,12 @@ impl DispatchState {
             call: call.call.clone(),
             digest: call.digest.clone(),
             next: Some(DispatchPoint::Initial),
+            retry: match call.shape {
+                Shape::OpenAiResponses => Some(DispatchPoint::WholeRetry),
+                Shape::AnthropicMessages => Some(DispatchPoint::PlainRetry),
+                shape if shape.redirect().is_some() => Some(DispatchPoint::Redirect),
+                _ => None,
+            },
         }
     }
 }
@@ -96,7 +120,7 @@ pub(crate) async fn read_released_segment<S, E>(
     stream: &mut S,
     max: usize,
     state: &mut DispatchState,
-    point: DispatchPoint,
+    phase: DispatchPhase,
     release: &(dyn Fn() -> Result<(), E> + Sync),
     deadline: Instant,
 ) -> Result<Zeroizing<Vec<u8>>, DispatchError<E>>
@@ -114,7 +138,7 @@ where
         if request.call != state.call
             || request.digest != state.digest
             || Some(request.point) != state.next
-            || request.point != point
+            || request.point.phase() != phase
         {
             return Err(BrokerError::Lost.into());
         }
@@ -125,8 +149,8 @@ where
         write_segment(stream, &bytes).await?;
         stream.flush().await?;
         state.next = match request.point {
-            DispatchPoint::Initial => Some(DispatchPoint::WholeRetry),
-            DispatchPoint::WholeRetry => None,
+            DispatchPoint::Initial => state.retry.take(),
+            DispatchPoint::WholeRetry | DispatchPoint::PlainRetry | DispatchPoint::Redirect => None,
         };
     }
 }

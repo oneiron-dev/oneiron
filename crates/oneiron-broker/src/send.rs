@@ -17,6 +17,8 @@ use reqwest::header::{
 };
 use reqwest::{Certificate, Client, Method, Url};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::frame::dispatch::{DispatchPoint, request_dispatch};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
@@ -100,16 +102,28 @@ impl Sender {
     /// then strips the key from what came back. `call` has passed
     /// [`CallHeader::check`] on `body`. The send ends by `deadline`'s send
     /// limit.
-    pub(crate) async fn send(
+    pub(crate) async fn send<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         url: Url,
         body: Zeroizing<Vec<u8>>,
         secret: &[u8],
+        writer: &mut W,
+        released: bool,
         deadline: CallDeadline,
     ) -> (Outcome, Zeroizing<Vec<u8>>) {
         let empty = Zeroizing::new(Vec::new());
-        let mut response = match self.reach(call, url, body, secret, deadline).await {
+        let mut response = match self
+            .reach(
+                call,
+                url,
+                body,
+                secret,
+                released.then_some(&mut *writer),
+                deadline,
+            )
+            .await
+        {
             Ok(response) => response,
             Err(outcome) => return (outcome, empty),
         };
@@ -197,7 +211,17 @@ impl Sender {
             .await;
         }
         let reached = match checked {
-            Ok(url) => self.reach(call, url, body, secret, deadline).await,
+            Ok(url) => {
+                self.reach(
+                    call,
+                    url,
+                    body,
+                    secret,
+                    released.then_some(&mut *writer),
+                    deadline,
+                )
+                .await
+            }
             Err(reason) => Err(Outcome::Refused { reason }),
         };
         let mut response = match reached {
@@ -259,21 +283,26 @@ impl Sender {
     /// body is the reply, or the outcome that ends the call before one. Each
     /// request gets only the send's time left, to the last reply byte; a call
     /// with none left is not sent (FIX 8559).
-    async fn reach(
+    async fn reach<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
         url: Url,
         body: Zeroizing<Vec<u8>>,
         secret: &[u8],
+        mut release: Option<&mut W>,
         deadline: CallDeadline,
     ) -> Result<reqwest::Response, Outcome> {
         let timed_out = || Outcome::Failed {
             reason: Failure::Timeout,
         };
         let left = deadline.send_left().ok_or_else(timed_out)?;
-        let (request, plain) = self
+        let (mut request, plain) = self
             .request(call, url.clone(), body, secret, left)
             .map_err(|reason| Outcome::Refused { reason })?;
+        if let Some(stream) = release.as_deref_mut() {
+            release_http_send(stream, call, DispatchPoint::Initial, deadline).await?;
+            *request.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
+        }
         let mut response = match self.client.execute(request).await {
             Ok(response) => response,
             // A connect error comes before any request byte is written.
@@ -293,11 +322,15 @@ impl Sender {
             let refused = response.status();
             drop(response);
             let left = deadline.send_left().ok_or_else(timed_out)?;
-            let resend = self
+            let mut resend = self
                 .request_plain(call, url.clone(), plain, secret, left)
                 .map_err(|_| Outcome::Failed {
                     reason: Failure::Send,
                 })?;
+            if let Some(stream) = release.as_deref_mut() {
+                release_http_send(stream, call, DispatchPoint::PlainRetry, deadline).await?;
+                *resend.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
+            }
             // The first 400 or 415 proves bytes reached the provider, so a
             // resend that fails is `Failed`, never `Refused{Connect}`.
             response = self
@@ -332,7 +365,7 @@ impl Sender {
             // the key goes along: the provider's download hop asks for it.
             let auth = auth_value(call, secret).map_err(|reason| Outcome::Refused { reason })?;
             let left = deadline.send_left().ok_or_else(timed_out)?;
-            let follow = self
+            let mut follow = self
                 .client
                 .get(target)
                 .header(ACCEPT_ENCODING, "identity")
@@ -340,6 +373,10 @@ impl Sender {
                 .timeout(left)
                 .build()
                 .map_err(|_| redirected.clone())?;
+            if let Some(stream) = release.as_deref_mut() {
+                release_http_send(stream, call, DispatchPoint::Redirect, deadline).await?;
+                *follow.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
+            }
             response = self
                 .client
                 .execute(follow)
@@ -460,6 +497,29 @@ impl Sender {
         let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
     }
+}
+
+async fn release_http_send<W: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut W,
+    call: &CallHeader,
+    point: DispatchPoint,
+    deadline: CallDeadline,
+) -> Result<(), Outcome> {
+    let failure = |reason| Outcome::Failed { reason };
+    tokio::time::timeout_at(deadline.send_by(), request_dispatch(stream, call, point))
+        .await
+        .map_err(|_| failure(Failure::Timeout))?
+        .map_err(|error| {
+            failure(if error.kind() == io::ErrorKind::TimedOut {
+                Failure::Timeout
+            } else {
+                Failure::Send
+            })
+        })?;
+    deadline
+        .send_left()
+        .ok_or_else(|| failure(Failure::Timeout))?;
+    Ok(())
 }
 
 /// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
