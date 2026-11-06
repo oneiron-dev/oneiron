@@ -449,11 +449,28 @@ delete, and keys for other runs are not deleted. Unbound cleanup shares the
 same native body without capacity accounting. Known capacities stay charged
 conservatively until the caller lease drops.
 
-Other turn-index buffers, trace-fork and outcome cleanup buffers remain outside
-these charges. The full cleanup order and errors stay unchanged, as do exclusions
-for raw row copies, decoded values, overlay copies, database pages, transaction
-scratch and allocation peaks. No extra encode, copy, lease, admission, wait or
-configured limit is introduced.
+The second trace-fork cleanup forwards the same optional caller lease. Its
+original direct lookup records the encoded key's actual capacity once before
+the same read. Lookup errors, missing or mismatched records, absent traces and
+unknown hashes still fall back to the original full-family scan. A known trace
+still deletes its one fork key and returns; that delete records its original
+key capacity before the same operation, including false or error returns.
+The native lookup result, record and trace keep their original scope and drops.
+
+On the fallback path, the original successful scan's typed-row vector and its
+distinct filtered key vector each record their actual capacity times their
+native element size once. The same consuming loops retain and drop those
+backings. Each original selected delete key records its actual capacity once
+before the same delete. Keys for other runs are not deleted. These temporary
+buffers drop before the same caller lease, which conservatively retains their
+known charge until it drops. Ordinary unbound cleanup keeps the same native
+operations without capacity accounting.
+
+Other turn-index buffers, outcome cleanup buffers and remaining trace-fork
+cleanup storage remain outside these charges. The full cleanup order and errors
+stay unchanged, as do exclusions for raw row copies, decoded values, overlay
+copies, database pages, transaction scratch and allocation peaks. No extra encode,
+copy, lease, admission, wait or configured limit is introduced.
 
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,

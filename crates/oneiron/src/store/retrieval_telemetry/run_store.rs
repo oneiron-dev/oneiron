@@ -801,7 +801,12 @@ pub(super) fn stage_retrieval_run_delete_with_memory(
         run_id,
         memory.as_deref_mut(),
     )?;
-    delete_retrieval_trace_fork_indexes_for_run(target, wtxn, run_id)?;
+    delete_retrieval_trace_fork_indexes_for_run_with_memory(
+        target,
+        wtxn,
+        run_id,
+        memory.as_deref_mut(),
+    )?;
     RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
     super::retention::delete_retrieval_age_with_memory(
         target,
@@ -1186,27 +1191,68 @@ fn delete_retrieval_trace_fork_indexes_for_run(
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
 ) -> Result<()> {
-    if let Ok(Some(record)) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)
-        && record.run_id == run_id
+    delete_retrieval_trace_fork_indexes_for_run_with_memory(target, wtxn, run_id, None)
+}
+
+fn delete_retrieval_trace_fork_indexes_for_run_with_memory(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<()> {
+    if let Ok(Some(record)) = RETRIEVAL_RUN.get_with_key_capacity(target, &*wtxn, &run_id, |bytes| {
+        if let Some(memory) = memory.as_deref_mut() {
+            memory.materialized(0, bytes);
+        }
+    }) && record.run_id == run_id
         && let Some(trace) = record.trace
         && !is_unknown_retrieval_trace_fork_hash(&trace.fork_hash)
     {
-        RETRIEVAL_TRACE_FORK_INDEX.delete(target, wtxn, &(trace.fork_hash, run_id))?;
+        RETRIEVAL_TRACE_FORK_INDEX.delete_with_key_capacity(
+            target,
+            wtxn,
+            &(trace.fork_hash, run_id),
+            |bytes| {
+                if let Some(memory) = memory.as_deref_mut() {
+                    memory.materialized(0, bytes);
+                }
+            },
+        )?;
         return Ok(());
     }
 
     let mut keys = Vec::new();
-    for row in RETRIEVAL_TRACE_FORK_INDEX
+    let rows = RETRIEVAL_TRACE_FORK_INDEX
         .iter_from(target, &*wtxn, &[])?
-        .collect::<Result<Vec<_>>>()?
-    {
+        .collect::<Result<Vec<_>>>()?;
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.materialized(
+            0,
+            (rows.capacity() as u64).saturating_mul(std::mem::size_of::<(
+                ([u8; 32], RetrievalRunId),
+                PresentMarker,
+            )>() as u64),
+        );
+    }
+    for row in rows {
         let ((fork_hash, key_run_id), _marker) = row;
         if key_run_id == run_id {
             keys.push((fork_hash, key_run_id));
         }
     }
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.materialized(
+            0,
+            (keys.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<([u8; 32], RetrievalRunId)>() as u64),
+        );
+    }
     for key in keys {
-        RETRIEVAL_TRACE_FORK_INDEX.delete(target, wtxn, &key)?;
+        RETRIEVAL_TRACE_FORK_INDEX.delete_with_key_capacity(target, wtxn, &key, |bytes| {
+            if let Some(memory) = memory.as_deref_mut() {
+                memory.materialized(0, bytes);
+            }
+        })?;
     }
     Ok(())
 }
