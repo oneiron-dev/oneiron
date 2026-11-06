@@ -46,6 +46,7 @@ static REWRITTEN: &[&SideTableDecl] = &[
     &side_table::CODE_RUN_WAIT_DELIVERY,
     &side_table::CODE_RUN_WAIT_INDEX,
     &side_table::MODEL_STEP_SUBMISSION,
+    &side_table::COMPACTION_CHECK_MATERIAL,
     &side_table::SAVED_QUERY_MEMO,
     &side_table::SELF_HEAL_CENTROID_EVIDENCE,
     &side_table::MESSAGE_REPLY_ASSERTIONS,

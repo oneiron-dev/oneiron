@@ -17,7 +17,7 @@ mod log;
 mod request;
 
 pub use request::CompactionRequest;
-pub(crate) use request::{ConversationBinding, WindowLog};
+pub(crate) use request::{ConversationBinding, StoredCompactionRequest, WindowLog};
 
 use super::gate::{CompactionCheck, CompactionRefusal};
 

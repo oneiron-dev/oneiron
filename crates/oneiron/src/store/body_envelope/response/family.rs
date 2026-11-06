@@ -79,6 +79,11 @@ pub(crate) enum ResponseFamily {
     /// orphan copies keep their claim alone. Existing unchanged bindings
     /// keep their prior owners. A retired copy leaves nothing.
     TypedQuestion,
+    /// A conversation summary's check material (FIX 5040): its sealed gate
+    /// request, the backend's whole reply and the gate policy, carried whole
+    /// and owned by the SUMMARY and every source of its window. A retired
+    /// copy keeps its erased form, which holds the refs and digest only.
+    CompactionCheckMaterial,
 }
 
 impl ResponseFamily {
@@ -107,6 +112,10 @@ impl ResponseFamily {
                 ),
                 (&side_table::FEEDBACK_REPORT_CLUSTER, Self::ReportCluster),
                 (&side_table::TYPED_QUESTION, Self::TypedQuestion),
+                (
+                    &side_table::COMPACTION_CHECK_MATERIAL,
+                    Self::CompactionCheckMaterial,
+                ),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -160,7 +169,8 @@ impl ResponseFamily {
             | Self::VoiceBank
             | Self::CentroidEvidence
             | Self::ReportCluster
-            | Self::TypedQuestion => ResponseDb::VaultMeta,
+            | Self::TypedQuestion
+            | Self::CompactionCheckMaterial => ResponseDb::VaultMeta,
         }
     }
 
@@ -223,6 +233,7 @@ impl ResponseFamily {
             Self::TypedQuestion => {
                 crate::llm::decision::questions::typed_question_carriage(key, value)
             }
+            Self::CompactionCheckMaterial => crate::compaction::check_material_carriage(value),
         }
     }
 
@@ -371,6 +382,9 @@ impl ResponseFamily {
                     store, txn, key, value,
                 )
             }
+            Self::CompactionCheckMaterial => {
+                Ok(crate::compaction::check_material_owners(key, value))
+            }
         }
     }
 
@@ -420,7 +434,8 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::AttemptPayload
-            | Self::ModelStepSubmission => Ok(()),
+            | Self::ModelStepSubmission
+            | Self::CompactionCheckMaterial => Ok(()),
         }
     }
 
@@ -459,7 +474,8 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission
-            | Self::CentroidEvidence => store.side_vault_meta().put(wtxn, key, &kept()?),
+            | Self::CentroidEvidence
+            | Self::CompactionCheckMaterial => store.side_vault_meta().put(wtxn, key, &kept()?),
             Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
