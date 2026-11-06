@@ -127,6 +127,16 @@ pub(super) fn replay_record<T: OutboundTransport>(
                 let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
                 return replay_record(vault, authority, proven, prepared, now_ms, transport);
             }
+            // FIX 4747: a provider that forgets its key after a window (LINE's
+            // retry key) deduplicates this resend only inside it, so the lookup
+            // decides, and the owner is asked once the window may have lapsed
+            // (review #6555).
+            if transport.looks_up_uncertain_sends()
+                && transport
+                    .idempotent_resend_is_time_bounded(&FrozenOutboundCall::from_record(&record))
+            {
+                return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
+            }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
             // BEFORE a resumed no-wire failure can replace its retry marker.

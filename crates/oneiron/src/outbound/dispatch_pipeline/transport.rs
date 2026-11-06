@@ -261,6 +261,19 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.request.engine_send_id.is_some()
     }
 
+    /// A LINE push or narrowcast of a connector-send TASK: LINE keeps its
+    /// retry key for 24 hours only (FIX 4747, review #6555). Engine call
+    /// (CALLS, FIX 4747): the channels and verbs whose key lapses.
+    fn idempotent_resend_is_time_bounded(
+        &self,
+        _call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> bool {
+        self.request.engine_send_id.is_some()
+            && crate::outbound::capability::normalize_key(&self.request.intent.channel)
+                == crate::channel_identity_provider::LINE_CHANNEL
+            && matches!(self.request.intent.verb.as_str(), "push" | "narrowcast")
+    }
+
     /// The owner's resend releases the uncertain call; else the sink's
     /// provider lookup for a call this transport would send decides (FIX
     /// 4747). A call this transport would not send, or a second lookup in
