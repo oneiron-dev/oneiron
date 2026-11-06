@@ -47723,7 +47723,7 @@
      "path": "src/memory/claims/commit.rs",
      "purpose": "Claim commits: the batch, single and guarded commit doors, and the claim-envelope actor read",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -47733,7 +47733,7 @@
      "path": "src/memory/claims/commit/preferences.rs",
      "purpose": "Stated-preference matching: the prior-claim lookup, preference conflicts and answer agreement",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -47743,7 +47743,7 @@
      "path": "src/memory/claims/commit/write.rs",
      "purpose": "The guarded claim commit: dedupe, supersede, Gate and publication in one write transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -47753,7 +47753,17 @@
      "path": "src/memory/claims/commit/write/attempt.rs",
      "purpose": "One write attempt of a claim commit: its candidate and envelope, then one content write that admits, stages…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/commit/write/batch.rs",
+     "purpose": "One atomic claim batch (FIX 9403): every element resolved first, then one actor content write that admits…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -47814,7 +47824,7 @@
      "purpose": "Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 1,
       "re-export": 3,
@@ -52726,7 +52736,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FileHandle",
@@ -52738,7 +52748,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -52756,7 +52766,7 @@
      "path": "src/note/folder_source/mod.rs",
      "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "re-export": 1,
@@ -92167,7 +92177,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 367,
+     "files": 368,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92883,7 +92893,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6545,
+   "source_files": 6546,
    "test_files": 895
   },
   "oneiron-android": {
@@ -119630,6 +119640,7 @@
      "notable": [
       "FilesAttachArgs",
       "FilesCommand",
+      "FilesConvertArgs",
       "FilesListArgs",
       "FilesPathArgs",
       "FilesRescanArgs"
@@ -119638,7 +119649,7 @@
      "purpose": "`oneiron files`: the Files world on a stopped vault (FIX 6942), the folders this install keeps searchable on…",
      "surface": {
       "enum": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
