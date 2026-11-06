@@ -116,6 +116,8 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// One participant's explicit team choice. Key: caller attempt hex, `:`, team reference.
+    TEAM_BALLOT: VaultMeta b"team:ballot:v1:" Named;
     /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
     /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
     TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named;

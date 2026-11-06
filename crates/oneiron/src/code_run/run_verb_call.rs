@@ -200,6 +200,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }
+        RunVerb::SelfTeamVote => SelfCall::Team(crate::team::SelfTeamCall::Vote(decode(input)?)),
         RunVerb::SelfTeamSubmit => SelfCall::TeamSubmit(decode(input)?),
         RunVerb::TasksWait => {
             let input: crate::code_run::TaskWaitInput = decode(input)?;

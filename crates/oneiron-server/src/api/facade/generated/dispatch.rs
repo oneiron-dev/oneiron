@@ -42568,6 +42568,7 @@ async fn call_verb_row(
         | "self.leader.pattern"
         | "self.team.start"
         | "self.team.record"
+        | "self.team.vote"
         | "self.team.submit"
         | "self.spawn"
         | "tasks.wait"
