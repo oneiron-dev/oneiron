@@ -31,6 +31,7 @@ mod updates;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
 // FIX 14975: the drafter evaluator's op, and the chat body split it sends.
 pub(super) use evaluator_ops::{
     advertised as evaluator_advertised, evaluate as evaluator_generate,
@@ -330,8 +331,8 @@ async fn begin(
     let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
-        Some(manifest) => {
-            worker_host::open_turn(
+        Some(manifest) => match release {
+            Some(release) => worker_host::open_turn_with_release(
                 route,
                 &launch,
                 &epoch,
@@ -339,9 +340,23 @@ async fn begin(
                 manifest,
                 &conversation,
                 &params,
+                Some(release),
             )
             .await
-        }
+            .map_err(OpenAiCompatTransportError::Release)?,
+            None => {
+                worker_host::open_turn(
+                    route,
+                    &launch,
+                    &epoch,
+                    lease.observed(),
+                    manifest,
+                    &conversation,
+                    &params,
+                )
+                .await
+            }
+        },
         None => None,
     };
     let plain = session.is_some().then(|| params.clone());
