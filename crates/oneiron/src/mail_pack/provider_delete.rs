@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use super::source::{MailProviderDeleteSetting, MailSourceRow};
 use super::state::{
-    BODY_QUEUE, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key, occurrence_key,
+    BODY_QUEUE, MailPresence, MailStage, OCCURRENCES, SYNC, THREAD_EPOCHS, body_queue_key,
+    occurrence_key, thread_hash,
 };
 use crate::deletion::DeleteReason;
 use crate::side_table::{self, Named, SideTable};
@@ -39,6 +40,12 @@ struct MailForgetOwed {
     /// Its thread's CONVERSATION: it goes once no other message of the
     /// source is left in that thread.
     conversation: EntityId,
+    /// The BLAKE3 of its thread key, whose epoch moves on when the
+    /// CONVERSATION goes.
+    thread: [u8; 32],
+    /// Whether this is the thread's last message, its epoch moved on: the
+    /// CONVERSATION's delete is what is left.
+    closing: bool,
     at: u64,
 }
 
@@ -114,6 +121,8 @@ pub(super) fn apply_provider_delete(
             let owed = MailForgetOwed {
                 rows,
                 conversation: current.conversation,
+                thread: thread_hash(&current.thread_key),
+                closing: false,
                 at,
             };
             FORGET_OWED.put(&vault.store, txn, &key, &owed)?;
@@ -177,12 +186,27 @@ fn resume_forget(vault: &Vault, key: &(EntityId, [u8; 32])) -> Result<()> {
     // One writer decides whether another message still holds the thread:
     // then this debt retires in it. The last keeps its debt until the
     // CONVERSATION's delete is done, so two forgets that end together never
-    // both leave it to the other.
+    // both leave it to the other. The last moves the thread's epoch on in
+    // that writer: a message landing in the thread from then on opens a new
+    // CONVERSATION, and one read before it is refused in its own writer and
+    // lands at the next step (`landing.rs`), so the delete takes no live
+    // message with it.
     let last = vault.with_write_txn_grouped(|txn| {
-        if conversation_holds_others_in(vault, txn, key, &owed.conversation)? {
+        let Some(mut current) = FORGET_OWED.get(&vault.store, txn, key)? else {
+            return Ok(false);
+        };
+        if current.closing {
+            return Ok(true);
+        }
+        if conversation_holds_others_in(vault, txn, key, &current.conversation)? {
             FORGET_OWED.delete(&vault.store, txn, key)?;
             return Ok(false);
         }
+        let thread = (key.0, current.thread);
+        let epoch = THREAD_EPOCHS.get(&vault.store, txn, &thread)?.unwrap_or(0);
+        THREAD_EPOCHS.put(&vault.store, txn, &thread, &(epoch + 1))?;
+        current.closing = true;
+        FORGET_OWED.put(&vault.store, txn, key, &current)?;
         Ok(true)
     })?;
     if last {
