@@ -252,6 +252,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultLegalHoldsWithdrawErase
         | Row::VaultAgentsGrantsMint
         | Row::VaultAgentsGrantsRevoke
+        | Row::VaultAgentsVerbClassesGet
+        | Row::VaultAgentsVerbClassesConfigure
         | Row::VaultRepoGitPushMint
         | Row::VaultRepoGitPushRevoke
         | Row::VaultRepoAnchorBind
