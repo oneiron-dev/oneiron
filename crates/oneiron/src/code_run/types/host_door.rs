@@ -33,6 +33,8 @@ pub struct AgentVerbAnswer {
     pub rows: Option<Vec<EntityId>>,
     pub observations: Vec<RunObservation>,
     pub hooks: Vec<SessionHookDisposition>,
+    /// Native handoff only. The write receipt keeps this in its output manifests.
+    pub(crate) stored_output: Option<crate::code_run::CodeRunRawOutput>,
 }
 
 impl AgentVerbAnswer {
@@ -45,6 +47,7 @@ impl AgentVerbAnswer {
             rows,
             observations: Vec::new(),
             hooks: Vec::new(),
+            stored_output: None,
         }
     }
 

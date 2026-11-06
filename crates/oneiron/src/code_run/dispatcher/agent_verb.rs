@@ -2,6 +2,7 @@
 
 mod scoped_port;
 mod session_write;
+mod stored_answer;
 
 use serde_json::Value;
 
@@ -260,6 +261,8 @@ impl HostSelfDispatcher<'_> {
             }
             Err(error) => return Err(error),
         };
+        let mut outcome = outcome;
+        stored_answer::store(&self.storage, site.run_id, &mut receipt, &mut outcome)?;
         // A receipt keeps its call's answer as its record's first row.
         receipt.bridge_calls.push(CodeRunBridgeCall::record(
             0,
@@ -343,7 +346,9 @@ impl HostSelfDispatcher<'_> {
         if standing_refusal(&receipt).is_some() {
             self.append_ruling(&receipt, row.clone())?;
         }
-        decode_self_dispatch_outcome(&row.outcome)
+        let mut outcome = decode_self_dispatch_outcome(&row.outcome)?;
+        stored_answer::restore(&receipt, &mut outcome);
+        Ok(outcome)
     }
 
     /// A `reveal.wait` answer carries a secret's value (OF-560): the guest
