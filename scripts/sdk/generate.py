@@ -1886,6 +1886,8 @@ def outputs():
             core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
             encoder = {
+                'vault.conversations.create': 'core_write_output::entity',
+                'vault.conversations.turns.create': 'core_write_output::entity',
                 'connector.schema': 'connector_output::schema',
                 'connector.call_status': 'connector_output::status',
                 'vault.models.catalog.refresh': 'model_catalog_output::revision',
