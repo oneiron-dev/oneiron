@@ -577,26 +577,7 @@ impl MergeQueue<'_> {
             let txn = self.vault.store.env.read_txn()?;
             self.repo_batches_in_txn(&txn)?
         };
-        if link.resolution_batch.is_none()
-            && let Some(task) = link.task
-            && let Some(successor) = retained.iter().find(|other| {
-                !link.batches.contains(&other.id)
-                    && other
-                        .run_order
-                        .as_ref()
-                        .is_some_and(|order| order.task == task)
-            })
-        {
-            link.resolution_batch = Some(successor.id.clone());
-            self.update_overlap_links(&link)?;
-            return Ok(QueueDriveOutcome::Changed);
-        }
-        if let Some(resolution) = &link.resolution_batch
-            && retained
-                .iter()
-                .any(|other| &other.id == resolution && other.state == BatchState::GreenAdvanced)
-        {
-            link.superseded = true;
+        if self.reconcile_conflict_resolution(&mut link, &retained)? {
             self.update_overlap_links(&link)?;
             return Ok(QueueDriveOutcome::Changed);
         }

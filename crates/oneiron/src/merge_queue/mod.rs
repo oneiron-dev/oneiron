@@ -15,6 +15,7 @@ mod checks;
 mod composition;
 mod driver;
 mod driver_materialize;
+mod driver_resolution;
 mod driver_store;
 mod driver_types;
 mod file_metadata;
