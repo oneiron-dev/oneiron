@@ -71,6 +71,10 @@ impl HostSelfDispatcher<'_> {
                 .code_run_folds(run_id)?
                 .answer(call, step, prefix_end)
         };
-        Ok(SelfDispatchOutcome::Fold(answer.to_string()))
+        // A fold's answer can quote its stub, ids and note: every known
+        // custody value in it reaches the guest as its handle.
+        Ok(SelfDispatchOutcome::Fold(
+            crate::engine_executor::mask_known_text(&self.storage, &answer.to_string())?,
+        ))
     }
 }
