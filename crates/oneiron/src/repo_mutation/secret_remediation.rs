@@ -40,6 +40,7 @@ mod link;
 mod plan;
 mod render;
 mod text;
+mod view;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,6 +51,9 @@ pub(crate) use self::env::{
 pub(crate) use self::link::offer_secret_remediation_in_txn;
 use self::plan::Plan;
 pub use self::render::RepoSecretReferenceRenderer;
+pub use self::view::{
+    RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretMarks, RepoSecretRemediationLinkEntry,
+};
 use super::git::{canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root};
 use super::proposal::{ProposalBase, RepoProposalReview, invalid};
 use super::snapshot::SnapshotCustody;

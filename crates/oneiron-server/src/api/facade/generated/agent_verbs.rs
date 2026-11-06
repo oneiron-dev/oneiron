@@ -764,6 +764,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.proposal_settle", post(facade_route))
         .route("/vault.code.proposal_settlement", post(facade_route))
         .route("/vault.code.oplog", post(facade_route))
+        .route("/vault.code.secrets.get", post(facade_route))
+        .route("/vault.code.secrets.propose", post(facade_route))
         .route("/execute_code", post(facade_route))
         .route("/vault.code.model_heal_count", post(facade_route))
         .route("/vault.code.type_diagnostics", post(facade_route))

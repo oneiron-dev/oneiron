@@ -3406,6 +3406,16 @@ export_facade! {
     let output = client.vault_code_oplog(&input)?;
     crate::codec::lift_record("vault.code.oplog", &output)
 };
+"vault.code.secrets.get" => fn vault_code_secrets_get(&self, input: CodeRepoRequest) -> CodeRepoSecretsView = |client| {
+    let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.secrets.get", input)?;
+    let output = client.vault_code_secrets_get(&input)?;
+    crate::codec::lift_record("vault.code.secrets.get", &output)
+};
+"vault.code.secrets.propose" => fn vault_code_secrets_propose(&self, input: CodeRepoSecretProposeRequest) -> CodeRepoSecretRemediation = |client| {
+    let input: oneiron::memory::code_doors::CodeRepoSecretProposeRequest = crate::codec::lower_record("vault.code.secrets.propose", input)?;
+    let output = client.vault_code_secrets_propose(&input)?;
+    crate::codec::lift_record("vault.code.secrets.propose", &output)
+};
 "execute_code" => fn execute_code(&self, input: ForeignCodeRunRequest) -> ForeignCodeRunResult = |client| {
     let input: oneiron::memory::foreign_code::ForeignCodeRunRequest = crate::codec::lower_record("execute_code", input)?;
     let output = client.execute_code(&input)?;

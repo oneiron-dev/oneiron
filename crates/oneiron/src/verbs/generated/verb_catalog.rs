@@ -685,6 +685,8 @@ pub enum AgentVerb {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
     VaultCodeTypeDiagnostics,
@@ -1972,6 +1974,8 @@ impl AgentVerb {
         Self::VaultCodeProposalSettle,
         Self::VaultCodeProposalSettlement,
         Self::VaultCodeOplog,
+        Self::VaultCodeSecretsGet,
+        Self::VaultCodeSecretsPropose,
         Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
         Self::VaultCodeTypeDiagnostics,
@@ -3286,6 +3290,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
             Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
             Self::VaultCodeOplog => "vault.code.oplog",
+            Self::VaultCodeSecretsGet => "vault.code.secrets.get",
+            Self::VaultCodeSecretsPropose => "vault.code.secrets.propose",
             Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeTypeDiagnostics => "vault.code.type_diagnostics",
@@ -4585,6 +4591,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeTypeDiagnostics
@@ -5901,6 +5909,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeTypeDiagnostics
@@ -7356,6 +7366,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
@@ -8308,6 +8320,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalResolve
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
+                | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
@@ -9384,6 +9397,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeSecretsGet => &["spec"],
+            Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
@@ -10672,6 +10687,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeSecretsGet => &["spec"],
+            Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
@@ -13292,6 +13309,12 @@ impl AgentVerb {
             }
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
+            }
+            Self::VaultCodeSecretsGet => {
+                "Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."
+            }
+            Self::VaultCodeSecretsPropose => {
+                "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."
             }
             Self::ExecuteCode => {
                 "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
