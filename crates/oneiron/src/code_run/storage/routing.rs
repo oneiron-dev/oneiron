@@ -727,8 +727,8 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// Stores a complete body with the run `owner`'s output descriptor in the
-    /// routed vault or session store (FIX 7283, 7363).
+    /// Stores a complete body in the routed vault or session store.
+    /// Eligible run occurrences hold it through output descriptors, even off record.
     pub(crate) fn put_code_run_raw_output(
         &self,
         owner: EntityId,
