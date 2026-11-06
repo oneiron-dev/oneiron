@@ -1464,10 +1464,12 @@ export class Oneiron {
       delegate: (input: Facade.FederationDelegateRequest): Facade.FederationMemberGrant => this.#call(() => this.#client.vaultMembersDelegate(input) as Facade.FederationMemberGrant),
       /** Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority. */
       projection: (input: Facade.SharedMemberRequest): Facade.MemberProjection => this.#call(() => this.#client.vaultMembersProjection(input) as Facade.MemberProjection),
-      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
-      add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
-      /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation. */
+      add: (input: Facade.SharedMemberAddRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedActExecutionReceipt),
+      /** The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound. */
       invitation_slip: (input: Facade.InvitationSlipRequest): Facade.InvitationSlip => this.#call(() => this.#client.vaultMembersInvitationSlip(input) as Facade.InvitationSlip),
+      /** The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key. */
+      invitation_code: (input: Facade.InvitationCodeRequest): Facade.InvitationCode => this.#call(() => this.#client.vaultMembersInvitationCode(input) as Facade.InvitationCode),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** An Admin removes one member from a shared vault. */
