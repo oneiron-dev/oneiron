@@ -83,14 +83,18 @@ fn container_marked(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return false;
     };
-    if !matches!(
+    body_marked(
         header.entity_type,
-        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
-    ) {
-        return false;
-    }
-    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    body_string(body, IMPORT_SOURCE_KEY).is_some_and(|source| SOURCE_IMPORTS.contains(&source))
+        raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default(),
+    )
+}
+
+/// Whether a row of type `entity_type` with body `body` is a source's
+/// import: a TURN or CONVERSATION naming one of the source imports.
+pub(super) fn body_marked(entity_type: u8, body: &[u8]) -> bool {
+    matches!(entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION)
+        && body_string(body, IMPORT_SOURCE_KEY)
+            .is_some_and(|source| SOURCE_IMPORTS.contains(&source))
 }
 
 /// Whether the row `id` (bytes `raw`) is one a source audience landed: a
@@ -246,8 +250,10 @@ pub(crate) fn lineage_held_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
 /// come from rows as a read takes them: every row it was written from, and,
 /// for a CLAIM, one of its supports, so a claim one free support carries
 /// travels as it reads (FIX 12559 follow-up); a restricted lane counts every
-/// support. Where the vault holds no policy only a row a source landed is
-/// withheld, by its own stamp.
+/// support. Where the vault holds no policy and no source ever landed a row
+/// here, only a row stamped as a source's import is withheld, by its own
+/// stamp; where one did, the walk runs as everywhere, so a row whose words
+/// came from an unbound landed row stays too (fix list row 16255).
 ///
 /// # Errors
 ///
@@ -259,7 +265,9 @@ pub(crate) fn withheld_by_lineage_in(
     scope: ReplicationScope,
 ) -> Result<bool> {
     let dbs = vault.store.read();
-    if !super::any_policy_in(vault, txn)? {
+    if !super::any_policy_in(vault, txn)? && !super::any_landed_in(vault, txn)? {
+        // No row here came from a landed one: only the row's own stamp can
+        // hold it.
         return match crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)? {
             Some(raw) => source_marked_in(&dbs, txn, *id, &raw),
             None => Ok(false),
@@ -292,8 +300,9 @@ pub(crate) fn withheld_by_lineage_in(
 /// Whether every one of `viewers` reads the revision `raw` of `id` under
 /// the source audience: its own binding, and those of everything its words
 /// came from. `dbs` is the view the read walks (a session's composed view
-/// included); bindings and policies read base. A vault that holds no policy
-/// and holds no row back answers at once.
+/// included); bindings and policies read base. A vault that holds no
+/// policy, holds no row back and never had a row a source landed answers at
+/// once (fix list row 16255).
 pub(crate) fn readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -302,9 +311,12 @@ pub(crate) fn readable_with_read_in(
     raw: &[u8],
     viewers: &[EntityId],
 ) -> Result<bool> {
-    if !super::any_policy_in(vault, txn)? && !super::any_held_in(vault, txn)? {
-        // No policy here, as on a replica the audience never reached: a row
-        // a source landed still reads to no one.
+    if !super::any_policy_in(vault, txn)?
+        && !super::any_held_in(vault, txn)?
+        && !super::any_landed_in(vault, txn)?
+    {
+        // No row here came from a landed one: only the row's own stamp can
+        // deny it.
         return Ok(!source_marked_in(dbs, txn, id, raw)?);
     }
     let mut judge = Judge {

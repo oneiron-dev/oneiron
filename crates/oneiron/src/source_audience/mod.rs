@@ -66,6 +66,9 @@ const RECORDS: SideTable<EntityId, EntityId, Named> =
 /// Each row this vault reads to no one meanwhile, and why.
 const HELD: SideTable<EntityId, HeldBack, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_HELD);
+/// Whether a row a source landed was ever written here (fix list row
+/// 16255).
+const LANDED: SideTable<(), bool, Named> = SideTable::new(&side_table::SOURCE_AUDIENCE_LANDED);
 /// The thread policy of one thread of a source policy, by the source policy
 /// and the BLAKE3 of the source's own thread key. A second policy another
 /// install minted for the same thread before the two met is filed beside it,
@@ -205,6 +208,33 @@ pub(crate) fn lift_hold_in_txn(
     }
     HELD.delete(&vault.store, txn, id)?;
     Ok(true)
+}
+
+/// Whether a row a source landed was ever written here, by any door: a
+/// pack landing, a replica's receipt, a logical archive's import or a
+/// restore of an image that held one (fix list row 16255). Until one is, no
+/// row's words came from one, so the walk answers at once.
+pub(crate) fn any_landed_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(LANDED.get(&vault.store, txn, &())?.unwrap_or(false))
+}
+
+/// Notes, in the write that materializes it, a TURN or CONVERSATION row a
+/// source landed: one whose body names a source audience's import source
+/// (fix list row 16255). Every base write of a row runs it, whoever writes.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn note_landed_in(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if walk::body_marked(entity_type, body) && LANDED.get(store, txn, &())? != Some(true) {
+        LANDED.put(store, txn, &(), &true)?;
+    }
+    Ok(())
 }
 
 /// Whether the vault holds any policy: one that holds none binds no row.

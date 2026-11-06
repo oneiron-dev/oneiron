@@ -247,6 +247,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
     // A held-back row stays denied in the image as it was.
     (&t::SOURCE_AUDIENCE_HELD, CONTENT),
+    // Whether a source landed a row stands with the rows the image holds.
+    (&t::SOURCE_AUDIENCE_LANDED, CONTENT),
     (&t::SOURCE_AUDIENCE_POLICY, LIVE),
     // A row's birth binding stands with the row as the image holds it.
     (&t::SOURCE_AUDIENCE_RECORD, CONTENT),
