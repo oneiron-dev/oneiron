@@ -25,6 +25,7 @@ use rmpv::Value;
 mod editor_sources;
 mod remake;
 mod requester_lane;
+pub(super) use requester_lane::inherit_note_requester_lane;
 
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).

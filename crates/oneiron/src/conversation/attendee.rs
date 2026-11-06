@@ -197,7 +197,26 @@ impl Memory<'_> {
         &self,
         event: &ContainerAttendeeEvent,
     ) -> MemoryResult<Option<TaskAskReceipt>> {
-        self.attendee_entered(event, EntryAsk::Identity)
+        self.attendee_entered(event, EntryAsk::Identity, None)
+    }
+
+    /// Records an entry and proposes a PERSON newcomer's clearance in the
+    /// same writer. `scope` and `owner_ref` are the host's proposal, never
+    /// authority; the owner reads and answers the existing disclosure offer.
+    /// No Scope or recipient is selected by the engine.
+    ///
+    /// An offer failure is returned after the entry commits. Retrying reads
+    /// the original entry, without another join or a new history cut, while
+    /// its first membership window remains open. An offer already filed for
+    /// that contact and room is not filed again. Speakers keep their normal
+    /// identity-ask behavior. Returns the identity ask raised, if any.
+    pub fn container_attendee_entered_with_disclosure_offer(
+        &self,
+        event: &ContainerAttendeeEvent,
+        scope: &oneiron_authority::federation::Scope,
+        owner_ref: &str,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
+        self.attendee_entered(event, EntryAsk::Identity, Some((scope, owner_ref)))
     }
 
     /// [`Self::container_attendee_entered`], a speaker asked as `ask` says.
@@ -205,15 +224,19 @@ impl Memory<'_> {
         &self,
         event: &ContainerAttendeeEvent,
         ask: EntryAsk,
+        offer_context: Option<(&oneiron_authority::federation::Scope, &str)>,
     ) -> MemoryResult<Option<TaskAskReceipt>> {
         // The identity ask is admitted in the entry's own writer, so the
         // task-work turn it needs is taken here, before any transaction.
         if !self.has_task_work_turn() {
-            return self.task_work_memory().attendee_entered(event, ask);
+            return self
+                .task_work_memory()
+                .attendee_entered(event, ask, offer_context);
         }
         let vault = self.vault();
         let writer = self.write_actor();
         self.with_verified_actor_write_txn(|txn| {
+            self.recheck_host_action_in_txn(txn)?;
             body::body_in(vault, txn, event.container)?;
             // A project room keeps its own rule: a PERSON enters it through
             // its roster, and a speaker enters it asked nothing.
@@ -232,7 +255,12 @@ impl Memory<'_> {
                     .ever_members_in_txn(txn, event.container)?
                     .contains(person)
             {
-                return Ok(Ok(None));
+                return Ok(match offer_context {
+                    Some((scope, owner_ref)) => {
+                        self.offer_person_entry_in_savepoint(txn, event, scope, owner_ref)
+                    }
+                    None => Ok(None),
+                });
             }
             let admit = match (ask, project) {
                 (EntryAsk::Identity, false) => crate::task_verb::admit_attendee_entry_in_txn,
@@ -254,6 +282,11 @@ impl Memory<'_> {
             let decided = entry_decided_in(vault, txn, &admitted.entry_ref)?;
             if decided {
                 return Ok(Ok(None));
+            }
+            if matches!(admitted.fact.attendee, ContainerAttendee::Person(_))
+                && let Some((scope, owner_ref)) = offer_context
+            {
+                return Ok(self.offer_person_entry_in_savepoint(txn, event, scope, owner_ref));
             }
             // The ask commits with the entry (FIX 10172). Its failure is
             // the ask's alone: the entry commits pending, as an entry whose
@@ -285,6 +318,71 @@ impl Memory<'_> {
             }
             Ok(Ok(None))
         })?
+    }
+
+    /// Proposes only the stored PERSON entry's question. The savepoint owns
+    /// every offer-related read and write, so a failed proposal never rolls
+    /// back the entry or repeats its membership and output-barrier effects.
+    fn offer_person_entry_in_savepoint(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        event: &ContainerAttendeeEvent,
+        scope: &oneiron_authority::federation::Scope,
+        owner_ref: &str,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
+        let vault = self.vault();
+        let entry_ref = crate::task_verb::attendee_entry_id(event.container, &event.attendee)?;
+        let offered: MemoryResult<()> = vault
+            .store
+            .env
+            .nested_write_txn(txn)
+            .map_err(|error| crate::memory::MemoryError::from(crate::Error::from(error)))
+            .and_then(|mut savepoint| {
+                let Some(fact) =
+                    crate::task_verb::read_attendee_entry_in(vault, &savepoint, entry_ref)?
+                else {
+                    return Ok(());
+                };
+                let ContainerAttendee::Person(person) = fact.attendee else {
+                    return Ok(());
+                };
+                if fact.container != event.container
+                    || event.attendee != ContainerAttendee::Person(person)
+                    || entry_decided_in(vault, &savepoint, &entry_ref)?
+                {
+                    return Ok(());
+                }
+                let windows = vault.windows_in_txn(&savepoint, fact.container, person)?;
+                let [window] = windows.as_slice() else {
+                    return Ok(());
+                };
+                if window.to.is_some() {
+                    return Ok(());
+                }
+                let fold = vault.authority_view_readonly_in_txn(&savepoint)?;
+                let Some(contact) =
+                    crate::disclosure::room_party_entry_in(vault, &savepoint, &fold, person)?
+                        .contact
+                else {
+                    return Ok(());
+                };
+                vault.file_person_entry_disclosure_offer_once_in_txn(
+                    &mut savepoint,
+                    contact,
+                    &fact.container,
+                    scope.clone(),
+                    owner_ref,
+                )?;
+                savepoint.commit().map_err(crate::Error::from)?;
+                Ok(())
+            });
+        if offered.is_err() {
+            tracing::warn!(
+                entry = %entry_ref.to_hex(),
+                "an attendee entry's disclosure offer was not filed; the entry stays pending"
+            );
+        }
+        offered.map(|()| None)
     }
 
     /// Admits `fact`'s "who is this?" ask in a savepoint of the entry's
@@ -393,7 +491,7 @@ impl Memory<'_> {
                 until,
                 history: HistoryChoice::Inherit,
             };
-            asks.extend(self.attendee_entered(&event, ask)?);
+            asks.extend(self.attendee_entered(&event, ask, None)?);
         }
         Ok(asks)
     }

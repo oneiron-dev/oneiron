@@ -199,6 +199,17 @@ pub(crate) struct BodyBudget<'a> {
     remaining: usize,
 }
 
+/// In-hand facts for an omitted-body marker, without retaining its raw body.
+pub(crate) struct PreparedOmittedBody {
+    id: EntityId,
+    entity_type: u8,
+    updated_at: u64,
+    view: View,
+    mode: ReadMode,
+    body_len: usize,
+    content_hash: u8,
+}
+
 impl<'a> BodyBudget<'a> {
     pub(crate) fn new(vault: &'a Vault, bound: usize) -> Self {
         Self {
@@ -283,6 +294,45 @@ impl<'a> BodyBudget<'a> {
         view: View,
         mode: ReadMode,
     ) -> Value {
+        self.finish_omitted(Self::prepare_omitted(
+            id,
+            entity_type,
+            updated_at,
+            body,
+            view,
+            mode,
+        ))
+    }
+
+    /// Captures only in-hand facts; no vault lookup or body decoding occurs.
+    pub(crate) fn prepare_omitted(
+        id: &EntityId,
+        entity_type: u8,
+        updated_at: u64,
+        body: &[u8],
+        view: View,
+        mode: ReadMode,
+    ) -> PreparedOmittedBody {
+        PreparedOmittedBody {
+            id: *id,
+            entity_type,
+            updated_at,
+            view,
+            mode,
+            body_len: body.len(),
+            content_hash: oneiron::batch::short_id_content_hash(body),
+        }
+    }
+
+    /// Resolves the original marker ref after the scoped read has closed.
+    pub(crate) fn finish_omitted(&self, prepared: PreparedOmittedBody) -> Value {
+        let PreparedOmittedBody {
+            id,
+            entity_type,
+            updated_at,
+            view,
+            ..
+        } = prepared;
         let id_hex = id.to_hex();
         let mut object = match view {
             View::Summary => {
@@ -310,7 +360,7 @@ impl<'a> BodyBudget<'a> {
                 object
             }
         };
-        object.insert("bodyOmitted".to_owned(), self.marker(id, body, mode));
+        object.insert("bodyOmitted".to_owned(), self.marker(&prepared));
         Value::Object(object)
     }
 
@@ -319,25 +369,29 @@ impl<'a> BodyBudget<'a> {
     /// id with the omitted body's own content hash, pinned to its revision
     /// when the read was. A row with no short id gives its hex id, read whole
     /// by `GET /api/entity/{id}?view=full`.
-    fn marker(&self, id: &EntityId, body: &[u8], mode: ReadMode) -> Value {
+    fn marker(&self, prepared: &PreparedOmittedBody) -> Value {
+        let PreparedOmittedBody {
+            id,
+            mode,
+            body_len,
+            content_hash: hash,
+            ..
+        } = prepared;
         let short = oneiron::retrieval_depth::short_ref_or_hex(self.vault, id)
             .unwrap_or_else(|_| id.to_hex());
         let reference = match short.split_once(':') {
-            Some((name, _)) => {
-                let hash = oneiron::batch::short_id_content_hash(body);
-                match mode {
-                    ReadMode::Pinned(revision) => {
-                        format!("{name}:{hash:02x}@{}", revision.to_hex())
-                    }
-                    _ => format!("{name}:{hash:02x}"),
+            Some((name, _)) => match mode {
+                ReadMode::Pinned(revision) => {
+                    format!("{name}:{hash:02x}@{}", revision.to_hex())
                 }
-            }
+                _ => format!("{name}:{hash:02x}"),
+            },
             None => short,
         };
         json!({
             "code": "PROJECTION_BYTES_EXCEEDED",
             "maxBytes": self.bound,
-            "bodyBytes": body.len(),
+            "bodyBytes": body_len,
             "ref": reference,
         })
     }

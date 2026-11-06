@@ -7,6 +7,7 @@
 //! and inconsistent revocation state are rejected.
 
 mod context;
+pub(crate) use context::AccessContextSnapshot;
 pub(crate) use context::principal_reach_ids_in;
 pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;

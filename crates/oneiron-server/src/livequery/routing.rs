@@ -11,12 +11,14 @@ const ROUTED_APP: u8 = 255;
 const HEADER: usize = 25;
 /// The row count of a body whose producer could not name its rows.
 const UNNAMED: u32 = u32::MAX;
+/// Internal request incarnation for the own-machine-only derivation reply.
+pub(super) const OWN_MACHINE_RPC_INCARNATION: u64 = 1;
 
 /// A frame as its routing header addressed it.
 pub(super) struct Routed<'a> {
     /// The subscription or request id.
     pub(super) id: u64,
-    /// The subscription's incarnation; zero for a request.
+    /// The subscription incarnation, or a request's private release requirement.
     pub(super) incarnation: u64,
     /// The rows its body was derived from; `None` when its producer could
     /// not name them.
