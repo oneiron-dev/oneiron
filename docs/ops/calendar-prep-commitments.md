@@ -1,9 +1,10 @@
 # Calendar prep: counterparty obligations
 
 Calendar prep adds open CMT-5 obligations when an EVENT attendee reference directly
-names a CounterpartyContact, or an admitted email attendee exactly matches an
-existing contact's party. It creates no contact and does not infer one from a
-PERSON id, display name or vendor label. Existing PPR evidence remains available.
+names a CounterpartyContact, or an admitted email or native communication PERSON
+attendee exactly matches an existing contact's party. It creates no contact and
+does not infer a party from a display name or vendor label. Existing PPR evidence
+remains available.
 There is no new stored prep cache, timer or permission.
 
 Both the raw and actor-scoped prep builders add the two ledger directions. A
@@ -61,12 +62,23 @@ selected contact label's exact party before using its ledger. Added items cite t
 actual attendee CLAIM as well as the commitment and deciding contact/identity
 heads. Existing direct-contact attendees and PPR seeds are unchanged.
 
+A PERSON attendee reference, including an exact entity id in a settled attendee
+CLAIM, can use the native communication PERSON body's stored `party_key`. The
+caller admits that PERSON row and applies the fire-instant cutoff before decoding
+its projected body. A missing or masked key, another entity type, or an inactive
+merge/split shell contributes no new match. Lifecycle evidence still uses the
+canonical vault authority. Prep does not re-read the unprojected PERSON body,
+resolve a display name, repair the party index or normalize the stored key. The
+selected contact party must match exactly. Added items cite the PERSON and, for
+the CLAIM path, that attendee CLAIM. The original direct-contact path stays intact.
+
 The lookup uses the serving content view. Its scan threshold remains vault
 policy. Deferred scan observations go to the actual Session's pending checks for
 a Session call, or the vault's pending checks for a canonical call; a content
 reader's base-forwarding accessor is not used as the room's destination.
 
-General PERSON-to-party resolution, all address spellings, complete off-record
-overlay coverage and runtime proof are not claimed. The raw builder retains its
+Resolution of PERSON bodies outside the native communication shape, all address
+spellings, complete off-record overlay coverage and runtime proof are not claimed.
+The raw builder retains its
 unrestricted API. This change adds no migration, feature flag,
 configuration or special deployment step. Deploy the ordinary engine/server update.
