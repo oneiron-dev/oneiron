@@ -199,6 +199,28 @@ pub struct AssetBodySession {
 }
 
 impl AssetBodySession {
+    /// Retains selected facts only after this socket's successful own-device
+    /// push. The opaque import keeps its original proof; a registry pointer
+    /// match binds it to the live window without keeping a strong handle.
+    pub fn retain_own_device_positions(
+        &mut self,
+        manager: &crate::sync::manager::WindowManager,
+        window: &crate::sync::window::LoadedWindow,
+        positions: crate::sync::origin_positions::OwnDevicePositionImport,
+    ) {
+        if let Some(identity) = manager.weak_window_if_same(window)
+            && let Some(positions) = positions.select_deferred(window, identity)
+        {
+            self.retain_positions(positions);
+        }
+    }
+
+    /// Retries this socket's ready live-import witnesses on its existing body
+    /// housekeeping path. Optional failures never fail a body or raw import.
+    pub fn retry_own_device_positions(&mut self, manager: &crate::sync::manager::WindowManager) {
+        self.retry_positions(manager);
+    }
+
     pub(in crate::sync) fn retain_positions(
         &mut self,
         mut positions: crate::sync::origin_positions::DeferredPositions,

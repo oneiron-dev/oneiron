@@ -141,8 +141,11 @@ Known births and at least one native file reference are required for this
 optional deferred slice.
 
 A weak handle binds each selected witness to the SAME registered window
-object, without keeping a window open or delaying replacement. Eviction or
-replacement invalidates it. Reconnecting resets the body session, including
+object, without keeping a window open or delaying replacement. Registration
+checks the already-held import window under the registry mutex without
+waiting for a transition that may be waiting for that import handle. Retry
+resolves the settled registry before taking any window handle. Eviction or
+replacement invalidates the weak identity. Reconnecting resets the body session, including
 all selected values and local-land effects. New selected values supersede
 older values only for the same owner keys; an obsolete window's values leave.
 
@@ -162,12 +165,31 @@ The local effect schedules a retry; it replaces none of those predicates.
 Optional metadata errors leave the working body and raw import paths intact.
 No new timer, operating cap, wire tag, retry authority or body plane is added.
 
+## Server-push body-later arrival
+
+A live server push retains its selected witness only after the actual native
+observed import has no pending operations, fan-out encoding succeeds, and
+any required residence/sidecar acknowledgment has been queued. The original
+persist-before-import, import-error eviction, broadcast and receipt ordering
+is unchanged. A pending import, held or translated refusal, failed import,
+failed fan-out encoding or failed acknowledgment creates no deferred holder.
+
+The socket's existing `ConnState.asset_bodies` owns the witness and local-land
+effects. That state is taken only through the connection loop's mutable
+borrow, including its existing blocking body handler; it is not a concurrent
+shared queue. A minimal opaque core adapter captures the native manager
+window's weak identity, without transition waits. The existing live-window
+body frame and housekeeping paths retry it. Selector/admitted-copy polling
+does not borrow this live-window proof. Socket teardown drops all witnesses.
+The same exact local-reference scheduling and current writer predicates as
+the client apply; remote receipts still prove no local landing.
+
 ## Remaining cases
 
 The live client UPDATE, server push and live own-device bounded-replacement
-boundaries are wired. Client body-later completion stays within its original
-live connection. Server-push body-later completion, recovery and later replay
-do not mint a deferred import proof. Raw, held, staged, missing or unknown
+boundaries are wired. Client and server-push body-later completion stay
+within their original live connections. Recovery and later replay do not
+mint a deferred import proof. Raw, held, staged, missing or unknown
 evidence keeps its existing behavior. Broader modes and a runtime
 demonstration remain separate work; this does not close all of FIX40. The
 older foreign-Connect proposal is not enabled by this path.
