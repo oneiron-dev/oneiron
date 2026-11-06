@@ -178,4 +178,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) shared_merge_evidence_rows: Option<u64>,
     pub(in crate::config) memory_reason_evidence_rows: Option<u64>,
     pub(in crate::config) memory_reason_tokens: Option<u64>,
+    pub(in crate::config) context_edge_hops: Option<u64>,
+    pub(in crate::config) context_neighbors: Option<u64>,
+    pub(in crate::config) context_selected_edges: Option<u64>,
 }

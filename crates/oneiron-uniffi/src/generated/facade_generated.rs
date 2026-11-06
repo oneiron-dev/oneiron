@@ -105,6 +105,36 @@ export_facade! {
     let output = client.self_focus_scratchpad_seal(&input)?;
     crate::codec::lift_record("self.focus.scratchpad.seal", &output)
 };
+"self.board.layout" => fn self_board_layout(&self) -> BoardLayoutState = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.board.layout")?;
+    let output = client.self_board_layout(&input)?;
+    crate::codec::lift_record("self.board.layout", &output)
+};
+"self.board.fold" => fn self_board_fold(&self, input: BoardFoldRequest) -> BoardLayoutState = |client| {
+    let input: oneiron::task_verb::sdk::BoardFoldRequest = crate::codec::lower_record("self.board.fold", input)?;
+    let output = client.self_board_fold(&input)?;
+    crate::codec::lift_record("self.board.fold", &output)
+};
+"self.board.unfold" => fn self_board_unfold(&self, input: BoardSectionRequest) -> BoardLayoutState = |client| {
+    let input: oneiron::task_verb::sdk::BoardSectionRequest = crate::codec::lower_record("self.board.unfold", input)?;
+    let output = client.self_board_unfold(&input)?;
+    crate::codec::lift_record("self.board.unfold", &output)
+};
+"self.board.size" => fn self_board_size(&self, input: BoardSizeRequest) -> BoardLayoutState = |client| {
+    let input: oneiron::task_verb::sdk::BoardSizeRequest = crate::codec::lower_record("self.board.size", input)?;
+    let output = client.self_board_size(&input)?;
+    crate::codec::lift_record("self.board.size", &output)
+};
+"self.board.filter" => fn self_board_filter(&self, input: BoardFilterRequest) -> BoardLayoutState = |client| {
+    let input: oneiron::task_verb::sdk::BoardFilterRequest = crate::codec::lower_record("self.board.filter", input)?;
+    let output = client.self_board_filter(&input)?;
+    crate::codec::lift_record("self.board.filter", &output)
+};
+"self.board.replace" => fn self_board_replace(&self, input: BoardReplaceRequest) -> BoardLayoutState = |client| {
+    let input: oneiron::task_verb::sdk::BoardReplaceRequest = crate::codec::lower_record("self.board.replace", input)?;
+    let output = client.self_board_replace(&input)?;
+    crate::codec::lift_record("self.board.replace", &output)
+};
 "self.memory.diary" => fn self_memory_diary(&self, input: DiaryEntryRequest) -> DiaryEntryReceipt = |client| {
     let input: oneiron::task_verb::sdk::DiaryEntryRequest = crate::codec::lower_record("self.memory.diary", input)?;
     let output = client.self_memory_diary(&input)?;

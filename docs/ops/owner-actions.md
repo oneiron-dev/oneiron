@@ -2158,6 +2158,12 @@ an owner pin replaces the spawn call's own seed, and the call's own pin always s
 row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
 width is passed over for the next row, and a budget only ever narrows the caller's budget.
 
+An unplanned named-agent launch with no explicit budget also takes the owner's budget pin or
+seed, for its inherited project and placed task type. Its launch preview reads the same setting;
+actual admission records and reserves under that cap through the normal spend path. An explicit
+budget always stands. Planned launches, workflows and reader loans keep their existing handling.
+The setting supplies a cap, not funds, and does not change the identity of a retried request.
+
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
 oneiron learning-settings list --key health.loop.repeats

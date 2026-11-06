@@ -449,6 +449,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "assemble this turn's context"
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
+- board layout: The board renders under the caller's own board layout (`self.board.layout`, `self.board.fold`, `self.board.unfold`, `self.board.size`, `self.board.filter`, `self.board.replace`): section shares of the cap, sections folded to one live summary line with an optional note and kept rows, and per-section filters. A hydration with a `turn` projects the pending batch and its accepted TURN commit applies it; without a `turn` the live layout renders and nothing applies. `board_budget.folded` and `board_budget.fitted` name the sections the layout folded or fitted. Optional `tasks_budget_tok` selects this hydration's concrete task rows by tokens and wins over the TASKS share; it cannot exceed the effective whole-board cap. See `docs/ops/context-board-layout.md`.
 
 #### core-conversations-list - `GET /v1/core/conversations`
 

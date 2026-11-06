@@ -175,6 +175,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_board_layout(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.layout", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_fold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.fold", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_unfold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.unfold", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_size(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.size", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_filter(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.filter", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_board_replace(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.board.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_memory_diary(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.memory.diary", js_json(input))
