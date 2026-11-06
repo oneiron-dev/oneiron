@@ -347,6 +347,7 @@ impl DecisionHost {
         };
         match HouseRead::new(
             door.reader(),
+            door.native_reader(),
             gate,
             paired,
             self.ladder.person.clone(),
@@ -659,6 +660,7 @@ struct HouseRead {
     vault: Arc<Vault>,
     pin: ProviderPin,
     reader: Arc<dyn LabelReadModel>,
+    native: Option<Arc<crate::models::DecisionReader>>,
     gate: HouseGate,
     paired: DecisionQuestion,
     person: Option<DecisionQuestion>,
@@ -669,6 +671,7 @@ struct HouseRead {
 impl HouseRead {
     fn new(
         reader: Arc<dyn LabelReadModel>,
+        native: Option<Arc<crate::models::DecisionReader>>,
         gate: HouseGate,
         paired: DecisionQuestion,
         person: Option<DecisionQuestion>,
@@ -681,6 +684,7 @@ impl HouseRead {
             paired,
             person,
             reader,
+            native,
             gate,
             leaves,
         };

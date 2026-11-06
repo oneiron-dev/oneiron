@@ -97,8 +97,16 @@ settlements remain unchanged. Caller-run handles bind to the capture inside its 
 funded handles are created inside that scope. Capture never settles the permit again.
 
 A nonlocal extraction needs its actual request's native extraction admission too.
-The nonlocal house reader does not yet supply that request through the captured
-interface, so that context returns unsupported before any capture, read or send.
+The configured house reader prepares its native input plan once from the core's
+actual typed question pack, before a generation allowance or paid gate. The plan
+carries every rendered prompt, the tokenizer's label and end-token strings, native
+endpoints, wire model and revision, and the shared fixed initial and retry completion
+fields. It is not a finalized completion body: the end-token id comes from the
+original paid tokenizer afterward. The original complete scope, purpose and host
+extraction predicate admit that plan through the existing raw-inference authorizer.
+The same native reader and rendered prompts then use the original worker, clock,
+credential release, lease, retries and settlement. A custom nonlocal reader without
+this preparation port still returns unsupported before capture or a paid gate.
 A System One rung without an explicit catalog binding likewise returns unsupported
 before any capture; with one it prepares its actual transformed native request
 before paid admission, admits its content-complete view, and sends those same owned

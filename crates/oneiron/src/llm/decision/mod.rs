@@ -31,7 +31,8 @@ pub use local::{
 pub mod questions;
 mod read;
 pub use read::{
-    DecisionReadGate, DecisionReadObserver, DecisionReadOutcome, DecisionReadProvider, GatedRead,
+    DecisionReadGate, DecisionReadObserver, DecisionReadOutcome, DecisionReadPreparer,
+    DecisionReadProvider, GatedRead, PreparedDecisionRead,
 };
 mod routine;
 pub use routine::*;
@@ -50,6 +51,5 @@ pub use seat::{
 };
 pub use slides_policy::*;
 pub use types::*;
-
 #[cfg(test)]
 mod tests;
