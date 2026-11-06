@@ -288,13 +288,15 @@ side_tables! {
     /// Immutable receipt of the file-mode-review proposal ids that promoted a revision. Key: id16.
     CODE_REVISION_PROMOTION: VaultMeta b"code_revision:promotion:v1:" LegacyCompact;
     /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: id16.
-    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw;
+    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw
+        => crate::code_revision::erase_proposal_author_in_txn;
     /// The checked Baseline a tested queue revision's parent chain ends at (value = id16),
     /// written when its seal is finalized, so a read finds the root by key, never by walking
     /// the chain (FIX 7390, 7391). Key: id16.
     CODE_REVISION_QUEUE_ROOT: VaultMeta b"code_revision:queue_root:v1:" Raw;
     /// Finalized code-revision row (hand-rolled MessagePack map). Key: id16.
-    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
+    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw
+        => crate::code_revision::erase_revision_author_in_txn;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
     CODE_REVISION_SESSION_INDEX: VaultMeta b"code_revision:session:v1:" Raw;
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
@@ -313,9 +315,10 @@ side_tables! {
     CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored [accepts: crate::code_run::code_run_continuation_accepts_masked];
     /// One contribution check's matched-fork rows (FIX 3028, FIX 2870): each fork's receipt (the
     /// capsule it regenerated, its request hash, model, seed, response body ref, anchor hash, the
-    /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
-    /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
-    /// string(row: `with_skill`, `without_skill` or `unavailable`).
+    /// outcome, goal revision and axis it was scored for, and its score), why the pair is
+    /// unavailable for good, or an owner verdict's pending owner pair (FIX 3609). Key: hash32(attempt
+    /// receipt, outcome, goal revision, axis, target) + string(row: `with_skill`, `without_skill`,
+    /// `owner_pair` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
         => crate::code_run::erase_contribution_forks_in_txn;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches

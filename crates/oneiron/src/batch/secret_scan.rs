@@ -34,12 +34,14 @@ pub(crate) use self::mask::admit::{
     predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
-    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::rebind_mask_origin_in_txn;
-pub(crate) use self::mask::retained_repo::read::project_marked_retained_repo_blob;
+pub(crate) use self::mask::retained_repo::read::{
+    RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
+};
 pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,
@@ -49,14 +51,14 @@ pub(crate) use self::mask::side_row::{
     admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
-    BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
+    AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
     mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
 };
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
-pub(crate) use self::provider_tokens::embedded_credential;
+pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
 pub(crate) use self::whole_read::{

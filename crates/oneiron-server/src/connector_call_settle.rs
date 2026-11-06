@@ -60,6 +60,10 @@ pub(crate) const CONNECTOR_SETTLE_INTERVAL: Duration = Duration::from_secs(30);
 /// answer's own drive is never raced.
 const BROWSER_WAIT_DRIVE_AFTER: Duration = CONNECTOR_SETTLE_INTERVAL;
 
+/// Paced verb calls' turns one settle pass runs (FIX 8753): one per
+/// principal per round, so one pass serves many principals' heads.
+const PACED_VERB_TURNS_PER_PASS: usize = 64;
+
 /// The longest a call that stays held or undelivered waits between two of
 /// its resumes.
 pub(crate) const CONNECTOR_SETTLE_MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
@@ -106,6 +110,19 @@ impl SyncServer {
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
     ) -> tokio::task::JoinHandle<()> {
+        // Verb calls a budget window paced take their turns on this settler
+        // (FIX 8753), back through the door they came in by, whatever the
+        // hook sandbox or `--no-hooks`: the host's check runs them, under
+        // the host's wait.
+        self.vault()
+            .set_paced_verb_wait_secs(self.config.limits.paced_verb_wait_secs);
+        #[cfg(feature = "code-sandbox-wasmtime")]
+        self.vault().install_verb_ask_credential_check(Arc::new(
+            crate::credential_resume::ServerVerbAskCredentialCheck::new(
+                self,
+                tokio::runtime::Handle::current(),
+            ),
+        ));
         tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
@@ -175,6 +192,12 @@ fn settle_connector_calls(
     // it opens (FIX 8686).
     if let Err(error) = vault.continue_paced_connector_wakes() {
         tracing::warn!(%error, "paced connector wakes not admitted");
+    }
+    // Verb calls a budget window paced take their fair turns, each through
+    // its own door and Gate again, or end unrun past their deadline (FIX
+    // 8753). Before the connector listing: none of them is a connector call.
+    if let Err(error) = vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_PASS) {
+        tracing::warn!(%error, "paced verb calls wait for the next pass");
     }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
     // FIX 11023: the remote tasks providers accepted sends as, polled.
@@ -299,10 +322,4 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     settled
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use crate::runtime::wall_clock_ms as now_ms;

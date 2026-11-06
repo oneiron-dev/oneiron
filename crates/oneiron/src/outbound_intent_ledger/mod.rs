@@ -16,6 +16,9 @@ mod store;
 mod types;
 
 pub use self::codec::INTENT_LEDGER_VALUE_KEYS;
+pub use self::remote_task_poll::{
+    DueRemoteTask, MIN_REMOTE_TASK_POLL_MS, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskPoll,
+};
 pub use self::dispatch::{derive_intent_id, intent_ledger_records};
 pub use self::remote_task_poll::{
     DueRemoteTask, MIN_REMOTE_TASK_POLL_MS, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskPoll,
@@ -72,6 +75,7 @@ pub(crate) use self::store::pending::{
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
 pub(crate) use self::types::AdmittedApproval;
+pub(crate) use self::types::CallAccounting;
 #[cfg(test)]
 pub(crate) use self::types::OutboundSender;
 
