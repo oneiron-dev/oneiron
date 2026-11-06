@@ -38,6 +38,25 @@ For the standard-covered failures, native reports serialize digest mismatches as
 names and the corresponding checks are unchanged. PDF-specific findings keep their
 existing custom names.
 
+## Revision coverage evidence
+
+Each native signature report includes `revision_coverage` alongside the
+existing `coverage` value. It is `null` if a valid byte range or a structural
+revision boundary cannot be established. Otherwise its typed `kind` is
+`whole_revision` or `partial`, with the revision index and its structural
+EOF offset in `byte_end`.
+
+A partial fact includes `uncovered` byte ranges with half-open `start` and
+`end` offsets. These name unsigned bytes between the signed prefix and the
+containing revision's EOF. The required signature `/Contents` exclusion is
+not a coverage shortfall. The existing EOF/CR-LF boundary rule is unchanged.
+A fact about an older revision does not claim that later appends are signed.
+
+This is additive evidence only. Profiles are not withheld or changed, and
+signature integrity, trust, timestamps, modification checks, verdicts and
+self-verification keep their existing rules. Rebuild and hash-pin the
+native seal organ to publish the new report field.
+
 ## Rollout
 
 Use the matching engine/server and regenerated clients for the new manifest/view
