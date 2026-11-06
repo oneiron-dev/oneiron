@@ -1324,8 +1324,9 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
       fetch: (request) => { sinkHits.push(request.url); return new Response("hooks05-sink"); },
     });
     stopSink = () => sink.stop(true);
-    if (!(sink.port > 0)) throw new Error("Loopback sink bound no port");
-    const sinkUrl = `http://127.0.0.1:${sink.port}/hook-probe`;
+    const sinkPort = sink.port;
+    if (sinkPort === undefined || !(sinkPort > 0)) throw new Error("Loopback sink bound no port");
+    const sinkUrl = `http://127.0.0.1:${sinkPort}/hook-probe`;
     const sentinelPath = resolve(engine.root, "hooks05-sentinel", "sentinel.txt");
     const sentinelText = "hooks05-sentinel-v1: the hook sandbox must never touch this file.\n";
     await mkdir(dirname(sentinelPath), { recursive: true });
