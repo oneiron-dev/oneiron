@@ -1,6 +1,7 @@
 //! The execute-code executor: one durable REPL run entered under its
 //! connector actor, and the answer that entry renders.
 
+use super::super::code_run_resume::McpCodeRunEntry;
 use super::*;
 
 /// Named results an `execute_code` answer lists, newest first.
@@ -20,24 +21,12 @@ pub(crate) async fn execute_mcp_execute_code(
         ));
     }
 
-    let host = server
-        .code_execution_host()
-        .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
-    let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
-    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
-        server, actor, run_id,
-    ));
-    let outcome = host
-        .execute(crate::mcp::McpCodeExecutionRequest {
-            vault: Arc::clone(&server.vault),
-            actor,
-            off_record_session: actor.off_record_session.clone(),
-            run_ref: &args.run_ref,
-            task: &args.task,
-            run_id,
-            verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
-        })
-        .await;
+    let entry = McpCodeRunEntry::begin(server, crate::mcp::mcp_code_run_id(&args.run_ref, actor));
+    let McpCodeRunEntered {
+        run_id,
+        verbs,
+        outcome,
+    } = enter_mcp_code_run(server, actor, &args.run_ref, &args.task, entry).await?;
     // Revocation takes effect at once: a credential that died while its run
     // ran gets its own refusal, never the run's results or failure. The run's
     // durable record stays for a re-entry its credential admits. A failure is
@@ -82,17 +71,6 @@ pub(crate) async fn execute_mcp_execute_code(
         outcome.status,
         oneiron::engine_executor::EngineExecutorStatus::Complete
     );
-    // A run that ended ends its desktop and closes the live lens cards it
-    // created, named by its run id's hex (OF-181, FIX 2612); any other entry
-    // leaves them parked for the run's next entry (CUA-001).
-    if terminal {
-        server.desktop_seats.end_run(run_id);
-        server.browser_seats.end_run(run_id);
-        server.lens_frames.close_run(&run_id.to_hex());
-        if let Err(error) = server.vault.seal_code_run_scratchpads(run_id) {
-            tracing::warn!(%error, run_id = %run_id.to_hex(), "code-run scratchpad seal failed");
-        }
-    }
     // Non-continuable: the step log is a run's own, not a re-enumerable
     // producer set, so a non-terminal page here states
     // `continuation_unavailable` instead of minting a handle nothing consumes.
@@ -172,6 +150,71 @@ pub(crate) async fn execute_mcp_execute_code(
     #[cfg(test)]
     super::device_release::release_hook::run(server);
     type_feedback_release::release_run_answer(server, actor, named, held, result)
+}
+
+/// One entry of a durable run: its id, the verb door it ran behind and
+/// what the host answered.
+pub(in crate::api::mcp_gateway) struct McpCodeRunEntered {
+    pub(in crate::api::mcp_gateway) run_id: oneiron::EntityId,
+    pub(in crate::api::mcp_gateway) verbs: Arc<super::code_mode_verbs::McpCodeModeVerbs>,
+    pub(in crate::api::mcp_gateway) outcome:
+        Result<oneiron::engine_executor::EngineExecutorOutcome, crate::mcp::McpCodeExecutionError>,
+}
+
+/// The admitted entry of the durable run `entry` holds, which `run_ref`
+/// names under `actor`: the host's single flight, run admission, model seat
+/// and spend line, as every entry of the run takes them. The caller's own
+/// call renders its answer; the automatic re-entry of a parked run whose
+/// reply was delivered renders none (FIX 4606). The outcome settles
+/// `entry`: a run parked on a wait registers it, and any other end removes
+/// the registration.
+pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    run_ref: &str,
+    task: &str,
+    entry: McpCodeRunEntry,
+) -> Result<McpCodeRunEntered, McpGatewayError> {
+    let host = server
+        .code_execution_host()
+        .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
+    let run_id = entry.run_id();
+    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
+        server, actor, run_id,
+    ));
+    let outcome = host
+        .execute(crate::mcp::McpCodeExecutionRequest {
+            vault: Arc::clone(&server.vault),
+            actor,
+            off_record_session: actor.off_record_session.clone(),
+            run_ref,
+            task,
+            run_id,
+            verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
+        })
+        .await;
+    // A run that ended ends its desktop and closes the live lens cards it
+    // created, named by its run id's hex (OF-181, FIX 2612); any other entry
+    // leaves them parked for the run's next entry (CUA-001).
+    if outcome.as_ref().is_ok_and(|outcome| {
+        matches!(
+            outcome.status,
+            oneiron::engine_executor::EngineExecutorStatus::Complete
+        )
+    }) {
+        server.desktop_seats.end_run(run_id);
+        server.browser_seats.end_run(run_id);
+        server.lens_frames.close_run(&run_id.to_hex());
+        if let Err(error) = server.vault.seal_code_run_scratchpads(run_id) {
+            tracing::warn!(%error, run_id = %run_id.to_hex(), "code-run scratchpad seal failed");
+        }
+    }
+    entry.settle(actor, run_ref, task, &outcome);
+    Ok(McpCodeRunEntered {
+        run_id,
+        verbs,
+        outcome,
+    })
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {

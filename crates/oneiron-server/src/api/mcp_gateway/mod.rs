@@ -12,6 +12,7 @@ mod claimed_release;
 mod client_surface;
 mod clock_repair_call;
 mod code_mode_verbs;
+mod code_run_resume;
 mod device_release;
 mod envelope;
 mod exec_board_verbs;
@@ -51,6 +52,7 @@ use self::board_setup::{
 pub(crate) use self::code_mode_verbs::{
     ReaderChildDoor, RunGuests, VerdictAsker, count_hook_decisions,
 };
+pub(crate) use self::code_run_resume::{McpCodeRunContinuations, reenter_ready_mcp_code_runs};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
 #[cfg(test)]
