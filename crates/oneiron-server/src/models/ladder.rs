@@ -40,8 +40,8 @@ use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
     CallOutcome, KeyCustody, OfferBinding, PaidConnector, Payer, RunAdmission, RunCall, RunDenied,
-    RunOverageSource, RunPermit, WorkPhysical, connector_is_free_work, offer_id, offer_is_free_work,
-    offer_place,
+    RunOverageSource, RunPermit, WorkPhysical, connector_is_free_work, offer_id,
+    offer_is_free_work, offer_place,
 };
 use oneiron::llm::{HostInferenceBinding, Segment, SegmentClock, SegmentKind, SegmentManifest};
 use oneiron::{
