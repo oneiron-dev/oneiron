@@ -20,7 +20,6 @@ use serde_json::{Value, json};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::claim::ScopedReadActorKey;
-use crate::code_run::payload::self_call_request_value;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -34,7 +33,10 @@ use crate::runtime_hooks::{
 use crate::task_verb::{TaskAskStatus, TaskAskWait};
 use crate::{EntityId, Vault};
 
+pub(super) use self::parked::ParkedHook;
+
 use self::args::hook_args;
+use self::parked::ParkedOffer;
 use self::rewrite::{Rewritten, rewrite, rewritten_refs};
 
 /// The refusal a guest reads when a pre-hook skipped its call. Its reason
@@ -66,7 +68,9 @@ impl HostSelfDispatcher<'_> {
     /// `dispatch_effect` inside the call's verb hooks, and the dispatched
     /// rewritten call (FIX 1442): `Some` when a hook rewrote it, `None`
     /// otherwise. A stop is the guest's typed answer, from either attach
-    /// point: a verb-table call's door raises its own.
+    /// point: a verb-table call's door raises its own. A parked call whose
+    /// row an erase took the words of answers before either attach point
+    /// and the effect (FIX 6534), a verb-table call too.
     pub(super) fn dispatch_hooked(
         &self,
         call: SelfCall,
@@ -111,13 +115,18 @@ impl HostSelfDispatcher<'_> {
     /// reads under `read_as`, the key the run's door admitted the call with,
     /// and as the run's actor when its host binds no door. The call's scope
     /// is the room that key reads inside, if any. Each rewrite is decoded as
-    /// the guest's input is, and the refs it changes admitted again.
+    /// the guest's input is, and the refs it changes admitted again. A call
+    /// a hook's ask parked on a row an erase took the words of answers
+    /// first, before any hook runs (FIX 6534).
     pub(crate) fn enter_verb_hooks(
         &self,
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<std::result::Result<(SelfCall, HookedCall), SelfDispatchOutcome>> {
+        if let Some(erased) = self.parked_erased_answer(&call, site)? {
+            return Ok(Err(erased));
+        }
         let vault = match &self.storage {
             ExecutorStorage::Canonical(vault) => vault,
             ExecutorStorage::Session(_) => return self.enter_room_verb_hooks(call, site, read_as),
@@ -277,37 +286,28 @@ impl HostSelfDispatcher<'_> {
         let Some(site) = site else {
             return Ok(InvocationId::mint());
         };
-        if !self.parked_hooks.borrow().is_empty() {
-            let key = parked_call(call.effect(), self_call_request_value(call)?);
-            let parked = self
-                .parked_hooks
-                .borrow()
-                .iter()
-                .find(|(held, ..)| *held == key)
-                .map(|(_, invocation, _)| *invocation);
-            if let Some(parked) = parked {
-                return Ok(parked);
-            }
+        if let Some(parked) = self.parked_hook(call, Some(site), ParkedHook::invocation)? {
+            return Ok(parked);
         }
         Ok(InvocationId::of_run_step(site.run_id.as_bytes(), site.seq))
     }
 
     /// Notes, in order, the calls a hook's ask parked in `bridge_calls`. A
     /// later row of the same call, parked or answered, replaces its note, so
-    /// an ask is resumed once.
+    /// an ask is resumed once. A row meets a note by the rule a call made
+    /// again meets it (FIX 6534): a later row of an erased call clears its
+    /// note and never revives it. A row whose request cannot be read clears
+    /// no note: the same call made again meets that note and reads the error.
     pub(super) fn observe_parked_hooks(&self, bridge_calls: &[CodeRunBridgeCall]) {
         let mut parked = self.parked_hooks.borrow_mut();
         for row in bridge_calls {
-            let invocation = parked_invocation(&row.outcome);
+            let parks = ParkedHook::of(row);
             // With nothing parked, a row that parks nothing has nothing to clear.
-            if invocation.is_none() && parked.is_empty() {
+            if parks.is_none() && parked.is_empty() {
                 continue;
             }
-            let key = parked_call(row.effect, row.request.clone());
-            parked.retain(|(held, ..)| *held != key);
-            if let Some(invocation) = invocation {
-                parked.push((key, invocation, parked::ask_of(&row.outcome)));
-            }
+            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row)), Ok(true)));
+            parked.extend(parks);
         }
     }
 }
@@ -371,12 +371,19 @@ fn stopped_view(stop: &VerbHookStop) -> Value {
 /// A call as its replay row names it, less the bridge's own stamps, so the
 /// same call made at another place in the run is the same call.
 fn parked_call(effect: SelfEffect, mut request: rmpv::Value) -> ParkedCall {
-    if (effect.is_speech() || effect == SelfEffect::ReportBlocked)
+    if bridge_stamped(effect)
         && let rmpv::Value::Map(entries) = &mut request
     {
         entries.retain(|(key, _)| !matches!(key.as_str(), Some("order" | "occurred_at")));
     }
     (effect, request)
+}
+
+/// Whether the bridge stamps its own order and time onto a call of
+/// `effect`, as [`SelfCall::with_bridge_stamp`] does: a speech bubble's
+/// and a blocked report's.
+fn bridge_stamped(effect: SelfEffect) -> bool {
+    effect.is_speech() || effect == SelfEffect::ReportBlocked
 }
 
 /// The invocation a recorded outcome parked on a hook's ask, if it did.
