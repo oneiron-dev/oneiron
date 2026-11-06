@@ -225,6 +225,20 @@ The old decoded empty-reason string and replaced pack metadata have already
 dropped and are not counted. Absent replay inputs add no replay backing, and
 an unbound finalizer performs no added walk.
 
+The same lease also records two old decoded buffers before their existing
+replacements: the result-ID vector, and the top-level score vector with each
+entry's component vector. Each uses its actual capacity and native element
+size. The result-ID charge is released after its original assignment drops the
+old vector, before the existing new-ID postcount. The old score charge starts
+before the surfaced-score collection and is released after that collection
+replaces and drops the old score vector. The existing current score and trace
+postcount stays separate. No live buffer's charge is released early or counted
+twice. An unbound finalizer adds no accounting walk.
+
+These old-buffer charges do not cover the simultaneous new allocation during
+replacement or the new score collection's construction peak. The original
+copies, replacement order, failures and row writes stay unchanged.
+
 These finalization charges do not cover remaining backing, the finalizer's
 input storage before these moves, other mutation copies, hash sets, config-map
 storage, number internals, serialization scratch, marker/index/retention keys
