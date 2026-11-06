@@ -16,7 +16,7 @@
   "sources": {
     "guest.c": "fac7f416152488370b086423a820dc6d484e8a590d88d14743c2989b9bff53c6",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "90735720da69562a7985604db535328632dd67fe26973d5d1a64877b51c23984",
+    "bootstrap.js": "a4929a3babf5068b9a7d6f4d6f1a8cbdcc560f5a5cf6693b29dd77d93f2bdf76",
     "reader_forks.js": "8418c12bf23be76f4a4b00682a3fa524acf7b601bf373cfc3328cd2c6b3d1b6a",
     "diff.js": "128383271eadf64d3e8ca2c0b92e104b14e39dc69b191c39da045766c0c9047a",
     "runtime.d.ts": "e51e567c2c3b7f241190f9b6148416884eeb03223e1ce6986d2d6ff64e722ade",
@@ -28,13 +28,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "792e3cffd16a01968f7bfc9f2f76d3963c21ee5d8df9713f99d2f2c83f7b8b1e",
-      "bytes": 1108462
+      "sha256": "ba5f7a1561b5e1a9aa63a408593231c2a1db17d9282fd21fee2719861677fc3d",
+      "bytes": 1108526
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "7a4d4d590dc6cbb8bf7142fea5bc3710edc35df15ed09cf9f085ad6e5f367076",
-      "bytes": 1103432
+      "sha256": "d7ecda00423047d04df01a6d25356186e5c43d843820412098100739febb57ad",
+      "bytes": 1103496
     },
     "hook": {
       "file": "quickjs-hook.wasm",

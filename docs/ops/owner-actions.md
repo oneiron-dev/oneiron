@@ -72,6 +72,25 @@ host from a password, passkey or escrow wrap the backup carries (*The vault key 
 The install that takes a backup signs it, and a restore checks that signature first. While any
 legal hold stands, no backup is pruned, whatever `keep` says.
 
+An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps the whole
+canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
+use a separate automatic selection. When an entity's known world dependencies are all resolved
+to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
+and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
+known Off worlds' window snapshots and durable window updates. Shared document proposals keep
+their other owners' fragments. Authority-log rows and non-payload links stay intact.
+
+This is partial world selection, not a guarantee that an Off world's every byte is absent.
+Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
+queued or mixed carriers and exterior custody publication still need their own world
+projection. The read setting **One machine** alone does not exclude a sealed backup.
+
+Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
+Content and custody positions must match exactly. A whole-vault artifact can satisfy an
+automatic idle-backup duty at that same position, keeping its original mark; an automatic mark
+never certifies a whole-vault backup. Reusing an artifact copies or publishes nothing new.
+Old marker formats read as changed; there is no marker migration or old-format reader.
+
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment, or with the owner's backup setting (below):
 

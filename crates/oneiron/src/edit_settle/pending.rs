@@ -752,6 +752,9 @@ impl Vault {
                 "a proposal already waits under this ref",
             )));
         }
+        if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
+            return Err(Error::EntityNotFound);
+        }
         PENDING.put(&self.store, wtxn, &key, row)
     }
 
@@ -834,4 +837,15 @@ pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
         )));
     }
     crate::batch::secret_scan::scan_metadata_field(proposal_ref)
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in PENDING.scan_keys(store, txn, artifact_id.as_bytes())? {
+        PENDING.delete(store, txn, &key)?;
+    }
+    Ok(())
 }
