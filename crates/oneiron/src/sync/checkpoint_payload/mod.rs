@@ -394,16 +394,22 @@ pub(crate) struct LoroCarrier {
     pub(crate) rows: Vec<LoroRow>,
     pub(crate) slots: Vec<LoroSlot>,
     pub(crate) joined: Vec<JoinedTurn>,
+    pub(crate) record_documents: Vec<record_documents::JoinedRecordDocument>,
 }
 
 impl LoroCarrier {
-    /// Every copy the carrier names: each slot's, then each joined turn's.
+    /// Every sealed copy, including every independent native source.
     /// A capture seals these, and a restore answers these, alone.
     pub(crate) fn copies(&self) -> impl Iterator<Item = &SlotCopy> {
         self.slots
             .iter()
             .flat_map(|slot| &slot.copies)
             .chain(self.joined.iter().flat_map(|turn| &turn.copies))
+            .chain(
+                self.record_documents
+                    .iter()
+                    .flat_map(|source| &source.copies),
+            )
     }
 }
 
@@ -426,13 +432,17 @@ pub(crate) const WINDOW_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEq
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoroVerdict {
     pub(crate) window: String,
-    /// The vendored join's report: the joined bytes hold the skeleton's
-    /// history with the values that opened.
+    /// The original skeleton's history with the values that opened.
+    /// False when native reconstruction rewrites and extends that history.
     pub(crate) equivalent: bool,
-    /// Every value and actor opened, so the history is the captured one;
-    /// otherwise it is the captured one with what did not open erased.
+    /// Every source value and actor opened. Native reconstruction can still
+    /// rewrite and extend the history, reported separately below.
     pub(crate) lossless: bool,
-    pub(crate) policy: RoundTripPolicy,
+    /// Native parts were rewritten and explicit source operations added.
+    /// An all-open native result is not the original window history.
+    pub(crate) rewritten_native_history: bool,
+    /// Only unchanged original history uses the ordinary round-trip policy.
+    pub(crate) policy: Option<RoundTripPolicy>,
 }
 
 /// How a projection placed one captured row. No variant holds payload.
@@ -510,6 +520,8 @@ pub(crate) struct SyncRestoreRows {
     pub(crate) markers: Vec<(RowLocator, Vec<u8>)>,
     /// What each window carrier's join proved.
     pub(crate) verdicts: Vec<LoroVerdict>,
+    /// Opened native source data for the original applying transaction.
+    pub(crate) record_sources: Vec<record_documents::opened::OpenedWindowRecordSources>,
 }
 
 /// Places every row of `rows` (KS7-3a): each sealed row's atoms go to

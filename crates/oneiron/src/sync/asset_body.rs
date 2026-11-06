@@ -16,6 +16,7 @@
 
 pub(crate) mod client;
 mod landing;
+mod receipt_publication;
 pub(crate) mod references;
 mod send;
 pub(crate) mod session;

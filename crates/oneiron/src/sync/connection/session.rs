@@ -3,8 +3,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use futures_util::stream::{SplitSink, SplitStream};
-use tokio_tungstenite::tungstenite::Message;
+pub(super) use super::socket::{WsSink, WsSource};
 
 use crate::sync::client::SyncClient;
 use crate::sync::loro_support::doc_version_vector;
@@ -12,6 +11,21 @@ use crate::sync::queue::QueuedUpdate;
 use crate::sync::transport::TransportError;
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::WindowKey;
+
+/// Reason the steady-state loop exited.
+pub(super) enum LoopExit {
+    /// Clean shutdown requested.
+    Shutdown,
+    /// WebSocket disconnected (with error description).
+    Disconnected(String),
+    /// The server closed the socket with a close frame, read by its code
+    /// (FIX 5927): a server fault takes the retry path, a refusal is
+    /// reported as one.
+    Closed(super::server_close::ServerClose),
+    /// The residence mode changed (FIX 8869): what was buffered is queued,
+    /// and the next connect sends the new mode's hello.
+    Renegotiate,
+}
 
 /// Whether `next` fits a node batch alone. A window write's first frame may
 /// pass a member's room by its envelope header's allowance (FIX 7107): it
@@ -52,12 +66,6 @@ pub(super) const MACHINE_HISTORY_RETRY_INTERVAL_SECS: u64 = 300;
 /// How many owed-history rounds a lane runs at once; each takes every owed
 /// target. CALLS: "FIX 3820 machine history tasks".
 pub(super) const MACHINE_HISTORY_FETCH_TASKS: usize = 1;
-
-pub(super) type WsSink = SplitSink<WsStream, Message>;
-
-pub(super) type WsSource = SplitStream<WsStream>;
-
-type WsStream = crate::sync::carrier::SyncSocket;
 
 /// Read-budget for one server-frame pump: how long to wait for the first
 /// frame, how long a quiet gap ends the pump, and a frame cap.

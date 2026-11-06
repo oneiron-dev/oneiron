@@ -61,6 +61,8 @@ pub(super) struct OpenedWindowRestoreSource<'opened> {
     records: &'opened [super::WindowCarrierRecord],
     windows: &'opened [OpenedOwnerRows],
     unopened: &'opened BTreeSet<OwnerRef>,
+    #[cfg(feature = "sync")]
+    source_rows: &'opened [(Vec<u8>, Vec<u8>)],
 }
 
 impl<'opened> OpenedWindowRestoreSource<'opened> {
@@ -73,31 +75,56 @@ impl<'opened> OpenedWindowRestoreSource<'opened> {
     ) {
         (self.records, self.windows, self.unopened)
     }
+
+    #[cfg(feature = "sync")]
+    pub(super) fn source_rows(&self) -> &'opened [(Vec<u8>, Vec<u8>)] {
+        self.source_rows
+    }
 }
 
 /// Joined rows of the authenticated source. This private product stays
 /// owned through budgeting and is consumed by the original restore writer.
 struct PreparedWindowRestore {
     rows: Vec<(RowLocator, Vec<u8>)>,
+    #[cfg(feature = "sync")]
+    rebindings: Vec<crate::store::window_record_sources::PreparedRecordDocumentRebinding>,
 }
 
 impl PreparedWindowRestore {
     fn prepare(source: OpenedWindowRestoreSource<'_>) -> Result<Self> {
-        Ok(Self {
-            rows: join_windows(source)?,
-        })
+        #[cfg(feature = "sync")]
+        {
+            let (rows, rebindings) = join_windows(source)?;
+            Ok(Self { rows, rebindings })
+        }
+        #[cfg(not(feature = "sync"))]
+        {
+            Ok(Self {
+                rows: join_windows(source)?,
+            })
+        }
     }
 
     fn row_lengths(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
-        self.rows
+        let rows = self
+            .rows
             .iter()
-            .map(|(at, value)| (at.key.len() as u64, value.len() as u64))
+            .map(|(at, value)| (at.key.len() as u64, value.len() as u64));
+        #[cfg(feature = "sync")]
+        let rows = rows.chain(self.rebindings.iter().map(|binding| binding.row_lengths()));
+        rows
     }
 
     fn restore_in_txn(self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
         for (at, value) in self.rows {
             restore_row_in_txn(store, txn, &at, &value)?;
         }
+        #[cfg(feature = "sync")]
+        crate::store::window_record_sources::persist_opened_rebindings(
+            store,
+            txn,
+            self.rebindings,
+        )?;
         Ok(())
     }
 }
@@ -190,6 +217,12 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
         records: &image.window_carriers,
         windows: &windows,
         unopened: &unopened,
+        #[cfg(feature = "sync")]
+        source_rows: image
+            .databases
+            .get("sync_state")
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
     })?;
     let pruned = structure::prune(&mut image.databases, &unopened);
     if pruned > 0 {
@@ -250,9 +283,14 @@ fn open_actor_copies(
 /// `unopened` is erased; a window whose values none opened keeps its
 /// history with them erased.
 #[cfg(feature = "sync")]
-fn join_windows(source: OpenedWindowRestoreSource<'_>) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+fn join_windows(
+    source: OpenedWindowRestoreSource<'_>,
+) -> Result<(
+    Vec<(RowLocator, Vec<u8>)>,
+    Vec<crate::store::window_record_sources::PreparedRecordDocumentRebinding>,
+)> {
     if source.records.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     super::sync::restore_window_carriers(source)
 }
