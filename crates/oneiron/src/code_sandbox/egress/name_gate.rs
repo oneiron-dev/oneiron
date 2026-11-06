@@ -68,7 +68,7 @@ enum Opening {
 /// The TLS handshake record type.
 const HANDSHAKE: u8 = 0x16;
 /// The ClientHello handshake message type.
-const CLIENT_HELLO: u8 = 1;
+pub(super) const CLIENT_HELLO: u8 = 1;
 /// The server_name extension (RFC 6066 3).
 const SERVER_NAME: u16 = 0;
 
@@ -194,6 +194,29 @@ fn tls(seen: &[u8], ended: bool) -> Opening {
         }
     }
     Opening::Pending
+}
+
+/// The names a whole bare ClientHello handshake message carries: its
+/// 4-byte handshake header and its body, as a QUIC Initial's CRYPTO frames
+/// carry it (FIX 8991). It is judged as a TLS stream's ClientHello is, by
+/// the same parser; the error says why its name cannot be checked.
+pub(super) fn client_hello_names(message: &[u8]) -> Result<Vec<String>, &'static str> {
+    let unparsed = "the ClientHello does not parse";
+    let Some((&[kind, a, b, c], body)) = message.split_first_chunk::<4>() else {
+        return Err(unparsed);
+    };
+    if kind != CLIENT_HELLO {
+        return Err("the first handshake message is no ClientHello");
+    }
+    let size = (usize::from(a) << 16) | (usize::from(b) << 8) | usize::from(c);
+    if body.len() != size {
+        return Err(unparsed);
+    }
+    match client_hello(body) {
+        Some(Opening::Names(names)) => Ok(names),
+        Some(Opening::Unverifiable(why)) => Err(why),
+        Some(Opening::Pending | Opening::Opaque) | None => Err(unparsed),
+    }
 }
 
 /// The visible server name a whole ClientHello body carries. An encrypted

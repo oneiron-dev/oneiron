@@ -66,6 +66,7 @@ impl Vault {
                     delegation: None,
                     comm: None,
                     trusted_contact: None,
+                    seat_claim: None,
                 };
                 let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
                 OWNER_PROJECT_SLIP_CACHE.put(
