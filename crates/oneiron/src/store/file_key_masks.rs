@@ -116,7 +116,15 @@ impl MaskedFile {
                 .pacing
                 .checkpoint(ReadProgress::Member)
                 .map_err(withheld)?;
-            places.push((member.path.clone(), spans(&member.keys)?));
+            let mut path = Vec::with_capacity(member.path.len());
+            for step in &member.path {
+                reader
+                    .pacing
+                    .checkpoint(ReadProgress::Member)
+                    .map_err(withheld)?;
+                path.push(*step);
+            }
+            places.push((path, spans(&member.keys)?));
         }
         Ok(places)
     }
