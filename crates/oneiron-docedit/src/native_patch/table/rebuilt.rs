@@ -38,8 +38,9 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// an original first pPr or last endParaRPr. Skipped children block bridges.
 /// A second render knows the exact original edge, whole-paragraph, whole-run,
 /// native single-piece partial-run, interior-zero and opaque-child identity sources.
-/// Fresh rPr template copies
-/// omit only XML-namespace id attributes that survive in those original sources.
+/// Fresh run and paragraph property template copies omit only XML-namespace id
+/// attributes that survive in those original sources. A successful styled paragraph
+/// also owns its original pPr and endParaRPr sources; their original bytes stay.
 /// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
@@ -82,6 +83,16 @@ fn rebuilt_pass(
     let source_run = within(tree, body)
         .find(|(_, node)| node.is(DML, "r"))
         .or_else(|| within(tree, body).find(|(_, node)| node.is(DML, "fld")));
+    let template_property = |property: Option<(usize, &Node)>| match property {
+        Some((at, node))
+            if retained_sources
+                .iter()
+                .any(|span| span.start <= node.span.start && node.span.end <= span.end) =>
+        {
+            copied_properties(bytes, tree, at)
+        }
+        _ => piece(property).to_owned(),
+    };
     let run_xml = |selected: Option<(usize, &Node)>,
                    para_node: &Node,
                    text: &str|
@@ -90,16 +101,7 @@ fn rebuilt_pass(
             .map(|(run, _)| tree.child(run, DML, "rPr"))
             .transpose()?
             .flatten();
-        let r_pr = match property {
-            Some((at, node))
-                if retained_sources
-                    .iter()
-                    .any(|span| span.start <= node.span.start && node.span.end <= span.end) =>
-            {
-                copied_properties(bytes, tree, at)
-            }
-            _ => piece(property).to_owned(),
-        };
+        let r_pr = template_property(property);
         let (r, t, run_bindings) = match selected {
             Some((at, node)) => (
                 node.child_name("r"),
@@ -149,9 +151,9 @@ fn rebuilt_pass(
                   line: &str|
      -> Result<String, NativeRefusal> {
         let (para, para_node) = paragraph;
-        let p_pr = piece(tree.child(para, DML, "pPr")?);
+        let p_pr = template_property(tree.child(para, DML, "pPr")?);
         let run = run_xml(selected, para_node, line)?;
-        let end = piece(tree.child(para, DML, "endParaRPr")?);
+        let end = template_property(tree.child(para, DML, "endParaRPr")?);
         let p = para_node.qualified.as_str();
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
         Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
@@ -415,6 +417,14 @@ fn rebuilt_pass(
             run_xml(selected, para_node, &text).ok()?
         };
         let tail = retained_runs(old.len() - suffix, old.len())?;
+        if field_free {
+            original_sources.extend(
+                [p_pr_node, end_node]
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, node)| node.span.clone()),
+            );
+        }
         emitted_sources.extend(edges);
         emitted_sources.extend(original_sources);
         Some(format!(
