@@ -127,6 +127,20 @@ fn calendar_timezone<'c>(calendar: &'c icalendar::parser::Component<'_>) -> Opti
         .filter(|zone| !zone.is_empty())
 }
 
+/// The zone the VCALENDAR in `input` names its own (`X-WR-TIMEZONE`), the
+/// zone [`parse_ics_feed`] gives that calendar's all-day events (fix list
+/// row 17868); `None` when it names none or does not parse.
+pub(crate) fn ics_calendar_timezone(input: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(input).ok()?;
+    let unfolded = icalendar::parser::unfold(text);
+    let roots = icalendar::parser::read_components(&unfolded).ok()?;
+    roots
+        .iter()
+        .filter(|root| is_named(root, "VCALENDAR"))
+        .find_map(calendar_timezone)
+        .map(str::to_owned)
+}
+
 /// Whether `component` is named `name` under any ASCII spelling (RFC 5545
 /// names are case-insensitive).
 fn is_named(component: &icalendar::parser::Component<'_>, name: &str) -> bool {
