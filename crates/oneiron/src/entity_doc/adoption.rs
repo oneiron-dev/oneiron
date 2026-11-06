@@ -89,8 +89,9 @@ pub(super) fn twins_in(
 
 /// Completes the place `incoming` took under `head`, its history persisted:
 /// its purge floor row, the citation floors of citers gone with the old
-/// history, each pin bound to its twin `pins`, and the operations `old`
-/// held past `replaced`, parked.
+/// history, each pin bound to its twin `pins`, the operations `old` held
+/// past `replaced`, parked, and the sync plane's pending frames of the old
+/// history, retired.
 #[allow(
     clippy::too_many_arguments,
     reason = "one adoption's parts, read once by twins_in"
@@ -124,6 +125,9 @@ pub(super) fn complete_in_txn(
     if !replaced.includes_vv(&old.doc.oplog_vv()) {
         park_held_edits_in_txn(vault, txn, entity, head, incoming, old)?;
     }
+    // The sync plane's pending frames are of the history that went.
+    #[cfg(feature = "sync")]
+    crate::sync::documents::retire_journal_in_txn(vault, txn, *entity)?;
     Ok(())
 }
 
