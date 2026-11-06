@@ -36,6 +36,8 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// Field-free paragraph edge gaps carry only beside actually emitted original
 /// neighbors: positive retained text at the first/last nonempty direct child,
 /// and an original first pPr or last endParaRPr. Skipped children block bridges.
+/// A wholly retained nonempty ordinary run or direct break in a field-free
+/// paragraph keeps its original XML once; partial segments stay static.
 pub(super) fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -232,7 +234,13 @@ pub(super) fn rebuilt(
                 {
                     runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
                 } else if start < end {
-                    if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
+                    if field_free
+                        && (node.is(DML, "r") || node.is(DML, "br"))
+                        && start == position
+                        && end == position + text.len()
+                    {
+                        runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
+                    } else if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
                         runs.push_str(&run_xml(Some((*at, *node)), para_node, &part).ok()?);
                     } else {
