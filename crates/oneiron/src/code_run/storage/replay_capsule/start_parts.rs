@@ -1,7 +1,7 @@
 //! The step starts a checkpoint carries as parts (FIX 9180, coord-b slice
 //! d): each read by its capsule's typed ref, and each republished from its
 //! parts, among an image's raw rows on a restore and through the start's
-//! own publisher on an activation.
+//! own piece writer on an activation.
 //!
 //! A kept start is found by its capsule, never by a path's name: the
 //! capsule's run and the start's path are its occurrence, the start's body
@@ -26,8 +26,11 @@ use super::super::replay_bodies::replay_owners;
 use super::super::response_erase::release_occurrence_in_txn;
 use super::CAPSULES;
 use super::pieces::PieceScope;
-use super::spawn_erase::{publish_start_in_txn, republished_start_body};
-use super::start_pieces::start_bytes_in_txn;
+use super::spawn_erase::republished_start_body;
+use super::start_pieces::{
+    release_unnamed_start_pieces_in_txn, republish_start_pieces_in_txn, start_bytes_in_txn,
+    start_manifest_pieces_in_txn,
+};
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::{
     OwnedBody, digest_is_held_in_txn, prune_digest_in_rows, queue_pruned_file_in_txn,
@@ -218,8 +221,10 @@ fn capsule_in_txn(
 
 /// FIX 9180: an activation's republish of the step start the capsule row
 /// `row` names, as `bytes`, what its source retired of its parts left of
-/// it, through the start's own publisher; the capsule names its new body
-/// and digest. The old body goes once nothing holds it.
+/// it, through the start's own piece writer (FIX 4192); the capsule names
+/// its new manifest and digest. The old manifest goes once nothing holds
+/// it, and so does each superseded piece no kept start of the run and
+/// actor names.
 ///
 /// # Errors
 ///
@@ -233,27 +238,28 @@ pub(crate) fn republish_step_start_in_txn(
     let Some((key, mut capsule)) = capsule_in_txn(store, wtxn, row)? else {
         return Ok(());
     };
+    let Some(scope) = capsule_scope(&capsule) else {
+        return Ok(());
+    };
     let Some(start) = capsule.start.take() else {
         return Ok(());
     };
-    let (body, held) = publish_start_in_txn(store, wtxn, capsule.run, &start, bytes)?;
-    capsule.start = Some(ExecutorStepStart {
-        body,
-        digest: *blake3::hash(bytes).as_bytes(),
-        erased: false,
-        ..start
-    });
+    let republished = republish_start_pieces_in_txn(store, wtxn, scope, &start, bytes)?;
+    capsule.start = Some(republished.start);
     CAPSULES.put(store, wtxn, &key, &capsule)?;
-    if let Some(digest) = held.filter(|digest| *digest != body.hash) {
+    let superseded = &republished.superseded;
+    let released = release_unnamed_start_pieces_in_txn(store, wtxn, scope, superseded)?;
+    for digest in republished.manifest.into_iter().chain(released) {
         drop_unheld_body_in_txn(store, wtxn, &digest)?;
     }
     Ok(())
 }
 
 /// FIX 9180: an activation's release of the step start the capsule row
-/// `row` names, whose rest its source retired: the run's occurrence goes
-/// with its marks, as a retired body's does, and its body once nothing
-/// holds it.
+/// `row` names, whose rest its source retired: the run's occurrence of its
+/// manifest goes with its marks, as a retired body's does, and its body
+/// once nothing holds it. FIX 4192: so does each of its pieces no other
+/// kept start of the run and actor names.
 ///
 /// # Errors
 ///
@@ -266,11 +272,29 @@ pub(crate) fn release_step_start_in_txn(
     let Some((_, capsule)) = capsule_in_txn(store, wtxn, row)? else {
         return Ok(());
     };
-    let Some(start) = capsule.start else {
+    let Some(start) = &capsule.start else {
         return Ok(());
     };
-    let handle = CodeRunRawOutput::of_ref(start.body).handle;
-    if let Some(digest) = release_occurrence_in_txn(store, wtxn, capsule.run, start.path, handle)? {
+    let mut named = BTreeSet::new();
+    start_manifest_pieces_in_txn(store, wtxn, start.body, &mut named)?;
+    let (path, handle) = (
+        start.path.clone(),
+        CodeRunRawOutput::of_ref(start.body).handle,
+    );
+    let mut held = Vec::new();
+    held.extend(release_occurrence_in_txn(
+        store,
+        wtxn,
+        capsule.run,
+        path,
+        handle,
+    )?);
+    if let Some(scope) = capsule_scope(&capsule) {
+        held.extend(release_unnamed_start_pieces_in_txn(
+            store, wtxn, scope, &named,
+        )?);
+    }
+    for digest in held {
         drop_unheld_body_in_txn(store, wtxn, &digest)?;
     }
     Ok(())
