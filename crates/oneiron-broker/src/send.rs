@@ -8,6 +8,7 @@
 //! follow or reply guard (OF-603).
 
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -50,6 +51,7 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
     /// Whether gzip request bodies still go: on, until a gzip-sent body is
@@ -60,7 +62,7 @@ pub(crate) struct Sender {
 }
 
 impl Sender {
-    pub(crate) fn new(policy: &SendPolicy) -> Result<Self, reqwest::Error> {
+    pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
         let mut builder = Client::builder()
             .use_rustls_tls()
             .https_only(true)
@@ -75,12 +77,15 @@ impl Sender {
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
             .timeout(policy.timeout);
         for pem in &policy.extra_roots {
-            for root in Certificate::from_pem_bundle(pem)? {
+            for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
                 builder = builder.add_root_certificate(root);
             }
         }
+        let client = builder.build().map_err(io::Error::other)?;
+        let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
-            client: builder.build()?,
+            client,
+            ws_tls,
             timeout: policy.timeout,
             gzip: AtomicBool::new(true),
         })
@@ -120,7 +125,14 @@ impl Sender {
                             empty,
                         );
                     }
-                    push_wiped(&mut raw, &chunk);
+                    if push_wiped(&mut raw, &chunk).is_err() {
+                        return (
+                            Outcome::Failed {
+                                reason: Failure::Send,
+                            },
+                            empty,
+                        );
+                    }
                 }
                 Ok(None) => break,
                 Err(error) => return (failed(&error), empty),
@@ -168,7 +180,14 @@ impl Sender {
     ) -> io::Result<()> {
         if call.shape == crate::Shape::OpenAiResponses {
             return crate::responses::responses_to(
-                call, checked, body, whole, secret, writer, deadline,
+                &self.ws_tls,
+                call,
+                checked,
+                body,
+                whole,
+                secret,
+                writer,
+                deadline,
             )
             .await;
         }
@@ -201,7 +220,9 @@ impl Sender {
                 Ok(None) => (watch.finish(), true),
                 Err(error) => break Some(failure(&error)),
             };
-            push_wiped(&mut cleared, &passed);
+            if push_wiped(&mut cleared, &passed).is_err() {
+                break Some(Failure::Send);
+            }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
             while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
@@ -213,7 +234,11 @@ impl Sender {
                 break None;
             }
             if sent > 0 {
-                cleared = Zeroizing::new(cleared[sent..].to_vec());
+                let mut remainder = Zeroizing::new(Vec::new());
+                if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
+                    break Some(Failure::Send);
+                }
+                cleared = remainder;
             }
         };
         within(deadline, write_stream_end(writer, cut)).await
@@ -424,14 +449,38 @@ impl Sender {
         {
             return None;
         }
-        let mut encoder = flate2::write::GzEncoder::new(
-            Vec::with_capacity(body.len() / 2),
-            flate2::Compression::new(1),
-        );
+        let sink = crate::body::FallibleBody::with_capacity(body.len() / 2).ok()?;
+        let mut encoder = flate2::write::GzEncoder::new(sink, flate2::Compression::new(1));
         io::Write::write_all(&mut encoder, body).ok()?;
-        let encoded = encoder.finish().ok()?;
+        let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
     }
+}
+
+/// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
+/// The HTTPS client has already validated every configured PEM bundle.
+fn ws_client_config(extra_roots: &[Vec<u8>]) -> io::Result<Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    for pem in extra_roots {
+        for cert in CertificateDer::pem_reader_iter(io::BufReader::new(pem.as_slice())) {
+            let cert = cert.map_err(io::Error::other)?;
+            roots.add(cert).map_err(io::Error::other)?;
+        }
+    }
+    // Match reqwest: respect an installed provider, otherwise use ring.
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
 }
 
 /// The origin whose Messages API takes a gzip request body (ARCH-0081 §6).
@@ -515,14 +564,21 @@ pub(crate) async fn answer<W: AsyncWrite + Unpin>(
 
 /// Appends `chunk`, growing into a fresh buffer when full so the old one is
 /// wiped as it drops instead of freed with reply bytes in it.
-pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) {
-    let needed = buffer.len() + chunk.len();
+pub(crate) fn push_wiped(buffer: &mut Zeroizing<Vec<u8>>, chunk: &[u8]) -> io::Result<()> {
+    let needed = buffer
+        .len()
+        .checked_add(chunk.len())
+        .ok_or(io::ErrorKind::OutOfMemory)?;
     if needed > buffer.capacity() {
-        let mut grown = Zeroizing::new(Vec::with_capacity(needed.max(buffer.capacity() * 2)));
+        let mut grown = Zeroizing::new(Vec::new());
+        grown
+            .try_reserve_exact(needed.max(buffer.capacity().saturating_mul(2)))
+            .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
         grown.extend_from_slice(buffer);
         *buffer = grown;
     }
     buffer.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// The reply's headers, each value stripped. A header whose name holds the

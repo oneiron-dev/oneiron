@@ -588,6 +588,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "MODEL_UNAVAILABLE",
     "MODEL_PIN_UNAVAILABLE",
     "PENDING_ASK",
+    oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
 ];
 
 /// One dispatched call's reply body, before its budget envelope.
@@ -616,14 +617,23 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 replay: value.replay,
             }
         }),
-        SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
+        SelfDispatchOutcome::AgentVerb(answer) => answer.guest_reply(),
         SelfDispatchOutcome::SkillCall(value) => json!({"output":value.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(value) => {
-            if GUEST_FAILURE_CODES.contains(&value.error.as_str()) {
-                json!({"failed": true, "error": value.error})
+            let error = value
+                .code
+                .as_deref()
+                .filter(|code| GUEST_FAILURE_CODES.contains(code))
+                .or_else(|| {
+                    GUEST_FAILURE_CODES
+                        .contains(&value.error.as_str())
+                        .then_some(value.error.as_str())
+                });
+            if let Some(error) = error {
+                json!({"failed": true, "error": error})
             } else {
                 json!({"failed": true})
             }
@@ -686,6 +696,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({"receipt":receipt.to_hex()})
         }
         SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
+        SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
         SelfDispatchOutcome::Fold(json) => {
             let output: Value =
                 serde_json::from_str(json).map_err(|_| failure("fold answer is not JSON"))?;

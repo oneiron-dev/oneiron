@@ -111,6 +111,37 @@ accounting. A later witness publication cannot substitute a newer receipt view.
 Existing base MESSAGEs keep their own receipt history; a promotion retry remains
 answered by its original durable save receipt.
 
+## Session-owned invocation claims
+
+`SessionWitnessContext::claim_invocation(id, body)` and
+`SessionWitnessBinding::claim_invocation(vault, id, body)` claim a request under
+that exact caller and session. The native hash binds the actual caller actor and
+class as well as the door's canonical body hash. Successful outcomes stay in the
+session's existing RAM keep; no durable invocation intent or reply is opened.
+Ordinary vault claims retain their existing concurrent-only lifetime.
+
+All active claims still occupy the original vault-wide in-flight index, so a
+hook cannot mistake a concurrent request for nested work. The session index and
+the volatile index share one outcome slot. Finish removes the volatile entry and
+keeps a successful session outcome for a later duplicate. `finish_unkept` shares
+a failure with current waiters but releases its session entry. A drop without a
+reply releases both entries. Removal requires the same slot instance.
+
+Session close force-clears completed outcomes as well as pending ones, wakes
+waiters without a reply and fences a late finish on the old slot. A new captured
+mode generation replaces the old RAM owner only after a typed stale-route check.
+The original caller binding must be revalidated after a wait and after replay's
+current destination release; neither an invocation id nor a kept reply is authority.
+
+The named-invocation path of `POST /v1/ai/chat` selects this keep for a positively
+bound Anonymous caller before opening the ordinary durable claim. Managed owner
+proof is attached only to the actual Human requester's caller Memory, never the
+assistant author. Unmatched session headers and ordinary OnRecord calls keep
+their existing durable path. The chat call hash includes the request's session
+context. This is the invocation-storage slice only: user/assistant witness and
+stream routing, Continue/Retry and completed-but-unretained delivery remain open.
+It is not a whole HTTP privacy guarantee or a cross-mode transition guarantee.
+
 ## Integration boundary
 
 This API does not route the HTTP chat user witness or assistant producer yet.

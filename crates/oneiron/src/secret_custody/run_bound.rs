@@ -454,11 +454,18 @@ impl Vault {
                     &entry.id,
                     SecretRevealCause::RunSeatEnded,
                 )?;
-                crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
+                crate::batch::deindex_entity(
+                    &crate::secret_custody::CustodyWrite::of(self),
+                    wtxn,
+                    &entry.id,
+                )?;
                 crate::secret_custody::erase_secret_handle_label_in_txn(
                     &self.store,
                     wtxn,
                     &entry.id,
+                )?;
+                crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
+                    self, wtxn, &entry.id,
                 )?;
                 // A run-bound name names its one record and is never
                 // reclaimed: its high-water goes with it.
@@ -498,11 +505,18 @@ impl Vault {
                         &entry.id,
                         SecretRevealCause::RunSeatEnded,
                     )?;
-                    crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
+                    crate::batch::deindex_entity(
+                        &crate::secret_custody::CustodyWrite::of(self),
+                        wtxn,
+                        &entry.id,
+                    )?;
                     crate::secret_custody::erase_secret_handle_label_in_txn(
                         &self.store,
                         wtxn,
                         &entry.id,
+                    )?;
+                    crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
+                        self, wtxn, &entry.id,
                     )?;
                     // A run-bound name names its one record and is never
                     // reclaimed: its high-water goes with it.

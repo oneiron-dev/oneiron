@@ -1,7 +1,7 @@
-//! Typed Git invocation context: repository selector and operation policy travel together.
+//! Core half of `git_wire::execution_context`: its store-layer items live in `oneiron_store::git_wire::execution_context` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::ffi::OsString;
-use std::path::Path;
+pub(crate) use oneiron_store::git_wire::execution_context::*;
 
 use super::argv::FrozenGitArgv;
 use super::bridge::bridged_verb_index;
@@ -9,50 +9,8 @@ use super::failure::invalid;
 use super::retained_object::RetainedGitIo;
 use super::{GitOid, GitWireOperation};
 use crate::error::Result;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum GitExecutionEffect {
-    Initialization,
-    ContextOnly,
-    PersistentConfig,
-    AttributeRead,
-    AttributeWrite,
-    WorktreeAdd,
-}
-
-impl GitExecutionEffect {
-    pub(super) const fn needs_profile(self) -> bool {
-        matches!(
-            self,
-            Self::AttributeRead | Self::AttributeWrite | Self::WorktreeAdd
-        )
-    }
-
-    pub(super) const fn creates_worktree(self) -> bool {
-        matches!(self, Self::WorktreeAdd)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum GitExecutionContext<'a> {
-    /// A local repository root, proven by the GitWire handle before effects;
-    /// discovery reads can establish that proof without an effect profile.
-    Repository(&'a Path),
-    /// The hub's validated private bare scratch repository. Its remote
-    /// configuration must persist between fixed config/fetch/read calls.
-    HubBare {
-        root: &'a Path,
-        selector: &'a [OsString],
-    },
-}
-
-impl GitExecutionContext<'_> {
-    pub(super) const fn root(&self) -> &Path {
-        match self {
-            Self::Repository(root) | Self::HubBare { root, .. } => root,
-        }
-    }
-}
+use std::ffi::OsString;
+use std::path::Path;
 
 pub(super) struct GitCommandSpec<'a> {
     context: GitExecutionContext<'a>,
@@ -253,17 +211,4 @@ impl<'a> GitCommandSpec<'a> {
     pub(super) const fn hold(&self) -> Option<&'a Path> {
         self.hold
     }
-}
-
-/// `rm -q -f -- <path>` or `rm -q --cached -- <path>`: one quiet removal of
-/// one path, from the checkout and index or from the index alone.
-fn fixed_rm_form(tail: &[String]) -> bool {
-    matches!(
-        tail,
-        [quiet, mode, separator, path]
-            if quiet == "-q"
-                && (mode == "-f" || mode == "--cached")
-                && separator == "--"
-                && !path.is_empty()
-    )
 }

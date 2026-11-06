@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::check_inputs::{
     QueueCheckHold, QueueCheckHoldReason, QueueCheckNeed, QueueCheckReceipt,
+    StoredQueueCheckReceipt,
 };
 use super::plan::FrozenCheckPlan;
 use super::storage::{BATCHES, check_row_size};
@@ -196,7 +197,7 @@ pub struct QueueCheckWork {
     pub generation: u32,
     pub status: QueueCheckStatus,
     /// Every generation's receipts, oldest first.
-    pub receipts: Vec<QueueCheckReceipt>,
+    pub receipts: Vec<StoredQueueCheckReceipt>,
     pub verdict_refs: Vec<String>,
     /// The queue pointers a completed init produced.
     pub pointers: Option<MergeQueuePointers>,
@@ -323,7 +324,7 @@ impl MergeQueue<'_> {
             }
             Some(work) => work,
             None => QueueCheckWork {
-                schema_version: 1,
+                schema_version: 2,
                 key: key.clone(),
                 store: self.repo.identity().as_hex(),
                 repo,
@@ -431,7 +432,7 @@ impl MergeQueue<'_> {
     /// The earlier passing receipt of this store whose inputs digest is
     /// `digest`, that a refresh-free check may stand on, read by index
     /// (FIX 7349).
-    pub(super) fn reusable_receipt(&self, digest: &str) -> Result<Option<QueueCheckReceipt>> {
+    pub(super) fn reusable_receipt(&self, digest: &str) -> Result<Option<StoredQueueCheckReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(super::receipt_index::indexed_receipts_in_txn(
             &self.vault.store,
@@ -454,7 +455,7 @@ impl MergeQueue<'_> {
         &self,
         digest: &str,
         verdict: &str,
-    ) -> Result<Option<QueueCheckReceipt>> {
+    ) -> Result<Option<StoredQueueCheckReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(super::receipt_index::indexed_receipts_in_txn(
             &self.vault.store,
@@ -685,7 +686,9 @@ impl Vault {
         } else {
             status = Some(QueueCheckStatus::Held(authority_lapsed()));
         }
-        current.receipts.extend(update.receipts);
+        let receipts =
+            super::check_exhaust::store_receipts_in_txn(self, &mut txn, &current, update.receipts)?;
+        current.receipts.extend(receipts);
         if let Some(status) = status {
             let attempt = current
                 .attempt
