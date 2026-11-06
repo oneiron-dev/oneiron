@@ -14,6 +14,7 @@ use super::{
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_docedit::resource::{Resources, wide};
 use oneiron_docedit::retained_opc::Limits;
 use serde::{Deserialize, Serialize};
 
@@ -162,7 +163,12 @@ fn run_pipeline<S: EditSession>(
     // handed us a broken blob), distinct from a session producing bad output.
     // The decomposed package moves into the session's document and is
     // borrowed back for inspection, the diff and the gate.
-    let doc_before = OfficeDoc::new(format, input_bytes.to_vec(), opc::read(input_bytes)?);
+    let resources = session.document_resources();
+    let doc_before = OfficeDoc::new(
+        format,
+        copy_document_bytes(input_bytes, resources.as_ref())?,
+        opc::read(input_bytes)?,
+    );
     let before = doc_before.package();
 
     // Stage 1: inspect-first.
@@ -205,7 +211,11 @@ fn run_pipeline<S: EditSession>(
         }
         match opc::read(&current) {
             Ok(package) => {
-                let edited = OfficeDoc::new(format, current.clone(), package);
+                let edited = OfficeDoc::new(
+                    format,
+                    copy_document_bytes(&current, resources.as_ref())?,
+                    package,
+                );
                 current = session.recalc(&edited)?;
                 RecalcStatus::Performed
             }
@@ -295,6 +305,25 @@ fn run_pipeline<S: EditSession>(
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
         sheet_answers: None,
     })))
+}
+
+fn copy_document_bytes(bytes: &[u8], resources: Option<&Resources>) -> Result<Vec<u8>> {
+    let Some(resources) = resources else {
+        return Ok(bytes.to_vec());
+    };
+    let mut backing = resources
+        .reserve(wide(bytes.len()))
+        .map_err(crate::office_body::machine_memory_refused)?;
+    let mut copy = Vec::new();
+    copy.try_reserve_exact(bytes.len())
+        .map_err(|error| Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error)))?;
+    if copy.capacity() > bytes.len() {
+        backing
+            .take(wide(copy.capacity() - bytes.len()))
+            .map_err(crate::office_body::machine_memory_refused)?;
+    }
+    copy.extend_from_slice(bytes);
+    Ok(copy)
 }
 
 impl crate::Vault {

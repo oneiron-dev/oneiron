@@ -18,6 +18,12 @@ The native recalculation wrapper also reuses an operation exposed by the edit
 session. Typed-answer sessions and their batch wrapper expose the original
 ask's resource operation, including its existing deadline. A generic session
 that exposes none keeps the previous per-call host-resource resolution.
+The pipeline's input-workbook copy and its pre-recalc byte copy reserve their
+actual vector capacity through that operation before copying. Sessions that
+expose no operation keep their original unadmitted byte-copy behavior. Public
+`OfficeDoc` and proposal `Clone` implementations are unchanged; this is not
+accounting for every copy made by a generic session or a caller.
+
 Resource errors returned by native recalculation or external-link preservation
 keep their typed cause; they do not start precision fallback or become an
 unreadable-package message. Unsupported workbook features and engine failures
