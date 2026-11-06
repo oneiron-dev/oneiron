@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::context_board::{TurnWake, turn_wake_line};
 use oneiron::ingest::ConnectorWitness;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::memory::TranscriptMessage;
@@ -147,9 +148,16 @@ fn answer(
                     message(LlmMessageRole::System, job.budget_steering.join("\n")),
                 );
             }
+            // FIX 15011: the event started this turn, so the wake opener
+            // closes it, after the event's briefing and outside its foreign
+            // text. An empty answer stays the no-send outcome below.
             context.push(message(
                 LlmMessageRole::User,
                 briefing(&origin, event_id, &text),
+            ));
+            context.push(message(
+                LlmMessageRole::User,
+                turn_wake_line(vault.now_recorded_ms(), TurnWake::Channel),
             ));
             let answer = generate(
                 server,
@@ -205,7 +213,16 @@ fn answer(
         OutboundDispatchOutcome::Ambiguous => ConnectorReplyStage::Ambiguous,
     };
     result.outcome = Some(dispatched.outcome.as_str().to_owned());
+    if dispatched.outcome == OutboundDispatchOutcome::Deferred {
+        owe(result, "reply: deferred".to_owned());
+    }
     result.gate_reason_codes = dispatched.gate_reason_codes;
+    // FIX 11026: a requeue waits for the edge the receipt names.
+    result.retry_at = dispatched
+        .receipt
+        .fields
+        .get("retry_at")
+        .and_then(|edge| edge.parse().ok());
     // Only words that reached the channel join the conversation: a held,
     // degraded, suppressed, let-go, failed or ambiguous reply was not said,
     // and a later run that delivers it witnesses it then. The kept words,

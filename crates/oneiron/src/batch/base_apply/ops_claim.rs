@@ -92,14 +92,15 @@ pub(super) fn apply_claim_candidate_arm(
 }
 
 pub(super) fn apply_reconcile_lexical_arm(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     state: &mut BatchApplyState,
     source: EntityId,
     keep: Vec<EntityId>,
 ) -> Result<()> {
+    let store = write.store;
     let keep: HashSet<EntityId> = keep.into_iter().collect();
-    let deleted = delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
+    let deleted = delete_lexical_query_hint_claims_for_target(write, wtxn, &source, &keep)?;
     for (deleted_id, neighbors) in &deleted.deleted {
         state.pending_embedding_tokens_written.remove(deleted_id);
         #[cfg(feature = "sync")]

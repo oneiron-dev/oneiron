@@ -9,6 +9,8 @@ use crate::api::ai::chat::compaction::{self, ChatReused};
 pub(crate) struct ActionSession {
     reader: Reader,
     segments: TurnSegments,
+    /// The agent the reused call answers as.
+    agent: EntityId,
 }
 
 impl ActionSession {
@@ -26,6 +28,7 @@ impl ActionSession {
         let (chat, borrowed, captured) =
             reused.breakpoint.action_chat(ai, vault, &memory, action)?;
         let (actor, class) = action.requester().ok()?;
+        let agent = reused.breakpoint.agent()?;
         let reader = Reader {
             vault: Arc::clone(vault),
             credential: TurnCredential::Action {
@@ -111,7 +114,7 @@ impl ActionSession {
                 self_chat: Some(&chat),
                 messages: &messages,
                 board: tail.as_ref(),
-                agent: reused.breakpoint.agent()?,
+                agent,
                 craft: craft.then_some(reused.craft.as_slice()),
             },
             &request.messages,
@@ -119,7 +122,11 @@ impl ActionSession {
             (continuing && request.messages.len() != ends).then_some(action.message),
         )?;
         segments.manifest.anchor()?;
-        Some(Self { reader, segments })
+        Some(Self {
+            reader,
+            segments,
+            agent,
+        })
     }
 
     pub(crate) fn manifest(&self) -> Arc<SegmentManifest> {
@@ -128,9 +135,31 @@ impl ActionSession {
 
     /// A Retry saves a new whole reply; a Continue appends to its existing
     /// MESSAGE. Only that generation's full persisted text can advance the
-    /// captured request. A fallback publishes no successor for it.
-    pub(crate) fn commit_on_answer(self, answering: Answering) -> Answering {
-        let Self { reader, segments } = self;
+    /// captured request. A fallback publishes no successor for it. With
+    /// `preparing`, the session then prepares beside the successor what the
+    /// conversation's next turn, its requester's, puts right after the
+    /// history (I1 = C, FIX 14677).
+    pub(crate) fn commit_on_answer(
+        self,
+        answering: Answering,
+        preparing: Option<Arc<crate::server::SyncServer>>,
+    ) -> Answering {
+        let Self {
+            reader,
+            segments,
+            agent,
+        } = self;
+        let next = preparing.and_then(|server| {
+            let TurnCredential::Action { action, .. } = &reader.credential else {
+                return None;
+            };
+            Some(Arc::new(crate::api::ai::chat::next_turn::ChatNextTurn {
+                server,
+                reader: reader.clone(),
+                agent,
+                conversation: Some(action.conversation),
+            }) as Arc<dyn NextTurnSource>)
+        });
         let authority = segments
             .authority
             .as_ref()
@@ -186,15 +215,20 @@ impl ActionSession {
                     Some(*turn)
                 });
                 if let Some(head) = turn {
-                    reply_committed(
-                        &segments.manifest,
-                        ReplyCommit {
-                            head,
-                            message,
-                            text,
-                        },
-                        Arc::new(authority),
-                    );
+                    let commit = ReplyCommit {
+                        head,
+                        message,
+                        text,
+                    };
+                    match next {
+                        Some(next) => reply_committed_preparing(
+                            &segments.manifest,
+                            commit,
+                            Arc::new(authority),
+                            next,
+                        ),
+                        None => reply_committed(&segments.manifest, commit, Arc::new(authority)),
+                    }
                 }
             }
         });

@@ -214,7 +214,6 @@ impl Vault {
         ]);
         definition.lifecycle_status = ClaimLifecycleStatus::Active;
         let disposition = if within {
-            definition.ceiling = effective;
             definition.approval_status = author_def.approval_status;
             AgentDefinitionPutDisposition::Active
         } else {

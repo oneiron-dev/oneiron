@@ -83,8 +83,13 @@ struct Cutover<'a> {
     writer: EntityId,
     mirror: bool,
     /// The owner proof the installing transaction revalidates, when the
-    /// owner's door carried one (FIX 8214).
-    owner: Option<&'a AuthenticatedOwner>,
+    /// owner's door carried one (FIX 8214), and the surface his act came
+    /// from: the transaction signs his cut of each portable id the repo
+    /// stands under with it (FIX 15740).
+    owner: Option<(&'a AuthenticatedOwner, crate::authority::ActSurface)>,
+    /// The repository's served name, for a cut through the served door: the
+    /// name its manifests carry.
+    served_name: Option<&'a str>,
 }
 /// Persisted host authorization. This is deliberately not a public deserializer
 /// for `OriginAuthorityLease`: only local admission evidence can restore it.
@@ -247,6 +252,7 @@ impl Vault {
             writer,
             mirror,
             owner: None,
+            served_name: None,
         };
         self.cut_origin_authority(repo.common_dir(), repo.repo_root(), id, cutover)
     }
@@ -267,14 +273,21 @@ impl Vault {
             writer,
             mirror,
             owner: None,
+            served_name: Some(repo_name),
         };
         self.cut_served_origin_authority(repo_name, cutover)
     }
     /// [`Vault::set_served_origin_authority`] as the caller's owner proof,
-    /// revalidated in the transaction that installs the row (FIX 8214).
+    /// revalidated in the transaction that installs the row (FIX 8214), from
+    /// `surface`. The same transaction signs the owner's cut of each
+    /// portable id the repo stands under ([`crate::authority::OriginCut`],
+    /// FIX 15740), at one epoch for the row and every cut: above the row's
+    /// and above every live cut of those ids. A cut that cannot be signed
+    /// (no carrier here, history the vault lacks) installs nothing.
     pub fn set_served_origin_authority_as_owner(
         &self,
         owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
         repo_name: &str,
         expected_epoch: Option<u64>,
         residence: OriginResidence,
@@ -286,7 +299,8 @@ impl Vault {
             residence,
             writer,
             mirror,
-            owner: Some(owner),
+            owner: Some((owner, surface)),
+            served_name: Some(repo_name),
         };
         self.cut_served_origin_authority(repo_name, cutover)
     }
@@ -357,9 +371,20 @@ impl Vault {
             && row.writer != ORIGIN_ERASED_WRITER
             && host.is_some_and(|host| row.writer == host.to_hex()))
     }
+    /// The authority row of repository `repo_id` in the caller's snapshot:
+    /// a carried repo manifest is judged against it in the transaction that
+    /// would store it (FIX 12765).
+    #[cfg(feature = "sync")]
+    pub(in crate::origin) fn origin_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        repo_id: EntityId,
+    ) -> Result<Option<OriginAuthority>> {
+        AUTHORITY.get(&self.store, txn, &repo_id)
+    }
     /// The authority key of a served repository: its object store's identity,
     /// as admission reads it before any commit is pinned.
-    fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
+    pub(in crate::origin) fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
         let identity = GitWire::new(self)?.repository_identity(repo_root)?;
         crate::origin::lfs::lfs_repo_id(&identity.as_hex())
     }
@@ -376,6 +401,7 @@ impl Vault {
             writer,
             mirror,
             owner,
+            served_name,
         } = cutover;
         let _guard = lock_repository(common_dir)?;
         self.reconcile_receive_pack_operations(repo_root)?;
@@ -392,25 +418,67 @@ impl Vault {
                 "origin cutover requires a drained publication census",
             ));
         }
+        // The owner's cut is signed for each portable id the repo stands
+        // under here (FIX 15740); resolved outside the writer, as it reads
+        // each CODE anchor's store, and checked again inside it.
+        let bound = match (owner, served_name) {
+            (Some(_), Some(name)) => self.served_repo_portable_ids(name, repo_root)?,
+            _ => Vec::new(),
+        };
         let mut txn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &txn)?;
-        }
+        let actor = match owner {
+            Some((owner, _)) => Some(owner.revalidate_in_txn(self, &txn)?),
+            None => None,
+        };
         let current = AUTHORITY.get(&self.store, &txn, &id)?;
         if current.as_ref().map(|row| row.epoch) != expected_epoch {
             return Err(Error::ConcurrentWrite("origin authority epoch moved"));
         }
+        let mut epoch = expected_epoch
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("origin epoch"))?;
+        let portables: Vec<[u8; 32]> = bound
+            .iter()
+            .map(|(_, portable)| *portable.as_bytes())
+            .collect();
+        if let (Some(name), false) = (served_name, bound.is_empty()) {
+            if !self.served_repo_portable_ids_stand_in_txn(&txn, name, &bound)? {
+                return Err(Error::ConcurrentWrite(
+                    "origin cutover's repo manifests moved",
+                ));
+            }
+            // Another host's cut of the same repo may stand at a higher
+            // epoch: one epoch for the row and every cut, above both.
+            let floor = self.origin_cut_epoch_floor_in_txn(&txn, &portables)?;
+            epoch = epoch.max(
+                floor
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow("origin epoch"))?,
+            );
+        }
         let row = OriginAuthority {
-            epoch: expected_epoch
-                .unwrap_or(0)
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("origin epoch"))?,
+            epoch,
             residence,
             writer: writer.to_hex(),
             mirror,
         };
         AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
+        let appended = match (actor, owner) {
+            (Some(actor), Some((_, surface))) => {
+                self.sign_origin_cuts_in_txn(&mut txn, actor, surface, &portables, (epoch, writer))?
+            }
+            _ => std::collections::BTreeSet::new(),
+        };
+        // The cuts and their joins reach every loaded window through the
+        // live mirror, and a crash before it loses none (FIX 7957).
+        #[cfg(feature = "sync")]
+        self.mark_pending_mirrors_in_txn(&mut txn, &appended)?;
         txn.commit()?;
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(appended);
+        #[cfg(not(feature = "sync"))]
+        drop(appended);
         Ok(row)
     }
     /// Host authorization is separate from the pusher's actor attribution.
