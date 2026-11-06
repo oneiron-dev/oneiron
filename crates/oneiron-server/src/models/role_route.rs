@@ -299,8 +299,17 @@ impl ModelRuntime {
         if role == ModelRole::Reranker && rung.is_none() {
             return Ok(None);
         }
+        let ladder = rung.unwrap_or(ladder);
+        // A local-GPU pick keeps its call local through every owner's
+        // fallback too: its call-local ladder carries an own-server ceiling,
+        // and a stricter ceiling the ladder has stays (review #6390).
+        let ladder = if choice.variant.access == ModelPackAccess::LocalGpu {
+            Arc::new(ladder.with_locality_ceiling(widest))
+        } else {
+            ladder
+        };
         Ok(Some(RoleRoute {
-            ladder: rung.unwrap_or(ladder),
+            ladder,
             model,
             locality: served,
             seat_bound: true,

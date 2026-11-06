@@ -256,28 +256,37 @@ impl ModelPack {
 
     /// `variant` as it runs on `as_of_epoch_day` (FIX 5368): itself while its
     /// model is served; from its model's retirement day, the same access and
-    /// words on the model's successor. An engine call (CALLS, FIX 5368): a
-    /// successor the variant's access does not carry (another provider's
-    /// model on a provider-bound access), or no successor, drops the
-    /// variant, and the role's next variant is its pick.
+    /// words on the first model of its successor chain that is still served,
+    /// at most [`MODEL_PACK_SUCCESSOR_HOPS`] away. An engine call (CALLS, FIX
+    /// 5368): a successor the variant's access does not carry (another
+    /// provider's model on a provider-bound access), no successor, a chain
+    /// that loops, or one longer than the bound drops the variant, and the
+    /// role's next variant is its pick.
     #[must_use]
     pub fn variant_on(
         &self,
         variant: &ModelPackVariant,
         as_of_epoch_day: u32,
     ) -> Option<ModelPackVariant> {
-        let Some(retiring) = self.model_retirement(&variant.model) else {
-            return Some(variant.clone());
-        };
-        if !retiring.retirement.is_retired(as_of_epoch_day) {
-            return Some(variant.clone());
+        let mut model = &variant.model;
+        let mut seen = BTreeSet::from([model]);
+        for _ in 0..=MODEL_PACK_SUCCESSOR_HOPS {
+            let Some(retiring) = self
+                .model_retirement(model)
+                .filter(|retiring| retiring.retirement.is_retired(as_of_epoch_day))
+            else {
+                return Some(ModelPackVariant {
+                    access: variant.access.clone(),
+                    model: model.clone(),
+                    when: variant.when.clone(),
+                });
+            };
+            model = retiring.successor.as_ref()?;
+            if !variant.access.carries(model) || !seen.insert(model) {
+                return None;
+            }
         }
-        let successor = retiring.successor.as_ref()?;
-        variant.access.carries(successor).then(|| ModelPackVariant {
-            access: variant.access.clone(),
-            model: successor.clone(),
-            when: variant.when.clone(),
-        })
+        None
     }
 
     /// The changelog line the owner's notices lead with. An engine call
