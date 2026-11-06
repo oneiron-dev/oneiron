@@ -85,7 +85,12 @@ This is a source implementation, not a production compile or runtime proof.
 The full FIX 9815 retention contract is still partial. Completed sheet-row and
 folder-item decisions now survive a staging or retention error and can be
 restaged under the same run reference without replaying the decider; see
-[completed typed-sheet answer retry](typed-sheet-answer-retry.md). An error
-before the decision loop completes, or failure to commit the completed-answer
-row itself, is not covered. Complete heap accounting, count-domain admission
-behavior and hard-time bounds are not established here.
+[completed typed-sheet answer retry](typed-sheet-answer-retry.md). The initial
+retained row is committed before the first provider call. Each paid result is
+committed before conversion, and the converted answer advances before another
+provider call. Previously committed units therefore survive an incomplete
+loop. A newly returned result whose advance cannot commit is not durably
+retained and may be requested again. Racing writers for the same run can also
+make competing provider calls; this is not single-flight or exactly-once
+provider execution. Complete heap accounting, count-domain admission behavior
+and hard-time bounds are not established here.
