@@ -107,6 +107,26 @@ pub trait DecisionReadObserver: Send + Sync {
     );
 }
 
+/// Prepares the reader's native inputs before its generation allowance or paid gate.
+/// Preparation performs no I/O and retains the inputs that the admitted read will use.
+pub trait DecisionReadPreparer: Send + Sync {
+    fn prepare<'request>(
+        &self,
+        request: &LabelReadRequest<'request>,
+    ) -> Result<Box<dyn PreparedDecisionRead + 'request>>;
+}
+
+/// A native read prepared from the provider's actual typed questions.
+pub trait PreparedDecisionRead {
+    fn read(
+        &self,
+        work_until: Option<Instant>,
+        lease: &BudgetLease,
+        may_send: Option<&(dyn Fn() -> bool + Sync)>,
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+    ) -> LlmResult<LabelReadGenerationOutcome>;
+}
+
 /// Fills the escalation slot. It reads only the call's state, admits and settles each read
 /// through its gate, and returns no authority, receipt or provenance.
 pub struct DecisionReadProvider<'a> {
@@ -116,6 +136,7 @@ pub struct DecisionReadProvider<'a> {
     paired: &'a DecisionQuestion,
     person: Option<&'a DecisionQuestion>,
     observer: Option<&'a dyn DecisionReadObserver>,
+    preparer: Option<&'a dyn DecisionReadPreparer>,
 }
 
 impl<'a> DecisionReadProvider<'a> {
@@ -150,6 +171,7 @@ impl<'a> DecisionReadProvider<'a> {
             paired,
             person,
             observer: None,
+            preparer: None,
         })
     }
 
@@ -157,6 +179,13 @@ impl<'a> DecisionReadProvider<'a> {
     #[must_use]
     pub fn observed_by(mut self, observer: &'a dyn DecisionReadObserver) -> Self {
         self.observer = Some(observer);
+        self
+    }
+
+    /// Uses the original reader's prepared native inputs on this read alone.
+    #[must_use]
+    pub fn prepared_by(mut self, preparer: &'a dyn DecisionReadPreparer) -> Self {
+        self.preparer = Some(preparer);
         self
     }
 
@@ -343,6 +372,16 @@ impl DecisionReadProvider<'_> {
                 })
                 .collect()
         };
+        let prepared = self
+            .preparer
+            .map(|preparer| {
+                preparer.prepare(&LabelReadRequest {
+                    state,
+                    questions: &questions,
+                    work_until: None,
+                })
+            })
+            .transpose()?;
         if let Some((_, generation)) = native
             && !generation.admit()
         {
@@ -361,6 +400,21 @@ impl DecisionReadProvider<'_> {
                 work_until: Some(Instant::now() + deadline.decision_time_left()),
             };
             sent_request = Some(request);
+            if let Some(prepared) = &prepared {
+                let admit_next = || native.is_none_or(|(_, generation)| generation.admit());
+                return match prepared.read(
+                    request.work_until,
+                    lease,
+                    self.gate.send_guard(),
+                    native.map(|_| &admit_next as &(dyn Fn() -> bool + Sync)),
+                ) {
+                    Ok(LabelReadGenerationOutcome::Complete(read)) => GatedRead::Read(Ok(read)),
+                    Ok(LabelReadGenerationOutcome::StoppedPaidPrefix { usage }) => {
+                        GatedRead::StoppedPaidPrefix { usage }
+                    }
+                    Err(error) => GatedRead::Read(Err(error)),
+                };
+            }
             if let Some((reader, generation)) = native {
                 let admit_next = || generation.admit();
                 return match reader.read_admitted(
