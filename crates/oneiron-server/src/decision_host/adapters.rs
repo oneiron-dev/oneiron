@@ -20,10 +20,11 @@ use super::{
     ReasoningEffort, RetrievalDeadline, SeatCandidate, SeatNotes, SeatTask, SystemOneRung, Vault,
 };
 
-impl DecisionReadGate for HouseGate {
-    fn read(
+impl HouseGate {
+    fn read_with_source(
         &self,
         deadline: &RetrievalDeadline,
+        source: Option<&oneiron::llm::decision::DecisionCallSource<'_>>,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
         let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
@@ -47,7 +48,11 @@ impl DecisionReadGate for HouseGate {
             Arc::clone(&self.admission.receipts),
             crate::decision_verdict::rung_payer(),
         );
-        let permit = run
+        let run = match source {
+            Some(_) => run.capturing_settlements(),
+            None => run,
+        };
+        let mut permit = run
             .admit_paid(&self.connector, meter.reserve_units())
             .map_err(|_| refused("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
@@ -55,6 +60,11 @@ impl DecisionReadGate for HouseGate {
         let mut context = run.work_context();
         context.physical = crate::models::physical_for_paid(&self.connector);
         permit.lease().attach_work_context(context);
+        if let Some(source) = source
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
         let gated = read(permit.lease());
         let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
@@ -82,16 +92,42 @@ impl DecisionReadGate for HouseGate {
     }
 }
 
+impl DecisionReadGate for HouseGate {
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.read_with_source(deadline, None, read)
+    }
+}
+
+struct SourcedHouseGate<'a, 'source> {
+    gate: &'a HouseGate,
+    source: Option<&'a oneiron::llm::decision::DecisionCallSource<'source>>,
+}
+
+impl DecisionReadGate for SourcedHouseGate<'_, '_> {
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.gate.read_with_source(deadline, self.source, read)
+    }
+}
+
 /// One house read admitted on the call the rung answers carries (FIX 10443): the same
 /// turn, admission, dispatch and settlement as [`HouseGate`], but the permit comes from
 /// the caller's run, already sourced with the call's evidence, instead of a run of the
 /// gate's own. The caller's run carries its own line, so no verdict meter wraps it.
-struct RunHouseGate<'a> {
+struct RunHouseGate<'a, 'source> {
     gate: &'a HouseGate,
     run: RunAdmission,
+    source: Option<&'a oneiron::llm::decision::DecisionCallSource<'source>>,
 }
 
-impl DecisionReadGate for RunHouseGate<'_> {
+impl DecisionReadGate for RunHouseGate<'_, '_> {
     fn send_guard(&self) -> Option<&(dyn Fn() -> bool + Sync)> {
         self.run.send_guard().map(|guard| guard as _)
     }
@@ -115,7 +151,7 @@ impl DecisionReadGate for RunHouseGate<'_> {
             else {
                 return Ok(GatedRead::NotStarted);
             };
-            let permit = self
+            let mut permit = self
                 .run
                 .admit_paid(
                     &self.gate.connector,
@@ -128,6 +164,11 @@ impl DecisionReadGate for RunHouseGate<'_> {
             let mut context = self.run.work_context();
             context.physical = crate::models::physical_for_paid(&self.gate.connector);
             permit.lease().attach_work_context(context);
+            if let Some(source) = self.source
+                && let Err(error) = permit.capture_native_decision_source(source)
+            {
+                tracing::warn!(%error, "native decision source was not captured");
+            }
             let gated = read(permit.lease());
             let unread = oneiron::llm::LlmUsage::zero();
             // A read that went out and failed keeps its reservation as spend.
@@ -224,6 +265,7 @@ impl DecisionProvider for HouseRead {
             let gate = RunHouseGate {
                 gate: &self.gate,
                 run: run.sourced(Some(call.evidence.to_vec())),
+                source: None,
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
@@ -246,6 +288,7 @@ impl DecisionProvider for HouseRead {
             let gate = RunHouseGate {
                 gate: &self.gate,
                 run: run.sourced(Some(pack.evidence.to_vec())),
+                source: None,
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
@@ -357,6 +400,7 @@ impl HouseRead {
                 run: run
                     .sourced(Some(pack.evidence.to_vec()))
                     .capturing_settlements(),
+                source: context.native_source.as_ref(),
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return read(
@@ -370,8 +414,21 @@ impl HouseRead {
                 .observed_by(&observer),
             );
         }
+        let gate = SourcedHouseGate {
+            gate: &self.gate,
+            source: context.native_source.as_ref(),
+        };
         let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
-        read(self.provider()?.observed_by(&observer))
+        read(
+            DecisionReadProvider::new(
+                self.pin.clone(),
+                self.reader.as_ref(),
+                &gate,
+                &self.paired,
+                self.person.as_ref(),
+            )?
+            .observed_by(&observer),
+        )
     }
 }
 

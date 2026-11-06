@@ -62,6 +62,7 @@ fn capture<T>(work: impl FnOnce() -> T, shared: bool) -> (T, Vec<RunReceipt>) {
 #[derive(Clone, Default)]
 pub(super) struct SettlementCapture {
     kept: Vec<Kept>,
+    native_admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
 }
 
 impl RunAdmission {
@@ -89,12 +90,25 @@ impl RunAdmission {
 }
 
 impl SettlementCapture {
+    pub(super) fn native_admission(&self) -> Option<&crate::dreamer_wake::DecisionCallAdmission> {
+        self.native_admission.as_ref()
+    }
+
+    pub(super) fn bind_native_admission(
+        &mut self,
+        admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
+    ) {
+        self.native_admission = admission;
+    }
+
     pub(super) fn record(&self, receipt: &RunReceipt) {
         if matches!(receipt.event, RunEvent::Settled { .. }) {
             for kept in &self.kept {
+                let mut captured = receipt.clone();
+                captured.native_admission = self.native_admission.clone();
                 kept.lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .push(receipt.clone());
+                    .push(captured);
             }
         }
     }

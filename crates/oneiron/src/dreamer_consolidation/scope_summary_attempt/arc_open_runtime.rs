@@ -237,6 +237,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 scope: &scope,
                 extraction_egress: call.inference.extraction_egress,
                 generation: Some(&generation),
+                native_source: Some(crate::llm::decision::DecisionCallSource::new(
+                    ctx.deadline,
+                    step.attempt_id,
+                )),
             };
             let mut spent = Vec::new();
             let mut cut_usage = Vec::new();

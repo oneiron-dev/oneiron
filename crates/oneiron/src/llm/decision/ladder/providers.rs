@@ -105,6 +105,9 @@ pub struct DecisionCallContext<'a> {
     pub extraction_egress: Option<&'a dyn ExtractionEgressPredicate>,
     /// The caller's per-invocation allowance, checked at each native generation start.
     pub generation: Option<&'a dyn DecisionGenerationAdmission>,
+    /// The original admitted caller's source. A stronger native read allocates
+    /// its own invocation; it never borrows the generated first read's identity.
+    pub native_source: Option<crate::dreamer_wake::DecisionCallSource<'a>>,
 }
 
 /// Admission for one logical generation, not one returned receipt or whole pack.

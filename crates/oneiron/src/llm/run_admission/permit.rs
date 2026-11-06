@@ -78,6 +78,20 @@ impl RunPermit {
         &self.lease
     }
 
+    /// Keeps this native decision's original source on its captured settlement.
+    /// Repeating this operation never draws another invocation. The host's
+    /// ordinary receipt sink and this permit's dispatch and settlement are unchanged.
+    pub fn capture_native_decision_source(
+        &mut self,
+        source: &crate::dreamer_wake::DecisionCallSource<'_>,
+    ) -> crate::Result<()> {
+        if self.capture.native_admission().is_none() {
+            let admission = source.admitted(&self.run.guard, &self.lease)?;
+            self.capture.bind_native_admission(admission);
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn facts(&self) -> &PermitFacts {
         &self.facts
