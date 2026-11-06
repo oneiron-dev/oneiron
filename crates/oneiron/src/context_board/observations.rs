@@ -57,7 +57,20 @@ impl SessionReadSet {
         read: &ScopedRead<'_>,
         ids: &[EntityId],
     ) -> Result<ScopedReadReceipt> {
+        self.observe_rows_with_read_capacity(read, ids, |_| {})
+    }
+
+    /// Observe the temporary point-read vector's backing before reading its rows.
+    pub fn observe_rows_with_read_capacity(
+        &mut self,
+        read: &ScopedRead<'_>,
+        ids: &[EntityId],
+        observe: impl FnOnce(u64),
+    ) -> Result<ScopedReadReceipt> {
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        observe(
+            (reads.capacity() as u64).saturating_mul(std::mem::size_of::<PointRead<'_>>() as u64),
+        );
         let ScopedReadResult {
             value: rows,
             mut receipt,
