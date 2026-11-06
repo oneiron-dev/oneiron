@@ -97,8 +97,8 @@ pub fn window_index_projection_with(
     // FIX 7608 slice 4: a marked repo item is listed by its copy id and
     // titled by its copy, never by its raw body.
     let copies = crate::sync::selector::secret_projection::IndexCopies::read(vault)?;
-    let txn = vault.store.env.read_txn()?;
     let mut entries = Vec::new();
+    let mut listed = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
         if result.is_err() {
@@ -113,22 +113,29 @@ pub fn window_index_projection_with(
         let Some(header) = EntityMetadataHeader::parse(blob) else {
             return;
         };
-        let witness = match readable(id) {
-            Ok(true) => content_world_in(&vault.store, &txn, id),
-            Ok(false) => return,
-            Err(error) => Err(error),
-        };
-        match witness {
-            Ok(witness) => entries.push(WindowIndexEntry {
-                entity_id: copies.shown(&id, key),
-                title: copies.title(&id, blob, |body| title_from_body(body, title_max_chars)),
-                learned_at: header.learned_at,
-                content_world: witness.shown_to(&withhold),
-            }),
+        match readable(id) {
+            Ok(true) => {
+                listed.push(id);
+                entries.push(WindowIndexEntry {
+                    entity_id: copies.shown(&id, key),
+                    title: copies.title(&id, blob, |body| title_from_body(body, title_max_chars)),
+                    learned_at: header.learned_at,
+                    content_world: ContentWorld::Unknown,
+                });
+            }
+            Ok(false) => {}
             Err(error) => result = Err(error),
         }
     });
     result?;
+    // Each listed row's witness (FIX 14534), read once every check above is
+    // done: `readable` opens transactions of its own, and none may nest in
+    // one held here.
+    let txn = vault.store.env.read_txn()?;
+    for (entry, id) in entries.iter_mut().zip(listed) {
+        entry.content_world = content_world_in(&vault.store, &txn, id)?.shown_to(&withhold);
+    }
+    drop(txn);
     entries.sort_unstable_by(|a, b| a.entity_id.cmp(&b.entity_id));
     Ok(entries)
 }
