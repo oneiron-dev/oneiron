@@ -99,3 +99,17 @@ A scalar aggregate minus native usage, or a sum of selected lease states, is not
 proof of the covered guard delta. The existing driver charge, owed-unit SUM and
 logical paid marks remain unchanged; this source does not close the late-call or
 continuation-transfer accounting gap.
+
+`accounting_snapshot` also returns the selected leases' first-settlement meter
+intervals beside their states and total. Each interval records that guard's actual
+global `used_units` before and after its first settlement, under the same lock.
+A per-call state may exceed this rise at saturation; an absolute settlement records
+only its rise over the watermark. A settled local or zero-growth lease has an empty
+interval. Open, aborted, foreign and unknown leases have no settled interval.
+Repeated settlement keeps the first interval. A checkpoint rebuilds a fresh guard
+with no old leases, so an old lease token is foreign there.
+
+These intervals are data for an eventual exact GROSS inclusion join, not credits.
+Callers still need the actual included native lease tokens, a coherent baseline and
+current snapshot, and the paid facts checked with the money in one writer. Neither
+this data nor the native NET invoices activate aggregate charge subtraction.
