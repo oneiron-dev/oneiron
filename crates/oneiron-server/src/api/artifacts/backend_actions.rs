@@ -45,8 +45,9 @@ pub(super) async fn fetch(
             HeaderValue::from_str(&value).map_err(io::Error::other)?,
         );
     }
-    // Outermost first: consume the original holder proof once, then check
-    // the staged identity, then enter the original action handler unchanged.
+    // Keep the public API's outer layers in their original order. The
+    // binding door consumes the holder proof once, before body decoding
+    // and the staged identity check enter the unchanged action handler.
     let routes = crate::api::facade::action_routes::routes()
         .layer(middleware::from_fn_with_state(
             Arc::clone(&server),
@@ -55,7 +56,16 @@ pub(super) async fn fetch(
         .layer(Extension(source))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&server),
+            crate::wire_telemetry::observe_http,
+        ))
+        .layer(middleware::from_fn(crate::api::body_codec::body_codec))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&server),
             crate::auth::admit_http_binding,
+        ))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&server),
+            crate::api::call_receipt::connection_receipt,
         ))
         .with_state(server);
     let response = match routes.oneshot(call).await {

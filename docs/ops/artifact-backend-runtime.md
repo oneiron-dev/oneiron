@@ -191,6 +191,14 @@ ordinary off-device/unknown destination; it does not become local merely
 because the relay runs in the host process. A zero-action credential still has
 no action scope. Ordinary zero-grant computation and HTTP serving continue.
 
+The ordinary API body codec decodes the request after binding admission and
+before the staged identity check and action readers. It also negotiates JSON
+reply compression. The original wire observer counts the call under its own
+caller, and the ordinary connection-receipt wrapper keeps its existing path
+selection; the action handler still supplies its own receipt stamp. Action
+idempotency remains the request body's `idempotencyKey`, not a second header-key
+cache. All codec, receipt and telemetry policies are the existing API policies.
+
 ## Remaining work and evidence limits
 
 The separate artifact-backend pairing API creates an app's own principal and
