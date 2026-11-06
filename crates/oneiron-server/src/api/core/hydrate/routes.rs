@@ -251,8 +251,9 @@ fn admit_batch_hydrate(body: &Value) -> Result<CoreBatchShortIdHydrateRequest, A
 /// items read frame by frame and projected in order, then their bodies
 /// observed into the caller's session and their served forms committed.
 /// The answer goes beside the rows its projected live and deleted items
-/// were derived from (FIX 1435). A malformed ref, or a slot that is absent
-/// or refused, adds none.
+/// were derived from (FIX 1435). A malformed ref, or a slot that is absent,
+/// adds none. A slot a legal order keeps from use leaves the answer
+/// unlisted: its row is not known by id.
 async fn read_batch_hydrate(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -283,6 +284,7 @@ async fn read_batch_hydrate(
     let mut served = Vec::new();
     let mut observed = Vec::new();
     let mut producers = Vec::new();
+    let mut unlisted = false;
     let project = || {
         project_short_id_batch(
             server,
@@ -299,6 +301,7 @@ async fn read_batch_hydrate(
                 served: &mut served,
                 observed: &mut observed,
                 producers: &mut producers,
+                unlisted: &mut unlisted,
             },
         )
     };
@@ -337,5 +340,11 @@ async fn read_batch_hydrate(
         narrowing: batch_narrowing,
         results,
     })?;
-    Ok(NativeReadAnswer::listed(response, producers))
+    // A use-restricted slot's row is not among the producers, so the
+    // answer's rows are not all known (FIX 1435).
+    Ok(if unlisted {
+        NativeReadAnswer::unlisted(response)
+    } else {
+        NativeReadAnswer::listed(response, producers)
+    })
 }
