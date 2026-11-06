@@ -196,8 +196,8 @@ mod report;
 pub use report::{
     Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionCoverage,
     RevisionKind, RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest,
-    UncoveredByteRange, VerifyCheck,
-    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
+    UncoveredByteRange, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    VerifyReport, VerifyVerdict,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
