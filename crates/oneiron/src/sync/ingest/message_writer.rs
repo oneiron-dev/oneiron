@@ -134,6 +134,18 @@ pub(crate) fn note_message_put_in_txn(
     }
 }
 
+/// Forgets which machine wrote the row `id`, in the transaction that erases
+/// it, whether or not a window carries it: the record holds a digest of the
+/// erased bytes, which could confirm a guess of them.
+pub(crate) fn forget_message_writer_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    WRITTEN.delete(store, wtxn, &HexId(*id))?;
+    Ok(())
+}
+
 /// Drops the record of each MESSAGE carrier a local path removes when it
 /// names those exact bytes.
 pub(in crate::sync) fn forget_written_rows(
