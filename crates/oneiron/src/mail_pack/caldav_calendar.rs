@@ -25,7 +25,7 @@
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Read;
 use std::ops::Bound;
@@ -52,6 +52,8 @@ pub const CALDAV_CALENDAR_CONNECTOR_EFFECTOR: &str = "connector:caldav_calendar"
 const MAX_DAV_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 /// The members one listing page reads.
 const LIST_PAGE: usize = 200;
+/// The changed members one pull reads.
+const CHANGES_PAGE: usize = 200;
 /// The members one `calendar-multiget` reads.
 const MULTIGET_BATCH: usize = 100;
 /// The longest href taken from a server.
@@ -80,6 +82,18 @@ struct CalDavCursor {
     /// first page); `None` once it ended.
     #[serde(default)]
     listed: Option<String>,
+    /// While a round of changes runs over more pages than one.
+    #[serde(default)]
+    round: Option<ChangeRound>,
+}
+
+/// A round of changes past its first page.
+#[derive(Debug, Serialize, Deserialize)]
+struct ChangeRound {
+    /// The last member it read.
+    after: String,
+    /// The token its first page answered, followed once it ends.
+    token: String,
 }
 
 /// Host-side CalDAV calendar wire over `reqwest::blocking`.
@@ -373,40 +387,55 @@ impl<'c> Account<'c> {
         Ok(Some(synced))
     }
 
-    /// The events of the members `hrefs`, each whole (`calendar-multiget`).
-    /// A member gone meanwhile, one that holds no event (a task), or one
-    /// that does not read as a calendar lands nothing.
-    fn multiget(&self, calendar: &Url, hrefs: &[String]) -> Result<Vec<RemoteCalendarObject>> {
+    /// What each of the members `hrefs` holds, read whole
+    /// (`calendar-multiget`), keyed by the href as asked. Every member asked
+    /// for is answered, or the read fails and nothing advances: one the
+    /// server leaves out, answers without its data, or whose data does not
+    /// parse is never read as gone.
+    fn multiget(&self, calendar: &Url, hrefs: &[String]) -> Result<Vec<(String, Member)>> {
         if hrefs.is_empty() {
             return Ok(Vec::new());
         }
+        let mut asked = BTreeMap::new();
         let mut body = format!(
             "<c:calendar-multiget xmlns:d=\"DAV:\" xmlns:c=\"{CAL}\"><d:prop><d:getetag/><c:calendar-data/></d:prop>"
         );
         for href in hrefs {
             let url = self.url(href)?;
             let _ = write!(body, "<d:href>{}</d:href>", dav_xml::escape(url.path()));
+            asked.insert(decoded_path(&url), href.clone());
         }
         body.push_str("</c:calendar-multiget>");
         let document = self.multistatus("REPORT", calendar, "1", body)?;
-        let mut objects = Vec::new();
+        let mut members = Vec::with_capacity(asked.len());
         for response in document.children(DAV, "response") {
             let Some(href) = response.child(DAV, "href") else {
                 continue;
             };
-            let href = self.url(&href.text)?.to_string();
-            let Some(data) = response.property(CAL, "calendar-data") else {
+            let Some(href) = asked.remove(&decoded_path(&self.url(&href.text)?)) else {
                 continue;
             };
+            let gone = response
+                .child(DAV, "status")
+                .and_then(|status| status_code(&status.text))
+                .is_some_and(|code| matches!(code, 404 | 410));
+            if gone {
+                members.push((href, Member::NoEvent));
+                continue;
+            }
+            let data = response
+                .property(CAL, "calendar-data")
+                .ok_or_else(|| refused("caldav_calendar_member_unreadable"))?;
             let ics = data.text.as_bytes().to_vec();
-            let Ok(feed) = crate::calendar::parse_ics_feed(&ics) else {
-                continue;
-            };
+            let feed = crate::calendar::parse_ics_feed(&ics)
+                .map_err(|_| refused("caldav_calendar_member_does_not_parse"))?;
+            // A member holding no event (a task) lands none.
             let Some(event) = feed.events.first() else {
+                members.push((href, Member::NoEvent));
                 continue;
             };
-            objects.push(RemoteCalendarObject {
-                href,
+            let object = RemoteCalendarObject {
+                href: href.clone(),
                 etag: response
                     .property(DAV, "getetag")
                     .map(|etag| etag.text.trim().to_owned()),
@@ -414,15 +443,78 @@ impl<'c> Account<'c> {
                 sequence: event.sequence,
                 content_hash: event.content_hash,
                 ics,
-            });
+            };
+            members.push((href, Member::Event(object)));
         }
-        Ok(objects)
+        if !asked.is_empty() {
+            return Err(refused("caldav_calendar_member_unanswered"));
+        }
+        Ok(members)
     }
+
+    /// What each of `hrefs` holds, read a batch at a time.
+    fn read_members(&self, calendar: &Url, hrefs: &[String]) -> Result<Vec<(String, Member)>> {
+        let mut members = Vec::with_capacity(hrefs.len());
+        for batch in hrefs.chunks(MULTIGET_BATCH) {
+            members.extend(self.multiget(calendar, batch)?);
+        }
+        Ok(members)
+    }
+}
+
+/// What one member of a collection holds.
+enum Member {
+    /// An event, read whole.
+    Event(RemoteCalendarObject),
+    /// No event: gone meanwhile, or holding something else (a task).
+    NoEvent,
+}
+
+/// `url`'s path with its percent escapes decoded: how two spellings of one
+/// member's href compare.
+fn decoded_path(url: &Url) -> Vec<u8> {
+    let path = url.path().as_bytes();
+    let digit = |at: usize| {
+        path.get(at)
+            .and_then(|byte| char::from(*byte).to_digit(16))
+            .and_then(|digit| u8::try_from(digit).ok())
+    };
+    let mut out = Vec::with_capacity(path.len());
+    let mut at = 0;
+    while let Some(&byte) = path.get(at) {
+        if byte == b'%'
+            && let (Some(high), Some(low)) = (digit(at + 1), digit(at + 2))
+        {
+            out.push((high << 4) | low);
+            at += 3;
+        } else {
+            out.push(byte);
+            at += 1;
+        }
+    }
+    out
+}
+
+/// The next page of a run over `members` in href order, after `after`: at
+/// most `limit`, and whether more follow.
+fn page_after<V: Clone>(
+    members: &BTreeMap<String, V>,
+    after: &str,
+    limit: usize,
+) -> (Vec<(String, V)>, bool) {
+    let mut page: Vec<(String, V)> = members
+        .range::<str, _>((Bound::Excluded(after), Bound::Unbounded))
+        .take(limit + 1)
+        .map(|(href, value)| (href.clone(), value.clone()))
+        .collect();
+    let more = page.len() > limit;
+    page.truncate(limit);
+    (page, more)
 }
 
 impl HttpCalDavCalendarWire<'_> {
     /// One pull through the open `account`: the listing's next page, or the
-    /// changes after the cursor's token.
+    /// next page of changes after the cursor's token.
     fn read(
         &self,
         account: &Account<'_>,
@@ -439,16 +531,18 @@ impl HttpCalDavCalendarWire<'_> {
                     calendar: calendar.to_string(),
                     token,
                     listed: Some(String::new()),
+                    round: None,
                 }
             }
         };
         let calendar = account.url(&cursor.calendar)?;
-        let (changes, next, complete) = match &cursor.listed {
-            Some(after) => list_page(account, &calendar, cursor.token, after)?,
-            None => match self.changes(account, source, &calendar, &cursor.token)? {
+        let (changes, next, complete) = if let Some(after) = &cursor.listed {
+            list_page(account, &calendar, cursor.token.clone(), after)?
+        } else {
+            match self.changes(account, source, &calendar, cursor)? {
                 Some(read) => read,
                 None => return Ok(MailCalendarRead::Expired),
-            },
+            }
         };
         Ok(MailCalendarRead::Pull(MailCalendarPull {
             changes,
@@ -461,41 +555,123 @@ impl HttpCalDavCalendarWire<'_> {
         }))
     }
 
-    /// The changes after `token`: each changed member read whole, then each
-    /// removed one as the delete of the UID landed for it, unless that UID
-    /// is read again under another member. `None` when the server no longer
-    /// honours the token.
+    /// The next page of changes after the cursor's token, at most
+    /// `CHANGES_PAGE` members in href order. Deletes go first: a removed
+    /// member's landed UID, and the UID a changed member held before it
+    /// holds another or none; then each changed member's event. A UID read
+    /// again under another member is not deleted: its old member's row is
+    /// retired. A round over more pages than one goes on from its last
+    /// member under the same token, and ends on the token its first page
+    /// answered, so a change made while it ran is read again. `None` when
+    /// the server no longer honours the token.
     fn changes(
         &self,
         account: &Account<'_>,
         source: &MailSyncSource,
         calendar: &Url,
-        token: &str,
+        cursor: CalDavCursor,
     ) -> Result<Option<(Vec<RemoteCalendarChange>, CalDavCursor, bool)>> {
-        let Some(synced) = account.sync(calendar, token)? else {
+        let Some(synced) = account.sync(calendar, &cursor.token)? else {
             return Ok(None);
         };
-        let mut changes = Vec::new();
-        let mut read_again = BTreeSet::new();
-        for batch in synced.changed.chunks(MULTIGET_BATCH) {
-            for object in account.multiget(calendar, batch)? {
-                read_again.insert(object.uid.clone());
-                changes.push(RemoteCalendarChange::Upsert(object));
-            }
+        let (after, round_token) = match cursor.round {
+            Some(round) => (round.after, round.token),
+            None => (String::new(), synced.token.clone()),
+        };
+        let mut members: BTreeMap<String, bool> = BTreeMap::new();
+        for href in synced.changed {
+            members.insert(href, false);
         }
         for href in synced.removed {
-            if let Some(uid) = landed_uid(self.vault, source.source_ref, &href)?
-                && !read_again.contains(&uid)
-            {
-                changes.push(RemoteCalendarChange::Delete { href, uid });
+            members.insert(href, true);
+        }
+        let (page, more) = page_after(&members, &after, CHANGES_PAGE);
+        let (gone, events) = self.page_changes(account, source, calendar, &page)?;
+        let changes = self.settle(source, gone, events)?;
+        let next = if more {
+            CalDavCursor {
+                calendar: calendar.to_string(),
+                token: cursor.token,
+                listed: None,
+                round: Some(ChangeRound {
+                    after: page
+                        .last()
+                        .map_or_else(String::new, |(href, _)| href.clone()),
+                    token: round_token,
+                }),
+            }
+        } else {
+            CalDavCursor {
+                calendar: calendar.to_string(),
+                token: round_token,
+                listed: None,
+                round: None,
+            }
+        };
+        Ok(Some((changes, next, !more && !synced.truncated)))
+    }
+}
+
+impl HttpCalDavCalendarWire<'_> {
+    /// What one page of changed (`false`) and removed (`true`) members
+    /// holds: the UIDs it no longer holds where it held them (a removed
+    /// member's landed UID, the one a changed member held before it holds
+    /// another or none), and the events it holds now.
+    fn page_changes(
+        &self,
+        account: &Account<'_>,
+        source: &MailSyncSource,
+        calendar: &Url,
+        page: &[(String, bool)],
+    ) -> Result<(Vec<(String, String)>, Vec<RemoteCalendarObject>)> {
+        let changed: Vec<String> = page
+            .iter()
+            .filter(|(_, removed)| !*removed)
+            .map(|(href, _)| href.clone())
+            .collect();
+        let mut gone = Vec::new();
+        for (href, _) in page.iter().filter(|(_, removed)| *removed) {
+            if let Some(uid) = landed_uid(self.vault, source.source_ref, href)? {
+                gone.push((href.clone(), uid));
             }
         }
-        let next = CalDavCursor {
-            calendar: calendar.to_string(),
-            token: synced.token,
-            listed: None,
-        };
-        Ok(Some((changes, next, !synced.truncated)))
+        let mut events = Vec::new();
+        for (href, member) in account.read_members(calendar, &changed)? {
+            let held = landed_uid(self.vault, source.source_ref, &href)?;
+            let now = match member {
+                Member::Event(object) => {
+                    let uid = object.uid.clone();
+                    events.push(object);
+                    Some(uid)
+                }
+                Member::NoEvent => None,
+            };
+            if let Some(held) = held.filter(|held| now.as_ref() != Some(held)) {
+                gone.push((href, held));
+            }
+        }
+        Ok((gone, events))
+    }
+
+    /// The changes one page makes: deletes first, then the events. A UID
+    /// read again under another member is not deleted; the row of the
+    /// member that held it is retired instead.
+    fn settle(
+        &self,
+        source: &MailSyncSource,
+        gone: Vec<(String, String)>,
+        events: Vec<RemoteCalendarObject>,
+    ) -> Result<Vec<RemoteCalendarChange>> {
+        let mut changes = Vec::new();
+        for (href, uid) in gone {
+            if !events.iter().any(|event| event.uid == uid) {
+                changes.push(RemoteCalendarChange::Delete { href, uid });
+            } else if !events.iter().any(|event| event.href == href) {
+                super::calendar::forget_resource_href(self.vault, source.source_ref, &href)?;
+            }
+        }
+        changes.extend(events.into_iter().map(RemoteCalendarChange::Upsert));
+        Ok(changes)
     }
 }
 
@@ -508,27 +684,24 @@ fn list_page(
     token: String,
     after: &str,
 ) -> Result<(Vec<RemoteCalendarChange>, CalDavCursor, bool)> {
-    let members = account.members(calendar)?;
-    let mut page: Vec<String> = members
-        .range::<str, _>((Bound::Excluded(after), Bound::Unbounded))
-        .take(LIST_PAGE + 1)
-        .cloned()
+    let members: BTreeMap<String, ()> = account
+        .members(calendar)?
+        .into_iter()
+        .map(|href| (href, ()))
         .collect();
-    let more = page.len() > LIST_PAGE;
-    page.truncate(LIST_PAGE);
+    let (page, more) = page_after(&members, after, LIST_PAGE);
+    let hrefs: Vec<String> = page.into_iter().map(|(href, ())| href).collect();
     let mut changes = Vec::new();
-    for batch in page.chunks(MULTIGET_BATCH) {
-        changes.extend(
-            account
-                .multiget(calendar, batch)?
-                .into_iter()
-                .map(RemoteCalendarChange::Upsert),
-        );
+    for (_, member) in account.read_members(calendar, &hrefs)? {
+        if let Member::Event(object) = member {
+            changes.push(RemoteCalendarChange::Upsert(object));
+        }
     }
     let next = CalDavCursor {
         calendar: calendar.to_string(),
         token,
-        listed: if more { page.pop() } else { None },
+        listed: if more { hrefs.last().cloned() } else { None },
+        round: None,
     };
     Ok((changes, next, !more))
 }

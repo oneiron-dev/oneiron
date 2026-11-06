@@ -1,6 +1,8 @@
 //! Namespace-aware WebDAV multistatus decoding for the pack's CalDAV wire
 //! (fix list row 16307): no DTD and no external entities. Each element keeps
-//! its namespace, local name, text and attributes.
+//! which of the two namespaces read here it is in (none for any other), its
+//! local name, text and attributes. A document holds at most a million
+//! elements.
 
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
@@ -9,10 +11,31 @@ use quick_xml::reader::NsReader;
 pub(super) const DAV: &str = "DAV:";
 pub(super) const CAL: &str = "urn:ietf:params:xml:ns:caldav";
 
+/// The most elements one document holds.
+const MAX_NODES: usize = 1_000_000;
+
+/// The namespaces this parser tells apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Namespace {
+    Dav,
+    Cal,
+}
+
+/// Which namespace `uri` is, if one read here. Each element keeps this, not
+/// its URI: a long URI bound once and used by many elements costs nothing
+/// per element.
+fn namespace(uri: &str) -> Option<Namespace> {
+    match uri {
+        DAV => Some(Namespace::Dav),
+        CAL => Some(Namespace::Cal),
+        _ => None,
+    }
+}
+
 /// One element of a multistatus document.
 #[derive(Default)]
 pub(super) struct Node {
-    ns: String,
+    ns: Option<Namespace>,
     name: String,
     pub(super) text: String,
     /// Its attributes by local name, their values as written.
@@ -36,19 +59,21 @@ impl Drop for Node {
 
 impl Node {
     pub(super) fn child(&self, ns: &str, name: &str) -> Option<&Self> {
+        let ns = namespace(ns)?;
         self.children
             .iter()
-            .find(|node| node.ns == ns && node.name == name)
+            .find(|node| node.ns == Some(ns) && node.name == name)
     }
 
     pub(super) fn children<'a>(
         &'a self,
-        ns: &'a str,
+        ns: &str,
         name: &'a str,
     ) -> impl Iterator<Item = &'a Self> {
+        let ns = namespace(ns);
         self.children
             .iter()
-            .filter(move |node| node.ns == ns && node.name == name)
+            .filter(move |node| ns.is_some() && node.ns == ns && node.name == name)
     }
 
     /// The property `ns:name` of a `response`, from a `propstat` whose
@@ -87,14 +112,19 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Node, &'static str> {
     let text = std::str::from_utf8(bytes).map_err(|_| "DAV XML is not UTF-8")?;
     let mut reader = NsReader::from_str(text);
     let mut stack = vec![Node::default()];
+    let mut nodes = 0_usize;
     loop {
         let event = reader.read_event().map_err(|_| "malformed DAV XML")?;
         let empty = matches!(&event, Event::Empty(_));
         match event {
             Event::Start(tag) | Event::Empty(tag) => {
+                nodes += 1;
+                if nodes > MAX_NODES {
+                    return Err("DAV XML holds too many elements");
+                }
                 let (ns, local) = reader.resolver().resolve_element(tag.name());
                 let ns = match ns {
-                    ResolveResult::Bound(ns) => ns.as_ref().to_owned(),
+                    ResolveResult::Bound(ns) => namespace(ns.as_ref()),
                     _ => return Err("DAV XML element has no namespace"),
                 };
                 let attributes = tag
@@ -171,7 +201,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Node, &'static str> {
                     return Err("DAV XML root");
                 }
                 let document = root.children.pop().ok_or("DAV XML root")?;
-                if document.ns != DAV || document.name != "multistatus" {
+                if document.ns != Some(Namespace::Dav) || document.name != "multistatus" {
                     return Err("DAV response is not multistatus");
                 }
                 return Ok(document);
