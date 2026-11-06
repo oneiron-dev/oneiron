@@ -27,8 +27,6 @@
 //! live owner (FIX 11090). Only the in-process host queues one with neither.
 mod actor_erase;
 
-use std::collections::VecDeque;
-
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome};
@@ -36,8 +34,7 @@ use crate::claim::{CallerLocality, ClaimReadStatus, ScopedRead};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
 use crate::memory::{
-    MAX_TRANSCRIPT_PAGE_TURNS, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
-    WitnessAuthor, resolve_entity_ref,
+    MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, WitnessAuthor, resolve_entity_ref,
 };
 use crate::workspace_roster::RoomRegenerationPermit;
 use crate::{EntityId, Error, Vault};
@@ -648,7 +645,7 @@ impl Memory<'_> {
             message,
             context: TurnActionContext {
                 agent,
-                history: walk.history.into(),
+                history: walk.history,
                 user_text,
                 user_sources,
                 saved: reply.text.clone(),
@@ -656,90 +653,35 @@ impl Memory<'_> {
         })
     }
 
-    /// Reads `conversation`'s transcript in order up to `target`, as the
-    /// bound actor: the target turn, the latest user turn before it, and up
-    /// to `history` lines before that user turn.
+    /// Reads `conversation`'s transcript up to `target`, as the bound actor:
+    /// the target turn, the latest user turn before it, and up to `history`
+    /// lines before that user turn. FIX 5032: it reads only these turns,
+    /// backward from `target` on its branch
+    /// ([`crate::compaction::select_action_turns`]), never the whole branch.
     fn walk_to_turn(
         &self,
         conversation: &EntityId,
         target: &EntityId,
         history: usize,
     ) -> MemoryResult<Walk> {
-        // A DAG conversation's history is the branch that leads to the turn,
-        // read on one page; any other's is its time order.
-        let mut branch = self.turn_action_branch_transcript(conversation, target)?;
-        let target = target.to_hex();
-        let mut walk = Walk {
-            turn: None,
-            user: None,
-            history: VecDeque::new(),
+        let selection =
+            crate::compaction::select_action_turns(self, *conversation, *target, history)?;
+        let Some(selection) = selection else {
+            return Ok(Walk {
+                turn: None,
+                user: None,
+                history: Vec::new(),
+            });
         };
-        // Lines of the latest user turn and of the turns after it so far:
-        // they join the history once a later user turn takes its place.
-        let mut since: Vec<TurnActionLine> = Vec::new();
-        let mut after = None;
-        loop {
-            let page = match branch.take() {
-                Some(page) => page,
-                None => {
-                    self.conversation_transcript(
-                        conversation,
-                        after.as_deref(),
-                        MAX_TRANSCRIPT_PAGE_TURNS,
-                    )?
-                    .value
-                }
-            };
-            for turn in page.turns {
-                if turn.id == target {
-                    walk.turn = Some(turn);
-                    return Ok(walk);
-                }
-                let turn_source = EntityId::from_hex(&turn.id).ok();
-                let lines: Vec<TurnActionLine> = turn
-                    .messages
-                    .iter()
-                    .filter_map(|message| {
-                        let author = WitnessAuthor::parse(&message.role)?;
-                        (author != WitnessAuthor::System && !message.text.is_empty()).then(|| {
-                            TurnActionLine {
-                                author,
-                                text: message.text.clone(),
-                                sources: turn_source
-                                    .zip(EntityId::from_hex(&message.id).ok())
-                                    .map(|(turn, message)| vec![turn, message]),
-                            }
-                        })
-                    })
-                    .collect();
-                let user: Vec<&str> = lines
-                    .iter()
-                    .filter(|line| line.author == WitnessAuthor::User)
-                    .map(|line| line.text.as_str())
-                    .collect();
-                if user.is_empty() {
-                    since.extend(lines);
-                    continue;
-                }
-                let text = user.join("\n\n");
-                let user_sources = lines
-                    .iter()
-                    .filter(|line| line.author == WitnessAuthor::User)
-                    .try_fold(Vec::new(), |mut rows, line| {
-                        rows.extend_from_slice(line.sources.as_deref()?);
-                        Some(rows)
-                    });
-                walk.history.extend(std::mem::replace(&mut since, lines));
-                while walk.history.len() > history {
-                    walk.history.pop_front();
-                }
-                walk.user = Some((EntityId::from_hex(&turn.id)?, text, user_sources));
-            }
-            match page.next {
-                Some(next) => after = Some(next),
-                None => return Ok(walk),
-            }
-        }
+        let (user, lines) = match selection.user {
+            Some(user) => (Some((user.id, user.text, user.sources)), user.history),
+            None => (None, Vec::new()),
+        };
+        Ok(Walk {
+            turn: Some(selection.target),
+            user,
+            history: lines,
+        })
     }
 }
 
@@ -747,5 +689,5 @@ impl Memory<'_> {
 struct Walk {
     turn: Option<crate::memory::TranscriptTurn>,
     user: Option<(EntityId, String, Option<Vec<EntityId>>)>,
-    history: VecDeque<TurnActionLine>,
+    history: Vec<TurnActionLine>,
 }
