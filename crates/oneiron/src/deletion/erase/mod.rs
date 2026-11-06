@@ -117,7 +117,38 @@ const PENDING_SWEEP_REFS: crate::side_table::SideTable<HexId, Vec<u8>, crate::si
     crate::side_table::SideTable::new(&crate::side_table::DELETION_PENDING_SWEEP_REFS);
 const SWEEP_REF_REVISION: u8 = 1;
 const SWEEP_REF_BODY_SNAPSHOT: u8 = 2;
+/// A row an erase of the id retired with it: its id joins the scope of the receipt and sweep the
+/// erase's writer queues (FIX 7494).
+const SWEEP_REF_RETIRED_ROW: u8 = 3;
 const SWEEP_REF_RECORD_LEN: usize = 17;
+
+/// Stages `rows`, the rows an erase of `id` retired with it in this transaction, for the receipt
+/// and sweep its writer queues: each id joins their scope (FIX 7494).
+pub(super) fn stage_retired_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rows: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let key = HexId(*id);
+    let mut value = PENDING_SWEEP_REFS
+        .get(&vault.store, wtxn, &key)?
+        .unwrap_or_default();
+    for row in rows {
+        let mut record = vec![SWEEP_REF_RETIRED_ROW];
+        record.extend_from_slice(row.as_bytes());
+        if !value
+            .chunks(SWEEP_REF_RECORD_LEN)
+            .any(|staged| staged == record.as_slice())
+        {
+            value.extend(record);
+        }
+    }
+    PENDING_SWEEP_REFS.put(&vault.store, wtxn, &key, &value)
+}
 
 /// Stages `captured`'s sweep refs in the SoftErase transaction that empties their Claim body.
 pub(super) fn stage_sweep_refs_in_txn(
@@ -153,24 +184,33 @@ pub(super) fn stage_sweep_refs_in_txn(
 }
 
 /// Adds the refs staged for `id` to the sweep being queued, and drops them in the same commit.
+/// Returns the rows its erase retired with it, whose ids join the receipt's scope (FIX 7494).
 pub(super) fn take_staged_sweep_refs_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     extras: &mut HardEraseSweepExtras,
-) -> Result<()> {
+) -> Result<Vec<EntityId>> {
     let key = HexId(*id);
     let Some(value) = PENDING_SWEEP_REFS.get(&vault.store, wtxn, &key)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if value.len() % SWEEP_REF_RECORD_LEN != 0 {
         return Err(Error::CorruptedIndex("pending sweep refs"));
     }
+    let mut retired = Vec::new();
     for record in value.chunks_exact(SWEEP_REF_RECORD_LEN) {
         let (kind, reference) = record.split_at(1);
         let slot = match kind {
             [SWEEP_REF_REVISION] => &mut extras.revision_ids,
             [SWEEP_REF_BODY_SNAPSHOT] => &mut extras.body_snapshot_refs,
+            [SWEEP_REF_RETIRED_ROW] => {
+                let row: [u8; 16] = reference
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("pending sweep refs"))?;
+                retired.push(EntityId::from_bytes(row)?);
+                continue;
+            }
             _ => return Err(Error::CorruptedIndex("pending sweep refs")),
         };
         let hex = bytes_to_hex_lower(reference);
@@ -179,7 +219,7 @@ pub(super) fn take_staged_sweep_refs_in_txn(
         }
     }
     PENDING_SWEEP_REFS.delete(&vault.store, wtxn, &key)?;
-    Ok(())
+    Ok(retired)
 }
 
 mod active_store;

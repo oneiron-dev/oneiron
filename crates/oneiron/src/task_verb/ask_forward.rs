@@ -11,15 +11,14 @@
 //! intent's result. The result is a second immutable TASK companion, signed
 //! with the group's issuer key, which the transport carries back. A pending
 //! intent is not an answer: the replica reports it pending until that result
-//! reads there.
+//! reads there. A hard erase of the holder retires their intents and those
+//! intents' results (`erase`).
 //!
 //! Entry: [`Memory::tasks_answer_forward`] on the replica;
 //! [`drain_ask_forward_intents`] at the admitting node.
 //!
 //! FIX 20468 serves the three doors as `tasks.answer.forward.challenge`,
-//! `tasks.answer.forward` and `tasks.answer.forward.status`. A hard erase of
-//! a person retires the intents they hold and the results of those intents
-//! ([`retire_holder_ask_forward_rows_in_txn`]).
+//! `tasks.answer.forward` and `tasks.answer.forward.status`.
 
 use std::collections::BTreeSet;
 
@@ -29,7 +28,7 @@ use super::ask_record::{self, AskGroup};
 use super::{TaskAskAnswer, TaskAskHandle, TaskAskWord};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::{TASK_ASK_FORWARD_INTENT, TASK_ASK_FORWARD_RESULT};
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     verify_actor_binding,
@@ -40,7 +39,7 @@ use crate::{EntityId, Vault};
 mod consume;
 mod erase;
 
-pub(crate) use erase::{ask_forward_rows_retired_with, retire_holder_ask_forward_rows_in_txn};
+pub(crate) use erase::retire_holder_ask_forward_rows_in_txn;
 
 /// Subkind of a relayed intent's TASK companion record.
 pub(super) const INTENT: &str = "tasks.ask_forward_intent";
@@ -243,9 +242,15 @@ impl AskForwardResult {
         Ok(())
     }
 
-    /// Checks the issuer signature against `group`, the stored group the
-    /// result names.
-    pub(super) fn verify_origin(&self, group: &AskGroup) -> Result<()> {
+    /// Checks that this result answers `intent`, the stored intent it names
+    /// (FIX 7494). Before any signature, it must name the intent's group and
+    /// bind its payload digest. Then the issuer signature is checked against
+    /// `group`, that intent's stored group, so another group's key never
+    /// verifies it.
+    pub(super) fn verify_for(&self, intent: &AskForwardIntent, group: &AskGroup) -> Result<()> {
+        if self.group != intent.group || self.payload_digest != intent.payload_digest {
+            return Err(ask_record::invalid());
+        }
         ask_record::verify_forward_result(group, &self.signed_body()?, &self.signature)
     }
 }
@@ -357,15 +362,12 @@ fn read_result(
     else {
         return Ok(None);
     };
-    if result.intent != id
-        || result.group != intent.group
-        || result.payload_digest != intent.payload_digest
-    {
+    if result.intent != id {
         return Err(ask_record::invalid());
     }
     let group =
         ask_record::read_group(vault, txn, intent.group)?.ok_or_else(ask_record::invalid)?;
-    result.verify_origin(&group)?;
+    result.verify_for(intent, &group)?;
     Ok(Some(result))
 }
 
@@ -419,7 +421,9 @@ fn with_arrivals<T>(vault: &Vault, act: impl FnOnce(&mut AskForwardArrivals) -> 
 /// transaction, local or replicated: an intent for an ask this node admitted,
 /// with no result yet, is noted for [`drain_ask_forward_intents`]. An intent
 /// with a result delivers it to the code runs parked on the intent, whether
-/// the result or the park came last. Every other TASK row passes untouched.
+/// the result or the park came last. A result is accepted only once its
+/// intent is here: without it, the result waits as a pending dependency.
+/// Every other TASK row passes untouched.
 pub(super) fn note_put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -437,7 +441,10 @@ pub(super) fn note_put_in_txn(
         _ => return Ok(()),
     };
     let Some(stored) = read_intent(vault, txn, intent)? else {
-        return Ok(());
+        if task == intent {
+            return Ok(());
+        }
+        return Err(Error::Record(RecordError::AskDependencyPending));
     };
     if let Some(result) = read_result(vault, txn, intent, &stored)? {
         return deliver_result_in_txn(vault, txn, intent, &result);
