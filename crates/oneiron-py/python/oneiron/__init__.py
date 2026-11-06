@@ -5825,6 +5825,9 @@ class Oneiron:
         @property
         def export_member_mail(self) -> "Oneiron._VaultMailExportMemberMailVerbs":
             return Oneiron._VaultMailExportMemberMailVerbs(self._client)
+        def export_request(self, spec):
+            """An Owner of a vault a person owns asks for another member's personal mailbox in their next whole-vault export; the member alone answers one Ask, Approve or Decline. Until approved, each export leaves the mailbox out."""
+            return json.loads(_translate(lambda: self._client.vault_mail_export_request(json.dumps(spec))))
         def inbox(self, spec):
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
             return json.loads(_translate(lambda: self._client.vault_mail_inbox(json.dumps(spec))))

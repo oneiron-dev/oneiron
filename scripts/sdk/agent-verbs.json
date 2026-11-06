@@ -21025,6 +21025,22 @@
       "section": false
     },
     {
+      "name": "vault.mail.export_request",
+      "description": "An Owner of a vault a person owns asks for another member's personal mailbox in their next whole-vault export; the member alone answers one Ask, Approve or Decline. Until approved, each export leaves the mailbox out.",
+      "input": "crate::mail_pack::MailExportRequest",
+      "output": "crate::mail_pack::MailExportRequestView",
+      "call": "memory.mail_export_request_as_owner(&memory.embedded_owner(\"vault.mail.export_request\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.mail.compliance.log",
       "description": "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.",
       "input": "EmptyRequest",

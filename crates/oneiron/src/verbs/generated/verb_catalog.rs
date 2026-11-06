@@ -1247,6 +1247,7 @@ pub enum AgentVerb {
     VaultMailComplianceSetting,
     VaultMailComplianceSet,
     VaultMailExportMemberMailSet,
+    VaultMailExportRequest,
     VaultMailComplianceLog,
     VaultMailSourcesSyncStatus,
     VaultMailInbox,
@@ -2536,6 +2537,7 @@ impl AgentVerb {
         Self::VaultMailComplianceSetting,
         Self::VaultMailComplianceSet,
         Self::VaultMailExportMemberMailSet,
+        Self::VaultMailExportRequest,
         Self::VaultMailComplianceLog,
         Self::VaultMailSourcesSyncStatus,
         Self::VaultMailInbox,
@@ -3862,6 +3864,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSetting => "vault.mail.compliance.setting",
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailExportMemberMailSet => "vault.mail.export_member_mail.set",
+            Self::VaultMailExportRequest => "vault.mail.export_request",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
             Self::VaultMailInbox => "vault.mail.inbox",
@@ -5131,6 +5134,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailExportMemberMailSet
+                | Self::VaultMailExportRequest
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
                 | Self::VaultMailInbox
@@ -6449,6 +6453,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailExportMemberMailSet
+                | Self::VaultMailExportRequest
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
                 | Self::VaultMailInbox
@@ -7861,6 +7866,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailExportMemberMailSet
+                | Self::VaultMailExportRequest
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
                 | Self::VaultMailInbox
@@ -8634,6 +8640,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailExportMemberMailSet
+                | Self::VaultMailExportRequest
                 | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -9959,6 +9966,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailExportMemberMailSet => &["spec"],
+            Self::VaultMailExportRequest => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
             Self::VaultMailInbox => &["spec"],
@@ -11249,6 +11257,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailExportMemberMailSet => &["spec"],
+            Self::VaultMailExportRequest => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
             Self::VaultMailInbox => &["spec"],
@@ -14941,6 +14950,9 @@ impl AgentVerb {
             }
             Self::VaultMailExportMemberMailSet => {
                 "Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes."
+            }
+            Self::VaultMailExportRequest => {
+                "An Owner of a vault a person owns asks for another member's personal mailbox in their next whole-vault export; the member alone answers one Ask, Approve or Decline. Until approved, each export leaves the mailbox out."
             }
             Self::VaultMailComplianceLog => {
                 "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."

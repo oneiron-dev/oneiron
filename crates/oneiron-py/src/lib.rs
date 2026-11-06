@@ -11155,6 +11155,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_mail_export_request(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.export_request")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.export_request", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_mail_compliance_log(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.mail.compliance.log")?;
         let output = py

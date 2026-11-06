@@ -260,6 +260,9 @@ impl Memory<'_> {
             status: row.status,
             connected_at: row.connected_at,
             updated_at: row.updated_at,
+            owners_export_member_mail: super::export_mailboxes::owners_export_member_mail_in(
+                vault, txn,
+            )?,
         }))
     }
 

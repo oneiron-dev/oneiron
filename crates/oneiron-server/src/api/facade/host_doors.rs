@@ -95,6 +95,9 @@ pub(crate) use super::run_read_doors::*;
 // A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
 pub(crate) use super::program_read_doors::*;
 pub(crate) use super::run_review_doors::*;
+// The Owner's request for a member's mailbox in an export (fix list row
+// 15416), likewise.
+pub(crate) use super::mail_export_request_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
 pub(crate) use super::skill_attribution_doors::*;
 pub(crate) use super::skill_execution_doors::*;

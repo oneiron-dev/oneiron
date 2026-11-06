@@ -1482,6 +1482,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.mail.compliance.setting" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.set" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.export_member_mail.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.export_request" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.log" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.sources.sync_status" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.inbox" => a.spec.clone().ok_or_else(invalid),
@@ -5286,6 +5287,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mail.export_member_mail.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.export_request" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mail.compliance.log" => {
@@ -25969,6 +25973,32 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_mail_export_member_mail_set(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.export_request" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mail.export_request", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::mail_pack::MailExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_mail_export_request(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.mail.export_request",
+                    ),
+                    input,
+                ))
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

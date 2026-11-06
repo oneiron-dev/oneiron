@@ -12,7 +12,9 @@
 //!   mailbox it left out to the Owner who exported. While an Owner or an
 //!   Admin has "Owners can export members' mail" on, it carries them as an
 //!   org-owned vault does; each change of that setting is kept in the
-//!   compliance log.
+//!   compliance log. A mailbox its member approved an Owner's request for
+//!   ([`super::export_requests`]) goes with that Owner's next export, which
+//!   uses the request.
 //! - A **personal** vault (no shared-vault creation, or the Personal preset)
 //!   has no members' mailboxes: nothing changes.
 //!
@@ -31,6 +33,9 @@ use serde::{Deserialize, Serialize};
 
 use super::compliance::{manages_in, record_export_member_mail_change_in_txn};
 use super::doors::live_person_in;
+use super::export_requests::{
+    ApprovedMailExportRequest, member_request_in, use_approved_request_in_txn,
+};
 use super::source::{MailSourceKind, SOURCES};
 use crate::federation::SharedVaultPreset;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
@@ -46,6 +51,9 @@ const SETTING: SideTable<(), OwnersExportMemberMailRow, Named> =
 /// The producer of a mailbox person's notice that an Owner's export carried
 /// their mailbox.
 const MEMBER_MAILBOX_EXPORT_PRODUCER: &str = "mail_pack.member_mailbox_export";
+/// The producer of a mailbox person's notice that an Owner's export used
+/// their approval of that Owner's request.
+const MEMBER_MAIL_REQUEST_USED_PRODUCER: &str = "mail_pack.member_mail_request_used";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct OwnersExportMemberMailRow {
@@ -56,7 +64,7 @@ struct OwnersExportMemberMailRow {
 
 /// Who owns a shared vault (ARCH-0043 RD-28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SharedVaultOwner {
+pub(super) enum SharedVaultOwner {
     /// A team's or an org's vault.
     Org,
     /// A household's, friends' or community's vault.
@@ -66,7 +74,10 @@ enum SharedVaultOwner {
 /// Who owns the vault in `txn`, by its shared-vault creation's preset:
 /// `None` for a personal vault, one with no creation row or the Personal
 /// preset. A shared vault with no preset is person-owned.
-fn shared_vault_owner_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<SharedVaultOwner>> {
+pub(super) fn shared_vault_owner_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SharedVaultOwner>> {
     Ok(vault
         .shared_vault_creation_in_txn(txn)?
         .and_then(|creation| match creation.preset {
@@ -80,17 +91,25 @@ fn shared_vault_owner_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<
 
 /// Whether "Owners can export members' mail" is on in `txn`; absent reads
 /// off.
-fn owners_export_member_mail_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+pub(super) fn owners_export_member_mail_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(SETTING
         .get(&vault.store, txn, &())?
         .is_some_and(|row| row.enabled))
 }
 
-/// Where an Owner's request for one member's mailbox stands for an export.
+/// Where the exporting Owner's request for one member's mailbox stands for
+/// an export ([`super::export_requests`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MemberMailRequest {
-    /// No Owner asked for it.
+pub(super) enum MemberMailRequest {
+    /// The Owner did not ask for it, or the request was used, withdrawn or
+    /// lost.
     NotRequested,
+    /// Asked; its member has not answered.
+    Pending,
+    /// Its member approved it.
+    Approved,
+    /// Its member declined it.
+    Declined,
 }
 
 /// Whether an export carries one other member's personal mailbox.
@@ -102,21 +121,28 @@ enum MemberMailboxDecision {
 
 /// The one rule (EXPORT-MAILBOXES, 01:43 and 01:45): an org-owned vault's
 /// export carries another member's mailbox; a person-owned vault's carries
-/// it while "Owners can export members' mail" (`setting`) is on, and leaves
-/// it out otherwise. A request never answered, or declined, leaves it out
-/// of the export too (rule X).
+/// it while "Owners can export members' mail" (`setting`) is on, or when its
+/// member approved the exporting Owner's request, and leaves it out
+/// otherwise. A request never answered, or declined, leaves it out of the
+/// export too (rule X).
 const fn member_mailbox_decision(
     owner: SharedVaultOwner,
     setting: bool,
     request: MemberMailRequest,
 ) -> MemberMailboxDecision {
     match (owner, setting, request) {
-        (SharedVaultOwner::Org, _, _) | (SharedVaultOwner::Person, true, _) => {
+        (SharedVaultOwner::Org, _, _)
+        | (SharedVaultOwner::Person, true, _)
+        | (SharedVaultOwner::Person, false, MemberMailRequest::Approved) => {
             MemberMailboxDecision::Include
         }
-        (SharedVaultOwner::Person, false, MemberMailRequest::NotRequested) => {
-            MemberMailboxDecision::LeaveOut
-        }
+        (
+            SharedVaultOwner::Person,
+            false,
+            MemberMailRequest::NotRequested
+            | MemberMailRequest::Pending
+            | MemberMailRequest::Declined,
+        ) => MemberMailboxDecision::LeaveOut,
     }
 }
 
@@ -166,21 +192,25 @@ struct MemberMailbox {
 }
 
 /// One export pass's reading of the vault's members' mailboxes: who owns
-/// the vault, the setting, and each source, read once in the pass's own
-/// snapshot.
+/// the vault, the setting, each source and the exporter's request for it,
+/// read once in the pass's own snapshot.
 pub(crate) struct MemberMailboxPlan {
     exporter: EntityId,
     audience: ExportAudience,
     /// Each other member's personal mailbox, by the source policy its rows
     /// were born under.
     members: BTreeMap<EntityId, MemberMailbox>,
+    /// Each approved request of the exporter's for a mailbox the pass
+    /// carries: the export uses it whether or not a row of that mailbox
+    /// goes.
+    approvals: Vec<ApprovedMailExportRequest>,
 }
 
 /// Whether the personal mailbox `owner` owns is `exporter`'s own: its
 /// PERSON names the exporter as a read names its reader (a pen through its
 /// PERSON anchor, the embedded owner through the owner it stands for). A
 /// mailbox whose person was erased is no one's.
-fn own_mailbox_in(
+pub(super) fn own_mailbox_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: Option<EntityId>,
@@ -196,9 +226,10 @@ fn own_mailbox_in(
 
 impl MemberMailboxPlan {
     /// The plan of `exporter`'s export of the vault in `txn`, each source
-    /// read once: `None` in a personal vault. With `untold`, the people of
-    /// the members' mailboxes this export would carry could not be told, and
-    /// it carries none of them.
+    /// and the exporter's request for it read once: `None` in a personal
+    /// vault. With `untold`, the people of the members' mailboxes this export
+    /// would carry could not be told, and it carries none of them and uses
+    /// no request.
     ///
     /// # Errors
     ///
@@ -216,6 +247,7 @@ impl MemberMailboxPlan {
         let mut sources = BTreeMap::new();
         let mut carried_members = BTreeSet::new();
         let mut members = BTreeMap::new();
+        let mut approvals = Vec::new();
         for row in SOURCES.iter_from(&vault.store, txn, &[])? {
             let (source, row) = row?;
             if row.kind != MailSourceKind::PersonalMailbox
@@ -228,10 +260,8 @@ impl MemberMailboxPlan {
                 Some(person) => live_person_in(vault, txn, &person)?.then_some(person),
                 None => None,
             };
-            let placement = match (
-                member_mailbox_decision(owner, setting, MemberMailRequest::NotRequested),
-                person,
-            ) {
+            let (request, approved) = member_request_in(vault, txn, source, exporter, person)?;
+            let placement = match (member_mailbox_decision(owner, setting, request), person) {
                 (MemberMailboxDecision::LeaveOut, _) => {
                     Placement::LeftOut(MailboxLeftOutReason::MemberMailbox)
                 }
@@ -246,6 +276,7 @@ impl MemberMailboxPlan {
             sources.insert(row.audience, carried);
             if carried {
                 carried_members.insert(row.audience);
+                approvals.extend(approved);
             }
             members.insert(
                 row.audience,
@@ -264,6 +295,7 @@ impl MemberMailboxPlan {
                 carried_members,
             },
             members,
+            approvals,
         }))
     }
 
@@ -285,10 +317,12 @@ impl MemberMailboxPlan {
     /// notice for each member's mailbox it left out whose rows the pass met,
     /// one for the rows of a source this vault cannot name, and the
     /// members' mailboxes the copy carries, each to be told before the copy
-    /// leaves (`None` when it carries none). A mailbox is carried only when a
-    /// row the copy ships, or a row that row's admitted lineage came from, is
-    /// of it ([`ExportMet::carried`]): one whose every row another gate kept
-    /// home is neither counted nor told.
+    /// leaves, with the approved requests it uses (`None` when it carries
+    /// none and uses none). A mailbox is carried only when a row the copy
+    /// ships, or a row that row's admitted lineage came from, is of it
+    /// ([`ExportMet::carried`]): one whose every row another gate kept home
+    /// is neither counted nor told. An approved request the pass read is
+    /// used all the same: the Owner's next whole-vault export uses it.
     pub(crate) fn outcome(
         self,
         met: &ExportMet,
@@ -321,10 +355,12 @@ impl MemberMailboxPlan {
                 reason: MailboxLeftOutReason::SourceUnidentified,
             });
         }
-        let carried = (!carried.is_empty()).then_some(CarriedMemberMailboxes {
-            exporter: self.exporter,
-            mailboxes: carried,
-        });
+        let carried =
+            (!carried.is_empty() || !self.approvals.is_empty()).then_some(CarriedMemberMailboxes {
+                exporter: self.exporter,
+                mailboxes: carried,
+                approvals: self.approvals,
+            });
         (notices, carried)
     }
 }
@@ -339,10 +375,12 @@ struct CarriedMailbox {
 }
 
 /// The other members' personal mailboxes an export's copy carries, each
-/// person to be told before a byte of it leaves.
+/// person to be told before a byte of it leaves, and the approved requests
+/// it uses, each used and its person told in that same write.
 pub(crate) struct CarriedMemberMailboxes {
     exporter: EntityId,
     mailboxes: Vec<CarriedMailbox>,
+    approvals: Vec<ApprovedMailExportRequest>,
 }
 
 impl CarriedMemberMailboxes {
@@ -355,15 +393,19 @@ impl CarriedMemberMailboxes {
 /// Tells each person of `carried` that the copy `export` carries their
 /// mailbox, in the export audit's own write `txn`, at `at`: one inbox
 /// NOTIFICATION each, for that person alone, naming the source, the exporter
-/// and the export, never a word of the mail. The vault's rule and each
-/// source are read again in `txn` first: a mailbox the rule no longer
-/// carries, a source changed since the copy read it, or a person gone fails
-/// the write, as any notice that is not written does. Answers how many
-/// mailboxes were told.
+/// and the export, never a word of the mail. The vault's rule, each source
+/// and the exporter's request for it are read again in `txn` first: a
+/// mailbox the rule no longer carries, a source changed since the copy read
+/// it, or a person gone fails the write, as any notice that is not written
+/// does. Then each approved request the copy uses is read again and marked
+/// used by `export`, and its person told that their approval was used, in
+/// the same write; an approval that no longer stands fails it too. Answers
+/// how many mailboxes were told.
 ///
 /// # Errors
 ///
-/// The mailbox no longer goes with the copy; storage failures.
+/// The mailbox, or the approval, no longer goes with the copy; storage
+/// failures.
 pub(crate) fn tell_member_mailboxes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -371,12 +413,49 @@ pub(crate) fn tell_member_mailboxes_in_txn(
     export: EntityId,
     at: u64,
 ) -> Result<u64> {
+    // One recipient-specific notice of `export`, about `source`, for
+    // `person` alone: `event` and `person` name it within the export.
+    let tell = |txn: &mut heed::RwTxn<'_>,
+                producer: &str,
+                event: EntityId,
+                source: EntityId,
+                person: EntityId| {
+        vault
+            .record_notification_in_txn(
+                txn,
+                &NotificationEvent {
+                    kind: NotificationKind::Finding,
+                    source: NotificationSource {
+                        producer: producer.to_owned(),
+                        event: format!(
+                            "{}:{}:{}",
+                            export.to_hex(),
+                            event.to_hex(),
+                            person.to_hex()
+                        ),
+                        result: Some(export.to_hex()),
+                        ..NotificationSource::default()
+                    },
+                    subject_refs: vec![source, carried.exporter],
+                    recipient: Some(person),
+                    created_at: at,
+                    origin_conversation: None,
+                },
+            )
+            .map(drop)
+    };
     let owner = shared_vault_owner_in(vault, txn)?;
     let setting = owners_export_member_mail_in(vault, txn)?;
     for mailbox in &carried.mailboxes {
+        let (request, _) = member_request_in(
+            vault,
+            txn,
+            mailbox.source,
+            carried.exporter,
+            Some(mailbox.person),
+        )?;
         let carries = owner.is_some_and(|owner| {
-            member_mailbox_decision(owner, setting, MemberMailRequest::NotRequested)
-                == MemberMailboxDecision::Include
+            member_mailbox_decision(owner, setting, request) == MemberMailboxDecision::Include
         });
         let stands = SOURCES
             .get(&vault.store, txn, &mailbox.source)?
@@ -390,26 +469,22 @@ pub(crate) fn tell_member_mailboxes_in_txn(
                 "a member's mailbox the export read no longer goes with it".into(),
             ));
         }
-        vault.record_notification_in_txn(
-            txn,
-            &NotificationEvent {
-                kind: NotificationKind::Finding,
-                source: NotificationSource {
-                    producer: MEMBER_MAILBOX_EXPORT_PRODUCER.to_owned(),
-                    event: format!(
-                        "{}:{}:{}",
-                        export.to_hex(),
-                        mailbox.source.to_hex(),
-                        mailbox.person.to_hex()
-                    ),
-                    result: Some(export.to_hex()),
-                    ..NotificationSource::default()
-                },
-                subject_refs: vec![mailbox.source, carried.exporter],
-                recipient: Some(mailbox.person),
-                created_at: at,
-                origin_conversation: None,
-            },
+        tell(
+            &mut *txn,
+            MEMBER_MAILBOX_EXPORT_PRODUCER,
+            mailbox.source,
+            mailbox.source,
+            mailbox.person,
+        )?;
+    }
+    for approval in &carried.approvals {
+        use_approved_request_in_txn(vault, txn, approval, export, at)?;
+        tell(
+            &mut *txn,
+            MEMBER_MAIL_REQUEST_USED_PRODUCER,
+            approval.request,
+            approval.source,
+            approval.mailbox_person,
         )?;
     }
     Ok(carried.mailboxes.len() as u64)

@@ -38288,6 +38288,46 @@ async fn vault_mail_export_member_mail_set(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_mail_export_request(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.mail.export_request")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.mail.export_request", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.mail.export_request", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_mail_export_request(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_mail_compliance_log(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -42523,6 +42563,9 @@ async fn call_verb_row(
         }
         "vault.mail.export_member_mail.set" => {
             Box::pin(vault_mail_export_member_mail_set(server, call, input)).await
+        }
+        "vault.mail.export_request" => {
+            Box::pin(vault_mail_export_request(server, call, input)).await
         }
         "vault.mail.compliance.log" => {
             Box::pin(vault_mail_compliance_log(server, call, input)).await

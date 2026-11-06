@@ -97,6 +97,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultRunsSettle
         | Row::VaultRunsSettlement
         | Row::VaultRevertRun
+        | Row::VaultMailExportRequest
         | Row::AiReply
         | Row::CalendarIcsConfigure
         | Row::CalendarIcsPoll
