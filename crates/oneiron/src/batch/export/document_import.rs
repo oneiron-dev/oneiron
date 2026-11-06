@@ -25,7 +25,7 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -71,8 +71,14 @@ impl Vault {
     /// without foreign owner stamps; enforcement follows this build's compiled
     /// equivalence. An exact normalized repeat is unchanged.
     ///
+    /// Witness MESSAGE rows come back as imported evidence (FIX 7777): typed
+    /// `import.archive`, marked `metadata.import.source = "archive"`, with the
+    /// source's type and `AuthoredBy` bylines inert in that metadata and no
+    /// local author edge; the TURN and CONVERSATION they join are stamped
+    /// `import_source = "archive"`.
+    ///
     /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
-    /// witness messages, notes, other reserved claims and owned/provenanced edges need
+    /// notes, other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
     /// The manifest explicitly marks hub configuration and foreign skill signals
@@ -195,6 +201,7 @@ impl Vault {
         super::provenance_import::index_mapped_edges(&mut archive)?;
         super::provenance_import::index_provenance(&mut archive)?;
         super::expression_import::index_expressions(&mut archive)?;
+        super::evidence_import::index_message_containers(&mut archive)?;
         let mut pending = 0;
         let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
@@ -235,6 +242,11 @@ impl Vault {
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -246,6 +258,11 @@ impl Vault {
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -300,6 +317,15 @@ impl Vault {
                     && !waits_on.contains(&facet)
                 {
                     waits_on.push(facet);
+                }
+            }
+            // FIX 7777: a MESSAGE lands after the TURN and CONVERSATION it
+            // joins, which come back stamped imported.
+            if row.entity_type == ENTITY_TYPE_MESSAGE {
+                for container in super::evidence_import::message_dependencies(&archive, &id)? {
+                    if !waits_on.contains(&container) {
+                        waits_on.push(container);
+                    }
                 }
             }
             archive
@@ -369,6 +395,17 @@ impl Vault {
                     continue;
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
+                // FIX 7777: an archived MESSAGE's byline rides inert in its
+                // body; an archive never makes a local author.
+                if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
+                    && super::evidence_import::is_message_byline(
+                        &archive,
+                        &parse_id(&edge.source)?,
+                        kind,
+                    )?
+                {
+                    continue;
+                }
                 if archive
                     .index
                     .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
@@ -564,6 +601,17 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             }
         }
+        // FIX 7777: the witness archive owner writes the row as imported
+        // evidence, with its archived membership; it binds no actor.
+        ENTITY_TYPE_MESSAGE => super::evidence_import::restore_message(
+            vault,
+            wtxn,
+            archive,
+            &id,
+            &body,
+            occurred,
+            row.learned_at,
+        ),
         ENTITY_TYPE_SKILL => {
             let record = crate::write_envelope::skill_record::decode_skill_record(&body)?;
             if at.section != Section::Skill {
@@ -1501,6 +1549,20 @@ fn imported_body(
             body.enabled = false;
             body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
             crate::store::agent_definition_codec::encode_agent_definition(&body)
+        }
+        // FIX 7777: imported evidence, its archived bylines inert inside it.
+        ENTITY_TYPE_MESSAGE => {
+            let bylines = super::evidence_import::archived_targets(
+                index,
+                &parse_id(&row.id)?,
+                EdgeKind::AuthoredBy,
+            )?;
+            crate::memory::archived_message_body(&bytes, &bylines)
+        }
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+            if index.contains(Tag::MessageContainer, parse_id(&row.id)?.as_bytes())? =>
+        {
+            crate::memory::archived_container_body(row.entity_type, &bytes)
         }
         _ => Ok(bytes),
     }
