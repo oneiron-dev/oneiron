@@ -142,7 +142,10 @@ impl QuestionHeadRung {
         })
     }
 
-    /// `binding`'s head, loaded for windows as long as `input` needs.
+    /// `binding`'s head, loaded for windows as long as `input` needs. The
+    /// binding is read again under the cache's lock, which [`Self::prune`]
+    /// takes too: a head unbound since the call read it is neither used nor
+    /// loaded, so no unbound head stays cached after an unbind's prune.
     fn loaded(
         &self,
         binding: &QuestionHeadBinding,
@@ -151,6 +154,15 @@ impl QuestionHeadRung {
         let checkpoint = binding.checkpoint.content_hash()?;
         let key = (binding.question, binding.question_version);
         let mut heads = self.heads.lock().unwrap_or_else(PoisonError::into_inner);
+        let live = self
+            .vault
+            .training_question_head(binding.question, binding.question_version)?
+            .map(|live| live.checkpoint.content_hash())
+            .transpose()?;
+        if live != Some(checkpoint) {
+            heads.remove(&key);
+            return Err(failed("the head was unbound while the call read it"));
+        }
         if let Some(loaded) = heads.get(&key)
             && loaded.checkpoint == checkpoint
             && loaded
