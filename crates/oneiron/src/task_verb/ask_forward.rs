@@ -15,6 +15,11 @@
 //!
 //! Entry: [`Memory::tasks_answer_forward`] on the replica;
 //! [`drain_ask_forward_intents`] at the admitting node.
+//!
+//! FIX 20468 serves the three doors as `tasks.answer.forward.challenge`,
+//! `tasks.answer.forward` and `tasks.answer.forward.status`. A hard erase of
+//! a person retires the intents they hold and the results of those intents
+//! ([`retire_holder_ask_forward_rows_in_txn`]).
 
 use std::collections::BTreeSet;
 
@@ -33,6 +38,9 @@ use crate::registry::ENTITY_TYPE_TASK;
 use crate::{EntityId, Vault};
 
 mod consume;
+mod erase;
+
+pub(crate) use erase::{ask_forward_rows_retired_with, retire_holder_ask_forward_rows_in_txn};
 
 /// Subkind of a relayed intent's TASK companion record.
 pub(super) const INTENT: &str = "tasks.ask_forward_intent";
@@ -45,7 +53,8 @@ const CHALLENGE_DOMAIN: &[u8] = b"oneiron/tasks.ask-forward/v1\0";
 const TOKEN_PREFIX: &str = "v2.slip.";
 
 /// What a relayed intent asks the ask's admitting node to do (FIX 7494).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The SDK rows take it as their input (FIX 20468).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AskForwardAct {
     /// The holder's own word, admitted there as `tasks_answer` admits it.
@@ -73,8 +82,9 @@ impl AskForwardAct {
 
 /// The holder's proof for one intent: their slip, and their signature over
 /// the slip's binding transcript (`CapabilitySlip::binding_transcript`) of
-/// [`ask_forward_challenge`].
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// [`ask_forward_challenge`]. It proves this one intent; the request that
+/// carries it authenticates apart, as every request does (FIX 20468).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskForwardHolderProof {
     /// The holder's `v2.slip.` token.
