@@ -19,7 +19,10 @@ impl<'a> HostSelfDispatcher<'a> {
         binding: &crate::task_verb::HostBinding,
     ) -> crate::Result<Self> {
         let leased = binding.leased_record(vault)?;
-        let dispatcher = Self::for_leased_agent_attempt(vault, actor, &leased)?;
+        let mut dispatcher = Self::for_leased_agent_attempt(vault, actor, &leased)?;
+        if let Some(run_ref) = binding.executor_run_ref() {
+            dispatcher.run_ref = run_ref.to_owned();
+        }
         Ok(match binding.executor_run() {
             Some(run) => dispatcher.with_bound_run(run),
             None => dispatcher,

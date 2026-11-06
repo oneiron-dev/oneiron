@@ -57,13 +57,26 @@ pub enum TaskVia {
 
 /// The lease a host-bound call runs under: the parent attempt, its owner and
 /// its generation, and the run it belongs to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct HostBinding {
     parent: AttemptId,
     lease_owner: String,
     attempt_count: u32,
     run_id: Option<EntityId>,
+    /// Transcript metadata, not part of the lease identity.
+    executor_run_ref: Option<String>,
 }
+
+impl PartialEq for HostBinding {
+    fn eq(&self, other: &Self) -> bool {
+        self.parent == other.parent
+            && self.lease_owner == other.lease_owner
+            && self.attempt_count == other.attempt_count
+            && self.run_id == other.run_id
+    }
+}
+
+impl Eq for HostBinding {}
 
 impl HostBinding {
     /// Built by the code-run host from the leased record it holds, never
@@ -79,6 +92,7 @@ impl HostBinding {
             lease_owner,
             attempt_count,
             run_id,
+            executor_run_ref: None,
         }
     }
 
@@ -102,6 +116,16 @@ impl HostBinding {
     /// (OF-181): the log a live-run action's fold verbs reach.
     pub(crate) const fn executor_run(&self) -> Option<EntityId> {
         self.run_id
+    }
+
+    /// Keeps the host dispatcher's transcript label beside its executor id.
+    pub(crate) fn with_executor_run_ref(mut self, run_ref: &str) -> Self {
+        self.executor_run_ref = Some(run_ref.to_owned());
+        self
+    }
+
+    pub(crate) fn executor_run_ref(&self) -> Option<&str> {
+        self.executor_run_ref.as_deref()
     }
 
     /// The witness a call receipt states of the try this binding sealed
