@@ -56,4 +56,3 @@ pub fn hasse(vvs: &[VersionVector]) -> Vec<Vec<usize>> {
     }
     parents
 }
-

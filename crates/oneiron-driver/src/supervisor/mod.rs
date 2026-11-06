@@ -49,6 +49,7 @@ mod program_factory;
 mod retry;
 #[path = "loop.rs"]
 mod run;
+mod session_allocations;
 mod shutdown;
 mod supervised_pass;
 mod wave_lane;
@@ -82,6 +83,7 @@ pub use self::inference_worker::{
 };
 pub use self::program_factory::ProgramExecutorFactory;
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};
+pub use self::session_allocations::{SessionAllocation, SessionAllocationOwner};
 pub use self::shutdown::ShutdownHandle;
 
 #[cfg(test)]
