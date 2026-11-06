@@ -62,12 +62,20 @@ impl ReapFreeze {
         }
     }
 
+    /// Resolves while the vault is frozen for reap; a vanished freeze
+    /// channel alone never pauses a shared-env lane.
+    pub(crate) async fn frozen(&mut self) {
+        if self.frozen.wait_for(|frozen| *frozen).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+
     /// Waits out a freeze: the first admission after the thaw, or `None`
     /// once `stop` is sent (or the freeze is gone). A vault frozen again
     /// before the admission is waited out again. The archive receiver waits
     /// on it too, so it runs without the `mesh` feature as well.
     #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
-    pub(super) async fn resumed(
+    pub(crate) async fn resumed(
         &mut self,
         stop: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> Option<Admitted> {

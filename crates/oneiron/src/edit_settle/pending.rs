@@ -515,26 +515,8 @@ impl Vault {
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
         let outcome = if let Some(proposal) = row.edit_proposal()? {
-            // A held answer whose units changed under it lands what is
-            // untouched and withdraws the rest (ARCH-0075 §4).
-            match self.split_typed_answers(
-                artifact_id,
-                &proposal,
-                row.retained_by,
-                row.made_by.as_ref(),
-                true,
-            )? {
-                Some(split) => self.keep_split(
-                    artifact_id,
-                    &proposal,
-                    split,
-                    row.made_by.as_ref(),
-                    consent,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.settle_select_edit_proposal_made_by(
+            if proposal.sheet_answers.is_some() {
+                self.settle_select_edit_proposal_made_by(
                     artifact_id,
                     &proposal,
                     row.made_by.as_ref(),
@@ -542,7 +524,37 @@ impl Vault {
                     actor,
                     occurred,
                     learned_at,
-                )?,
+                )?
+            } else {
+                // A held answer whose units changed under it lands what is
+                // untouched and withdraws the rest (ARCH-0075 §4).
+                match self.split_typed_answers(
+                    artifact_id,
+                    &proposal,
+                    row.retained_by,
+                    row.made_by.as_ref(),
+                    true,
+                )? {
+                    Some(split) => self.keep_split(
+                        artifact_id,
+                        &proposal,
+                        split,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                    )?,
+                    None => self.settle_select_edit_proposal_made_by(
+                        artifact_id,
+                        &proposal,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                    )?,
+                }
             }
         } else {
             self.keep_native_output(artifact_id, &row, consent, actor, occurred, learned_at)?
@@ -752,6 +764,9 @@ impl Vault {
                 "a proposal already waits under this ref",
             )));
         }
+        if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
+            return Err(Error::EntityNotFound);
+        }
         PENDING.put(&self.store, wtxn, &key, row)
     }
 
@@ -834,4 +849,15 @@ pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
         )));
     }
     crate::batch::secret_scan::scan_metadata_field(proposal_ref)
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in PENDING.scan_keys(store, txn, artifact_id.as_bytes())? {
+        PENDING.delete(store, txn, &key)?;
+    }
+    Ok(())
 }
