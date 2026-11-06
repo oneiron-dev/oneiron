@@ -12,7 +12,8 @@
 //!
 //! For each section, the suggested default takes what at least two thirds
 //! of the role's laid-out agents share: the section folded, its median share
-//! of the cap, and the status filter most of them set. A suggestion is filed
+//! of the cap, and the status filter most of them set. Shares that would sum
+//! past the cap are scaled down to fit it. A suggestion is filed
 //! again only when what it suggests changes: its claim id is made from its
 //! content, and the agents behind it are its evidence.
 
@@ -163,5 +164,27 @@ fn suggested_sections(agents: &[(EntityId, BoardLayout)]) -> BTreeMap<String, se
             suggested.insert(key.clone(), serde_json::Value::Object(section));
         }
     }
+    fit_shares_to_cap(&mut suggested);
     suggested
+}
+
+/// Section shares are shares of one cap and never sum past it (owner
+/// 2026-11-03 20:31). Medians taken section by section can: then each
+/// suggested share is scaled down in proportion, rounding down, so the
+/// suggested layout is one `BoardLayout::validate` accepts.
+fn fit_shares_to_cap(suggested: &mut BTreeMap<String, serde_json::Value>) {
+    let share =
+        |section: &serde_json::Value| section.get("share_pct").and_then(serde_json::Value::as_u64);
+    let total: u64 = suggested.values().filter_map(share).sum();
+    if total <= 100 {
+        return;
+    }
+    for section in suggested.values_mut() {
+        if let (Some(pct), Some(object)) = (share(section), section.as_object_mut()) {
+            object.insert(
+                "share_pct".to_owned(),
+                serde_json::Value::from(pct.saturating_mul(100) / total),
+            );
+        }
+    }
 }
