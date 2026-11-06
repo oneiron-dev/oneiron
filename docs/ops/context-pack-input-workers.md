@@ -317,8 +317,28 @@ The original no-record, unmatched-render, error and cancellation behavior stays
 the same. The final record callback still borrows the original captured section.
 
 This is post-allocation custody only. Temporary clones while settling rows,
-filter scratch, world sets, auth, layout candidates, frozen emit fields, copied
-record text and other record-building allocations are not covered. Earlier
+filter scratch, world sets, auth, layout candidates, temporary emit assembly,
+copied record text and other record-building allocations are not covered. Earlier
 assembly, raw-return tuples, allocation and reallocation peaks, and retained-input
 FIFO progress remain separate work. No memory wait, admission, cap, deadline,
 refusal, policy or format changes here.
+
+
+## Frozen chat receipt buffer custody
+
+A capture carries a private handle to the same memory line its producer used.
+Freezing uses that handle to create an empty lease before constructing the
+receipt fields. It does not re-upgrade a queued action's weak server pointer or
+add a new liveness branch. The freeze signature and both callers stay unchanged.
+
+After construction, the frozen context records the actual capacities of its
+receipt field strings, optional strings, activated-id vector slots and each id
+string, plus its own request-digest string. These are independent allocations
+from the capture's section and fingerprint. The frozen payload fields drop
+before their trailing receipt holder through the same async and blocking owners.
+A failed freeze still keeps its capture and omits only the receipt, as before.
+
+This covers only the final frozen receipt tuple after allocation. Its temporary
+system-message JSON, prompt stamp, hash serialization, later receipt-map copies,
+record text and request-digest copies remain separate storage. No memory wait,
+admission, cap, deadline, refusal, policy, schema or caller behavior changes.
