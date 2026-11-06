@@ -12,6 +12,7 @@ pub(crate) use event::{
 };
 pub(crate) use fold::{
     ClaimTransitionProjection, TransitionFoldError, fold_machine_claim_transitions,
+    fold_machine_claim_transitions_owned,
 };
 pub(crate) use write::stage_machine_claim_transition;
 
