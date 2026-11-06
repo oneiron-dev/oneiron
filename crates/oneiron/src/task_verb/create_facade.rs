@@ -384,6 +384,7 @@ impl Memory<'_> {
             provenance: provenance.clone(),
             created_at: now,
             type_ref: Some(validated.type_ref.clone()),
+            type_parents: validated.type_parents.clone(),
             refusal: None,
             brief,
             subproject_ref: None,

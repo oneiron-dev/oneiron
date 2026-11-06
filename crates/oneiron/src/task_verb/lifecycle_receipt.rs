@@ -113,7 +113,23 @@ pub(super) fn stamp_record_in(
             None => None,
         },
     };
-    let row = project(&id, lifecycle, type_ref.as_ref())?;
+    let mut row = project(&id, lifecycle, type_ref.as_ref())?;
+    if let Some(type_ref) = &type_ref {
+        let parents = lifecycle
+            .trigger_ref
+            .as_deref()
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+            .and_then(|task_ref| {
+                task_verb_body_in(vault, &*wtxn, task_ref)
+                    .ok()
+                    .flatten()
+                    .filter(|body| body.type_ref.as_ref() == Some(type_ref))
+                    .and_then(|body| body.type_parents)
+            });
+        if let Some(parents) = parents {
+            crate::receipt::append_task_type_parent_fields(&mut row, &parents)?;
+        }
+    }
     let old = RECEIPTS.get(&vault.store, &*wtxn, &id)?;
     index_in(&vault.store, wtxn, &id, old.as_ref(), &row)?;
     RECEIPTS.put(&vault.store, wtxn, &id, &row)?;

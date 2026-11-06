@@ -328,6 +328,11 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
                     })
             })
             .transpose()?,
+        type_parents: task_body_optional(entries, "type_parents")
+            .ok()
+            .flatten()
+            .and_then(Value::as_str)
+            .and_then(|json| serde_json::from_str(json).ok()),
         refusal: task_body_optional(entries, "refusal")?
             .map(decode_task_refusal_record)
             .transpose()?,

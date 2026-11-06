@@ -355,6 +355,18 @@ pub fn append_task_type_fields(
     Ok(())
 }
 
+/// Records the nearest-parent-first lineage frozen with a placement.
+/// An absent capture leaves `typeParents` unknown; a captured root has `[]`.
+pub(crate) fn append_task_type_parent_fields(
+    receipt: &mut ReceiptRecord,
+    parents: &[crate::learning::TypeRef],
+) -> Result<()> {
+    let encoded = serde_json::to_string(parents)
+        .map_err(|_| Error::InvariantViolation("typeParents field encode failed"))?;
+    receipt.fields.insert("typeParents".to_owned(), encoded);
+    Ok(())
+}
+
 /// Stamps the run's project beside the receipt's typeRef (FIX 6038), as the
 /// dispatch froze it: one authoritative value, never re-read from live
 /// state. A run with no project stamps nothing and reads as the vault's.
