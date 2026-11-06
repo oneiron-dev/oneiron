@@ -285,9 +285,10 @@ head/tail interval (`from < position < to`) with zero actual DrawingML `fld` (ow
 check plus no descendant `fld`) as its original span bytes as-is under the same rebuilt
 paragraph qualified tag with its own `xmlns`/default-undeclare bindings and the same body
 ancestors, with no binding materialization into a self-closing tag. Old nonempty static and
-opaque bytes are unchanged; edited, boundary, leading, trailing or field-holding empties keep
-the existing drop, known empty `r` qualifies only under the same strict internal field-free
-rule, empty `fld` is never raw-restored, and same-position multiple zero children preserve
+opaque bytes are unchanged; edited, internal-boundary or field-holding empties keep
+the existing drop. In this interior branch, known empty `r` qualifies under the same strict
+internal field-free rule; leading/trailing clusters follow the boundary extension below.
+Empty `fld` is never raw-restored, and same-position multiple zero children preserve
 original order once. No paragraph-wide field refusal, matching map, default, cap, API, DTO,
 schema, authority, config, dependency, BC, policy or deploy changes. Raw comment/PI/whitespace
 gaps are not implemented in this slice. This is a source-only direct-child correction, part of
@@ -326,16 +327,18 @@ This is source preservation, not full native or PowerPoint fidelity proof.
 
 The table-cell fallback keeps original raw non-node bytes at the edges of an
 actually reused field-free paragraph. A leading or trailing gap beside a text
-segment carries only when the original first or last direct segment is nonempty
-and contributes the first retained prefix character or last retained suffix
-character. Its other neighbor is the original paragraph edge, or the already
-copied first `a:pPr` or last `a:endParaRPr`, with no skipped direct child.
-The exterior gaps before that first `a:pPr` and after that last `a:endParaRPr`
-also keep their original bytes. Every gap excludes node spans and stays under
-the same original paragraph attributes and body ancestors. Leading/trailing
-zero-text children still drop and prevent bridges; field-containing paragraphs,
-unknown-coverage fallback, templates for added paragraphs, static run/break
-serialization, matching and field-removal receipts are unchanged. The complete
+segment carries when the first or last nonempty direct segment contributes the
+first retained prefix character or last retained suffix character. Consecutive
+zero-text children before or after that segment and their intervening gaps now
+carry their original bytes too. The other neighbor is the original paragraph
+edge, or the already copied first `a:pPr` or last `a:endParaRPr`; skipped direct
+children still block bridges. The exterior gaps before that first `a:pPr` and
+after that last `a:endParaRPr` also keep their original bytes. Raw gaps exclude
+node spans; the whole retained edge stays under the same original paragraph
+attributes and body ancestors. Field-containing paragraphs, unknown-coverage
+fallback, template selection, run/break text serialization, matching and
+field-removal receipts are unchanged. The property-template identity handling
+for the newly carried edge sources is described below. The complete
 fallback helper moves to `native_patch/table/rebuilt.rs` without changing its
 parent caller. This is source-only retention work, not proof of Office fidelity
 or completion of the full table-cell fallback or OF-509/OF-510.
@@ -417,3 +420,34 @@ The prior serializer still succeeds first; a failed native text splice keeps
 the same static attribute path. Runs intersecting both retained pieces, fields,
 breaks, templates, matching and receipts are unchanged. This remains source-only
 preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity proof.
+
+
+## XML identity of newly retained table-cell boundary sources
+
+The fallback first records exact original raw edge intervals only after the
+styled paragraph, including both retained intervals and its replacement, succeeds.
+Failed styled attempts and existing whole-paragraph copies record no new edge
+ownership. If such intervals exist, a second render uses that same original tree,
+text and interval plan. Property-template source selection and every fallback
+condition depend on unchanged original nodes and text, not the cloned attributes.
+
+When a selected `a:rPr` lies wholly inside a newly retained raw interval, its
+original subtree survives verbatim there. Fresh copies of that subtree in any
+replacement run, requested break or added/fallback paragraph omit only attributes
+whose expanded name is XML-namespace `id`. Qualified attribute names resolve
+through the original nearest namespace declarations and the reserved `xml` binding.
+Only those parsed attribute byte spans are omitted; all remaining property bytes,
+styles, namespace declarations, relationship `r:id` references, unqualified `id`
+and unknown metadata stay. The original attributes and identities are never removed
+from the retained source. This distinguishes an original element from a new style
+copy without assigning new identities or choosing a different style template.
+
+The leading-empty-run source case can therefore retain its original `rPr xml:id`
+once at the original edge while the inserted middle keeps the same style without
+copying that identity. The plan covers cross-paragraph copies of the global run
+source as well as its own middle. It does not change unrelated existing template
+copies or establish identity semantics for arbitrary schema-specific attributes.
+Internal-boundary empties, field-containing paragraphs, matching and field-cut
+receipts keep their prior behavior. This is source-only work in the existing
+17480/18510 pack, not full table-cell fallback, OF-509/OF-510, compiler, runtime or
+Office fidelity proof.
