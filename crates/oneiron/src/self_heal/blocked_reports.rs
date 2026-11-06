@@ -247,6 +247,15 @@ pub(crate) fn blocked_issue(vault: &Vault, receipt: &EntityId) -> Result<Option<
     PENDING.get(&vault.store, &txn, receipt)
 }
 
+/// The pending report in the caller's source transaction.
+pub(crate) fn blocked_issue_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &EntityId,
+) -> Result<Option<BlockedIssue>> {
+    PENDING.get(&vault.store, txn, receipt)
+}
+
 /// What the Coach already filed under `key`, if anything, in one snapshot.
 pub(crate) fn settled_issue(vault: &Vault, key: &EntityId) -> Result<Option<IssueSettled>> {
     let txn = vault.store.env.read_txn()?;

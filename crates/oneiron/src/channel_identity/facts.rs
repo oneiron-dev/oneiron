@@ -86,7 +86,7 @@ fn corrupt() -> Error {
 /// The identity's facts from its live heads, or `None` when it has none. A
 /// missing or doubled head in a family that has heads fails closed.
 pub(crate) fn channel_identity_facts_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
 ) -> Result<Option<ChannelIdentityFacts>> {
@@ -166,7 +166,7 @@ pub(crate) fn channel_identity_fact_head_ids_in_txn(
 ///
 /// As [`channel_identity_facts_in_txn`]'s own head read.
 pub(crate) fn channel_identity_correctable_head_ids_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
 ) -> Result<BTreeMap<&'static str, EntityId>> {
@@ -185,7 +185,7 @@ pub(crate) fn channel_identity_correctable_head_ids_in_txn(
 /// not stale. A Proposed replacement is not live yet, so it never doubles a
 /// head.
 fn for_each_live_head(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
     mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
@@ -222,7 +222,7 @@ fn for_each_live_head(
 
 /// The family's live heads by predicate: Active, Auto or Approved, and not stale, one each.
 fn live_heads_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
 ) -> Result<BTreeMap<String, (EntityId, ClaimBody)>> {

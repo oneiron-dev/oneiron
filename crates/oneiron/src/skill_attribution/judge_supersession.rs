@@ -1,5 +1,9 @@
 //! Judge-revision provenance for routed receipts, and non-destructive displacement.
 
+use std::collections::BTreeMap;
+
+use crate::skill_reliability::OutcomeReadPosition;
+
 use super::{attribution_judgments, projector::attribution_judgments_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -169,6 +173,18 @@ pub fn supersede_displaced_judge_receipts(
     replacement: &str,
     at: u64,
 ) -> Result<Vec<DisplacedJudgeReceipt>> {
+    supersede_displaced_judge_receipts_with_positions(vault, displaced, replacement, at, None)
+}
+
+/// Marks displaced outcomes with independently declared per-judgment output placement.
+/// Positions are request data, not read authority, and cannot restamp held rows.
+pub fn supersede_displaced_judge_receipts_with_positions(
+    vault: &Vault,
+    displaced: &str,
+    replacement: &str,
+    at: u64,
+    output_positions: Option<&BTreeMap<u64, OutcomeReadPosition>>,
+) -> Result<Vec<DisplacedJudgeReceipt>> {
     if displaced == replacement
         || displaced.is_empty()
         || replacement.is_empty()
@@ -242,7 +258,7 @@ pub fn supersede_displaced_judge_receipts(
                                 .filter(|id| !id.is_empty())
                                 .cloned()
                         });
-                crate::skill_reliability::mark_displaced_outcome_in_txn(
+                crate::skill_reliability::mark_displaced_outcome_positioned_in_txn(
                     vault,
                     txn,
                     &subject,
@@ -250,6 +266,7 @@ pub fn supersede_displaced_judge_receipts(
                     receipt_ref,
                     displaced,
                     replacement,
+                    output_positions.and_then(|positions| positions.get(&judgment.sequence)),
                 )?;
                 let pair = (subject, executor);
                 if !affected.contains(&pair) {

@@ -165,8 +165,8 @@ impl RunOf {
 }
 
 /// A claimed run: its leased attempt and input, the agent it runs as, what
-/// its task says, the MESSAGE thread its failure asks on, and the objectives
-/// it confesses against (OF-544).
+/// its task says, its failure's Q&A or host-correlation reference, and the
+/// objectives it confesses against (OF-544).
 struct Claimed {
     status: AgentDispatchStatus,
     agent: EntityId,
@@ -522,7 +522,7 @@ fn claim(
                 let claimed = Claimed {
                     task: resident_task(&status, &resident, briefing.clone()),
                     agent,
-                    qa_thread_ref: resident.home_message_ref,
+                    qa_thread_ref: resident.home_conversation_ref,
                     wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),

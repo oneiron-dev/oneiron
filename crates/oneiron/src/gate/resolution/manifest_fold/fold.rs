@@ -63,6 +63,7 @@ pub(super) fn fold_policy_manifest(
             Err(error) => return Err(error),
         };
 
+        resolution.manifest_body_rows.insert(id);
         if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;

@@ -20,12 +20,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, LegacyJson, Named, Raw, RawValue, SideTable};
+use crate::store::GateReadAnchors;
+use oneiron_authority::federation::Scope;
 
+mod anchor;
+mod canonical;
 mod rubric;
+
+pub(crate) use canonical::{CanonicalJudgeLabel, canonical_judge_label_in_txn};
+
+pub use self::anchor::judge_label_anchor;
+pub(crate) use self::anchor::{
+    judge_label_anchor_sourced, skill_label_anchor, skill_label_anchor_sourced,
+};
 
 use self::rubric::repin_before_pick_in_txn;
 
@@ -33,7 +43,9 @@ pub use self::rubric::{
     JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheckReport, JudgeLabelRecheckRequest,
     JudgeLabelRegrade, judge_rubric, record_judge_label_regrade,
 };
-pub(crate) use self::rubric::{judge_head_in_txn, judge_rubric_in_txn, recheck_judge_labels};
+pub(crate) use self::rubric::{
+    judge_head_in_txn, judge_rubric_in_txn, judge_rubric_sourced_in_txn, recheck_judge_labels,
+};
 
 /// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).
 const ASKS: SideTable<[u8; 32], JudgeAsk, LegacyJson> =
@@ -133,6 +145,21 @@ pub struct JudgeRegrade {
     pub rubric: [u8; 32],
 }
 
+/// A new native label's read position, supplied on its original pick request.
+/// Placement metadata is not a reader grant or a custody proof.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JudgeLabelReadPosition {
+    pub scope: Scope,
+    pub kind_band: u8,
+    #[serde(deserialize_with = "crate::write_envelope::claim_body::RelationshipScope::deserialize")]
+    pub relationship: crate::write_envelope::claim_body::RelationshipScope,
+    pub private: bool,
+    pub body_worlds: Vec<EntityId>,
+    pub body_facets: Vec<EntityId>,
+    pub anchors: GateReadAnchors,
+}
+
 /// One human pick is one immutable calibration label. No score, model output,
 /// or digest delivery can mint this row. A rubric edit marks it for a
 /// re-check; it never changes the pick.
@@ -152,6 +179,9 @@ pub struct JudgeLabel {
     /// edit since it was picked or last found fitting is pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recheck: Option<JudgeLabelRecheck>,
+    /// The original pick's requested position; unknown once the row changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_position: Option<JudgeLabelReadPosition>,
 }
 
 /// A label's re-check after an edit of the judge's rubric. Each `rubric` is
@@ -458,77 +488,6 @@ pub(crate) fn judge_ask_room(vault: &Vault, person: EntityId) -> Result<JudgeAsk
     })
 }
 
-/// `skill` and every revision it superseded, through admitted succession
-/// (`Supersedes`, new to old): the revisions whose human picks are this
-/// revision's anchor. A fork is another skill and carries none.
-fn label_lineage_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    skill: EntityId,
-) -> Result<BTreeSet<EntityId>> {
-    let mut lineage = BTreeSet::from([skill]);
-    let mut next = vec![skill];
-    while let Some(revision) = next.pop() {
-        for older in vault.filtered_edge_peers(
-            txn,
-            crate::ports::EdgeDirection::Out,
-            &revision,
-            EdgeKind::Supersedes,
-            Some(crate::registry::ENTITY_TYPE_SKILL),
-        )? {
-            if lineage.insert(older) {
-                next.push(older);
-            }
-        }
-    }
-    Ok(lineage)
-}
-
-/// List labels for one skill and campaign, the picks its superseded
-/// revisions took included. The persisted anchor is only these rows, never
-/// the proposed asks, and never a pick a rubric edit left waiting on its
-/// person's re-grade. Order is stable by ask identity.
-pub fn judge_label_anchor(
-    vault: &Vault,
-    skill: EntityId,
-    campaign: &str,
-) -> Result<Vec<JudgeLabel>> {
-    let txn = vault.store.env.read_txn()?;
-    let lineage = label_lineage_in_txn(vault, &txn, skill)?;
-    let mut labels = Vec::new();
-    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
-        let (key, label) = row?;
-        if key != label.ask.id {
-            return Err(Error::CorruptedIndex("judge label identity"));
-        }
-        if label.in_anchor() && lineage.contains(&label.ask.skill) && label.ask.campaign == campaign
-        {
-            labels.push(label);
-        }
-    }
-    Ok(labels)
-}
-
-/// Every label in one skill's anchor, whatever campaign asked it and
-/// whichever of its superseded revisions it was asked on: the human picks
-/// the skill-edit gate measures the judge against. Order is stable by ask
-/// identity.
-pub(crate) fn skill_label_anchor(vault: &Vault, skill: EntityId) -> Result<Vec<JudgeLabel>> {
-    let txn = vault.store.env.read_txn()?;
-    let lineage = label_lineage_in_txn(vault, &txn, skill)?;
-    let mut labels = Vec::new();
-    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
-        let (key, label) = row?;
-        if key != label.ask.id {
-            return Err(Error::CorruptedIndex("judge label identity"));
-        }
-        if label.in_anchor() && lineage.contains(&label.ask.skill) {
-            labels.push(label);
-        }
-    }
-    Ok(labels)
-}
-
 /// How many labels the whole anchor gained after `since`, by pick time: the
 /// fresh human picks a judge rubric revision counts. A pick pending a
 /// re-check counts by its original pick time; one waiting on a re-grade does
@@ -538,15 +497,27 @@ pub(crate) fn anchor_labels_since_in_txn(
     txn: &heed::RoTxn<'_>,
     since: u64,
 ) -> Result<u64> {
+    anchor_labels_since_sourced_in_txn(vault, txn, since).map(|(count, _)| count)
+}
+
+/// The anchor count beside the real row ids of every decoded label, including
+/// labels outside the anchor or before `since`. Ask keys are not row ids.
+pub(crate) fn anchor_labels_since_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    since: u64,
+) -> Result<(u64, Vec<EntityId>)> {
     let mut fresh = 0_u64;
+    let mut source_rows = Vec::new();
     for row in LABELS.iter_from(&vault.store, txn, &[])? {
         let (key, label) = row?;
         if key != label.ask.id {
             return Err(Error::CorruptedIndex("judge label identity"));
         }
+        source_rows.push(label.row_id);
         fresh += u64::from(label.in_anchor() && label.picked_at > since);
     }
-    Ok(fresh)
+    Ok((fresh, source_rows))
 }
 
 /// Ingest an authenticated human's A/B pick, at most once for an ask. A
@@ -557,15 +528,26 @@ pub fn record_judge_pick(
     ask_id: [u8; 32],
     choose_b: bool,
     at: u64,
+    read_position: Option<JudgeLabelReadPosition>,
 ) -> Result<JudgeLabel> {
     vault.with_write_txn_grouped(|txn| {
         let actor =
             crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &*txn, owner)?;
-        pick_in_txn(vault, txn, owner, actor, ask_id, choose_b, at)
+        pick_in_txn(
+            vault,
+            txn,
+            owner,
+            actor,
+            ask_id,
+            choose_b,
+            at,
+            read_position,
+        )
     })
 }
 
 /// [`record_judge_pick`] for an `actor` the caller already validated.
+#[expect(clippy::too_many_arguments, reason = "one pick with its placement")]
 fn pick_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -574,6 +556,7 @@ fn pick_in_txn(
     ask_id: [u8; 32],
     choose_b: bool,
     at: u64,
+    read_position: Option<JudgeLabelReadPosition>,
 ) -> Result<JudgeLabel> {
     let ask = ASKS
         .get(&vault.store, &*txn, &ask_id)?
@@ -607,6 +590,7 @@ fn pick_in_txn(
         picked_at: at,
         principal_ref: owner.person_principal_ref_in_txn(vault, &*txn)?.into(),
         recheck: None,
+        read_position,
     };
     LABELS.put(&vault.store, txn, &ask_id, &label)?;
     Ok(label)
@@ -649,7 +633,7 @@ pub(crate) fn record_judge_swap_label(
             ask.delivered_at = Some(delivered_at);
             ASKS.put(&vault.store, txn, &ask.id, &ask)?;
         }
-        pick_in_txn(vault, txn, owner, actor, ask.id, choose_b, at)
+        pick_in_txn(vault, txn, owner, actor, ask.id, choose_b, at, None)
     })
 }
 

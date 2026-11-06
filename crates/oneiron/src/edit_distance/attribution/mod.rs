@@ -101,7 +101,8 @@ pub use self::evidence_judge::{
     record_amendment_evidence,
 };
 pub use self::projector::{
-    project_amendment_lessons, project_amendment_reliability, project_edit_cost_claims,
+    project_amendment_lessons, project_amendment_reliability,
+    project_amendment_reliability_with_positions, project_edit_cost_claims,
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,

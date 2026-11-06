@@ -144,6 +144,7 @@ pub(crate) mod attempt_payload_retire;
 pub(crate) mod attempt_payload_route;
 pub use oneiron_store::attempt_read_producer;
 pub mod attempt_record;
+pub mod attempt_sources;
 pub(crate) mod attempt_record_codec;
 pub(crate) mod attempt_record_read;
 pub use oneiron_store::attempt_result;

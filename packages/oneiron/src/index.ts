@@ -470,6 +470,8 @@ export class Oneiron {
       create: (input: Facade.CommitmentCreateRequest): Facade.CommitmentCreateReceipt => this.#call(() => this.#client.vaultCommitmentsCreate(input) as Facade.CommitmentCreateReceipt),
       /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
       get: (input: Facade.CommitmentRefRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsGet(input) as Facade.CommitmentView),
+      /** Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views. */
+      ledger: (input: Facade.CommitmentLedgerRequest): Facade.CommitmentLedgerView => this.#call(() => this.#client.vaultCommitmentsLedger(input) as Facade.CommitmentLedgerView),
       /** Lists the materialized occurrences of a commitment series, including closed obligations. */
       instances: (input: Facade.CommitmentRefRequest): Facade.CommitmentView[] => this.#call(() => this.#client.vaultCommitmentsInstances(input) as Facade.CommitmentView[]),
       /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
@@ -871,7 +873,7 @@ export class Oneiron {
       /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
       resolve_proposal: (input: Facade.ClusterResolveRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterResolveProposal(input) as Facade.ClusterTopologyReceipt),
     }),
-    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
+    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */
     export: Object.assign((format?: string): Facade.ExportAnswer => this.#call(() => this.#client.vaultExport({format: format}) as Facade.ExportAnswer), {
       transfer: {
         /** Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it. */

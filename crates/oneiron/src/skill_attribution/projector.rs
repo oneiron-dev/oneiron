@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_optimize::union_source_rows;
+use oneiron_skill_attribution::output_requests::AttributionOutputReadRequests;
 
 use super::codec::{
     CURSOR, EDIT_PROPOSAL, EVIDENCE, EvidenceRow, JUDGMENT, evidence_after,
@@ -13,8 +14,8 @@ use super::decision_receipts::keep_decision_receipts_in_txn;
 use super::judge::{AttributionDecisions, verdict_subject};
 use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
 use super::types::{
-    AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
-    SkillEditProposal,
+    AttributionJudgment, AttributionJudgmentReadPosition, AttributionLane, AttributionVerdict,
+    JudgeRequest, OutcomeEvidence, SkillEditProposal, SkillEditProposalReadPosition,
 };
 use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
 
@@ -93,6 +94,65 @@ pub fn run_attribution_projector_with_decisions(
     vault: &Vault,
     since_cursor: u64,
     decisions: Option<&AttributionDecisions<'_>>,
+) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_with_position(vault, since_cursor, decisions, None)
+}
+
+/// Runs the original pass with the placement its caller requests for NEW
+/// discovery proposals. This data grants no read and never restamps a held row.
+pub fn run_attribution_projector_with_position(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    read_position: Option<&SkillEditProposalReadPosition>,
+) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_with_positions(vault, since_cursor, decisions, None, read_position)
+}
+
+/// Runs the original pass with independently requested placement for NEW
+/// judgments and discovery proposals. Held rows retain their original placement.
+pub fn run_attribution_projector_with_positions(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    judgment_position: Option<&AttributionJudgmentReadPosition>,
+    proposal_position: Option<&SkillEditProposalReadPosition>,
+) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_requested(
+        vault,
+        since_cursor,
+        decisions,
+        judgment_position,
+        proposal_position,
+        None,
+    )
+}
+
+/// Routes the original pass with separate placement requests for each evidence
+/// sequence. Missing keys remain unknown; held outputs never adopt a request.
+pub fn run_attribution_projector_with_output_requests(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    output_requests: &AttributionOutputReadRequests,
+) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_requested(
+        vault,
+        since_cursor,
+        decisions,
+        None,
+        None,
+        Some(output_requests),
+    )
+}
+
+fn run_attribution_projector_requested(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    judgment_position: Option<&AttributionJudgmentReadPosition>,
+    proposal_position: Option<&SkillEditProposalReadPosition>,
+    output_requests: Option<&AttributionOutputReadRequests>,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
     let mut judgments = Vec::new();
@@ -176,6 +236,11 @@ pub fn run_attribution_projector_with_decisions(
             subject: Some(subject),
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
+            read_position: output_requests
+                .map_or(judgment_position, |requests| {
+                    requests.judgments.get(&sequence)
+                })
+                .cloned(),
         });
         stamps.push((revision, trace.receipts));
     }
@@ -202,6 +267,7 @@ pub fn run_attribution_projector_with_decisions(
             if let Some(existing) = JUDGMENT.get(&vault.store, wtxn, &judgment.sequence)? {
                 // A re-route names the stored row: the id is the row's, not the pass's.
                 judgment.row_id = existing.row_id;
+                judgment.read_position = existing.read_position.clone();
                 if existing != *judgment {
                     return Err(crate::error::Error::InvalidClaimBody(
                         "an attribution judgment cannot be rescored",
@@ -231,7 +297,14 @@ pub fn run_attribution_projector_with_decisions(
                 AttributionLane::Attempt,
                 &judgment.sequence.to_string(),
             )?;
-            mint_edit_proposal_in_txn(vault, wtxn, judgment)?;
+            mint_edit_proposal_with_position_in_txn(
+                vault,
+                wtxn,
+                judgment,
+                output_requests.map_or(proposal_position, |requests| {
+                    requests.proposals.get(&judgment.sequence)
+                }),
+            )?;
         }
         for sequence in &settled_environment {
             delete_unclear_in_txn(vault, wtxn, AttributionLane::Attempt, &sequence.to_string())?;
@@ -319,10 +392,26 @@ pub(crate) fn mint_edit_proposal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     judgment: &AttributionJudgment,
 ) -> Result<()> {
+    mint_edit_proposal_with_position_in_txn(vault, wtxn, judgment, None)
+}
+
+fn mint_edit_proposal_with_position_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    judgment: &AttributionJudgment,
+    read_position: Option<&SkillEditProposalReadPosition>,
+) -> Result<()> {
     if let Some(mut proposal) = edit_proposal_for(judgment, vault.store.clock.entity_id()?) {
-        // A re-judged amendment re-mints under its held sequence: the row keeps its id.
         if let Some(held) = EDIT_PROPOSAL.get(&vault.store, wtxn, &proposal.judgment_sequence)? {
             proposal.row_id = held.row_id;
+            proposal.read_position = held.read_position.clone();
+            // The same row keeps its original placement. Changed contents
+            // cannot borrow the old position or a later caller's request.
+            if proposal != held {
+                proposal.read_position = None;
+            }
+        } else {
+            proposal.read_position = read_position.cloned();
         }
         EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
     }
@@ -369,6 +458,7 @@ fn edit_proposal_for(
             skill,
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
+            read_position: None,
         })
 }
 

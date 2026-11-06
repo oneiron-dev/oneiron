@@ -44,6 +44,17 @@ pub(crate) fn stored_epoch_in(
     id: &EntityId,
     body: &[u8],
 ) -> Result<StoredEpoch> {
+    stored_epoch_in_observed(dbs, txn, id, body, None)
+}
+
+/// Original epoch interpretation with an optional borrowed document-head input.
+pub(crate) fn stored_epoch_in_observed(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+    observe: Option<&mut crate::ports::DocumentReadObserver<'_>>,
+) -> Result<StoredEpoch> {
     if decode_epoch_summary_body(body).is_ok() || WithdrawnKeyframe::decode(body).is_ok() {
         return Ok(StoredEpoch::Yes);
     }
@@ -63,7 +74,7 @@ pub(crate) fn stored_epoch_in(
     if !cursor.is_empty() {
         return Ok(StoredEpoch::Unresolved);
     }
-    pointer_epoch_in(dbs, txn, id, fields)
+    pointer_epoch_in(dbs, txn, id, fields, observe)
 }
 
 /// [`stored_epoch_in`] for the other keys, `fields`, of a pointer row that
@@ -73,9 +84,10 @@ fn pointer_epoch_in(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     mut fields: Vec<(Value, Value)>,
+    observe: Option<&mut crate::ports::DocumentReadObserver<'_>>,
 ) -> Result<StoredEpoch> {
     let Some(crate::entity_doc::TextField::MapField(field)) =
-        crate::entity_doc::pointer_field_in(dbs, txn, id)?
+        crate::entity_doc::pointer_field_in_observed(dbs, txn, id, observe)?
     else {
         return Ok(StoredEpoch::Unresolved);
     };

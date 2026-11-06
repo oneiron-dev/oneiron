@@ -44,6 +44,7 @@ mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod artifact_backend_slip;
 mod backup_signer_delegation;
 mod carried_act;
 mod causal_write;

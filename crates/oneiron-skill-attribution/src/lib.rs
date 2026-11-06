@@ -5,5 +5,7 @@
 //! door that records or reads them are the engine's (`skill_attribution` in
 //! `oneiron`).
 
+pub mod output_requests;
+pub mod read_position;
 pub mod row_ids;
 pub mod types;

@@ -41,7 +41,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
@@ -519,14 +519,19 @@ impl Vault {
     }
 
     /// Whether `agent` is a live agent principal of this vault: a live agent
-    /// definition, or one of the two seeded base-agent MACHINE principals
-    /// (the Dreamer's and the Coach's). Any other machine is a device.
+    /// definition, a native published-app PERSON, or one of the two seeded
+    /// base-agent MACHINE principals (the Dreamer's and the Coach's).
+    /// Any other PERSON or machine is not an agent here.
     fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
                 ..
             } => true,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PERSON,
+                body,
+            } => crate::artifact_hosting::is_backend_principal(agent, &body),
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_MACHINE,
                 ..

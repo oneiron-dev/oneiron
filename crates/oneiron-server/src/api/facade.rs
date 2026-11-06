@@ -223,7 +223,9 @@ use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{
     connector_answer_as, connector_call_listing_as, connector_call_listing_on,
 };
-pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
+pub(crate) use export_transfer::{
+    ExportTransfers, mcp_export_transfer, owner_whole_vault_export_admitted,
+};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
@@ -284,12 +286,10 @@ use super::credential_memory;
 use super::write_facet::{SESSION_HEADER, landing_facet};
 use super::{host_action, owner_routes, pairing, scoped_read_for_core_auth};
 
-/// Request-body ceiling for the facade nest: 64 MiB.
-///
-/// Sized for the largest legal blob append (32 MiB raw) once base64 and JSON
-/// framing are paid for. Applied as a layer on THIS router, so the limit is a
-/// property of the facade projection and no other route's body handling moves.
-const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
+/// Request-body ceiling for the anonymous-chat SDK route: 64 MiB, its
+/// pre-auth bound. The authenticated facade nest reads up to the API's
+/// request floor instead (`limits.request_body_bytes`, ABC transport row T2).
+const ANONYMOUS_CHAT_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 
 /// The facade route table.
 ///
@@ -297,18 +297,19 @@ const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 /// request bodies (`vault.recall` has five inputs), and `/v1/core`'s own read
 /// routes — `/query`, `/context-pack`, `/hydrate` — already post their
 /// requests for the same reason. One method per verb also keeps the route
-/// census a flat list a contract test can compare against the catalog.
+/// census a flat list a contract test can compare against the catalog. Its
+/// bodies are read up to the API's request floor (`limits.request_body_bytes`,
+/// ABC transport row T2), the API router's own layer: the nest sets none.
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .merge(agent_verbs::routes())
         .fallback(facade_unknown_verb)
-        .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
 /// The anonymous-chat SDK route, mounted with the existing standalone
 /// handler outside invocation claims, wire telemetry and call receipts.
 pub(crate) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
-    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(ANONYMOUS_CHAT_MAX_BODY_BYTES))
 }
 
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer

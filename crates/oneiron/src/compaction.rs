@@ -132,7 +132,7 @@ pub use self_writer::{
     CompactionLandingReceipt, CompactionStepRef, CompactionUsage, HOME_PART_WORN,
     SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
 };
-pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
+pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in, stored_epoch_in_observed};
 pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use withdrawn::{is_withdrawn_keyframe, withdrawn_keyframe_envelope};

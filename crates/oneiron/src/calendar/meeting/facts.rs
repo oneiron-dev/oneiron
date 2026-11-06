@@ -6,7 +6,7 @@ use crate::calendar::claims::{
     decode_prep_opt_in_value, decode_status_value, decode_time_kind_value,
 };
 use crate::claim::{ScopedRead, claim_surfaceable};
-use crate::ports::TombstoneStore;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::{EntityId, Result, Vault};
 
 pub(super) fn readable_event_in_txn(
@@ -15,18 +15,22 @@ pub(super) fn readable_event_in_txn(
     lane: &ScopedRead<'_>,
     event: EntityId,
 ) -> Result<bool> {
-    if vault.get_entity_type_in_txn(txn, &event)? != Some(crate::registry::ENTITY_TYPE_EVENT)
-        || vault.port_tombstone_is_deleted(txn, &event)?
+    let read = lane.store_read();
+    if read
+        .port_entity_record(txn, &event)?
+        .map(|row| row.entity_type)
+        != Some(crate::registry::ENTITY_TYPE_EVENT)
+        || read.port_deletion_state(txn, &event)?.deleted
         || !lane.entities_readable_in_txn(txn, &[event])?[0]
-        || crate::calendar::origin::invalidated_in_txn(vault, txn, event)?
+        || crate::calendar::origin::invalidated_from_read_in_txn(&read, txn, event)?
     {
         return Ok(false);
     }
     // A withheld deciding claim never turns into an absent/default fact.
     let mut claims = Vec::new();
-    for id in vault.claims_for_subject_in_txn(txn, &event)? {
+    for id in vault.claims_for_subject_from_read_in_txn(&read, txn, &event)? {
         if vault
-            .get_claim_in_txn(txn, &id)?
+            .get_claim_from_read_in_txn(&read, txn, &id)?
             .is_some_and(|body| body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
         {
             claims.push(id);
@@ -39,7 +43,7 @@ pub(super) fn readable_event_in_txn(
     {
         return Ok(false);
     }
-    Ok(crate::calendar::origin::live_origin(&vault.store, txn, event)?.is_some())
+    Ok(crate::calendar::origin::live_origin_from_read(&read, txn, event)?.is_some())
 }
 
 pub(in crate::calendar) fn meeting_event_in_txn(
@@ -51,24 +55,28 @@ pub(in crate::calendar) fn meeting_event_in_txn(
     if !readable_event_in_txn(vault, txn, lane, event)? {
         return Ok(None);
     }
-    let header = vault
-        .entity_header_in_txn(txn, &event)?
+    let read = lane.store_read();
+    let header = read
+        .port_entity_record(txn, &event)?
         .ok_or(crate::Error::EntityNotFound)?;
-    if header.occurred_start == 0 || header.occurred_end < header.occurred_start {
+    if header.occurred.start == 0 || header.occurred.end < header.occurred.start {
         return Ok(None);
     }
     let mut result = PrepEvent {
         event_ref: event,
-        start_utc: header.occurred_start,
-        end_utc: header.occurred_end,
+        start_utc: header.occurred.start,
+        end_utc: header.occurred.end,
         attendee_refs: Vec::new(),
         external_attendee_count: 0,
         has_campaign_linkage: false,
         has_commitment_linkage: false,
         internal_meeting_opt_in: false,
     };
-    for id in vault.claims_for_subject_in_txn(txn, &event)? {
-        let Some(body) = vault.get_claim_in_txn(txn, &id)?.filter(claim_surfaceable) else {
+    for id in vault.claims_for_subject_from_read_in_txn(&read, txn, &event)? {
+        let Some(body) = vault
+            .get_claim_from_read_in_txn(&read, txn, &id)?
+            .filter(claim_surfaceable)
+        else {
             continue;
         };
         if body.predicate == PREDICATE_CALENDAR_STATUS

@@ -45,11 +45,19 @@ pub(super) fn validate_text(value: &str, max_bytes: usize, reason: &'static str)
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn skill_optimize_min_outcomes(vault: &Vault) -> Result<u32> {
+    skill_optimize_min_outcomes_sourced(vault).map(|(value, _)| value)
+}
+
+/// The native dial read, with no body source when the shipped default is
+/// used. A stored singleton has no source-row identity on this carrier.
+pub(super) fn skill_optimize_min_outcomes_sourced(
+    vault: &Vault,
+) -> Result<(u32, Option<Vec<crate::EntityId>>)> {
     let rtxn = vault.store.env.read_txn()?;
     let Some(bytes) = MIN_OUTCOMES.get(&vault.store, &rtxn, &())? else {
-        return Ok(DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES);
+        return Ok((DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, Some(Vec::new())));
     };
-    Ok(u32::from_be_bytes(bytes))
+    Ok((u32::from_be_bytes(bytes), None))
 }
 
 /// Sets the N dial.

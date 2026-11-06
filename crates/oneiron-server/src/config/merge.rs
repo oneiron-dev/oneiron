@@ -350,6 +350,7 @@ struct FileServeConfig {
     models: Option<ModelsFile>,
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
+    artifact_backend: Option<super::ArtifactBackendConfig>,
     merge_queue: Option<super::MergeQueueCheckerConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
@@ -424,6 +425,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             models: None,
             browser: value.browser,
             desktop: value.desktop,
+            artifact_backend: value.artifact_backend,
             merge_queue: value.merge_queue,
             gpu: value.gpu,
             native_mail: value.native_mail,
@@ -507,6 +509,8 @@ struct PartialServeConfig {
     browser: Option<super::BrowserConfig>,
     /// `[desktop]` is file-only, as `[browser]` is.
     desktop: Option<super::DesktopConfig>,
+    /// `[artifact_backend]` is host-owned and file-only.
+    artifact_backend: Option<super::ArtifactBackendConfig>,
     /// `[merge_queue]` is file-only, as `[browser]` is.
     merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
@@ -722,6 +726,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            artifact_backend: None,
             merge_queue: None,
             gpu: None,
             native_mail: None,

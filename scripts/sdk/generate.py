@@ -846,6 +846,8 @@ def mcp_input_dispatch(row):
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
+                 '// An export a code run calls follows the world settings as before owner ruling 1-EXPORT = B (FIX 9591): the run\'s dispatch says so, never the request.\n'
+                 'let input = oneiron::memory::ExportOptions { in_code_run: crate::api::facade::host_doors::support::in_code_run(), ..input };\n'
                  '// A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.\n'
                  'let action = crate::api::host_action::host_action_of(server.vault(), auth).transpose().map_err(|error| mcp_engine_error("host action failed", error))?;\n'
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
@@ -1153,7 +1155,9 @@ async fn execute_agent_verb_row(
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
-/// arm's door future is on the heap, so this one stays small (FIX 12072).
+/// row's arm is its own async function, constructed and boxed in its own
+/// non-inlined function (FIX 19837); this match holds only that boxed handle,
+/// so its frame stays small however large any one row is.
 async fn execute_agent_verb_row_on(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -1166,9 +1170,43 @@ async fn execute_agent_verb_row_on(
         pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
-    result += invalid + 'match tool {\n'
-    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows() if row['name'] != 'ai.anonymous_chat')
+    result += invalid + ('let row = McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold };\n'
+                         'match tool {\n')
+    rows = [row for row in mcp_rows() if row['name'] != 'ai.anonymous_chat']
+    helpers = ''
+    for row in rows:
+        name, method = row['name'], row['name'].replace('.', '_')
+        arm = mcp_input_dispatch(row)
+        prefix, suffix = f'{json.dumps(name)} => {{\n', ' },\n'
+        assert arm.startswith(prefix) and arm.endswith(suffix), f'{name}: an MCP arm is not one block'
+        body = arm[len(prefix):-len(suffix)]
+        result += f'{json.dumps(name)} => boxed_mcp_verb_row_{method}(row).await,\n'
+        # The row's body is unchanged; it runs in its own function on the
+        # same arguments, the ones it does not read named once (FIX 19837).
+        uses_invalid = re.search(r'(?<![\w"])invalid(?![\w"])', body) is not None
+        helpers += (f"#[inline(never)]\nfn boxed_mcp_verb_row_{method}<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {{\nBox::pin(mcp_verb_row_{method}(row))\n}}\n"
+                    f"async fn mcp_verb_row_{method}(row: McpVerbRow<'_>) -> McpVerbRowResult {{\n"
+                    'let McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold } = row;\n'
+                    'let _ = (&server, &tool, &input, &actor, &memory, &surface, &served, &board_hooks, &pre_hooked_fold);\n'
+                    + (invalid if uses_invalid else '') + f'{body} }}\n')
     result += '_ => Err(invalid()), } }\n'
+    result += '''/// What one MCP row's arm returns.
+type McpVerbRowResult = Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError>;
+/// One MCP row's arm, boxed by its own function (FIX 19837).
+type McpVerbRowFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = McpVerbRowResult> + Send + 'a>>;
+/// [`execute_agent_verb_row_on`]'s arguments, moved whole into the one row's arm.
+struct McpVerbRow<'a> {
+    server: &'a Arc<SyncServer>,
+    tool: &'a str,
+    input: Value,
+    actor: &'a McpCallContext,
+    memory: oneiron::Memory<'a>,
+    surface: McpRowSurface,
+    served: &'a mut McpServed,
+    board_hooks: &'a mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
+}
+''' + helpers
     result += '''/// One typed verb result, drained in a single frame.
 fn mcp_agent_verb_output(
         output: impl serde::Serialize,
@@ -1742,6 +1780,14 @@ def facade_dispatch(facade_rows):
                  '/// [`NESTED_READABLE`]\'s paths for `verb`; none for a row that declares none.\n'
                  "pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {\n"
                  'match NESTED_READABLE.iter().find(|(row, _)| *row == verb) { Some((_, paths)) => *paths, None => &[] }\n}\n')
+    dispatch += "type FacadeRowFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<FacadeCallOutput, FacadeApiError>> + Send + 'a>>;\n"
+    for r in facade_rows:
+        method = r['name'].replace('.', '_')
+        dispatch += f'''#[inline(never)]
+fn boxed_{method}<'a>(server: &'a Arc<SyncServer>, call: &'a FacadeCall<'a>, input: Result<serde_json::Value, FacadeApiError>) -> FacadeRowFuture<'a> {{
+Box::pin({method}(server, call, input))
+}}
+'''
     dispatch += f'''/// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -1753,12 +1799,13 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
 super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
 }}
-/// [`call_verb`]'s row for `verb`. Each row's future is on the heap, so this
-/// one stays small however large its largest row is (FIX 12072).
+/// [`call_verb`]'s row for `verb`. Each row's concrete future is constructed
+/// and boxed in its own non-inlined function (FIX 19837); this match receives
+/// only its boxed handle.
 async fn call_verb_row(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
 match verb {{
 '''
-    dispatch += ''.join(f'{json.dumps(r["name"])} => Box::pin({r["name"].replace(".", "_")}(server, call, input)).await,\n' for r in facade_rows)
+    dispatch += ''.join(f'{json.dumps(r["name"])} => boxed_{r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
     for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board' and 'host' not in r]), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
@@ -1849,18 +1896,22 @@ def outputs():
         core += '&' + json.dumps(list(r.get('mcp_required_fields', r['mcp_fields']))) + '},\n'
     core += '_ => return None, }; Some(serde_json::json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})) }\n'
     core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
+    validators = ''
     board_host_input = {r['name']: r['input'] for r in BOARD_HOST_ROWS}
     for r in ROWS:
+        method = r['name'].replace('.', '_')
         checks = r.get('admission', {}).get('validate', '')
         binding = 'input' if checks else '_input'
         if r['name'] in board_host_input:
             # One verb, two served shapes: the board/MCP shape and the
             # facade's host projection. Either admits; each door decodes
             # its own shape after this check.
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
+            body = f'if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }}'
         else:
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
-    core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
+            body = f'let {binding}: {r["input"]} = decode(value.clone())?; {checks}'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => validate_input_{method}(value)?,\n'
+        validators += f'{core_cfg(r)}#[inline(never)]\nfn validate_input_{method}(value: &serde_json::Value) -> MemoryResult<()> {{ {body} Ok(()) }}\n'
+    core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n' + validators
     # Code mode binds its own guest, so a rewrite there validates the original
     # browser input, never the public live-run attachment wrapper.
     core += "pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
@@ -1876,15 +1927,58 @@ def outputs():
     core += 'if verb == "ai.anonymous_chat" { return encode(ai_anonymous_chat(memory, decode(value)?)?); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
     core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
+    invokers = ''
     for r in facade_rows:
         method = r['name'].replace('.', '_')
         if r.get('board_host'):
             # No memory fn of this name: it is the board fn's. An embedded
             # handle answers the host-only refusal, as other host rows do.
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
+            body = f'encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?)'
         else:
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
-    core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
+            encoder = {
+                'self.use': 'secret_use_output::answer',
+                'vault.artifacts.proposals': 'pending_proposal_output::list',
+                'vault.artifacts.propose_output': 'pending_proposal_output::view',
+                'vault.skills.get': 'skill_library_output::view',
+                'vault.skills.list': 'skill_library_output::page',
+                'vault.skills.archive': 'skill_library_output::view',
+                'vault.skills.restore': 'skill_library_output::restored',
+                'vault.skills.fork': 'skill_library_output::view',
+                'vault.conversations.create': 'core_write_output::entity',
+                'vault.conversations.turns.create': 'core_write_output::entity',
+                'vault.shape.read': 'shape_output::read',
+                'vault.shape.plan': 'shape_output::plan',
+                'vault.shape.apply': 'shape_output::receipt',
+                'vault.shape.groups': 'shape_output::groups',
+                'vault.shape.groups.resolve': 'shape_output::receipt',
+                'vault.shape.items.receipt': 'shape_output::item',
+                'vault.shape.plan.card': 'shape_output::card',
+                'connector.schema': 'connector_output::schema',
+                'connector.call_status': 'connector_output::status',
+                'vault.models.catalog.refresh': 'model_catalog_output::revision',
+                'vault.models.catalog.get': 'model_catalog_output::revision',
+                'vault.models.catalog.diff': 'model_catalog_output::diff',
+                'vault.coach.inspect': 'claim_output::coach',
+                'vault.claims.review': 'claim_output::review',
+                'vault.claims.vetting': 'claim_output::review',
+                'vault.claims.settle': 'claim_output::settlement',
+                'vault.claims.list': 'claim_output::list',
+                'vault.claims.list_filtered': 'claim_output::list',
+                'vault.claims.history': 'claim_output::list',
+                'vault.claims.read_filtered': 'claim_output::read',
+                'vault.memory.signal_extraction.result': 'claim_output::extraction',
+                'vault.kv.get': 'key_value_output::get',
+                'vault.kv.put': 'key_value_output::put',
+                'vault.kv.search': 'key_value_output::search',
+                'self.saved_query.create': 'saved_query_output::record',
+                'self.saved_query.read': 'saved_query_output::read',
+                'self.saved_query.update': 'saved_query_output::record',
+                'self.saved_query.archive': 'saved_query_output::record',
+            }.get(r['name'], 'encode')
+            body = f'{encoder}({method}(memory, decode(value)?)?)'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => invoke_{method}(memory, value),\n'
+        invokers += f"{core_cfg(r)}#[inline(never)]\nfn invoke_{method}(memory: &Memory<'_>, value: serde_json::Value) -> MemoryResult<serde_json::Value> {{ {body} }}\n"
+    core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n' + invokers
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
     core += "pub fn invoke_browser(driver: &mut dyn oneiron_browser::BrowserDriver, verb: &str, value: serde_json::Value) -> Result<serde_json::Value, oneiron_browser::BrowserError> {\n"
@@ -2173,6 +2267,44 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::lens::InspectionResolved': 'InspectionResolved',
+    'crate::lens::LensSelectionResolved': 'LensSelectionResolved',
+    'crate::claim::WeaveReportView': 'WeaveReportView',
+    'crate::lens::LensFrameCard': 'LensFrameCard',
+    'crate::claim::ScopedReadResult<crate::lens::LensFrameCard>': 'ScopedReadResultLensFrameCard',
+    'crate::claim::WeaveDigestView': 'WeaveDigestView',
+    'crate::lens::LensListPage': 'LensListPage',
+    'crate::agent_inbox_lens::InboxItemView': 'InboxItemView',
+    'crate::inbox::NotificationPage': 'NotificationPage',
+    'crate::inbox::NotificationRow': 'NotificationRow',
+    'crate::task_verb::sdk::OffRecordResultCards': 'OffRecordResultCards',
+    'crate::memory::result_doors::ResultReadView': 'ResultReadView',
+    'crate::vault_shape::ShapeRead': 'ShapeRead',
+    'crate::vault_shape::ShapePlan': 'ShapePlan',
+    'crate::vault_shape::ShapeApplyReceipt': 'ShapeApplyReceipt',
+    'crate::memory::ShapeItemReceipt': 'ShapeItemReceipt',
+    'crate::inbox::UnifiedInboxGroupPage': 'UnifiedInboxGroupPage',
+    'crate::inbox::InboxGroupResolution': 'InboxGroupResolution',
+    'crate::task_verb::sdk::FeedbackSubjectPreview': 'FeedbackSubjectPreview',
+    'crate::task_verb::sdk::OffRecordResultRead': 'OffRecordResultRead',
+    'crate::memory::ShapePlanCardView': 'ShapePlanCardView',
+    'crate::dreamer_runner::maintenance::identity::IdentityActNow': 'IdentityActNow',
+    'crate::task_verb::sdk::BrowserObservationPage': 'BrowserAnswerObservationPage',
+    'crate::task_verb::sdk::BrowserImageOutput': 'BrowserAnswerImageOutput',
+    'crate::task_verb::sdk::BrowserFindOutput': 'BrowserAnswerFindOutput',
+    'crate::task_verb::sdk::BrowserWaitForOutput': 'BrowserAnswerWaitForOutput',
+    'crate::task_verb::sdk::BrowserExpectOutput': 'BrowserAnswerExpectOutput',
+    'crate::task_verb::sdk::BrowserScreenshotOutput': 'BrowserAnswerScreenshotOutput',
+    'crate::task_verb::sdk::BrowserLibraryFindOutput': 'BrowserAnswerLibraryFindOutput',
+    'crate::task_verb::sdk::BrowserLibraryDraftOutput': 'BrowserAnswerDraftOutput',
+    'crate::task_verb::sdk::BrowserDemonstrationStartOutput': 'BrowserAnswerDemonstrationStarted',
+    'crate::task_verb::sdk::BrowserDemonstrationStopOutput': 'BrowserAnswerDemonstrationOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetireOutput': 'BrowserAnswerLibraryRetireOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetiredOutput': 'BrowserAnswerLibraryRetiredOutput',
+    'crate::task_verb::sdk::BrowserHandoverOutput': 'BrowserAnswerHandoverOutput',
+    'crate::task_verb::sdk::BrowserSwitchEngineOutput': 'BrowserAnswerSwitchEngineOutput',
+    'crate::task_verb::sdk::BrowserLibraryProposeOutput': 'BrowserAnswerProposeOutput',
+    'crate::task_verb::sdk::BrowserLibraryRunOutput': 'BrowserAnswerLibraryRunOutput',
     'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
     'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
@@ -2308,7 +2440,89 @@ def uniffi_export(row, types, census):
             if owned and owned != mirror:
                 raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
             output = mirror
-            if owned:
+            if row['output'] == 'Vec<crate::vault_shape::ShapeInboxGroup>':
+                result = 'crate::codec::lift_shape_groups(output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiAnswer':
+                result = f'crate::codec::lift_ai_answer({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiVideoJob':
+                result = f'crate::codec::lift_ai_video_job({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AskImageAnswer':
+                result = f'crate::codec::lift_ask_image({name}, output)'
+            elif row['output'] == 'crate::llm::manifest::doors::ModelRoleInvocation':
+                result = f'crate::codec::lift_model_role_invocation({name}, output)'
+            elif row['output'] == 'crate::llm::model_step::ModelStepReceipt':
+                result = f'crate::codec::lift_model_step_receipt({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamEvents':
+                result = f'crate::codec::lift_model_stream_events({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamTerminal':
+                result = f'crate::codec::lift_model_stream_terminal({name}, output)'
+            elif row['output'] == 'Option<crate::llm::model_step::SettledStepView>':
+                result = f'crate::codec::lift_settled_step({name}, output)'
+            elif row['output'] == 'Option<crate::dreamer_runner::SettledProgramStepView>':
+                result = f'crate::codec::lift_settled_program_step({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelTrialView':
+                result = f'crate::codec::lift_model_trial({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelBindingProposal':
+                result = f'crate::codec::lift_model_binding_proposal({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryRecordView':
+                result = f'crate::codec::lift_saved_query_record({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryReadResult':
+                result = f'crate::codec::lift_saved_query_read({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryEvaluationReceipt':
+                result = f'crate::codec::lift_saved_query_evaluation({name}, output)'
+            elif row['output'] == 'crate::memory::identity_doors::IdentityLookup':
+                result = f'crate::codec::lift_identity_lookup({name}, output)'
+            elif row['output'] == 'Vec<crate::query_expansion::host::HydeHostWork>':
+                result = f'crate::codec::lift_hyde_host_work({name}, output)'
+            elif row['output'] == 'Vec<crate::task_verb::sdk::RetrievalRunEvidence>':
+                result = f'crate::codec::lift_retrieval_run_evidences({name}, output)'
+            elif row['output'] == 'Option<crate::task_verb::sdk::RetrievalRunEvidence>':
+                result = f'crate::codec::lift_retrieval_run_evidence_opt({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::RetrievalDiagnosticExport':
+                result = f'crate::codec::lift_retrieval_diagnostic_export({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SkillLibraryView':
+                result = f'crate::codec::lift_skill_library_view({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SkillLibraryPage':
+                result = f'crate::codec::lift_skill_library_page({name}, output)'
+            elif row['output'] == 'Vec<crate::task_verb::sdk::BootstrapSkillView>':
+                result = f'crate::codec::lift_bootstrap_skills({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SkillLibraryRestoreReceipt':
+                result = f'crate::codec::lift_skill_library_restore({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::ConnectorPackView':
+                result = f'crate::codec::lift_connector_pack_view({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::ConnectorPackDelta':
+                result = f'crate::codec::lift_connector_pack_delta({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::ProxyConnectorRegistration':
+                result = f'crate::codec::lift_proxy_connector_registration({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SecretUseAnswer':
+                result = f'crate::codec::lift_secret_use_answer({name}, output)'
+            elif row['output'] == 'crate::llm::decision::DecisionAsk':
+                result = f'crate::codec::lift_decision_ask({name}, output)'
+            elif row['output'] == 'Vec<crate::llm::decision::DecisionAsk>':
+                result = f'crate::codec::lift_decision_asks({name}, output)'
+            elif row['output'] == 'crate::ingest::AgUiFileRead':
+                result = f'crate::codec::lift_ag_ui_file_read({name}, output)'
+            elif row['output'] == 'crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>':
+                result = f'crate::codec::lift_scoped_claim({name}, output)'
+            elif row['output'] == 'crate::memory::ClaimSettlement':
+                result = f'crate::codec::lift_claim_settlement({name}, output)'
+            elif row['output'] == 'Option<crate::memory::SignalExtractionResult>':
+                result = f'crate::codec::lift_signal_extraction_result({name}, output)'
+            elif row['output'] == 'crate::drafter::DrafterPolicy':
+                result = f'crate::codec::lift_drafter_policy({name}, output)'
+            elif row['output'] == 'crate::drafter::DrafterStatus':
+                result = f'crate::codec::lift_drafter_status({name}, output)'
+            elif row['output'] == 'crate::memory::foreign_code::ForeignCodeRunResult':
+                result = f'crate::codec::lift_foreign_code_result({name}, output)'
+            elif row['output'] == 'crate::vault_cleanup::CleanupReviewView':
+                result = f'crate::codec::lift_cleanup_review({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelCatalogRevision':
+                result = f'crate::codec::lift_model_catalog_revision({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelCatalogDiff':
+                result = f'crate::codec::lift_model_catalog_diff({name}, output)'
+            elif row['output'] == 'crate::memory::merge_queue_doors::MergeQueueObservation':
+                result = f'crate::codec::lift_merge_queue_observation({name}, output)'
+            elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
                 nested_voice = ''

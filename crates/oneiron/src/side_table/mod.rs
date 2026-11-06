@@ -13,6 +13,7 @@ mod decls;
 mod erased;
 use oneiron_store::side_table::key;
 mod raw_reverse;
+mod source_rows;
 #[cfg(test)]
 mod tests;
 
@@ -521,6 +522,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         key_prefix: &[u8],
     ) -> Result<Vec<(K, V)>> {
         self.iter_from(dbs, txn, key_prefix)?.collect()
+    }
+
+    /// The same eager typed scan, retaining the actual full keys and stored bytes
+    /// for a source witness. Decode errors and their order match `scan_from`.
+    pub(crate) fn scan_from_with_raw(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &RoTxn<'_>,
+        key_prefix: &[u8],
+    ) -> Result<Vec<(K, V, Vec<u8>, Vec<u8>)>> {
+        self.raw_rows(dbs, txn, key_prefix, false)?
+            .map(|row| {
+                let (key, value) = row?;
+                let (decoded_key, decoded_value) = self.decode_row((key.clone(), value.clone()))?;
+                Ok((decoded_key, decoded_value, key, value))
+            })
+            .collect()
     }
 
     /// The keys of every row under `key_prefix`, without decoding values.

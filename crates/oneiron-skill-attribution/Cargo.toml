@@ -8,6 +8,8 @@ description = "Skill attribution vocabulary of the oneiron engine: outcome evide
 repository.workspace = true
 
 [dependencies]
+oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+serde = { workspace = true }
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 
 [lints]

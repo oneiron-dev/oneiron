@@ -109,6 +109,17 @@ fn manifest_axes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<(Vec<GoalAxisSpec>, Vec<crate::gate::SkillEditGoalPolicy>)> {
+    manifest_axes_sourced_in_txn(vault, txn).map(|(axes, policies, _)| (axes, policies))
+}
+
+fn manifest_axes_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(
+    Vec<GoalAxisSpec>,
+    Vec<crate::gate::SkillEditGoalPolicy>,
+    BTreeSet<EntityId>,
+)> {
     let resolved = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let policies = resolved
         .skill_edit_goal_policies()
@@ -139,7 +150,7 @@ fn manifest_axes_in_txn(
         }),
     }
     validate_axes(&axes)?;
-    Ok((axes, policies))
+    Ok((axes, policies, resolved.manifest_body_rows))
 }
 
 /// The portable goal identity of `skill`, without resolving its axes.
@@ -157,8 +168,17 @@ pub(super) fn goal_definition_in_txn(
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<GoalDefinition> {
-    let (mut axes, policies) = manifest_axes_in_txn(vault, txn)?;
+    goal_definition_sourced_in_txn(vault, txn, skill).map(|(definition, _)| definition)
+}
+
+pub(super) fn goal_definition_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(GoalDefinition, Option<BTreeSet<EntityId>>)> {
+    let (mut axes, policies, mut source_rows) = manifest_axes_sourced_in_txn(vault, txn)?;
     let goal_id = goal_id_in_txn(vault, txn, skill)?;
+    source_rows.insert(*skill);
     // The project's goal record joins the vault's axes. A kind that disagrees
     // with policy is a conflict to resolve, not an axis to pick a side on.
     let project = super::project_goal::project_goal_in_txn(vault, txn, &goal_id)?;
@@ -182,6 +202,8 @@ pub(super) fn goal_definition_in_txn(
                 .map_err(|_| Error::CorruptedIndex("skill goal definition"))
         })
         .transpose()?;
+    // These stored metadata bodies have no row identity on their current carriers.
+    let mut sources_known = project.is_none() && override_row.is_none();
     if let Some(definition) = &override_row {
         validate_axes(&definition.axes)
             .map_err(|_| Error::CorruptedIndex("skill goal definition"))?;
@@ -219,15 +241,19 @@ pub(super) fn goal_definition_in_txn(
     // The goal record holds its learned preferences (ARCH-0053 §10a): a new
     // rule, band or pick is a new goal revision.
     if let Some(preferences) = super::tradeoff::preferences_bytes_in_txn(vault, txn, &goal_id)? {
+        sources_known = false;
         hash.update(b"\0tradeoff_preferences\0");
         hash.update(preferences);
     }
-    Ok(GoalDefinition {
-        goal_id,
-        revision: bytes_to_hex_lower(&hash.finalize()),
-        axes,
-        project,
-    })
+    Ok((
+        GoalDefinition {
+            goal_id,
+            revision: bytes_to_hex_lower(&hash.finalize()),
+            axes,
+            project,
+        },
+        sources_known.then_some(source_rows),
+    ))
 }
 
 /// The effective goal the gate rules `skill` under.
@@ -239,20 +265,39 @@ pub fn skill_edit_goal(vault: &Vault, skill: &EntityId) -> Result<SkillEditGoal>
     skill_edit_goal_in_txn(vault, &txn, skill)
 }
 
+pub(crate) fn skill_edit_goal_sourced(
+    vault: &Vault,
+    skill: &EntityId,
+) -> Result<(SkillEditGoal, Option<BTreeSet<EntityId>>)> {
+    let txn = vault.store.env.read_txn()?;
+    skill_edit_goal_sourced_in_txn(vault, &txn, skill)
+}
+
 pub(crate) fn skill_edit_goal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<SkillEditGoal> {
-    let definition = goal_definition_in_txn(vault, txn, skill)?;
-    Ok(SkillEditGoal {
-        goal_id: definition.goal_id,
-        revision: definition.revision,
-        axes: definition.axes,
-        project: definition
-            .project
-            .map(|join| (join.project, join.goal_claim)),
-    })
+    skill_edit_goal_sourced_in_txn(vault, txn, skill).map(|(goal, _)| goal)
+}
+
+pub(crate) fn skill_edit_goal_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(SkillEditGoal, Option<BTreeSet<EntityId>>)> {
+    let (definition, source_rows) = goal_definition_sourced_in_txn(vault, txn, skill)?;
+    Ok((
+        SkillEditGoal {
+            goal_id: definition.goal_id,
+            revision: definition.revision,
+            axes: definition.axes,
+            project: definition
+                .project
+                .map(|join| (join.project, join.goal_claim)),
+        },
+        source_rows,
+    ))
 }
 
 /// The authenticated human sets the goal axes used by the optimizer for this

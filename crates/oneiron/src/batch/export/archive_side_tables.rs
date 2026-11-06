@@ -747,14 +747,15 @@ impl ArchiveSideRow {
 /// `rtxn`, and the families it holds out. A record's rows of one family go when
 /// the record and every carrier they name are in `included`; otherwise none go,
 /// and a record in `included` has that family named once. A vault-wide row goes
-/// only to a caller on this device; a row of a record the export does not carry,
-/// and an index row no record owns, stay unnamed (FIX 3681: a records archive
-/// never names what its reader could not read).
+/// only when `include_vault_wide` (the owner's own whole-vault archive, or one
+/// read on this device); a row of a record the export does not carry, and an
+/// index row no record owns, stay unnamed (FIX 3681: a records archive never
+/// names what its reader could not read).
 pub(crate) fn archive_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     included: &BTreeSet<EntityId>,
-    on_device: bool,
+    include_vault_wide: bool,
 ) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
@@ -777,7 +778,14 @@ pub(crate) fn archive_side_rows_in_txn(
         .into_iter()
         .zip(&travels)
         .filter_map(|((family, key, value), (_, travel))| {
-            let owner = carried(family, travel, &groups, included, on_device, &mut held_out)?;
+            let owner = carried(
+                family,
+                travel,
+                &groups,
+                included,
+                include_vault_wide,
+                &mut held_out,
+            )?;
             let carriers = match travel {
                 Travel::With(_, carriers) => carriers.clone(),
                 Travel::Broken(_) | Travel::Vault | Travel::Orphan => Vec::new(),

@@ -94,25 +94,55 @@ pub(crate) fn tier_verdict_in_txn(
     skill: &EntityId,
     record: &SkillRecord,
 ) -> Result<SkillTierVerdict> {
-    if let Some(tier) = record.governance_tier {
-        return Ok(SkillTierVerdict::Marked(tier));
-    }
-    if born_on_convert_road(record) {
-        return Ok(SkillTierVerdict::LegacyStandard);
-    }
-    if record.source == ClaimSource::Imported && hub_vouches_in_txn(vault, rtxn, skill)? {
-        return Ok(SkillTierVerdict::LegacyStandard);
-    }
-    Ok(SkillTierVerdict::Ambiguous)
+    tier_verdict_sourced_in_txn(vault, rtxn, skill, record).map(|(verdict, _)| verdict)
 }
 
-/// True when an active `skill.hub_provenance` alias says a hub carried this
-/// record here — the positive half of the hub-import road.
-fn hub_vouches_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, skill: &EntityId) -> Result<bool> {
+pub(super) fn tier_verdict_sourced(
+    vault: &Vault,
+    skill: &EntityId,
+    record: &SkillRecord,
+) -> Result<(SkillTierVerdict, Vec<EntityId>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    tier_verdict_sourced_in_txn(vault, &rtxn, skill, record)
+}
+
+pub(super) fn tier_verdict_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    record: &SkillRecord,
+) -> Result<(SkillTierVerdict, Vec<EntityId>)> {
+    if let Some(tier) = record.governance_tier {
+        return Ok((SkillTierVerdict::Marked(tier), Vec::new()));
+    }
+    if born_on_convert_road(record) {
+        return Ok((SkillTierVerdict::LegacyStandard, Vec::new()));
+    }
+    if record.source == ClaimSource::Imported {
+        let (vouches, rows) = hub_vouches_in_txn(vault, rtxn, skill)?;
+        let verdict = if vouches {
+            SkillTierVerdict::LegacyStandard
+        } else {
+            SkillTierVerdict::Ambiguous
+        };
+        return Ok((verdict, rows));
+    }
+    Ok((SkillTierVerdict::Ambiguous, Vec::new()))
+}
+
+/// Whether an active hub alias vouches for this skill, beside the claim
+/// bodies examined before that answer.
+fn hub_vouches_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(bool, Vec<EntityId>)> {
+    let mut rows = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, skill)? {
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
+        rows.push(id);
         if body.predicate == PREDICATE_SKILL_HUB_PROVENANCE
             && body.lifecycle == ClaimLifecycleStatus::Active
             && crate::gate::claim_consolidation_eligible_in_txn(
@@ -122,10 +152,10 @@ fn hub_vouches_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, skill: &EntityId) -
                 crate::gate::ConsolidationReader::SkillOptimizeHubVouch,
             )?
         {
-            return Ok(true);
+            return Ok((true, rows));
         }
     }
-    Ok(false)
+    Ok((false, rows))
 }
 
 fn born_on_convert_road(record: &SkillRecord) -> bool {

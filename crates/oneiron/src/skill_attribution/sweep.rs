@@ -10,6 +10,7 @@ use super::{
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_page};
 use crate::side_table::{self, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_skill_attribution::output_requests::AttributionOutputReadRequests;
 
 /// Resume cursor for the in-progress task-attribution receipt-page scan. Key: ().
 const SCAN_CURSOR: SideTable<(), String, side_table::Raw> =
@@ -86,6 +87,18 @@ pub fn run_task_attribution_sweep_with_decisions(
     source: &dyn ReceiptAttributionSource,
     decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<AttributionSweepReport> {
+    run_task_attribution_sweep_with_output_requests(vault, limit, source, decisions, None)
+}
+
+/// The task sweep with independently declared placement for new judgments and
+/// proposals. An absent request preserves the ordinary unknown placement.
+pub fn run_task_attribution_sweep_with_output_requests(
+    vault: &Vault,
+    limit: usize,
+    source: &dyn ReceiptAttributionSource,
+    decisions: Option<&AttributionDecisions<'_>>,
+    output_requests: Option<&AttributionOutputReadRequests>,
+) -> Result<AttributionSweepReport> {
     let after = {
         let txn = vault.store.env.read_txn()?;
         SCAN_CURSOR.get(&vault.store, &txn, &())?
@@ -132,7 +145,12 @@ pub fn run_task_attribution_sweep_with_decisions(
         let txn = vault.store.env.read_txn()?;
         APPLIED_CURSOR.get(&vault.store, &txn, &())?.unwrap_or(0)
     };
-    run_attribution_projector_with_decisions(vault, read_attribution_cursor(vault)?, decisions)?;
+    let cursor = read_attribution_cursor(vault)?;
+    if let Some(requests) = output_requests {
+        super::run_attribution_projector_with_output_requests(vault, cursor, decisions, requests)?;
+    } else {
+        run_attribution_projector_with_decisions(vault, cursor, decisions)?;
+    }
     let routed = read_attribution_cursor(vault)?;
     let judgments: Vec<_> = attribution_judgments(vault)?
         .into_iter()

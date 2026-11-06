@@ -386,6 +386,11 @@ class ExportReceipt(TypedDict):
     bytes: int
     # BLAKE3 of the archive, lowercase hex.
     digest: str
+    # Holder work recorded by this export; absent when there is none.
+    holder_requests: NotRequired[list[Facade.HolderExportRequest]]
+    # Each world the owner's own export carries that his recipient choice
+    # would keep from where it goes, and why (owner ruling 1-EXPORT = B).
+    notices: NotRequired[list[Facade.WorldRecipientNotice]]
 
 class NativeLimitQuestion(TypedDict):
     # The [limits] row key that asked.
@@ -794,6 +799,8 @@ class Oneiron:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
         def get(self, spec: Facade.CommitmentRefRequest) -> Facade.CommitmentView:
             """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
+        def ledger(self, spec: Facade.CommitmentLedgerRequest) -> Facade.CommitmentLedgerView:
+            """Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."""
         def instances(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentView]:
             """Lists the materialized occurrences of a commitment series, including closed obligations."""
         def proposals(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentWakeProposal]:

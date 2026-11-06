@@ -25,11 +25,24 @@ impl JudgeBinding {
         txn: &heed::RoTxn<'_>,
         judge_revision: &str,
     ) -> Result<Self> {
-        Ok(Self {
-            judge_revision: judge_revision.to_owned(),
-            rubric: crate::skill_optimize::labels::judge_rubric_in_txn(vault, txn)?
-                .map(|rubric| rubric.digest),
-        })
+        Ok(Self::sourced_in_txn(vault, txn, judge_revision)?.0)
+    }
+
+    pub(super) fn sourced_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        judge_revision: &str,
+    ) -> Result<(Self, Option<Vec<EntityId>>)> {
+        let judge_revision = judge_revision.to_owned();
+        let (rubric, sources) =
+            crate::skill_optimize::labels::judge_rubric_sourced_in_txn(vault, txn)?;
+        Ok((
+            Self {
+                judge_revision,
+                rubric: rubric.map(|rubric| rubric.digest),
+            },
+            sources,
+        ))
     }
 }
 
@@ -42,8 +55,16 @@ pub(super) fn judge_rubric_digest_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<String>> {
-    Ok(
-        crate::skill_optimize::labels::judge_rubric_in_txn(vault, txn)?
-            .map(|rubric| bytes_to_hex_lower(&rubric.digest)),
-    )
+    Ok(judge_rubric_digest_sourced_in_txn(vault, txn)?.0)
+}
+
+pub(super) fn judge_rubric_digest_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Option<String>, Option<Vec<EntityId>>)> {
+    let (rubric, sources) = crate::skill_optimize::labels::judge_rubric_sourced_in_txn(vault, txn)?;
+    Ok((
+        rubric.map(|rubric| bytes_to_hex_lower(&rubric.digest)),
+        sources,
+    ))
 }

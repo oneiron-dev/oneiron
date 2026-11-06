@@ -69,6 +69,26 @@ impl Admit<'_, '_, '_> {
         }
         Ok(None)
     }
+
+    fn sources(
+        &self,
+        sources: Option<&crate::store::attempt_sources::AttemptSources>,
+    ) -> Result<Option<&'static str>> {
+        let Some(sources) = sources else {
+            return self.part(&[], false, &[]);
+        };
+        if let Some(why) = self.part(&sources.entities, true, &[])? {
+            return Ok(Some(why));
+        }
+        for source in &sources.native {
+            if let Some(why) =
+                super::native_sources::unavailable_in_txn(self.lane, self.txn, source)?
+            {
+                return Ok(Some(why));
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl Gather<'_> {
@@ -154,7 +174,10 @@ impl Gather<'_> {
         // opens, so the whole set is pinned and custody is guarded before it
         // opens, held through the last body read and file close.
         let _bodies = self.vault.pin_all_result_bodies();
-        let _custody = match self.vault.store.gate_custody_read_guard() {
+        let _custody = match lane
+            .persist_grant_clock()
+            .and_then(|_| self.vault.store.gate_custody_read_guard())
+        {
             Ok(guard) => guard,
             Err(error) => {
                 let why = kind(&error);
@@ -167,23 +190,26 @@ impl Gather<'_> {
                 return;
             }
         };
-        let read = lane.read_projected(&[], None, |txn, _| {
-            let admit = Admit {
-                lane,
-                txn,
-                owner: lane.actor_key().reads_as_vault_owner(),
-            };
-            self.runs_in(&admit);
-            self.report_sources_in(&admit);
-            if self.roots.is_empty() {
-                self.unavailable("ancestry".into(), "unlinked");
-            } else {
-                self.ancestry_in(&admit);
-            }
-            self.code_runs_in(&admit);
-            self.pack_receipts_in(&admit);
-            Ok::<_, Error>(())
-        });
+        let read = (|| -> Result<_> {
+            let txn = self.vault.store.env.read_txn()?;
+            lane.read_projected_in_txn(&txn, &[], None, |txn, _| {
+                let admit = Admit {
+                    lane,
+                    txn,
+                    owner: lane.actor_key().reads_as_vault_owner(),
+                };
+                self.runs_in(&admit);
+                self.report_sources_in(&admit);
+                if self.roots.is_empty() {
+                    self.unavailable("ancestry".into(), "unlinked");
+                } else {
+                    self.ancestry_in(&admit);
+                }
+                self.code_runs_in(&admit);
+                self.pack_receipts_in(&admit);
+                Ok::<_, Error>(())
+            })
+        })();
         match read {
             Ok(read) => self.narrow(&read.receipt),
             Err(error) => {
@@ -311,8 +337,8 @@ impl Gather<'_> {
             .reached
             .into_iter()
             .map(|record| {
-                let rows = record.source_rows();
-                let refused = match admit.part(rows.unwrap_or_default(), rows.is_some(), &[]) {
+                let sources = record.sources();
+                let refused = match admit.sources(sources.as_ref()) {
                     Ok(None) => None,
                     Ok(Some(why)) => Some(why.to_owned()),
                     Err(error) => Some(kind(&error)),
@@ -512,8 +538,8 @@ impl Gather<'_> {
                         continue;
                     }
                 };
-            let rows = receipt.pack_source_rows();
-            match admit.part(rows.as_deref().unwrap_or_default(), rows.is_some(), &[]) {
+            let sources = receipt.pack_sources();
+            match admit.sources(sources.as_ref()) {
                 Ok(None) => {
                     entry.insert(
                         "pack_receipt".into(),

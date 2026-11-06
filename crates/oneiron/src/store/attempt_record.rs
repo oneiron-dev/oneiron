@@ -192,6 +192,9 @@ pub enum PlannedExactness {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttemptReadSet {
     pub rows: Option<Vec<EntityId>>,
+    /// Native components of this same read set; never entity ids or grants.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub native: BTreeSet<crate::store::attempt_sources::NativeReadSource>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub expected: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]

@@ -24,7 +24,7 @@ use oneiron_skill_attribution::types::SkillEditProposal;
 
 impl RawValue for AttributionJudgment {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&encode_judgment(self))?)
+        Ok(encode_value(&encode_judgment(self)?)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
@@ -34,7 +34,7 @@ impl RawValue for AttributionJudgment {
 
 impl RawValue for SkillEditProposal {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&encode_edit_proposal(self))?)
+        Ok(encode_value(&encode_edit_proposal(self)?)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
@@ -64,8 +64,10 @@ pub fn optional_entity(id: Option<EntityId>) -> Value {
     id.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec()))
 }
 
-pub fn encode_judgment(judgment: &AttributionJudgment) -> Value {
-    Value::Map(vec![
+pub fn encode_judgment(judgment: &AttributionJudgment) -> Result<Value> {
+    let position = rmpv::ext::to_value(&judgment.read_position)
+        .map_err(|_| invalid("attribution judgment position encode failed"))?;
+    Ok(Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(SKILL_ATTRIBUTION_SCHEMA_VERSION),
@@ -91,7 +93,8 @@ pub fn encode_judgment(judgment: &AttributionJudgment) -> Value {
             ),
         ),
         (Value::from(KEY_AT), Value::from(judgment.at)),
-    ])
+        (Value::from("read_position"), position),
+    ]))
 }
 
 pub fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
@@ -103,6 +106,7 @@ pub fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
     let mut subject = None;
     let mut evidence_receipts = None;
     let mut at = None;
+    let mut read_position = None;
     for (key, value) in entries {
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
@@ -112,6 +116,12 @@ pub fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
             KEY_SUBJECT => subject = Some(decode_optional_entity(value)?),
             KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
             KEY_AT => at = value.as_u64(),
+            "read_position" => {
+                read_position = Some(
+                    rmpv::ext::from_value(value.clone())
+                        .map_err(|_| invalid("attribution judgment position decode failed"))?,
+                );
+            }
             _ => return Err(invalid("attribution judgment key is not pinned")),
         }
     }
@@ -123,6 +133,7 @@ pub fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
         evidence_receipts: evidence_receipts
             .ok_or(invalid("attribution judgment missing evidence"))?,
         at: at.ok_or(invalid("attribution judgment missing timestamp"))?,
+        read_position: read_position.ok_or(invalid("attribution judgment missing position"))?,
     })
 }
 
@@ -141,8 +152,10 @@ pub fn decode_receipt_array(value: &Value) -> Result<Vec<String>> {
     Ok(receipts)
 }
 
-pub fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
-    Value::Map(vec![
+pub fn encode_edit_proposal(proposal: &SkillEditProposal) -> Result<Value> {
+    let position = rmpv::ext::to_value(&proposal.read_position)
+        .map_err(|_| invalid("skill edit proposal position encode failed"))?;
+    Ok(Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(SKILL_ATTRIBUTION_SCHEMA_VERSION),
@@ -170,7 +183,8 @@ pub fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
             ),
         ),
         (Value::from(KEY_AT), Value::from(proposal.at)),
-    ])
+        (Value::from("read_position"), position),
+    ]))
 }
 
 pub fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
@@ -181,6 +195,7 @@ pub fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
     let mut skill = None;
     let mut evidence_receipts = None;
     let mut at = None;
+    let mut read_position = None;
     for (key, value) in entries {
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
@@ -189,6 +204,12 @@ pub fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
             KEY_SUBJECT => skill = Some(decode_entity(value)?),
             KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
             KEY_AT => at = value.as_u64(),
+            "read_position" => {
+                read_position = Some(
+                    rmpv::ext::from_value(value.clone())
+                        .map_err(|_| invalid("skill edit proposal position decode failed"))?,
+                );
+            }
             _ => return Err(invalid("skill edit proposal key is not pinned")),
         }
     }
@@ -200,6 +221,7 @@ pub fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
         evidence_receipts: evidence_receipts
             .ok_or(invalid("skill edit proposal missing evidence"))?,
         at: at.ok_or(invalid("skill edit proposal missing timestamp"))?,
+        read_position: read_position.ok_or(invalid("skill edit proposal missing position"))?,
     })
 }
 

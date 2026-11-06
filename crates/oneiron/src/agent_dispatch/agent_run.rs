@@ -20,8 +20,9 @@ use crate::error::Result;
 /// How far up a run tree its Q&A thread is looked for.
 const MAX_TREE_DEPTH: usize = 64;
 
-/// A claimed agent run: its leased attempt and input, and the MESSAGE thread
-/// its failure's Q&A goes to.
+/// A claimed agent run: its leased attempt and input, and its Q&A reference.
+/// Resident trees use their home CONVERSATION; other runs keep TASK/root
+/// correlation references, not proof of a thread or read access.
 #[derive(Debug, Clone)]
 pub struct AgentRun {
     pub status: AgentDispatchStatus,
@@ -136,8 +137,8 @@ impl AgentDispatcher<'_> {
         }))
     }
 
-    /// Where a run's failure asks: its tree's resident home when a settled
-    /// resident's run spawned it, else its TASK, else its tree's root.
+    /// Where a run's failure asks: its tree's resident home CONVERSATION when
+    /// a settled resident's run spawned it, else its TASK, else its tree's root.
     fn run_thread_in(
         &self,
         queue: &AttemptQueue<'_>,
@@ -156,7 +157,7 @@ impl AgentDispatcher<'_> {
             && let Some((_, resident)) =
                 self.vault.resident_binding_for_effect_in_txn(txn, agent)?
         {
-            return Ok(resident.home_message_ref);
+            return Ok(resident.home_conversation_ref);
         }
         if let Some(task) = row
             .task_ref

@@ -57,6 +57,17 @@ pub(super) fn check_source_custody(
     holder: &EntityId,
     hash: &SkillContentHash,
 ) -> Result<()> {
+    check_source_custody_sourced(store, txn, holder, hash).map(|_| ())
+}
+
+/// The same custody check, beside its actual holder body. A stored INDEX state
+/// has no EntityId body carrier, including the accepted Live value.
+pub(super) fn check_source_custody_sourced(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+    hash: &SkillContentHash,
+) -> Result<Option<Vec<EntityId>>> {
     if store.off_record_sessions.contains_entity(holder)? {
         return Err(Error::OffRecord(
             OffRecordError::OffRecordTaintedBaseWrite {
@@ -65,13 +76,18 @@ pub(super) fn check_source_custody(
         ));
     }
     check_source_target(store, txn, holder)?;
-    if INDEX
-        .get(store, txn, &(*holder, *hash.as_bytes()))?
-        .is_some_and(|state| state != CustodyState::Live)
-    {
+    let mut sources = Some(Vec::new());
+    let custody = INDEX.get(store, txn, &(*holder, *hash.as_bytes()))?;
+    if custody.is_some() {
+        sources = None;
+    }
+    if custody.is_some_and(|state| state != CustodyState::Live) {
         return Err(invalid("source custody has been retired"));
     }
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, holder)? {
+        if let Some(rows) = &mut sources {
+            rows.push(*holder);
+        }
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("source holder header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL || raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -80,7 +96,7 @@ pub(super) fn check_source_custody(
             ));
         }
     }
-    Ok(())
+    Ok(sources)
 }
 
 pub(super) fn check_source_target(

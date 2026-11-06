@@ -297,8 +297,9 @@ impl Oneiron {
     /// Exports the whole vault into the file at `path`, owner only, as
     /// `vault.export` does: `format` is `archive` (the default) or `okf`.
     /// The file is created or truncated; the answer is the archive's
-    /// format, length and BLAKE3. Over a server the archive streams
-    /// through a kept transfer, so no ceiling on a reply applies to it.
+    /// format, length, BLAKE3, holder requests and world notices. Over a
+    /// server the archive streams through a kept transfer, so no ceiling
+    /// on a reply applies to it.
     pub fn export_to(
         &self,
         path: String,

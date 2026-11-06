@@ -644,10 +644,20 @@ pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
     rtxn: &heed::RoTxn<'_>,
     content_hash: SkillContentHash,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
+    skill_scan_verdict_heads_sourced_in_store(store, rtxn, content_hash).map(|(heads, _)| heads)
+}
+
+/// Scan heads beside the actual entity rows examined on the content anchor.
+pub(crate) fn skill_scan_verdict_heads_sourced_in_store(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    content_hash: SkillContentHash,
+) -> Result<(Vec<(EntityId, ClaimBody)>, Vec<EntityId>)> {
     let hash_hex = content_hash.to_hex();
     let anchor = skill_content_anchor_entity_id(content_hash)?;
 
     let mut rows = Vec::new();
+    let mut sources = Vec::new();
     for entry in store.port_edges(
         rtxn,
         &anchor,
@@ -661,6 +671,7 @@ pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
             continue;
         };
 
+        sources.push(claim_id);
         if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             continue;
         }
@@ -675,7 +686,7 @@ pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
             rows.push((claim_id, body));
         }
     }
-    Ok(rows)
+    Ok((rows, sources))
 }
 
 fn validate_skill_scan_receipt(receipt: &SkillScanReceipt) -> Result<()> {

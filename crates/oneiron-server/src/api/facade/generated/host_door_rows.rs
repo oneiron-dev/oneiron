@@ -5,6 +5,7 @@
 //! new host door fails to compile until it names its check there. A row
 //! whose table entry says `"host_door_precheck": false` checks nothing
 //! before its hooks; those rows:
+//! - `vault.commitments.ledger`
 //! - `self.focus.wakes`
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`

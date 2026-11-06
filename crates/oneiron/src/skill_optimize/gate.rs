@@ -145,14 +145,21 @@ mod deferred_approval;
 mod goal_axis;
 mod judge_binding;
 mod ledger;
+pub(crate) use ledger::{
+    CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
+    canonical_skill_edit_verdict_in_txn, canonical_skill_edit_verdicts_in_txn,
+    verdict_rows_sourced_observed_in_txn,
+};
 mod live;
 mod measurement;
 mod preflight;
 mod project_goal;
+mod read_position;
 mod rule_policy;
 mod tradeoff;
 mod tradeoff_capacity;
 mod verdict;
+pub use read_position::SkillVerdictReadPosition;
 
 pub(crate) use decision::score_gate_skill_edit_as_owner;
 pub(crate) use live::measure_skill_edit_goal_axes_as_owner;
@@ -169,7 +176,8 @@ pub use basis::{
     skill_edit_cycle_cap, skill_edit_score_call_purpose,
 };
 pub use decision::{
-    score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
+    score_gate_skill_edit, score_gate_skill_edit_in_cycle,
+    score_gate_skill_edit_in_cycle_positioned, score_gate_skill_edit_with_scorer,
 };
 pub use goal_axis::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, SkillEditGoal, set_skill_edit_goal_axes,
@@ -212,7 +220,8 @@ pub(crate) use admission::{
 };
 pub(crate) use ledger::{
     displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_in_txn,
-    skill_edit_verdict_receipts, validate_judge_revision,
+    skill_edit_verdict_receipts, skill_edit_verdict_sourced, skill_edit_verdict_sourced_in_txn,
+    validate_judge_revision,
 };
 pub(crate) use preflight::{
     SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,
@@ -220,7 +229,10 @@ pub(crate) use preflight::{
 pub(crate) use project_goal::{
     project_axes, project_goal_revision_proposals_in_txn, project_rules_for_record,
 };
-pub(crate) use tradeoff::{settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn};
+pub(crate) use tradeoff::{
+    settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn,
+    skill_tradeoff_ask_sourced,
+};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;
@@ -335,6 +347,7 @@ const KEY_PROPOSAL_TIER: &str = "proposal_tier";
 const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
+const KEY_READ_POSITION: &str = "read_position";
 const KEY_MEASUREMENTS: &str = "measurements";
 const KEY_GOAL_AXES: &str = "goal_axes";
 const KEY_GOAL_REVISION: &str = "goal_revision";
@@ -356,3 +369,4 @@ const VERDICT_ROW_LABEL: &str = "skill edit verdict row";
 const SKILL_EDIT_RECEIPT_PREFIX: &str = "skill_edit:";
 
 pub(crate) use goal_axis::skill_edit_goal_in_txn;
+pub(crate) use goal_axis::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};

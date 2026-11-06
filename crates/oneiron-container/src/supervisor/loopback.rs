@@ -6,9 +6,10 @@
 //! bounded queue; a connect from this session to a loopback address one of
 //! its listeners holds queues the client's host end, and an accept installs
 //! that end in the guest, so the two guest ends talk over one Unix pair.
-//! Nothing on the host or in another session can reach a listener: only
-//! this session's own connect calls look in its registry, and a connect to
-//! any other address goes to the host egress proxy as it always did.
+//! The trusted holder of this session's fence may also connect to an exact
+//! loopback listener, keeping the host peer. No kernel listener or route to
+//! another session is opened. Guest connects to any other address still
+//! go to the host egress proxy.
 //!
 //! Only 127.0.0.0/8 and ::1 hold listeners ([`loopback_admits`]); any other
 //! address is a typed refusal the host records ([`refuse`]). So is a
@@ -45,6 +46,36 @@ use std::time::Duration;
 
 // Connects that wait their turn for a slot (FIX 6785, FIX 8015).
 mod connect;
+/// The trusted session holder's exact loopback dial. No guest socket id or
+/// egress authority is manufactured for the host peer.
+pub(super) fn connect_host(
+    state: &State,
+    target: SocketAddr,
+    waiting: impl Fn() -> bool,
+) -> io::Result<super::LoopbackConnection> {
+    if !state.alive.load(Ordering::Acquire) || !waiting() {
+        return Err(errno(libc::EINTR));
+    }
+    let target = canonical(target);
+    if loopback_admits(target).is_err() {
+        return Err(errno(libc::EACCES));
+    }
+    let (listener, own) = {
+        let mut registry = state.loopback.lock().map_err(|_| poisoned())?;
+        let listener = registry
+            .bound
+            .get(&target)
+            .and_then(|id| registry.listeners.get(id))
+            .cloned()
+            .ok_or_else(|| errno(libc::ECONNREFUSED))?;
+        let own = registry
+            .free(target.ip())
+            .ok_or_else(|| errno(libc::EADDRINUSE))?;
+        (listener, own)
+    };
+    connect::enqueue_host(state, &listener, own, waiting)
+}
+
 pub(super) use connect::Connecting;
 // SO_ACCEPTCONN and IPV6_V6ONLY, kept by the fence (FIX 6784, FIX 6787).
 mod options;

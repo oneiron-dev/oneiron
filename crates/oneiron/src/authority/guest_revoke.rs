@@ -189,14 +189,17 @@ impl Vault {
         Ok(())
     }
 
-    /// The current full Scope of an ordinary membership-bound slip. Delegates
-    /// keep their existing parent/issuer path; own-device and guest grants keep
-    /// their existing admission. Only the exact signed grant is read.
+    /// The current full Scope of a membership-bound or owner-issued app slip.
+    /// Other delegates keep their existing parent/issuer path; own-device and
+    /// guest grants keep their admission. Only the exact signed grant is read.
     pub(super) fn current_member_slip_scope_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
     ) -> Result<Option<oneiron_authority::federation::Scope>> {
+        if let Some(scope) = self.current_artifact_backend_slip_scope_in_txn(txn, claims)? {
+            return Ok(Some(scope));
+        }
         let Some(grant_ref) = claims.grant_ref.as_deref() else {
             return Ok(None);
         };

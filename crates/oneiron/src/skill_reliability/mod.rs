@@ -24,9 +24,30 @@ mod read;
 mod resident;
 mod row_ids;
 mod rule_outcome;
+mod rule_outcome_position;
+mod rule_outcome_read;
+mod outcome_position;
+mod outcome_row;
+mod outcome_write;
+mod outcome_read;
+
+pub use outcome_position::OutcomeReadPosition;
+pub(crate) use outcome_read::{
+    CanonicalOutcomeDependency, canonical_attributed_outcomes_in_txn,
+    canonical_outcome_dependency_in_txn,
+};
+pub(crate) use outcome_write::{
+    mark_displaced_outcome_positioned_in_txn, record_outcome_positioned_in_txn,
+};
+
+pub(crate) use self::rule_outcome_position::RuleOutcomeReadPosition;
+pub(crate) use self::rule_outcome_read::{
+    CanonicalRuleOutcome, canonical_rule_outcome_in_txn, canonical_rule_outcomes_in_txn,
+};
 
 pub(crate) use self::amended::{
     AmendedOutcome, amended_share_in_txn, reconcile_amended_outcomes_in_txn,
+    reconcile_amended_outcomes_positioned_in_txn,
 };
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
@@ -37,11 +58,15 @@ pub use self::floor::{
     check_reliability_floor_for_executor, set_skill_reliability_floor, skill_reliability_floor,
 };
 pub(crate) use self::ledger::{
-    attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
+    attributed_outcome_receipts, attributed_outcome_results, attributed_outcome_results_sourced,
+    attributed_outcomes_weighted, attributed_outcomes_weighted_sourced,
     mark_displaced_outcome_in_txn, record_skill_settled_loss,
+    record_skill_settled_loss_with_position,
 };
 pub use self::ledger::{
-    effective_skill_outcome, record_resident_skill_contributing_win, record_skill_contributing_win,
+    effective_skill_outcome, record_resident_skill_contributing_win,
+    record_resident_skill_contributing_win_with_position, record_skill_contributing_win,
+    record_skill_contributing_win_with_position,
 };
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
@@ -51,10 +76,12 @@ pub use self::projector::{
     FIELD_SKILL_GOAL_REVISION, FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF,
     PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,
     project_skill_reliability_for, project_skill_reliability_for_executor,
+    project_skill_reliability_with_positions,
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub(crate) use self::provenance::{
-    skill_reliability_prior_rows, skill_reliability_sources, skill_reliability_with_sources,
+    skill_reliability_prior_rows, skill_reliability_prior_sourced, skill_reliability_sources,
+    skill_reliability_with_sources,
 };
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, person_skill_fit, read_skill_reliability,
@@ -71,7 +98,6 @@ pub(crate) use self::rule_outcome::{
     RuleOutcomeSource, record_rule_outcome_in_txn, rule_outcome_receipts_in_txn,
     withdraw_rule_outcome_in_txn,
 };
-
 #[cfg(test)]
 mod tests;
 

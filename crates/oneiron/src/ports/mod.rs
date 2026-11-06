@@ -27,10 +27,21 @@ pub(crate) use maintenance::*;
 mod lmdb_phonetic;
 mod lmdb_query;
 pub(crate) use lmdb_query::checkpoint;
+mod deletion_reads;
+mod deletion_sources;
 mod lmdb_retrieval_inventory;
 mod lmdb_staging;
 mod lmdb_timeline;
+pub(crate) use deletion_sources::observe as observe_deletion_source;
+pub(crate) use deletion_sources::{
+    DeletionSource, DeletionSourceObserver, DeletionSourceTable, deletion_source_contains,
+};
+pub(crate) use lmdb_window_rows::world_pending_tombstone_observed;
 mod lmdb_visibility;
+pub(crate) use deletion_reads::{DeletionStateObserver, DeletionStateOrigin, DeletionStateRead};
+pub(crate) use lmdb_visibility::{
+    deletion_state_observed_in_txn, deletion_state_with_sources_in_txn,
+};
 mod lmdb_window_rows;
 mod query;
 pub use query::*;
@@ -47,15 +58,19 @@ pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
 mod dependency_registration;
+mod epoch_reads;
 mod integrity;
+pub(crate) mod stale_reads;
 pub(crate) use dependency_registration::{
     record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
 };
+pub(crate) use stale_reads::{StaleRead, StaleReadObserver, StaleReadTable, stale_in_txn_observed};
 mod lmdb_aux;
 pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
+pub(crate) use lmdb_claim::read_claim_body_in_txn;
 mod lmdb_entity;
 pub(crate) use lmdb_entity::{BodyReadError, indexes_named_entity, reindex_named_entities};
 mod lmdb_index;

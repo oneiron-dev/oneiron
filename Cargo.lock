@@ -8360,6 +8360,7 @@ dependencies = [
  "oneiron-sandbox-contract",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "wasmtime",
@@ -8857,7 +8858,9 @@ dependencies = [
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
+ "oneiron-authority",
  "oneiron-contracts",
+ "serde",
 ]
 
 [[package]]

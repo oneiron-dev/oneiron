@@ -365,6 +365,7 @@ pub(crate) async fn build_server(
                 .as_ref()
                 .map(crate::config::DesktopConfig::guest),
         )
+        .with_artifact_backend(config.artifact_backend.clone())?
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,

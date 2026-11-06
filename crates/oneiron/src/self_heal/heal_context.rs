@@ -38,6 +38,7 @@ use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Error, Vault};
 
 mod admitted;
+mod native_sources;
 mod records;
 use records::{body_value, source_order};
 

@@ -116,14 +116,25 @@ impl Vault {
         entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<Option<HubPackage>> {
+        Ok(self
+            .hub_package_from_carrier_sourced_in_txn(txn, entity, record)?
+            .0)
+    }
+    /// The same fallback, carrying the source result even when a carrier is rejected.
+    pub(crate) fn hub_package_from_carrier_sourced_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &crate::skill::SkillRecord,
+    ) -> Result<(Option<HubPackage>, Option<Vec<EntityId>>)> {
         let Some(hash) = record.content_hash else {
-            return Ok(None);
+            return Ok((None, Some(Vec::new())));
         };
         let carrier = super::source_carrier::source_carrier_id(entity, &hash)?;
-        let Some((holder, package)) =
-            super::source_carrier::read_source_carrier_in_txn(&self.store, txn, &carrier)?
-        else {
-            return Ok(None);
+        let (carried, sources) =
+            super::source_carrier::read_source_carrier_sourced_in_txn(&self.store, txn, &carrier)?;
+        let Some((holder, package)) = carried else {
+            return Ok((None, sources));
         };
         if holder != *entity
             || package.content_hash()? != hash
@@ -135,7 +146,7 @@ impl Vault {
         {
             return Err(invalid("replicated source differs from its native skill"));
         }
-        Ok(Some(package))
+        Ok((Some(package), sources))
     }
     /// Instruction bytes for an admitted runtime load, never a standalone export door.
     pub(crate) fn runtime_skill_package_in_txn(
@@ -144,9 +155,21 @@ impl Vault {
         entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<Option<HubPackage>> {
+        Ok(self
+            .runtime_skill_package_sourced_in_txn(txn, entity, record)?
+            .0)
+    }
+    /// The native PACKAGE-first read beside the bodies supplying its result.
+    /// A stored local PACKAGE has no EntityId body carrier, so its sources are unknown.
+    pub(crate) fn runtime_skill_package_sourced_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &crate::skill::SkillRecord,
+    ) -> Result<(Option<HubPackage>, Option<Vec<EntityId>>)> {
         let package = match PACKAGE.get(&self.store, txn, entity)? {
             Some(package) => package,
-            None => return self.hub_package_from_carrier_in_txn(txn, entity, record),
+            None => return self.hub_package_from_carrier_sourced_in_txn(txn, entity, record),
         };
         super::source_custody::check_source_custody(
             &self.store,
@@ -163,7 +186,7 @@ impl Vault {
         {
             return Err(invalid("runtime package differs from the admitted skill"));
         }
-        Ok(Some(package))
+        Ok((Some(package), None))
     }
     /// The replicated carrier ASSET a runtime load of `entity`'s package read
     /// its bytes from, on the load's snapshot (FIX 7017): `None` while the

@@ -37,6 +37,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "models" => struct_fields::<ModelsFile>(),
         "browser" => struct_fields::<super::BrowserConfig>(),
         "desktop" => struct_fields::<super::DesktopConfig>(),
+        "artifact_backend" => struct_fields::<crate::config::ArtifactBackendConfig>(),
         "merge_queue" => struct_fields::<super::MergeQueueCheckerConfig>(),
         "gpu" => struct_fields::<crate::runtime::GpuPoolConfig>(),
         "native_mail" => struct_fields::<super::NativeMailConfig>(),
@@ -129,6 +130,9 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     }
     if let Some(desktop) = &config.desktop {
         desktop.validate()?;
+    }
+    if let Some(backend) = &config.artifact_backend {
+        backend.validate()?;
     }
     if let Some(merge_queue) = &config.merge_queue {
         merge_queue.validate()?;

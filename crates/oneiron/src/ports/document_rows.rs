@@ -77,6 +77,22 @@ pub(crate) struct PendingUpdate {
     pub(crate) bytes: Vec<u8>,
 }
 
+/// Borrowed physical inputs, not a read grant or a complete record-read certificate.
+pub(crate) enum DocumentRead<'a> {
+    Row {
+        table: &'static crate::side_table::SideTableDecl,
+        key: &'a [u8],
+        value: Option<&'a [u8]>,
+    },
+    /// The original storage iterator exhausted this full physical prefix successfully.
+    ScanComplete {
+        table: &'static crate::side_table::SideTableDecl,
+        prefix: &'a [u8],
+    },
+}
+
+pub(crate) type DocumentReadObserver<'a> = dyn for<'row> FnMut(DocumentRead<'row>) + 'a;
+
 pub(crate) trait DocumentRowStore: Transactions {
     /// Appends one update at the slot's next sequence, advances the counter and marks the state
     /// vector stale. Returns the sequence the update took.
@@ -144,6 +160,21 @@ pub(crate) trait DocumentRowStore: Transactions {
         &self,
         txn: &Self::Read<'_>,
         slot: DocumentSlot,
+    ) -> Result<Vec<PendingUpdate>>;
+    /// Observe the same stored row before its bytes are copied for the caller.
+    fn port_document_row_observed(
+        &self,
+        txn: &Self::Read<'_>,
+        slot: DocumentSlot,
+        row: DocumentRow,
+        observe: Option<&mut DocumentReadObserver<'_>>,
+    ) -> Result<Option<Vec<u8>>>;
+    /// Observe exact stored update keys, including malformed keys, and scan exhaustion.
+    fn port_document_updates_observed(
+        &self,
+        txn: &Self::Read<'_>,
+        slot: DocumentSlot,
+        observe: Option<&mut DocumentReadObserver<'_>>,
     ) -> Result<Vec<PendingUpdate>>;
     /// Whether the slot holds a snapshot or at least one pending update. Reads
     /// no further than the first update.

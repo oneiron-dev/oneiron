@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4580 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
+// UniFFI census: 1263 facade rows, 4583 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -307,6 +307,44 @@ pub struct CommitmentCreateReceipt {
 pub struct CommitmentRefRequest {
     #[serde(rename = "commitment_ref")]
     pub commitment_ref: String,
+}
+
+/// `oneiron::memory::commitment_doors::ledger::CommitmentLedgerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentLedgerRequest {
+    #[serde(rename = "contact_ref")]
+    pub contact_ref: String,
+}
+
+/// `oneiron::memory::commitment_doors::ledger::CommitmentLedgerItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentLedgerItem {
+    #[serde(rename = "valid_from")]
+    pub valid_from: u64,
+    #[serde(rename = "valid_to")]
+    pub valid_to: u64,
+    #[serde(rename = "commitment")]
+    pub commitment: CommitmentView,
+}
+
+/// `oneiron::memory::commitment_doors::ledger::CommitmentLedgerView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommitmentLedgerView {
+    #[serde(rename = "contact_ref")]
+    pub contact_ref: String,
+    #[serde(rename = "identity_ref")]
+    pub identity_ref: String,
+    #[serde(rename = "counterparty")]
+    pub counterparty: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "address_or_handle")]
+    pub address_or_handle: String,
+    #[serde(rename = "owed_by_them")]
+    pub owed_by_them: Vec<CommitmentLedgerItem>,
+    #[serde(rename = "owed_to_them")]
+    pub owed_to_them: Vec<CommitmentLedgerItem>,
 }
 
 /// `oneiron::memory::commitment_doors::types::CommitmentWakePhase`.
@@ -11644,6 +11682,32 @@ pub struct HolderExportRequest {
     pub state: HolderExportState,
 }
 
+/// `oneiron::share_travel::pack_notice::WorldRecipientNotice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorldRecipientNotice {
+    #[serde(rename = "notice_type")]
+    pub notice_type: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "voice")]
+    pub voice: String,
+    #[serde(rename = "audience")]
+    pub audience: String,
+    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
+    #[serde(
+        rename = "world_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub world_name: Option<String>,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "body")]
+    pub body: String,
+}
+
 /// `oneiron::memory::export::MemoryExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryExport {
@@ -11659,6 +11723,8 @@ pub struct MemoryExport {
         skip_serializing_if = "Option::is_none"
     )]
     pub holder_requests: Option<Vec<HolderExportRequest>>,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::memory::export::ExportTransfer`.
@@ -11678,6 +11744,8 @@ pub struct ExportTransfer {
         skip_serializing_if = "Option::is_none"
     )]
     pub holder_requests: Option<Vec<HolderExportRequest>>,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::memory::export::ExportAnswer`.
@@ -16998,32 +17066,6 @@ pub struct PackSection {
     pub authority_lane: String,
     #[serde(rename = "budget_policy")]
     pub budget_policy: String,
-}
-
-/// `oneiron::share_travel::pack_notice::WorldRecipientNotice`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WorldRecipientNotice {
-    #[serde(rename = "notice_type")]
-    pub notice_type: String,
-    #[serde(rename = "channel")]
-    pub channel: String,
-    #[serde(rename = "voice")]
-    pub voice: String,
-    #[serde(rename = "audience")]
-    pub audience: String,
-    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
-    pub world_ref: Option<String>,
-    #[serde(
-        rename = "world_name",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub world_name: Option<String>,
-    #[serde(rename = "reason")]
-    pub reason: String,
-    #[serde(rename = "body")]
-    pub body: String,
 }
 
 /// `oneiron::skill_hub::pack_catalog::admission_types::PackInstallReceipt`.

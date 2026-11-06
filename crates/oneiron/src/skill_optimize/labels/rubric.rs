@@ -3,6 +3,7 @@
 //! The labels parent owns the anchor rows and rubric pin definitions.
 
 use super::*;
+use crate::edge::EdgeKind;
 
 /// The judge head: from the bootstrap `judge` skill, through admitted
 /// succession (`Supersedes`, new to old) to its newest revision, when that
@@ -10,19 +11,29 @@ use super::*;
 /// judge imported under another id still has a head (FIX 9076). `None` when
 /// no live head exists.
 pub(crate) fn judge_head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
+    Ok(judge_head_sourced_in_txn(vault, txn)?.0)
+}
+
+/// The same succession walk, including opaque graph rows before peer filtering.
+pub(crate) fn judge_head_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Option<EntityId>, Option<Vec<EntityId>>)> {
     let mut head = EntityId::derive(
         crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
         &[JUDGE_SKILL_ID.as_bytes()],
     )?;
     let mut seen = BTreeSet::from([head]);
+    let mut sources = Some(Vec::new());
     loop {
-        let newer = vault.filtered_edge_peers(
+        let (newer, edge_sources) = vault.filtered_edge_peers_sourced(
             txn,
             crate::ports::EdgeDirection::In,
             &head,
             EdgeKind::Supersedes,
             Some(crate::registry::ENTITY_TYPE_SKILL),
         )?;
+        sources = crate::attempt_queue::source_rows::union_source_rows([sources, edge_sources]);
         // Admitted succession is linear; the least id settles a fork in it.
         let Some(next) = newer.into_iter().filter(|id| !seen.contains(id)).min() else {
             break;
@@ -30,10 +41,16 @@ pub(crate) fn judge_head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<
         seen.insert(next);
         head = next;
     }
-    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &head)?.is_live() {
-        return Ok(None);
+    match crate::vault::live_entity_row_in_txn(&vault.store, txn, &head)? {
+        crate::vault::LiveEntityRow::Absent => return Ok((None, sources)),
+        crate::vault::LiveEntityRow::DeletedShell => return Ok((None, None)),
+        crate::vault::LiveEntityRow::Live { .. } => {
+            if let Some(rows) = &mut sources {
+                rows.push(head);
+            }
+        }
     }
-    Ok(Some(head))
+    Ok((Some(head), sources))
 }
 
 /// The judge's rubric: from the bootstrap `judge` skill, through admitted
@@ -45,21 +62,33 @@ pub(crate) fn judge_rubric_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<JudgeRubric>> {
-    let Some(head) = judge_head_in_txn(vault, txn)? else {
-        return Ok(None);
+    Ok(judge_rubric_sourced_in_txn(vault, txn)?.0)
+}
+
+/// The same rubric read, carrying all native head and package body sources.
+pub(crate) fn judge_rubric_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Option<JudgeRubric>, Option<Vec<EntityId>>)> {
+    let (head, sources) = judge_head_sourced_in_txn(vault, txn)?;
+    let Some(head) = head else {
+        return Ok((None, sources));
     };
     let record = match vault.read_skill_record_in_txn(txn, &head) {
         Ok(record) => record,
-        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok((None, sources)),
         Err(error) => return Err(error),
     };
     if record.skill_id != JUDGE_SKILL_ID
         || crate::skill::resident_of(&record)?.is_some()
         || !crate::skill::skill_loadable(&record)
     {
-        return Ok(None);
+        return Ok((None, sources));
     }
-    let text = match vault.runtime_skill_package_in_txn(txn, &head, &record)? {
+    let (package, package_sources) =
+        vault.runtime_skill_package_sourced_in_txn(txn, &head, &record)?;
+    let sources = crate::attempt_queue::source_rows::union_source_rows([sources, package_sources]);
+    let text = match package {
         Some(package) => package
             .files
             .into_iter()
@@ -72,12 +101,15 @@ pub(crate) fn judge_rubric_in_txn(
         }
         None => None,
     };
-    Ok(text.map(|text| JudgeRubric {
-        skill: head,
-        version: record.version,
-        digest: *blake3::hash(text.as_bytes()).as_bytes(),
-        text,
-    }))
+    Ok((
+        text.map(|text| JudgeRubric {
+            skill: head,
+            version: record.version,
+            digest: *blake3::hash(text.as_bytes()).as_bytes(),
+            text,
+        }),
+        sources,
+    ))
 }
 
 /// [`judge_rubric_in_txn`] in a read transaction of its own: the rubric the
@@ -128,6 +160,7 @@ fn repin_in_txn(
             label.recheck = Some(JudgeLabelRecheck::Pending {
                 rubric: rubric.digest,
             });
+            label.read_position = None;
             stamped.push(label);
         }
     }
@@ -293,6 +326,7 @@ fn settle_recheck_in_txn(
     }
     let fits = fit == JudgeLabelFit::Fits;
     let mut settled = label.clone();
+    settled.read_position = None;
     settled.recheck = if fits {
         None
     } else {
@@ -426,6 +460,7 @@ pub fn record_judge_label_regrade(
             });
             Some(fresh)
         };
+        label.read_position = None;
         LABELS.put(&vault.store, txn, &of.label, &label)?;
         Ok(JudgeLabelRegrade { label, fresh })
     })

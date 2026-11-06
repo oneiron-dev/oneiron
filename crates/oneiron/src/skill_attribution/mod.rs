@@ -93,6 +93,16 @@ pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
 };
+mod judgment_read;
+pub(crate) use judgment_read::{
+    CanonicalAttributionJudgment, canonical_attribution_judgment_in_txn,
+    canonical_attribution_judgments_in_txn,
+};
+mod proposal_read;
+pub(crate) use proposal_read::{
+    CanonicalSkillEditProposal, canonical_skill_edit_proposal_in_txn,
+    canonical_skill_edit_proposals_in_txn,
+};
 mod projector;
 pub(crate) use self::projector::{
     attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
@@ -122,16 +132,20 @@ pub use self::judge::{
     ATTRIBUTION_CALL_PURPOSE_NAME, ATTRIBUTION_DIAL, AttributionDecisions, AttributionNotes,
     AttributionRules, attribution_call_purpose,
 };
+pub use oneiron_skill_attribution::output_requests::AttributionOutputReadRequests;
+
 pub use self::projector::{
     attribution_judgments, pending_edit_proposals, read_attribution_cursor,
     record_attribution_evidence, run_attribution_projector,
-    run_attribution_projector_with_decisions,
+    run_attribution_projector_with_decisions, run_attribution_projector_with_output_requests,
+    run_attribution_projector_with_position, run_attribution_projector_with_positions,
 };
 pub use self::types::{
-    AttemptOutcome, AttributionJudgment, AttributionLane, AttributionShare, AttributionSplit,
-    AttributionVerdict, DeviationCause, EditHunk, FollowedState, HunkVerdict, JudgeRequest,
-    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal, UnclearNote,
-    UnclearReason,
+    AttemptOutcome, AttributionJudgment, AttributionJudgmentReadPosition, AttributionLane,
+    AttributionShare, AttributionSplit, AttributionVerdict, DeviationCause, EditHunk, FollowedState,
+    HunkVerdict, JudgeRequest,
+    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    SkillEditProposalReadPosition, UnclearNote, UnclearReason,
 };
 
 #[cfg(test)]
@@ -179,6 +193,7 @@ mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
+    run_task_attribution_sweep_with_output_requests,
 };
 mod trace;
 pub use trace::{
@@ -187,4 +202,5 @@ pub use trace::{
 
 pub use self::judge_supersession::{
     DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,
+    supersede_displaced_judge_receipts_with_positions,
 };

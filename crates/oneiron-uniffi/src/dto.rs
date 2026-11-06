@@ -1118,10 +1118,9 @@ pub struct OutboundIntentReceipt {
 
 // ── export ──────────────────────────────────────────────────────────────
 
-/// One whole-vault export written to the caller's file (FIX 11177): its
-/// format, length and BLAKE3, as its receipt records them. The archive is
-/// the caller's file.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+/// One whole-vault export written to the caller's file: its format, length,
+/// BLAKE3, holder requests and world notices. The archive is the caller's file.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct ExportReceipt {
     /// The archive manifest's `format`: `archive` or `okf`.
     pub format: String,
@@ -1129,4 +1128,8 @@ pub struct ExportReceipt {
     pub bytes: u64,
     /// BLAKE3 of the archive, lowercase hex.
     pub digest: String,
+    /// Holder work recorded by this export, including unassigned requests.
+    pub holder_requests: Vec<crate::HolderExportRequest>,
+    /// Recipient-limit notices returned with the export.
+    pub notices: Vec<crate::WorldRecipientNotice>,
 }

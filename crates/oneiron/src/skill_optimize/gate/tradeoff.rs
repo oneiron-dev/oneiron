@@ -398,14 +398,28 @@ fn bound_ask_in_txn(
     txn: &heed::RoTxn<'_>,
     pending: &HeldOutVerdict,
 ) -> Result<Option<(SkillTradeoffAsk, Option<SkillTradeoffPreferences>)>> {
+    bound_ask_sourced_in_txn(vault, txn, pending).map(|(ask, _)| ask)
+}
+
+/// The original bound-ask walk, with its consulted-row set. A stored ask has
+/// no source-row identity on its current carrier, so consuming one makes the
+/// set unknown; its pending verdict and goal keys are not substitute identities.
+fn bound_ask_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pending: &HeldOutVerdict,
+) -> Result<(
+    Option<(SkillTradeoffAsk, Option<SkillTradeoffPreferences>)>,
+    Option<Vec<EntityId>>,
+)> {
     if pending.disposition != SkillEditDisposition::NeedsTradeoffDecision
         || pending.displaced_by_revision.is_some()
     {
-        return Ok(None);
+        return Ok((None, Some(Vec::new())));
     }
     let Some(ask) = load::<SkillTradeoffAsk>(vault, txn, &key(ASK_PREFIX, &pending.proposal))?
     else {
-        return Ok(None);
+        return Ok((None, Some(Vec::new())));
     };
     if ask.pending != pending.id
         || require_open_optimizer_proposal(&vault.read_skill_record_in_txn(txn, &pending.proposal)?)
@@ -413,10 +427,10 @@ fn bound_ask_in_txn(
         || goal_definition_in_txn(vault, txn, &pending.skill)?.revision
             != ask.question.goal_revision
     {
-        return Ok(None);
+        return Ok((None, None));
     }
     let preferences = preferences_in_txn(vault, txn, &ask.question.goal_id)?;
-    Ok(Some((ask, preferences)))
+    Ok((Some((ask, preferences)), None))
 }
 
 /// The A/B question pending on `proposal`, for a host to render to the
@@ -442,6 +456,23 @@ pub(crate) fn skill_tradeoff_ask_in_txn(
         return Ok(None);
     };
     Ok(bound_ask_in_txn(vault, txn, &pending)?.map(|(ask, _)| ask))
+}
+
+/// The ask and consulted verdict rows on one native read snapshot. If the
+/// walk consumes a stored ask, its carrier cannot name that body and the
+/// complete set is unknown. Capture never changes the binding checks.
+pub(crate) fn skill_tradeoff_ask_sourced(
+    vault: &Vault,
+    proposal: &EntityId,
+) -> Result<(Option<SkillTradeoffAsk>, Option<Vec<EntityId>>)> {
+    let txn = vault.store.env.read_txn()?;
+    let (pending, verdict_rows) = skill_edit_verdict_sourced_in_txn(vault, &txn, proposal)?;
+    let Some(pending) = pending else {
+        return Ok((None, verdict_rows));
+    };
+    let (ask, ask_rows) = bound_ask_sourced_in_txn(vault, &txn, &pending)?;
+    let sources = crate::attempt_queue::source_rows::union_source_rows([verdict_rows, ask_rows]);
+    Ok((ask.map(|(ask, _)| ask), sources))
 }
 
 /// The bound asks `person` may answer now, for a host to render as that
@@ -537,8 +568,18 @@ pub(super) fn pending_waits_in_txn(
     txn: &heed::RoTxn<'_>,
     pending: &HeldOutVerdict,
 ) -> Result<bool> {
+    Ok(pending_waits_sourced_in_txn(vault, txn, pending)?.0)
+}
+
+/// The same pending goal check and bound ask, with the native ask's sources.
+pub(super) fn pending_waits_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pending: &HeldOutVerdict,
+) -> Result<(bool, Option<Vec<EntityId>>)> {
     pending.goal_id.ok_or(Error::CorruptedIndex(
         "pending skill tradeoff without a goal",
     ))?;
-    Ok(bound_ask_in_txn(vault, txn, pending)?.is_some())
+    let (ask, sources) = bound_ask_sourced_in_txn(vault, txn, pending)?;
+    Ok((ask.is_some(), sources))
 }

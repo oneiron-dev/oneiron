@@ -33,6 +33,9 @@ use crate::write_envelope::WriteActor;
 
 /// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
 pub(crate) mod checkpoint;
+mod backend_principal;
+pub use backend_principal::ArtifactBackendPairing;
+pub(crate) use backend_principal::is_backend_principal;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
 mod pointer_rows;
@@ -413,7 +416,7 @@ pub fn artifact_hex(bytes: &[u8]) -> String {
 }
 
 mod access;
-pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};
+pub use self::access::{ArtifactBackendSource, ArtifactLinkCapability, ArtifactServeTier};
 
 mod publish;
 #[cfg(any(test, feature = "test-hooks"))]

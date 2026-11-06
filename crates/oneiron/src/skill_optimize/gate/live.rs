@@ -383,16 +383,34 @@ pub(super) fn live_axes(
     definition: &GoalDefinition,
     judge_revision: &str,
 ) -> Result<LiveAxes> {
+    Ok(live_axes_sourced(vault, proposal, basis, definition, judge_revision)?.0)
+}
+
+/// The same measured axes beside the native LIVE and fallback preflight sources.
+pub(super) fn live_axes_sourced(
+    vault: &Vault,
+    proposal: &EntityId,
+    basis: &ScoredBasis,
+    definition: &GoalDefinition,
+    judge_revision: &str,
+) -> Result<(LiveAxes, Option<Vec<EntityId>>)> {
     if definition.project.is_none() {
-        return Ok(LiveAxes::default());
+        return Ok((LiveAxes::default(), Some(Vec::new())));
     }
     let plan = goal_axis_plan(definition, 0);
     if plan.online.is_empty() {
-        return Ok(LiveAxes::default());
+        return Ok((LiveAxes::default(), Some(Vec::new())));
     }
     let txn = vault.store.env.read_txn()?;
     let row = load(vault, &txn, proposal)?;
-    let judge = JudgeBinding::in_txn(vault, &txn, judge_revision)?;
+    let row_sources = if row.is_some() {
+        None
+    } else {
+        Some(Vec::new())
+    };
+    let (judge, judge_sources) = JudgeBinding::sourced_in_txn(vault, &txn, judge_revision)?;
+    let sources =
+        crate::attempt_queue::source_rows::union_source_rows([row_sources, judge_sources]);
     drop(txn);
     let Some(row) = row.filter(|row| {
         binds(
@@ -407,17 +425,24 @@ pub(super) fn live_axes(
     }) else {
         // A floor that regressed offline on this basis opened no trial: the
         // failed preflight is the evidence, and the floor rejects.
-        let failed = super::preflight::failed_preflight_axes(
+        let (failed, preflight_sources) = super::preflight::failed_preflight_axes_sourced(
             vault,
             proposal,
             basis,
             definition,
             judge_revision,
         )?;
+        let sources =
+            crate::attempt_queue::source_rows::union_source_rows([sources, preflight_sources]);
         return failed
-            .map(|measured| LiveAxes {
-                measured,
-                inconclusive: BTreeSet::new(),
+            .map(|measured| {
+                (
+                    LiveAxes {
+                        measured,
+                        inconclusive: BTreeSet::new(),
+                    },
+                    sources,
+                )
             })
             .ok_or(retry(
                 "a project goal's primary axes need a live measurement of this proposal first",
@@ -474,8 +499,11 @@ pub(super) fn live_axes(
             },
         );
     }
-    Ok(LiveAxes {
-        measured,
-        inconclusive: unknown,
-    })
+    Ok((
+        LiveAxes {
+            measured,
+            inconclusive: unknown,
+        },
+        sources,
+    ))
 }

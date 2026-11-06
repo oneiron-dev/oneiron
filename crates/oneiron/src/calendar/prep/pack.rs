@@ -9,11 +9,13 @@ use crate::calendar::claims::is_calendar_claim_predicate;
 use crate::context_pack::ContextEntity;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::ppr::MAX_PPR_SEEDS;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_NOTE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::store::ManifestDbs;
 use crate::vault::Vault;
 
 /// Default ceiling on the assembled pack. A ceiling, not a target.
@@ -182,6 +184,10 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
 pub(crate) fn build_prep_pack_scoped(
     read: &crate::claim::ScopedRead<'_>,
     request: &PrepBuildRequest,
+    session: Option<(
+        &crate::off_record::SessionRetrievalTelemetry<'_>,
+        &crate::store::PendingScanChecks,
+    )>,
 ) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
     if !prep_is_eligible(&request.event, request.policy) {
         return Ok(crate::claim::ScopedReadResult {
@@ -201,16 +207,46 @@ pub(crate) fn build_prep_pack_scoped(
                     _: &heed::RoTxn<'_>,
                     _: &EntityId|
      -> Result<bool> { Ok(true) };
-    let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
+    let builder = prep_context_builder(read.vault(), &request.event, request.fired_at)
+        .reading(read.store_read());
+    let builder = match session {
+        Some((telemetry, _)) => builder.in_session(telemetry),
+        None => builder,
+    };
+    let (scoped, _) = builder
         .authority_filter(plan_candidates)
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
         .run_scoped_with_run_status(read)?;
-    let mut candidates = scoped.value.results;
-    candidates.extend(scoped.value.neighbors);
+    let mut pack = scoped.value;
+    let (receipt, prior_commitments) = read.filter_context_pack_critical_projected_under(
+        &mut pack,
+        &crate::serialize::pack_accounting::PackCriticalAccounting::default(),
+        None,
+        |txn, _| {
+            super::ledger::ledger_prep_items(
+                read.vault(),
+                &read.store_read(),
+                session.map_or_else(
+                    || read.vault().store.pending_scan_checks(),
+                    |(_, pending)| pending,
+                ),
+                txn,
+                &request.event,
+                request.fired_at,
+                |id| read.graph_ask_raw_in_txn(txn, id),
+            )
+        },
+    )?;
+    let mut candidates = pack.results;
+    candidates.extend(pack.neighbors);
+    let txn = read.vault().store.env.read_txn()?;
+    let mut items =
+        prep_items_from_candidates(&read.store_read(), &txn, &request.event, &candidates)?;
+    merge_prior_commitments(&mut items, prior_commitments);
     Ok(crate::claim::ScopedReadResult {
-        value: pack_from_candidates(read.vault(), request, &candidates)?,
-        receipt: scoped.receipt,
+        value: assemble_prep_pack(&request.event, request.fired_at, request.policy, items),
+        receipt,
     })
 }
 
@@ -238,13 +274,31 @@ fn pack_from_candidates(
     request: &PrepBuildRequest,
     candidates: &[ContextEntity],
 ) -> Result<Option<PrepPack>> {
-    let items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    let mut items = {
+        let txn = vault.store.env.read_txn()?;
+        prep_items_from_candidates(&vault.store.read(), &txn, &request.event, candidates)?
+    };
+    let prior_commitments =
+        super::ledger::unscoped_ledger_prep_items(vault, &request.event, request.fired_at)?;
+    merge_prior_commitments(&mut items, prior_commitments);
     Ok(assemble_prep_pack(
         &request.event,
         request.fired_at,
         request.policy,
         items,
     ))
+}
+
+fn merge_prior_commitments(
+    items: &mut Vec<(EntityId, PrepItem)>,
+    prior_commitments: Vec<(EntityId, PrepItem)>,
+) {
+    let mut seen: HashSet<_> = items.iter().map(|(id, _)| *id).collect();
+    items.extend(
+        prior_commitments
+            .into_iter()
+            .filter(|(id, _)| seen.insert(*id)),
+    );
 }
 
 /// Runs the scoped live assembly around one EVENT.
@@ -293,7 +347,8 @@ fn prep_context_builder<'a>(
 /// nothing: the seeds themselves, duplicates, redirect and deleted shells,
 /// types outside the three sections, and rows with no readable text.
 fn prep_items_from_candidates(
-    vault: &Vault,
+    store: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
     event: &PrepEvent,
     candidates: &[ContextEntity],
 ) -> Result<Vec<(EntityId, PrepItem)>> {
@@ -333,10 +388,10 @@ fn prep_items_from_candidates(
         }) else {
             continue;
         };
-        if vault.is_deleted_shell(&candidate.id)? {
+        if store.port_deletion_state(txn, &candidate.id)?.deleted {
             continue;
         }
-        let Some(header) = vault.read_entity_header(&candidate.id)? else {
+        let Some(row) = store.port_entity_record(txn, &candidate.id)? else {
             continue;
         };
         items.push((
@@ -345,7 +400,7 @@ fn prep_items_from_candidates(
                 kind,
                 text,
                 source_refs: vec![candidate.id.to_hex()],
-                observed_at: header.learned_at,
+                observed_at: row.learned_at,
             },
         ));
     }

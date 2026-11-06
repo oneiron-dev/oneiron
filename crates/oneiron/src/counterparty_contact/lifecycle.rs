@@ -359,7 +359,12 @@ pub(crate) fn rematerialize_party_contact_cache_in_txn(
         PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
         party_ref.trim(),
     )? {
-        let Some(record) = live_counterparty_contact_heads_in_txn(vault, &*wtxn, &contact_id)?
+        let Some(record) = live_counterparty_contact_heads_in_txn(
+            vault,
+            &vault.store.read(),
+            &*wtxn,
+            &contact_id,
+        )?
         else {
             continue;
         };
@@ -393,11 +398,17 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
-    counterparty_contact_record_from_heads(contact_claim_bodies_in_txn(vault, rtxn, contact_id)?)
+    counterparty_contact_record_from_heads(contact_claim_bodies_in_txn(
+        vault,
+        &vault.store.read(),
+        rtxn,
+        contact_id,
+    )?)
 }
 
 fn contact_claim_bodies_in_txn(
     vault: &Vault,
+    store: &crate::store::StoreRead<'_>,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<Vec<crate::claim::ClaimBody>> {
@@ -406,8 +417,8 @@ fn contact_claim_bodies_in_txn(
     let mut duplicate = false;
     // Keep the first duplicate for the fold, but read every claim so later
     // read errors still take precedence over the duplicate-head error.
-    for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
-        if let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? {
+    for claim_id in vault.claims_for_subject_from_read_in_txn(store, rtxn, contact_id)? {
+        if let Some(body) = vault.get_claim_from_read_in_txn(store, rtxn, &claim_id)? {
             if duplicate || !is_live_contact_head(&body) {
                 continue;
             }
@@ -437,13 +448,14 @@ fn contact_claim_bodies_in_txn(
 /// wants [`counterparty_contact_in_claims_in_txn`].
 pub(super) fn live_counterparty_contact_heads_in_txn(
     vault: &Vault,
+    store: &crate::store::StoreRead<'_>,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
-    if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
+    if contact_deleted_in_txn(store, rtxn, contact_id)? {
         return Ok(None);
     }
-    let bodies = contact_claim_bodies_in_txn(vault, rtxn, contact_id)?;
+    let bodies = contact_claim_bodies_in_txn(vault, store, rtxn, contact_id)?;
     if !bodies.iter().any(is_live_contact_head) {
         return Ok(None);
     }
@@ -456,10 +468,12 @@ pub(super) fn live_counterparty_contact_heads_in_txn(
 /// (OF-272). This is the read door; `None` is "no such contact".
 pub(super) fn counterparty_contact_in_claims_in_txn(
     vault: &Vault,
+    store: &crate::store::StoreRead<'_>,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
-    let Some(mut record) = live_counterparty_contact_heads_in_txn(vault, rtxn, contact_id)? else {
+    let Some(mut record) = live_counterparty_contact_heads_in_txn(vault, store, rtxn, contact_id)?
+    else {
         return Ok(None);
     };
     fold_party_opt_out_heads_in_txn(vault, rtxn, &mut record)?;
@@ -728,4 +742,46 @@ pub(crate) fn drop_contact_index_rows_in_txn(
     // at the same id) cannot name it, so no pair may keep the id.
     remove_counterparty_contact_from_every_party_channel(store, wtxn, *contact_id)?;
     Ok(())
+}
+
+/// The contact's labels and the exact own heads that supply them, in one snapshot.
+pub(crate) fn counterparty_contact_label_sources_in_txn(
+    vault: &Vault,
+    store: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<(CounterpartyContactRecord, [EntityId; 2])>> {
+    let Some(record) = vault.get_counterparty_contact_from_read_in_txn(store, txn, contact_id)?
+    else {
+        return Ok(None);
+    };
+    let predicates = [
+        super::types::PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+    ];
+    let mut selected = [None; 2];
+    for id in vault.claims_for_subject_from_read_in_txn(store, txn, contact_id)? {
+        let Some(body) = vault.get_claim_from_read_in_txn(store, txn, &id)? else {
+            continue;
+        };
+        if !is_live_contact_head(&body) {
+            continue;
+        }
+        if let Some(index) = predicates
+            .iter()
+            .position(|predicate| *predicate == body.predicate)
+        {
+            if selected[index].replace(id).is_some() {
+                return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
+                    "counterparty contact claim family has two live heads for one predicate",
+                )));
+            }
+        }
+    }
+    let [Some(identity), Some(counterparty)] = selected else {
+        return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
+            "counterparty contact claim family is missing a live head",
+        )));
+    };
+    Ok(Some((record, [identity, counterparty])))
 }

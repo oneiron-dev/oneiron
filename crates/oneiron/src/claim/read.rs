@@ -129,6 +129,38 @@ impl Vault {
         ) -> Result<super::transition::ClaimTransitionProjection>,
     ) -> Result<Option<ClaimBody>> {
         let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
+        self.project_read_claim_in_txn(rtxn, id, body, history)
+    }
+
+    /// Reads content from `store`, retaining the vault's own authority and
+    /// MACHINE-history projection.
+    pub(crate) fn get_claim_from_read_in_txn(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let body = crate::ports::read_claim_body_in_txn(store, rtxn, id)?;
+        self.project_read_claim_in_txn(
+            rtxn,
+            id,
+            body,
+            super::history_projection::resolved_machine_history,
+        )
+    }
+
+    fn project_read_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: Option<ClaimBody>,
+        history: fn(
+            &crate::store::Store,
+            &heed::RoTxn<'_>,
+            &crate::authority::AuthorityFold,
+            EntityId,
+        ) -> Result<super::transition::ClaimTransitionProjection>,
+    ) -> Result<Option<ClaimBody>> {
         let Some(body) = body else { return Ok(None) };
         if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
             || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
@@ -216,6 +248,23 @@ impl Vault {
         subject: &EntityId,
     ) -> Result<Vec<EntityId>> {
         crate::ports::ClaimStore::port_claim_list(self, rtxn, subject)
+    }
+
+    /// The subject's CLAIM ids through the caller's captured content view.
+    pub(crate) fn claims_for_subject_from_read_in_txn(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        crate::vault::filtered_edge_peers_in(
+            store,
+            rtxn,
+            crate::ports::EdgeDirection::In,
+            subject,
+            EdgeKind::ClaimOf,
+            Some(ENTITY_TYPE_CLAIM),
+        )
     }
 
     /// Walks the CLAIMs attached to `subject` via inbound `claim_of` edges and

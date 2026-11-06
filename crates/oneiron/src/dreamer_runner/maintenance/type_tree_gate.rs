@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 
 use super::agent_health::AgentHealthApplicationState;
+use super::coach::TypeTreeOutcomeReadRequests;
 use super::type_tree_prior::{
     DonorTree, PROJECT_TREE_DONOR_WEIGHT, donor_path, donor_prior_winner,
 };
@@ -83,6 +84,18 @@ pub(super) fn record_team_shape_outcomes(
     record: &SkillRecord,
     receipts: &[TeamReceipt],
 ) -> Result<ReserveWrite> {
+    record_team_shape_outcomes_with_requests(vault, head, record, receipts, None)
+}
+
+/// The original settled-team pass with independent placement requested for each
+/// exact (skill head, leader pack receipt) output. Missing keys remain unknown.
+pub(super) fn record_team_shape_outcomes_with_requests(
+    vault: &Vault,
+    head: &EntityId,
+    record: &SkillRecord,
+    receipts: &[TeamReceipt],
+    requests: Option<&TypeTreeOutcomeReadRequests>,
+) -> Result<ReserveWrite> {
     let mut write = ReserveWrite::default();
     for receipt in receipts {
         let Some(outcome) = &receipt.outcome else {
@@ -107,19 +120,23 @@ pub(super) fn record_team_shape_outcomes(
         if !loaded {
             continue;
         }
+        let output_position =
+            requests.and_then(|request| request.outcomes.get(&(*head, receipt_ref.clone())));
         let recorded = if outcome.success {
-            crate::skill_reliability::record_skill_contributing_win(
+            crate::skill_reliability::record_skill_contributing_win_with_position(
                 vault,
                 head,
                 &receipt_ref,
                 outcome.at,
+                output_position,
             )
         } else if TEAM_SHAPE_CHARGES_FAILED_TEAMS {
-            crate::skill_reliability::record_skill_settled_loss(
+            crate::skill_reliability::record_skill_settled_loss_with_position(
                 vault,
                 head,
                 &receipt_ref,
                 outcome.at,
+                output_position,
             )
         } else {
             continue;
