@@ -15,21 +15,22 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
-use oneiron::EntityId;
 use oneiron::inference_snapshot::SnapshotId;
 use oneiron::inference_snapshot::retention::SNAPSHOT_HEADROOM_BYTES;
+use oneiron::llm::DispatchRelease;
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, MessageStamp, SessionBinding, SessionDrop,
     SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionReleased, SessionResidency,
     SessionTarget, VaultRef,
 };
+use oneiron::{BudgetLease, EntityId, LlmError};
 use oneiron_contracts::limit_ask::available_memory_bytes;
 use oneiron_driver::{DeviceLedger, InferenceWorker, SessionAllocation, SessionAllocationOwner};
 use serde_json::Value as JsonValue;
 use tokio::sync::Notify;
 
 use super::{CheckpointAuthority, SnapshotScope, lifecycle, policy};
-use crate::models::native_exl3::{OpFault, session_send};
+use crate::models::native_exl3::{OpFault, ReleasedOpFault, session_send, session_send_released};
 use crate::models::worker_host::NativeLaunch;
 
 /// Every managed worker's sessions, by worker id: held by the process's one
@@ -526,6 +527,41 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
     .map_err(|fault| match fault {
         OpFault::Refused(code) => policy::refused(&code),
         OpFault::Cut => SessionInvalidation::Evicted,
+    })
+}
+
+/// A release failure leaves the session intact; a worker fault uses its
+/// existing invalidation and fallback path.
+pub(super) enum SendFailure {
+    Invalid(SessionInvalidation),
+    Release(LlmError),
+}
+
+pub(super) async fn send_with_release<B: serde::Serialize, R: serde::de::DeserializeOwned>(
+    place: &Place,
+    op: SessionOp,
+    body: &B,
+    conversation: Option<&JsonValue>,
+    release: (DispatchRelease<'_>, &BudgetLease),
+) -> Result<R, SendFailure> {
+    session_send_released(
+        &place.launch,
+        &place.epoch,
+        op,
+        body,
+        conversation,
+        &place.worker,
+        release,
+    )
+    .await
+    .map_err(|fault| match fault {
+        ReleasedOpFault::Operation(OpFault::Refused(code)) => {
+            SendFailure::Invalid(policy::refused(&code))
+        }
+        ReleasedOpFault::Operation(OpFault::Cut) => {
+            SendFailure::Invalid(SessionInvalidation::Evicted)
+        }
+        ReleasedOpFault::Release(error) => SendFailure::Release(error),
     })
 }
 

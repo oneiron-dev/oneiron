@@ -453,8 +453,20 @@ impl Channel {
         &mut self,
         op: &str,
         epoch: Option<&str>,
+        body: JsonValue,
+        input: Option<Outbound<'_>>,
+    ) -> io::Result<u64> {
+        self.send_op_with_release(op, epoch, body, input, None)
+            .await
+    }
+
+    async fn send_op_with_release(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
         mut body: JsonValue,
         input: Option<Outbound<'_>>,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
     ) -> io::Result<u64> {
         let request_id = next_request_id();
         match input {
@@ -465,8 +477,23 @@ impl Channel {
                         wire::region(request_id, input.len, input.encoding),
                     );
                 }
-                self.send_with_fd(op, request_id, epoch, body, input.fd)
-                    .await?;
+                match release {
+                    Some(release) => {
+                        self.send_with_fd_release(
+                            op,
+                            request_id,
+                            epoch,
+                            body,
+                            input.fd,
+                            Some(release),
+                        )
+                        .await?;
+                    }
+                    None => {
+                        self.send_with_fd(op, request_id, epoch, body, input.fd)
+                            .await?
+                    }
+                }
             }
             None => self.send(op, request_id, epoch, body).await?,
         }
@@ -483,7 +510,23 @@ impl Channel {
         body: JsonValue,
         input: Option<Outbound<'_>>,
     ) -> io::Result<Incoming> {
-        let request_id = self.send_op(op, epoch, body, input).await?;
+        self.exchange_with_release(op, epoch, body, input, None)
+            .await
+    }
+
+    /// Keeps the call's release check at the first descriptor write, after
+    /// connection and writer readiness. A frame without input is unchanged.
+    pub(super) async fn exchange_with_release(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Option<Outbound<'_>>,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> io::Result<Incoming> {
+        let request_id = self
+            .send_op_with_release(op, epoch, body, input, release)
+            .await?;
         loop {
             match self.next().await? {
                 Some(frame) if frame.request_id == request_id => return Ok(frame),
