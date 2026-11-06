@@ -72,6 +72,12 @@ fn delete_repo_copy_in_txn(
     let key_prefix = format!("{}:", copy.to_hex()).into_bytes();
     SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
     SYNC_AD_E.delete_from(store, txn, &key_prefix)?;
+    // A copy's pending note requests and their receipts carry the prose and
+    // the note view they edit, so they go as the source's own do (FIX
+    // 10799).
+    SYNC_QN_E.delete_from(store, txn, &key_prefix)?;
+    NOTE_RECEIPT_BY_REQUEST.delete_from(store, txn, &key_prefix)?;
+    SYNC_NC_E.delete_from(store, txn, &key_prefix)?;
     #[cfg(feature = "sync")]
     crate::sync::residence::erase_item_caches_in_txn(store, txn, &[*source, copy])?;
     Ok(())
