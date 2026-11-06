@@ -52,19 +52,20 @@ microvm = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(microvm)
 
 # The image's mountpoints and tool directories. /vault takes the vault disk,
-# /config the optional settings drive, /restore a cold restore's optional
-# source drive, /etc/oneiron the UID table's tmpfs.
+# /config the optional settings drive, /models the node's optional read-only
+# model drive, /restore a cold restore's optional source drive, and
+# /etc/oneiron the UID table's tmpfs.
 DIRECTORIES = ("bin", "sbin", "usr/bin", "lib", "lib64", "usr/lib", "proc", "sys",
-               "dev", "run", "tmp", "vault", "config", "restore", "etc/oneiron")
+               "dev", "run", "tmp", "vault", "config", "models", "restore", "etc/oneiron")
 BINARIES = ("oneiron-server", "oneiron-broker", "oneiron-vm-init", "oneiron-vm-outbox")
 # What /sbin/oneiron-vault-init runs besides the engine's binaries.
 TOOLS = ("sh", "mount", "umount", "cat", "head", "sync", "reboot")
 PROVISION_REVISION = 1
-# The outbox carrier's wire revision (oneiron_vault_contract::vm_outbox): 4
-# adds the notice's action and the host's answer to a removal of its
-# kept-aside copy (FIX 11985), and each end refuses the other's revision 3,
-# so a host pairs only with an image whose manifest names 4.
-OUTBOX_WIRE_REVISION = 4
+# Outbox carrier revision 4 added the notice's action and the host's
+# answer to removal of its kept-aside copy (FIX 11985), refusing revision 3
+# at that floor. Revision 5 adds descriptor-only offers and a go before
+# bodies (FIX 11071 / 6685); pair the host with an image naming revision 5.
+OUTBOX_WIRE_REVISION = 5
 # The restore channel's wire revision (oneiron_vault_contract::vm_restore):
 # every cold boot of this image dials it first, so a host pairs only with an
 # image whose manifest names it.
@@ -93,6 +94,9 @@ VM_MANAGED_PROFILE_REVISION = 1
 # applied only by an image whose manifest names it. It never says a list was
 # staged or an organ started.
 VM_TRUSTED_ORGAN_BUILDS_REVISION = 1
+# The optional read-only shared model drive, mounted at /models by this init
+# (oneiron_vault_contract::vm::VM_MODEL_DRIVE_REVISION, FIX 6872).
+VM_MODEL_DRIVE_REVISION = 1
 # The resolver file's mountpoint: empty and 0644 in the image, and covered by
 # oneiron-vm-init's bind mount when the guest's network plan names nameservers.
 RESOLV_CONF = "etc/resolv.conf"
@@ -118,7 +122,7 @@ MAPPING_HELPERS = ("newuidmap", "newgidmap")
 RUNTIME_MODE_BITS = 0o4755
 # Where no runtime file goes: a mountpoint a boot covers, the UID table's
 # directory, and the guest runtime's own directory.
-RESERVED = ("proc", "sys", "dev", "run", "tmp", "vault", "config", "restore", "etc/oneiron",
+RESERVED = ("proc", "sys", "dev", "run", "tmp", "vault", "config", "models", "restore", "etc/oneiron",
             GUEST_RUNTIMES)
 # Where the image's dynamic loader finds a library (microvm.library_spec).
 LIBRARY_DESTINATION = re.compile(r"(?:lib64|lib|usr/lib)/[A-Za-z0-9_.+-]+")
@@ -350,6 +354,7 @@ def build_rootfs(args):
         "guest_runtime": descriptor,
         # The init copied above reads the config drive's trusted-organ-builds.
         "vm_trusted_organ_builds_revision": VM_TRUSTED_ORGAN_BUILDS_REVISION,
+        "vm_model_drive_revision": VM_MODEL_DRIVE_REVISION,
     })
 
 
@@ -408,6 +413,11 @@ def make_manifest(args):
     trusted_revision = receipt["vm_trusted_organ_builds_revision"]
     if type(trusted_revision) is not int or trusted_revision != VM_TRUSTED_ORGAN_BUILDS_REVISION:
         raise ValueError("the rootfs receipt names another trusted organ builds revision")
+    if receipt["rootfs_sha256"] != artifacts["rootfs"]["sha256"]:
+        raise ValueError("the rootfs receipt names different image bytes")
+    model_drive_revision = receipt["vm_model_drive_revision"]
+    if type(model_drive_revision) is not int or model_drive_revision != VM_MODEL_DRIVE_REVISION:
+        raise ValueError("the rootfs receipt names another model drive revision")
     output = Path(args.output)
     with output.open("x") as stream:
         json.dump({"schema": 1, "engine_revision": args.engine_revision,
@@ -420,6 +430,7 @@ def make_manifest(args):
                    "vm_managed_profile_revision": VM_MANAGED_PROFILE_REVISION,
                    "vm_guest_runtime_revision": runtime_revision, "guest_runtime": descriptor,
                    "vm_trusted_organ_builds_revision": trusted_revision,
+                   "vm_model_drive_revision": model_drive_revision,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")

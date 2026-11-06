@@ -7,6 +7,10 @@ use super::codec::{
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::write_envelope::communication::{
+    COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL, COMM_OPT_OUT_REASON_STOP,
+    COMM_OPT_OUT_REASON_UNSUBSCRIBE,
+};
 use rmpv::Value;
 
 /// Current CounterpartyContactRecord body schema version.
@@ -176,9 +180,9 @@ impl CounterpartyOptOutReason {
     #[must_use]
     pub const fn receipt_reason(self) -> &'static str {
         match self {
-            Self::Stop => "counterparty_opt_out_stop",
-            Self::Unsubscribe => "counterparty_opt_out_unsubscribe",
-            Self::BlockOrFriendRemoval => "counterparty_opt_out_block_or_friend_removal",
+            Self::Stop => COMM_OPT_OUT_REASON_STOP,
+            Self::Unsubscribe => COMM_OPT_OUT_REASON_UNSUBSCRIBE,
+            Self::BlockOrFriendRemoval => COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
         }
     }
 
@@ -200,9 +204,9 @@ impl CounterpartyOptOutReason {
     #[must_use]
     pub(crate) fn from_receipt_reason(token: &str) -> Option<Self> {
         match token {
-            "counterparty_opt_out_stop" => Some(Self::Stop),
-            "counterparty_opt_out_unsubscribe" => Some(Self::Unsubscribe),
-            "counterparty_opt_out_block_or_friend_removal" => Some(Self::BlockOrFriendRemoval),
+            COMM_OPT_OUT_REASON_STOP => Some(Self::Stop),
+            COMM_OPT_OUT_REASON_UNSUBSCRIBE => Some(Self::Unsubscribe),
+            COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL => Some(Self::BlockOrFriendRemoval),
             _ => None,
         }
     }

@@ -31,6 +31,7 @@ pub(super) struct StagedPut {
     id: EntityId,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: Vec<u8>,
 }
 
@@ -58,6 +59,7 @@ pub(super) fn put_or_stage(
             id,
             occurred,
             learned_at: header.learned_at,
+            row_version: header.row_version,
             data: data.to_vec(),
         });
         return Ok(());
@@ -71,6 +73,7 @@ pub(super) fn put_or_stage(
         header.entity_type,
         occurred,
         header.learned_at,
+        Some(header.row_version),
         data,
     );
     match &ctx.authority_beside {
@@ -208,6 +211,7 @@ pub(in crate::sync) fn ingest_rows_in_savepoint(
                     ENTITY_TYPE_TASK,
                     put.occurred,
                     put.learned_at,
+                    Some(put.row_version),
                     &put.data,
                 );
             }
