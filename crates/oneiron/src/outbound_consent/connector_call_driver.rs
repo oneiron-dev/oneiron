@@ -319,6 +319,9 @@ impl Vault {
                     && !input.uncertain
                 {
                     input.resume = resume.seal_in_txn(self, txn, call_ref);
+                    // What the send presented binds with the state a resume
+                    // takes it up from (fix list row 10550).
+                    input.sent = resume.sent.clone();
                 }
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
                     self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
