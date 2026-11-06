@@ -2,8 +2,8 @@
 //!
 //! At pin d81235049384534c167caea52b85a694f6103d14, env, argv and file
 //! handlers append accepted keys. Env keys and a key/file flag at the start
-//! of the operator args, or after only the known context/slot prefix, stay
-//! valid with any later args. Other argv and preset-only authentication
+//! of the operator args, or after only the known single-value launch options,
+//! stay valid with any later args. Other argv and preset-only authentication
 //! keep the existing unauthenticated GET.
 use std::path::Path;
 
@@ -39,10 +39,32 @@ impl MetricsRoute {
     }
 }
 
-// Skip only the pinned context/slot options, each with exactly one value.
+// Skip only the pinned single-value launch options.
 fn auth_args(mut args: &[String]) -> &[String] {
     while let [flag, _, rest @ ..] = args {
-        if !matches!(flag.as_str(), "--parallel" | "-np" | "--ctx-size" | "-c") {
+        if !matches!(
+            flag.as_str(),
+            "--parallel"
+                | "-np"
+                | "--ctx-size"
+                | "-c"
+                | "-t"
+                | "--threads"
+                | "-tb"
+                | "--threads-batch"
+                | "--threads-http"
+                | "-dev"
+                | "--device"
+                | "-ngl"
+                | "--gpu-layers"
+                | "--n-gpu-layers"
+                | "--host"
+                | "--port"
+                | "-to"
+                | "--timeout"
+                | "-m"
+                | "--model"
+        ) {
             break;
         }
         args = rest;
