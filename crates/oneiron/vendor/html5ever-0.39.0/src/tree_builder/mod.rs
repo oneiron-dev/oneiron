@@ -329,12 +329,93 @@ where
         }
     }
 
-    fn process_to_completion(&self, mut token: Token) -> TokenSinkResult<Handle> {
+    fn process_token_in(
+        &self,
+        token: tokenizer::Token,
+        line_number: u64,
+        checkpoint: &dyn Fn() -> bool,
+    ) -> TokenSinkResult<Handle> {
+        if line_number != self.current_line.get() {
+            self.sink.set_current_line(line_number);
+        }
+        let ignore_lf = self.ignore_lf.take();
+
+        // Handle `ParseError` and `DoctypeToken`; convert everything else to the local `Token` type.
+        let token = match token {
+            tokenizer::ParseError(e) => {
+                self.sink.parse_error(e);
+                return tokenizer::TokenSinkResult::Continue;
+            },
+
+            tokenizer::DoctypeToken(dt) => {
+                if self.mode.get() == InsertionMode::Initial {
+                    let (err, quirk) = data::doctype_error_and_quirks(&dt, self.opts.iframe_srcdoc);
+                    if err {
+                        self.sink.parse_error(if self.opts.exact_errors {
+                            Cow::from(format!("Bad DOCTYPE: {dt:?}"))
+                        } else {
+                            Cow::from("Bad DOCTYPE")
+                        });
+                    }
+                    let Doctype {
+                        name,
+                        public_id,
+                        system_id,
+                        force_quirks: _,
+                    } = dt;
+                    if !self.opts.drop_doctype {
+                        self.sink.append_doctype_to_document(
+                            name.unwrap_or(StrTendril::new()),
+                            public_id.unwrap_or(StrTendril::new()),
+                            system_id.unwrap_or(StrTendril::new()),
+                        );
+                    }
+                    self.set_quirks_mode(quirk);
+
+                    self.mode.set(InsertionMode::BeforeHtml);
+                    return tokenizer::TokenSinkResult::Continue;
+                } else {
+                    self.sink.parse_error(if self.opts.exact_errors {
+                        Cow::from(format!("DOCTYPE in insertion mode {:?}", self.mode.get()))
+                    } else {
+                        Cow::from("DOCTYPE in body")
+                    });
+                    return tokenizer::TokenSinkResult::Continue;
+                }
+            },
+
+            tokenizer::TagToken(x) => Token::Tag(x),
+            tokenizer::CommentToken(x) => Token::Comment(x),
+            tokenizer::NullCharacterToken => Token::NullCharacter,
+            tokenizer::EOFToken => Token::Eof,
+
+            tokenizer::CharacterTokens(mut x) => {
+                if ignore_lf && x.starts_with("\n") {
+                    x.pop_front(1);
+                }
+                if x.is_empty() {
+                    return tokenizer::TokenSinkResult::Continue;
+                }
+                Token::Characters(SplitStatus::NotSplit, x)
+            },
+        };
+
+        self.process_to_completion(token, checkpoint)
+    }
+
+    fn process_to_completion(
+        &self,
+        mut token: Token,
+        checkpoint: &dyn Fn() -> bool,
+    ) -> TokenSinkResult<Handle> {
         // Queue of additional tokens yet to be processed.
         // This stays empty in the common case where we don't split whitespace.
         let mut more_tokens = VecDeque::new();
 
         loop {
+            if !checkpoint() {
+                return tokenizer::TokenSinkResult::Continue;
+            }
             let should_have_acknowledged_self_closing_flag = matches!(
                 token,
                 Token::Tag(Tag {
@@ -475,72 +556,16 @@ where
     type Handle = Handle;
 
     fn process_token(&self, token: tokenizer::Token, line_number: u64) -> TokenSinkResult<Handle> {
-        if line_number != self.current_line.get() {
-            self.sink.set_current_line(line_number);
-        }
-        let ignore_lf = self.ignore_lf.take();
+        self.process_token_in(token, line_number, &|| true)
+    }
 
-        // Handle `ParseError` and `DoctypeToken`; convert everything else to the local `Token` type.
-        let token = match token {
-            tokenizer::ParseError(e) => {
-                self.sink.parse_error(e);
-                return tokenizer::TokenSinkResult::Continue;
-            },
-
-            tokenizer::DoctypeToken(dt) => {
-                if self.mode.get() == InsertionMode::Initial {
-                    let (err, quirk) = data::doctype_error_and_quirks(&dt, self.opts.iframe_srcdoc);
-                    if err {
-                        self.sink.parse_error(if self.opts.exact_errors {
-                            Cow::from(format!("Bad DOCTYPE: {dt:?}"))
-                        } else {
-                            Cow::from("Bad DOCTYPE")
-                        });
-                    }
-                    let Doctype {
-                        name,
-                        public_id,
-                        system_id,
-                        force_quirks: _,
-                    } = dt;
-                    if !self.opts.drop_doctype {
-                        self.sink.append_doctype_to_document(
-                            name.unwrap_or(StrTendril::new()),
-                            public_id.unwrap_or(StrTendril::new()),
-                            system_id.unwrap_or(StrTendril::new()),
-                        );
-                    }
-                    self.set_quirks_mode(quirk);
-
-                    self.mode.set(InsertionMode::BeforeHtml);
-                    return tokenizer::TokenSinkResult::Continue;
-                } else {
-                    self.sink.parse_error(if self.opts.exact_errors {
-                        Cow::from(format!("DOCTYPE in insertion mode {:?}", self.mode.get()))
-                    } else {
-                        Cow::from("DOCTYPE in body")
-                    });
-                    return tokenizer::TokenSinkResult::Continue;
-                }
-            },
-
-            tokenizer::TagToken(x) => Token::Tag(x),
-            tokenizer::CommentToken(x) => Token::Comment(x),
-            tokenizer::NullCharacterToken => Token::NullCharacter,
-            tokenizer::EOFToken => Token::Eof,
-
-            tokenizer::CharacterTokens(mut x) => {
-                if ignore_lf && x.starts_with("\n") {
-                    x.pop_front(1);
-                }
-                if x.is_empty() {
-                    return tokenizer::TokenSinkResult::Continue;
-                }
-                Token::Characters(SplitStatus::NotSplit, x)
-            },
-        };
-
-        self.process_to_completion(token)
+    fn process_token_with_checkpoint(
+        &self,
+        token: tokenizer::Token,
+        line_number: u64,
+        checkpoint: &dyn Fn() -> bool,
+    ) -> TokenSinkResult<Handle> {
+        self.process_token_in(token, line_number, checkpoint)
     }
 
     fn end(&self) {

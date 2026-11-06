@@ -262,11 +262,19 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             return TokenSinkResult::Continue;
         }
         if self.opts.profile {
-            let (ret, dt) = time!(self.sink.process_token(token, self.current_line.get()));
+            let (ret, dt) = time!(self.sink.process_token_with_checkpoint(
+                token,
+                self.current_line.get(),
+                &|| self.checkpoint(),
+            ));
             self.time_in_sink.set(self.time_in_sink.get() + dt);
             ret
         } else {
-            self.sink.process_token(token, self.current_line.get())
+            self.sink.process_token_with_checkpoint(
+                token,
+                self.current_line.get(),
+                &|| self.checkpoint(),
+            )
         }
     }
 

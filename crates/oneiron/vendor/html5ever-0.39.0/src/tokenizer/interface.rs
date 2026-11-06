@@ -133,6 +133,17 @@ pub trait TokenSink {
     /// Process a token.
     fn process_token(&self, token: Token, line_number: u64) -> TokenSinkResult<Self::Handle>;
 
+    /// Process a token, optionally polling the same caller checkpoint inside
+    /// long consumer work. Existing sinks keep their ordinary implementation.
+    fn process_token_with_checkpoint(
+        &self,
+        token: Token,
+        line_number: u64,
+        _checkpoint: &dyn Fn() -> bool,
+    ) -> TokenSinkResult<Self::Handle> {
+        self.process_token(token, line_number)
+    }
+
     /// Signal that tokenization reached the end of the document.
     fn end(&self) {}
 

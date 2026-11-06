@@ -131,7 +131,18 @@ output and default to no checkpoint. HTML parsing keeps the exact tokenizer
 options and disabled scripting used by `dom_query::Document::from`.
 
 This is cooperative parser deadline coverage, not native DOM arena admission.
-Input conversion, one tokenizer step, character-reference processing, one
-native tree-builder call and its internal loops remain non-preemptible. DOM
+Input conversion, one tokenizer step, character-reference processing and one
+native insertion-mode step (including recursive/internal work) remain
+non-preemptible. DOM
 arena, attribute, atom/tendril, parser-stack and parse-error allocations remain
 outside the memory guard. Full FIX 9615 remains open.
+
+The native tree builder also receives a borrowed view of that same checkpoint
+when it consumes a token. Its existing reprocess/split-whitespace queue loop
+polls before its next insertion-mode step. A refusal returns to the already
+latched tokenizer without another step or queued-token use; the checked driver
+then drops the partial tree and returns the same original error. The ordinary
+`TokenSink::process_token` API remains unchanged and uses an always-true
+checkpoint. Existing token-conversion and insertion-mode rule bodies are not
+duplicated or changed. Internal recursion, creation, formatting and adoption
+work within one insertion-mode step remains non-preemptible and unadmitted.

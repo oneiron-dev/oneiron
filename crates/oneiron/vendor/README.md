@@ -23,6 +23,11 @@ Local production changes (FIX 9615):
   and tokenizer behind a private checkpoint sink. It retains the first typed
   callback failure and returns it only after dropping the partial parser/DOM.
   Successful parsing uses the ordinary sink output and supplied parse options.
+- `TokenSink::process_token_with_checkpoint` defaults to the original token
+  method. Native dispatch forwards the same borrowed checkpoint into the
+  existing tree-builder reprocess/split-whitespace loop, before its next
+  insertion-mode step. The ordinary token API uses an always-true callback.
+  The original token conversion and grammar bodies remain shared and unchanged.
 - The ordinary driver and checked driver share the existing feed loop. The
   ordinary `Parser`, `parse_document`, fragment APIs and `Document::from` keep
   their signatures and algorithms. The new checked API is re-exported at root.
@@ -33,7 +38,7 @@ unchanged. The engine's direct edge is the same exact `=0.39.0` pin already
 used by dom_query 0.28.0; no new codec family is introduced.
 
 The callback is the caller's work deadline, not a content limit or a new timer.
-One tokenizer step, character-reference work and one tree-builder call remain
-non-preemptible. DOM arena, attribute, atom/tendril, parser-stack and error
+One tokenizer step, character-reference work and one insertion-mode step,
+including its recursive/formatting/adoption work, remain non-preemptible. DOM arena, attribute, atom/tendril, parser-stack and error
 allocations remain unadmitted. This snapshot does not complete FIX 9615 or
 establish a global heap or wall-time bound.

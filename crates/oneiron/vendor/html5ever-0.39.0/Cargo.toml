@@ -50,4 +50,3 @@ version = "0.4"
 
 [dependencies.markup5ever]
 version = "0.39"
-

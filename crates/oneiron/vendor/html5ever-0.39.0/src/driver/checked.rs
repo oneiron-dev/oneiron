@@ -125,6 +125,15 @@ where
         self.sink.process_token(token, line_number)
     }
 
+    fn process_token_with_checkpoint(
+        &self,
+        token: Token,
+        line_number: u64,
+        checkpoint: &dyn Fn() -> bool,
+    ) -> TokenSinkResult<Self::Handle> {
+        self.sink.process_token_with_checkpoint(token, line_number, checkpoint)
+    }
+
     fn end(&self) {
         self.sink.end();
     }
