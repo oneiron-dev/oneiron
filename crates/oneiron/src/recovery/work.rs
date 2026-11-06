@@ -8,19 +8,21 @@
 //! the caller's deadline leaves the work pending where it stands, never run
 //! without a turn, never refused and never reported Healthy.
 //!
-//! What must hold of the whole runs whole: the artifact's validation, the
-//! preflight that admits every row in one aborted transaction, the NOTE
-//! workflow plan, the equivalence of the recaptured window, and the manifest,
-//! published last and only once every page is done. The rebuild, the
-//! forward replay and the per-row checks after it run a page at a time, with
-//! the replay's cross-pass ledgers kept from page to page.
+//! Artifact validation, aborted-transaction preflight, the NOTE workflow
+//! plan and the final snapshot comparison still run whole. Recapture yields
+//! between structural stages while retaining one store read view. The
+//! rebuild, forward replay and per-row checks run a page at a time, with
+//! replay's cross-pass ledgers kept between pages. The manifest is published
+//! last, only after all work completes.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use loro::LoroDoc;
 
-use super::canonical::{CanonicalSnapshot, RebuildAt, invalid, rebuild_page, rebuild_start};
+use super::canonical::{
+    CanonicalCapture, CanonicalSnapshot, RebuildAt, invalid, rebuild_page, rebuild_start,
+};
 use super::ladder::{
     PreparedRecovery, RecoveryBudget, RecoveryTier, limit, prepare_rebuilt, verify_page,
 };
@@ -42,7 +44,7 @@ pub(crate) enum RecoveryPhase {
     Preflight,
     /// The forward replay, a page of rows at a time.
     Replay,
-    /// The per-row checks, a page at a time, and the equivalence, whole.
+    /// Paged row checks, staged recapture and a whole snapshot comparison.
     Verify,
     /// The repaired manifest, published last.
     Publish,
@@ -82,6 +84,8 @@ pub(crate) struct RecoveryWork {
     prepared: Option<PreparedRecovery>,
     forward: Option<ForwardRun>,
     verified: usize,
+    /// In-progress structural recapture (FIX 10316 partial), if any.
+    capture: Option<CanonicalCapture>,
 }
 
 impl RecoveryWork {
@@ -103,6 +107,7 @@ impl RecoveryWork {
             prepared: None,
             forward: None,
             verified: 0,
+            capture: None,
         }
     }
 
@@ -237,7 +242,14 @@ impl RecoveryWork {
                     .prepared
                     .as_ref()
                     .ok_or_else(|| invalid("recovery verify"))?;
-                if verify_page(vault, prepared, &self.source, &mut self.verified, page)? {
+                if verify_page(
+                    vault,
+                    prepared,
+                    &self.source,
+                    &mut self.verified,
+                    page,
+                    &mut self.capture,
+                )? {
                     self.phase = RecoveryPhase::Publish;
                 }
             }
