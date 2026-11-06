@@ -388,6 +388,7 @@ async fn bind_question_head(
             question,
             request.question_version,
             request.choice,
+            &crate::ai_host::training_pack::answerer_pins(&server),
         )?;
         // The head this binding replaced frees its encoder now.
         server.decision_host().forget_unbound_question_heads();

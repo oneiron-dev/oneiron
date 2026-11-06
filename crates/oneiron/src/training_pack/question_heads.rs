@@ -26,6 +26,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::llm::decision::ProviderPin;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -178,7 +179,9 @@ impl Vault {
     /// trial ([`QuestionHeadTrial::wins`]); an explicit choice records the
     /// owner's reason. The head that answered the question before goes back
     /// to scored. The same run already bound to the question returns its
-    /// binding. The owner is revalidated in the writer.
+    /// binding. The owner is revalidated in the writer. `answerer` is the pin
+    /// of every rung the host's ladder holds now: an evaluated bind takes only
+    /// a trial opened against the same.
     ///
     /// # Errors
     ///
@@ -193,6 +196,7 @@ impl Vault {
         question: EntityId,
         question_version: u32,
         choice: SwapChoice,
+        answerer: &[ProviderPin],
     ) -> Result<QuestionHeadBinding> {
         self.recheck_owner(owner)?;
         self.with_write_txn_grouped(|txn| {
@@ -230,6 +234,7 @@ impl Vault {
                     trial.question == question
                         && trial.question_version == question_version
                         && trial.incumbent_head == current
+                        && trial.answerer == answerer
                 });
             match &choice {
                 SwapChoice::Evaluated if !run.can_bind_question_head() => {
