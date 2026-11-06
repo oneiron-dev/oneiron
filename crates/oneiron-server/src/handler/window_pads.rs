@@ -197,7 +197,17 @@ pub(super) fn send_released_outcome<'t>(
     transport: &'t mut StoppingTransport,
     frame: Vec<u8>,
 ) -> impl Future<Output = Released> + use<'t> {
-    let released = release(server, conn_state, frame);
+    // A document frame past one decoded payload leaves in bounded parts
+    // (#6490); no door holds a document frame back.
+    let released = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
+        && frame.len() > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    {
+        oneiron::sync::transport::DocumentPartFrames::new(&frame)
+            .map(Iterator::collect)
+            .map_err(|_| Released::Failed)
+    } else {
+        release(server, conn_state, frame)
+    };
     async move {
         let frames = match released {
             Ok(frames) => frames,
