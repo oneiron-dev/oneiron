@@ -236,8 +236,7 @@ impl McpEngineNativeCodeHost {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // The executor's future is not `Send`, so it runs on a thread of its
         // own with its own reactor, as an `execute_code` run does.
-        let worker = std::thread::Builder::new()
-            .name("off-record-execute".to_owned())
+        let worker = crate::engine_thread("off-record-execute".to_owned())
             .spawn(move || {
                 let outcome = run_in_off_record_session(
                     &vault,
