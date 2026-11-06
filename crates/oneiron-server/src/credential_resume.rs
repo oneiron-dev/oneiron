@@ -46,8 +46,8 @@ impl ServerVerbAskCredentialCheck {
     }
 
     /// Runs `call` again through its door, under its credential as it
-    /// stands now; the refusal when it does not. A native read's MCP door
-    /// lists the rows its answer was derived from beside it (FIX 1435).
+    /// stands now; the refusal when it does not. An MCP door lists the rows
+    /// its answer was derived from beside it (FIX 1435, FIX 21054).
     fn resumed(
         &self,
         call: VerbAskSavedCall,
