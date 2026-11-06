@@ -303,6 +303,8 @@ pub use history_fetch::{
     AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_repair::AuthorityRepairOutcome;
+#[cfg(feature = "sync")]
+pub(crate) use history_transfer::HandoffRoster;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
     JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
