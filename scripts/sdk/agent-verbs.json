@@ -387,6 +387,78 @@
       "section": false
     },
     {
+      "name": "self.board.layout",
+      "description": "The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_layout_reply(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.fold",
+      "description": "Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardFoldRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_fold_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.unfold",
+      "description": "Unfolds one section of the bound actor's context board; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardSectionRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_unfold_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.size",
+      "description": "Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardSizeRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_size_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.filter",
+      "description": "Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardFilterRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_filter_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.replace",
+      "description": "Replaces the whole layout the bound actor's next turn applies to its context board.",
+      "input": "crate::task_verb::sdk::BoardReplaceRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_replace_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
       "input": "DiaryEntryRequest",
@@ -2962,7 +3034,7 @@
       "description": "The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval.",
       "input": "crate::campaign::compliance::ComplianceAmendRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_install_as(&memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_install_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2978,7 +3050,7 @@
       "description": "Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp.",
       "input": "crate::campaign::compliance::ComplianceAmendRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_amend(&input)?",
+      "call": "memory.vault().store.record_hooks.compliance_amend(memory, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2991,7 +3063,7 @@
       "description": "The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt.",
       "input": "crate::campaign::compliance::ComplianceApprovalRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_approve_as(&memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_approve_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3007,7 +3079,7 @@
       "description": "The owner rejects the exact pending compliance proposal hash without changing the effective rules.",
       "input": "crate::campaign::compliance::ComplianceApprovalRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_reject_as(&memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_reject_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3023,7 +3095,7 @@
       "description": "The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy.",
       "input": "crate::campaign::compliance::ComplianceVerifyRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_verify_as(&memory.embedded_owner(\"vault.campaign.compliance.verify\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_verify_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.verify\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3039,7 +3111,7 @@
       "description": "Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot.",
       "input": "crate::campaign::compliance::ComplianceResultRequest",
       "output": "crate::campaign::compliance::ComplianceResult",
-      "call": "memory.compliance_result(&input)?",
+      "call": "memory.vault().store.record_hooks.compliance_result(memory, &input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -3507,6 +3579,22 @@
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.proactivity.digest",
+      "description": "Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator.",
+      "input": "crate::memory::ProactivityDigestRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
+      "call": "memory.proactivity_digest_as_owner(&memory.embedded_owner(\"vault.proactivity.digest\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7387,6 +7475,98 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.list",
+      "description": "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible.",
+      "input": "crate::drafter::DrafterListRequest",
+      "output": "Vec<crate::drafter::DrafterVersionView>",
+      "call": "crate::drafter::list_drafters_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.list\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.list_as",
+      "description": "An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read.",
+      "input": "crate::drafter::DrafterListRequest",
+      "output": "Vec<crate::drafter::DrafterVersionView>",
+      "call": "crate::drafter::list_drafters_as_agent(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.status",
+      "description": "The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor.",
+      "input": "crate::drafter::DrafterStatusRequest",
+      "output": "crate::drafter::DrafterStatus",
+      "call": "crate::drafter::drafter_status_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.status\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.policy.set",
+      "description": "The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock.",
+      "input": "crate::drafter::DrafterPolicySetRequest",
+      "output": "crate::drafter::DrafterPolicy",
+      "call": "crate::drafter::set_drafter_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.revert",
+      "description": "The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back.",
+      "input": "crate::drafter::DrafterRevertRequest",
+      "output": "crate::drafter::DrafterRevertReceipt",
+      "call": "crate::drafter::revert_drafter_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.revert\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.revert_as",
+      "description": "An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert.",
+      "input": "crate::drafter::DrafterRevertRequest",
+      "output": "crate::drafter::DrafterRevertReceipt",
+      "call": "crate::drafter::revert_drafter_as_agent(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -16007,7 +16187,7 @@
     },
     {
       "name": "vault.commit",
-      "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
+      "description": "Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt.",
       "refs": [
         "/claims/*/subject_ref",
         "/claims/*/evidence_turn_refs/*"
@@ -17070,6 +17250,37 @@
       "section": false,
       "mcp_scope": "filtered",
       "openapi": true
+    },
+    {
+      "name": "vault.ingest.ag_ui.import",
+      "description": "The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent.",
+      "input": "crate::ingest::AgUiFileImport",
+      "output": "crate::ingest::AgUiFileReceipt",
+      "call": "memory.vault().ingest_ag_ui_file(&memory.embedded_owner(\"vault.ingest.ag_ui.import\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.ingest.ag_ui.read",
+      "description": "Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission.",
+      "input": "crate::ingest::AgUiFileReadInput",
+      "output": "crate::ingest::AgUiFileRead",
+      "call": "memory.read_ag_ui_file(&input)?",
+      "scope": "Read",
+      "refs": [
+        "/claim_ref"
+      ],
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.claims.admit",
@@ -20035,7 +20246,7 @@
       "host": {
         "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldMarkRequest",
-        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.",
+        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console.",
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
@@ -20687,6 +20898,197 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false
+    },
+    {
+      "name": "vault.mail.pack.install",
+      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.connect",
+      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.",
+      "input": "crate::mail_pack::MailSourceConnectRequest",
+      "output": "crate::mail_pack::MailSourceConnectReceipt",
+      "call": "memory.mail_sources_connect(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.list",
+      "description": "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::mail_pack::MailSourceView>",
+      "call": "memory.mail_sources_list()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.settings.set",
+      "description": "Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address.",
+      "input": "crate::mail_pack::MailSourceSettingsRequest",
+      "output": "crate::mail_pack::MailSourceView",
+      "call": "memory.mail_sources_settings_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.members.set",
+      "description": "Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on.",
+      "input": "crate::mail_pack::MailSourceMembersRequest",
+      "output": "crate::mail_pack::MailSourceView",
+      "call": "memory.mail_sources_members_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.audience_events",
+      "description": "Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins.",
+      "input": "crate::mail_pack::MailSourceRef",
+      "output": "Vec<crate::mail_pack::SourceAudienceEventView>",
+      "call": "memory.mail_sources_audience_events(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.share",
+      "description": "Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox.",
+      "input": "crate::mail_pack::MailThreadShareRequest",
+      "output": "crate::mail_pack::MailThreadShareReceipt",
+      "call": "memory.mail_threads_share(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.unshare",
+      "description": "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving.",
+      "input": "crate::mail_pack::MailThreadShareRequest",
+      "output": "crate::mail_pack::MailThreadShareReceipt",
+      "call": "memory.mail_threads_unshare(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.setting",
+      "description": "Whether org compliance search across mailboxes is on; off by default.",
+      "input": "EmptyRequest",
+      "output": "crate::mail_pack::MailComplianceSettingView",
+      "call": "memory.mail_compliance_setting()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.set",
+      "description": "Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log.",
+      "input": "crate::mail_pack::MailComplianceSetRequest",
+      "output": "crate::mail_pack::MailComplianceSettingView",
+      "call": "memory.mail_compliance_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.log",
+      "description": "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::mail_pack::MailComplianceEventView>",
+      "call": "memory.mail_compliance_log()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.sync_status",
+      "description": "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers.",
+      "input": "crate::mail_pack::MailSourceRef",
+      "output": "crate::mail_pack::MailSyncStatusView",
+      "call": "memory.mail_sources_sync_status(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.inbox",
+      "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
+      "input": "crate::mail_pack::MailInboxRequest",
+      "output": "crate::mail_pack::MailInboxPage",
+      "call": "memory.mail_inbox(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.read",
+      "description": "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with.",
+      "input": "crate::mail_pack::MailThreadRequest",
+      "output": "crate::mail_pack::MailThreadView",
+      "call": "memory.mail_thread(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.search",
+      "description": "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers.",
+      "input": "crate::mail_pack::MailComplianceSearchRequest",
+      "output": "crate::mail_pack::MailComplianceSearchReply",
+      "call": "memory.mail_compliance_search(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
       "section": false
     }
   ]

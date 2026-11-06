@@ -40,6 +40,7 @@ mod verify;
 
 pub use custody_keys::CustodySealKeys;
 pub use file_keys::{FileSealKeys, pem_certificates};
+pub use pdf_work::{PdfInspectionError, inspect_pdf_pages_via_organ, inspect_pdf_region_until};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -186,6 +187,20 @@ impl SealSettings {
             class: CallClass::Background,
             deadline: Duration::from_secs(60),
             fetch_timeout: Duration::from_secs(5),
+        }
+    }
+
+    fn call(&self, verb: &str, schema: u32, args: Value) -> OrganCall {
+        OrganCall {
+            organ: self.organ.clone(),
+            verb: verb.to_owned(),
+            schema,
+            args,
+            body: None,
+            inputs: Vec::new(),
+            class: self.class,
+            deadline: self.deadline,
+            grant: self.grant.clone(),
         }
     }
 }
@@ -470,17 +485,7 @@ impl HostedSealer<'_> {
     }
 
     fn call(&self, verb: &str, schema: u32, args: Value) -> OrganCall {
-        OrganCall {
-            organ: self.settings.organ.clone(),
-            verb: verb.to_owned(),
-            schema,
-            args,
-            body: None,
-            inputs: Vec::new(),
-            class: self.settings.class,
-            deadline: self.settings.deadline,
-            grant: self.settings.grant.clone(),
-        }
+        self.settings.call(verb, schema, args)
     }
 }
 
