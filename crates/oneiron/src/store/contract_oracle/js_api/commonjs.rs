@@ -48,7 +48,8 @@ pub(super) fn collect(
                     alias = (native_module && whole_value(value, semantic, &mut accounted))
                         || (alias && wrapper(value, "exports", semantic, &mut accounted));
                 } else if binding.name == "module" {
-                    native_module = false;
+                    native_module =
+                        native_module && wrapper(value, "module", semantic, &mut accounted);
                 }
             }
             continue;
@@ -93,7 +94,9 @@ pub(super) fn collect(
                             && wrapper(&assignment.right, "exports", semantic, &mut accounted)));
                 accounted.insert((identifier.span.start, identifier.span.end));
             } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
-                native_module = false;
+                native_module = assignment.operator.is_assign()
+                    && native_module
+                    && wrapper(&assignment.right, "module", semantic, &mut accounted);
                 accounted.insert((identifier.span.start, identifier.span.end));
             }
             continue;
