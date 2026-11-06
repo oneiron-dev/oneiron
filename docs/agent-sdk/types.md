@@ -2228,6 +2228,8 @@ class Oneiron:
         @property
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
         @property
+        def replies(self) -> "Oneiron._VaultConnectorsRepliesVerbs": ...
+        @property
         def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs": ...
         @property
         def web(self) -> "Oneiron._VaultConnectorsWebVerbs": ...
@@ -2261,6 +2263,9 @@ class Oneiron:
     class _VaultConnectorsCallsVerbs:
         def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
+    class _VaultConnectorsRepliesVerbs:
+        def retry_failed(self, spec: Facade.ConnectorReplyRetryRequest) -> Facade.ConnectorReplyRetryView:
+            """The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."""
     class _VaultConnectorsReadGrantsVerbs:
         def grant(self, spec: Facade.ConnectorWitnessReadGrantRequest) -> Facade.ConnectorWitnessReadGranted:
             """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""

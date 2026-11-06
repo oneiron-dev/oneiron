@@ -1331,6 +1331,10 @@ export class Oneiron {
         /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
         approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
       },
+      replies: {
+        /** The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history. */
+        retry_failed: (input: Facade.ConnectorReplyRetryRequest): Facade.ConnectorReplyRetryView => this.#call(() => this.#client.vaultConnectorsRepliesRetryFailed(input) as Facade.ConnectorReplyRetryView),
+      },
       read_grants: {
         /** The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing. */
         grant: (input: Facade.ConnectorWitnessReadGrantRequest): Facade.ConnectorWitnessReadGranted => this.#call(() => this.#client.vaultConnectorsReadGrantsGrant(input) as Facade.ConnectorWitnessReadGranted),

@@ -63,6 +63,7 @@ mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
+mod connector_reply_doors;
 mod connector_revision_doors;
 mod connector_slate_doors;
 mod connector_witness_read_doors;
