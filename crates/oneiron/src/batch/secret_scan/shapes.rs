@@ -1,9 +1,16 @@
 //! Credential-shape detection shared by write, serve, and export.
 
+// The literals of the assignment rule, shared with the release reader (FIX 7200).
+mod assignment_syntax;
 mod blocklist_entries;
 // A recovery phrase's spans (FIX 1099).
 mod mnemonic_spans;
 mod phrase_run;
+pub(super) use assignment_syntax::{
+    ASSIGNMENT_QUOTES, ASSIGNMENT_SEPARATORS, CREDENTIAL_NAME_ENDINGS, CREDENTIAL_NAMES,
+    EXPORT_PREFIX, HANDLE_QUOTES, HANDLE_TAG, RELEASE_PLACEHOLDERS, SEGMENT_BREAKS,
+    normalized_key_byte,
+};
 pub(super) use mnemonic_spans::mnemonic_spans;
 
 use std::ops::Range;
@@ -448,43 +455,20 @@ fn armor_header(line: &str) -> bool {
 }
 
 pub(super) fn sensitive_key(key: &str) -> bool {
-    let normalized = key.to_ascii_lowercase().replace(['-', '.'], "_");
-    matches!(
-        normalized.as_str(),
-        "password"
-            | "passwd"
-            | "pwd"
-            | "secret"
-            | "token"
-            | "api_key"
-            | "apikey"
-            | "private_key"
-            | "client_secret"
-            | "access_token"
-            | "refresh_token"
-            | "authorization"
-            | "mnemonic"
-            | "seed_phrase"
-    ) || [
-        "_password",
-        "_passwd",
-        "_secret",
-        "_token",
-        "_api_key",
-        "_private_key",
-        "_access_key",
-    ]
-    .iter()
-    .any(|suffix| normalized.ends_with(suffix))
+    let normalized: Vec<u8> = key.bytes().map(normalized_key_byte).collect();
+    CREDENTIAL_NAMES
+        .iter()
+        .any(|name| name.as_bytes() == normalized.as_slice())
+        || CREDENTIAL_NAME_ENDINGS
+            .iter()
+            .any(|ending| normalized.ends_with(ending.as_bytes()))
 }
 
 /// Values serve and export have always treated as no secret at all, and the
 /// handle a mask on write leaves.
 fn placeholder(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "" | "[redacted]" | "[secret redacted]" | "<redacted>" | "null"
-    ) || custody_handle(value)
+    RELEASE_PLACEHOLDERS.contains(&value.trim().to_ascii_lowercase().as_str())
+        || custody_handle(value)
 }
 
 /// How a masked span opens: `[secret sc12]` stands where the secret was.
@@ -495,7 +479,7 @@ pub(super) const HANDLE_OPEN: &str = "[secret ";
 /// as a whole value. It names a custody record and holds no value.
 fn custody_handle(value: &str) -> bool {
     let bare = |text: &str| {
-        text.strip_prefix("sc").is_some_and(|digits| {
+        text.strip_prefix(HANDLE_TAG).is_some_and(|digits| {
             !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
         })
     };
@@ -620,7 +604,7 @@ fn masked(value: &str) -> bool {
 fn trim_value(value: &str) -> &str {
     value
         .trim()
-        .trim_matches(['"', '\'', '`'])
+        .trim_matches(HANDLE_QUOTES)
         .trim_end_matches([',', ';'])
 }
 
@@ -679,8 +663,8 @@ fn dotted_name(value: &str) -> bool {
 pub(super) fn sensitive_assignment(text: &str, door: Door) -> bool {
     // Assignment syntax covers dotenv, shell, JSON and YAML. Structural
     // MessagePack fields are checked separately at the payload door.
-    text.split(['\n', '\r', ',', ';', '{', '}']).any(|line| {
-        let Some((key, value)) = line.split_once(['=', ':']) else {
+    text.split(SEGMENT_BREAKS).any(|line| {
+        let Some((key, value)) = line.split_once(ASSIGNMENT_SEPARATORS) else {
             return false;
         };
         let value = assigned_value(value);
@@ -695,9 +679,9 @@ pub(super) fn sensitive_assignment(text: &str, door: Door) -> bool {
 /// Where the write door's [`sensitive_assignment`] reads each secret in
 /// `text`: the assigned value's candidate word.
 pub(super) fn assignment_spans(text: &str) -> Vec<Range<usize>> {
-    text.split(['\n', '\r', ',', ';', '{', '}'])
+    text.split(SEGMENT_BREAKS)
         .filter_map(|line| {
-            let (key, value) = line.split_once(['=', ':'])?;
+            let (key, value) = line.split_once(ASSIGNMENT_SEPARATORS)?;
             if !sensitive_key(assigned_key(key)) {
                 return None;
             }
@@ -709,14 +693,14 @@ pub(super) fn assignment_spans(text: &str) -> Vec<Range<usize>> {
 /// The name an assignment's key text reads as.
 fn assigned_key(key: &str) -> &str {
     key.trim()
-        .trim_start_matches("export ")
+        .trim_start_matches(EXPORT_PREFIX)
         .trim()
-        .trim_matches(['"', '\''])
+        .trim_matches(ASSIGNMENT_QUOTES)
 }
 
 /// The value an assignment's value text reads as.
 fn assigned_value(value: &str) -> &str {
-    value.trim().trim_matches(['"', '\''])
+    value.trim().trim_matches(ASSIGNMENT_QUOTES)
 }
 
 /// The longest ending [`sensitive_key`] reads, and some.
@@ -746,10 +730,11 @@ pub(super) fn cut_assignment(
             let head = head
                 .strip_suffix(char::REPLACEMENT_CHARACTER)
                 .unwrap_or(head);
-            let exported = head.trim_start().trim_start_matches("export ");
-            let start = exported.trim_start().trim_start_matches(['"', '\'']);
-            let ending = key.trim_end().trim_end_matches(['"', '\'']);
-            if "export ".starts_with(exported) || start.is_empty() || ending.len() < KEY_ENDING {
+            let exported = head.trim_start().trim_start_matches(EXPORT_PREFIX);
+            let start = exported.trim_start().trim_start_matches(ASSIGNMENT_QUOTES);
+            let ending = key.trim_end().trim_end_matches(ASSIGNMENT_QUOTES);
+            if EXPORT_PREFIX.starts_with(exported) || start.is_empty() || ending.len() < KEY_ENDING
+            {
                 return None;
             }
             sensitive_key(ending)
@@ -760,7 +745,7 @@ pub(super) fn cut_assignment(
     }
     // The rule reads the value's first word, and the next after an auth
     // scheme: each must end, at a blank, before the cut.
-    let read = value.trim_start().trim_start_matches(['"', '\'']);
+    let read = value.trim_start().trim_start_matches(ASSIGNMENT_QUOTES);
     let words: Vec<&str> = read.split_whitespace().take(3).collect();
     let complete = if words.len() == 3 || read.ends_with(char::is_whitespace) {
         words.len()

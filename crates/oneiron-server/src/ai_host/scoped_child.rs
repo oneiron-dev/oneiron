@@ -177,7 +177,8 @@ pub fn enqueue_scoped_child(
 /// on the monotonic clock. Never a wall reading and never stored: a first
 /// spawn projects it once into its parent row (`reader_parent_deadline`),
 /// and the runner bounds the parent's children's model and port work by it
-/// beside that row.
+/// beside that row, a scoped child's port calls and reads by its due
+/// instant ([`Self::due_at`], FIX 8233).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReaderParentClock {
     origin: Instant,
@@ -224,6 +225,19 @@ impl ReaderParentClock {
     #[must_use]
     pub fn remaining_ms(self) -> u64 {
         self.budget_ms.saturating_sub(millis(self.origin.elapsed()))
+    }
+
+    /// The instant it is due less `reserve_ms`, taken once (FIX 8233): the
+    /// deadline a scoped child's port calls and reads stop at. The monotonic
+    /// sample comes before the remaining time is read, so no elapsed time
+    /// is given back; a clock already due is due now. `None` only past what
+    /// the monotonic clock can hold, which bounds nothing.
+    #[must_use]
+    pub fn due_at(self, reserve_ms: u64) -> Option<Instant> {
+        let now = Instant::now();
+        now.checked_add(Duration::from_millis(
+            self.remaining_ms().saturating_sub(reserve_ms),
+        ))
     }
 }
 

@@ -479,13 +479,14 @@ pub(crate) fn reject_held_pad_carrier_in_txn(
 /// Only an erase calls it: a soft delete keeps the world's keys. Idempotent: a
 /// second call keeps the first receipt and purges any pad left.
 pub(crate) fn destroy_world_keys_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     target: EntityId,
     cause: WorldKeyDestroyCause,
     request_id: Option<[u8; 16]>,
     deleted_at: u64,
 ) -> Result<Option<WorldKeyDestruction>> {
+    let store = write.store;
     if target == crate::claim::base_world_id() {
         return Ok(None);
     }
@@ -516,7 +517,7 @@ pub(crate) fn destroy_world_keys_in_txn(
         request_id: request_id.unwrap_or(*target.as_bytes()),
     };
     for (id, _, learned_at) in &rows {
-        crate::batch::deindex_entity(store, wtxn, id)?;
+        crate::batch::deindex_entity(write, wtxn, id)?;
         let window = pad_window(target, *learned_at);
         stage_engine_row_hard_erasure_at_in_txn(store, wtxn, id, window.clone(), &tombstone)?;
         // The batch that owns this transaction publishes the window once it
@@ -677,8 +678,14 @@ impl Vault {
         request_id: Option<[u8; 16]>,
     ) -> Result<Option<WorldKeyDestruction>> {
         let deleted_at = self.instant_in_txn(wtxn)?.secs();
-        let destroyed =
-            destroy_world_keys_in_txn(&self.store, wtxn, target, cause, request_id, deleted_at)?;
+        let destroyed = destroy_world_keys_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            wtxn,
+            target,
+            cause,
+            request_id,
+            deleted_at,
+        )?;
         if destroyed.is_some() {
             self.world_key_ring().retain(|id, _| id.world != target);
         }

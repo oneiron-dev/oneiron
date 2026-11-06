@@ -201,7 +201,7 @@ pub(super) fn validate_normalized_commit_hash(input: &str) -> Result<()> {
 }
 
 pub(super) fn validate_code_symbol_graph_edge(edge: &CodeSymbolGraphEdge) -> Result<()> {
-    if edge.source == edge.target {
+    if edge.source == edge.target && !matches!(edge.kind, EdgeKind::Calls | EdgeKind::Refs) {
         return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "code symbol graph edge cannot be a self-edge",
         )));
@@ -212,9 +212,13 @@ pub(super) fn validate_code_symbol_graph_edge(edge: &CodeSymbolGraphEdge) -> Res
         )));
     }
     match edge.kind {
-        EdgeKind::Mentions | EdgeKind::Attached => Ok(()),
+        EdgeKind::Mentions
+        | EdgeKind::Attached
+        | EdgeKind::Calls
+        | EdgeKind::Imports
+        | EdgeKind::Refs => Ok(()),
         _ => Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "code symbol graph edge kind must be Mentions or Attached",
+            "code symbol graph edge kind must be Mentions, Attached, Calls, Imports or Refs",
         ))),
     }
 }

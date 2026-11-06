@@ -474,6 +474,17 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::origin_positions::mirror_local_position(vault, doc, window_key, id)?
+            {
+                wrote_any = true;
+            }
+            // FIX 12113: a MESSAGE row's writer proof rides beside its
+            // carrier the same way, when this install wrote the row or the
+            // own-device lane admitted it with that proof.
+            if crate::sync::ingest::publish_writer_proof(vault, doc, id, &raw)? {
+                wrote_any = true;
+            }
             // OF-522: a TURN's room row rides beside its carrier the same
             // way, and is refreshed when only the row changed.
             if window_key.world().is_none()
@@ -749,11 +760,10 @@ pub(super) fn remove_entity_crdt_carriers(
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
         removed = true;
     }
-    // The row's birth leaves with its carrier.
-    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
-        && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
-    {
-        removed = true;
+    // The row's birth and optional position data leave with its carrier.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map) {
+        removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
+        removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
     }
     Ok(removed)
 }

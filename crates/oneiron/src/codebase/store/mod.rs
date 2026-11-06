@@ -428,6 +428,33 @@ impl Vault {
         CUSTODY_REPORTS.get(&self.store, &rtxn, &codebase_custody_key(fork_hash))
     }
 
+    pub(crate) fn codebase_snapshots_by_repo_ref_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        repo_ref: &RepoRef,
+    ) -> Result<Vec<EntityId>> {
+        codebase_ids_by_index(
+            REPO_INDEX,
+            &self.store,
+            txn,
+            &text_index_scan_prefix(&repo_ref.canonical()),
+        )
+    }
+
+    pub(crate) fn codebase_snapshots_by_project_id_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        project_id: &str,
+    ) -> Result<Vec<EntityId>> {
+        validate_project_id(project_id)?;
+        codebase_ids_by_index(
+            PROJECT_INDEX,
+            &self.store,
+            txn,
+            &text_index_scan_prefix(project_id),
+        )
+    }
+
     pub(crate) fn get_codebase_snapshot_custody_report_in_txn(
         &self,
         txn: &RoTxn<'_>,

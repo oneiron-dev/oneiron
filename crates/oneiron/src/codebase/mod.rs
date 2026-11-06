@@ -3,6 +3,7 @@
 //! Child modules own the repo references, snapshot types and ingest definitions forwarded here.
 
 mod file_mode;
+mod identity;
 mod ingest;
 mod instructions;
 mod repo_ref;
@@ -19,6 +20,8 @@ pub(crate) use self::store::codebase_asset_entity_id as snapshot_asset_entity_id
 
 pub use self::file_mode::DEFAULT_CODE_FILE_MODE;
 pub(crate) use self::file_mode::validate_code_file_mode;
+pub use self::identity::RepoIdentity;
+pub(crate) use self::identity::resolve_repo_identity_in_txn;
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,

@@ -61,5 +61,9 @@ pub trait StoreDeleteGuards: Send + Sync {
         store: &Store,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<(bool, bool, Vec<EntityId>)>;
 }
