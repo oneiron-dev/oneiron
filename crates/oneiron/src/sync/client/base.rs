@@ -58,6 +58,10 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    /// The home answered this connection's NOTE session bind: the NOTE lane
+    /// (NOTE requests, operations, imports and receipts, publications) runs.
+    /// A peer session binds the socket's actor, never the NOTE authority, so
+    /// this stays false on one (FIX 4748).
     pub(crate) note_session_bound: bool,
     /// FIX 11111: the main socket already logged that it withholds this
     /// machine's credentials from a cleartext server.

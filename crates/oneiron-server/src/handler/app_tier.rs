@@ -430,6 +430,10 @@ fn answer_app_message(
             }
             return Ok(None);
         }
+        // A socket served as a peer binds its actor too (FIX 4748): its
+        // promotion and document admissions judge that principal as a home's
+        // socket does. It takes no NOTE authority action from the bind
+        // (`peer_serve::refuse_note_authority`).
         if request.method == "auth.bind" {
             let binding = (|| {
                 // A bind is the connection's, and carries no call context.

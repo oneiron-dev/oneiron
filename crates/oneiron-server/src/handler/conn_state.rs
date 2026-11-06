@@ -87,6 +87,11 @@ pub(super) struct ConnState {
     /// serves state only, and none of the home's residence lane, lease
     /// registrar, sealed update relay or leaf-key relay.
     pub(super) peer_served: bool,
+    /// On a socket served as a peer, what the export door chose for each
+    /// window, which the release door holds every window frame to (FIX
+    /// 4748). The mutex lets the release door, which reads the state shared,
+    /// take a state-only copy once.
+    pub(super) peer_exports: std::sync::Mutex<super::peer_serve::PeerExports>,
 }
 
 impl ConnState {
@@ -120,6 +125,7 @@ impl ConnState {
             sealed_world_updates: false,
             sealed_updates_live: false,
             peer_served: false,
+            peer_exports: std::sync::Mutex::default(),
         }
     }
 

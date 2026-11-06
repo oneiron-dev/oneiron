@@ -127,11 +127,11 @@ impl SyncClient {
                 }
             }
         }];
-        // The NOTE admission authority is the home: a peer session binds
-        // none (FIX 4748).
-        if let Some(session) = &self.config.note_session
-            && self.peer_session.is_none()
-        {
+        // A peer session binds the socket's actor too, so the peer admits its
+        // promotion and document requests as the home does; only the NOTE
+        // authority side of the bind stays the home's (FIX 4748,
+        // `note_session_bound`).
+        if let Some(session) = &self.config.note_session {
             messages.push(super::note_session::bind_frame(session)?);
         }
         messages
@@ -322,11 +322,17 @@ impl SyncClient {
         }
 
         self.owner_note_requests()?;
+        // A peer session asks for no NOTE: the NOTE lane is its authority's,
+        // the home's (FIX 4748).
+        let requests = self
+            .manager
+            .documents()
+            .request_frames()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
         messages.extend(
-            self.manager
-                .documents()
-                .request_frames()
-                .map_err(|error| TransportError::Storage(error.to_string()))?,
+            requests
+                .into_iter()
+                .filter(|frame| self.peer_session.is_none() || !self.note_document_frame(frame)),
         );
         Ok(messages)
     }
