@@ -18,8 +18,11 @@ pub struct SelfActorRefs {
     pub actor_class: String,
     /// The person the caller acts for: a person himself; an agent or system
     /// actor on a personal vault, the vault's live owner, who mints its
-    /// credential. `None` where the vault records no such person: a shared
-    /// vault, whose owners are several and none is named the actor's.
+    /// credential; an agent on a shared vault, the one live member its
+    /// credentials' mints name as their minting member. `None` where the
+    /// vault records no such person: a shared vault's system actor, or an
+    /// agent whose mints name no member, name two, or name one who left.
+    /// An identifier, never a permission.
     pub person_ref: Option<String>,
 }
 
@@ -33,12 +36,16 @@ pub fn self_actor_refs(
         EdgeActorClass::Human => Some(actor),
         EdgeActorClass::Agent | EdgeActorClass::System => {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            if vault.shared_vault_creation_in_txn(&txn)?.is_some() {
-                None
-            } else {
-                crate::policy_model::owners_in_txn(vault, &txn)?
+            match vault.shared_vault_creation_in_txn(&txn)? {
+                Some(shared) => match class {
+                    EdgeActorClass::Agent => {
+                        agent_minting_member_in_txn(vault, &txn, actor, shared.vault_id)?
+                    }
+                    _ => None,
+                },
+                None => crate::policy_model::owners_in_txn(vault, &txn)?
                     .into_iter()
-                    .next()
+                    .next(),
             }
         }
     };
@@ -47,4 +54,39 @@ pub fn self_actor_refs(
         actor_class: class.gate_actor_class().to_owned(),
         person_ref: person.map(|person| person.to_hex()),
     })
+}
+
+/// The member who minted `agent`'s credentials on shared vault `vault_id`
+/// (FIX 11713): the one person every mint the authority fold keeps for it
+/// names as its minting member, revoked, consumed and expired mints
+/// included, while that person is live and still a member. `None` where no
+/// mint names one, two name different people, or the person left.
+fn agent_minting_member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    vault_id: u64,
+) -> crate::error::Result<Option<EntityId>> {
+    let holder = agent.to_hex();
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    let mut named = fold
+        .slips
+        .mints
+        .values()
+        .filter(|mint| mint.action.claims.holder_ref == holder)
+        .filter_map(|mint| mint.action.minting_member);
+    let Some(member) = named.next() else {
+        return Ok(None);
+    };
+    if named.any(|other| other != member) {
+        return Ok(None);
+    }
+    if !crate::consent::person_is_live_in_txn(vault, txn, &member)? {
+        return Ok(None);
+    }
+    let still_member = vault
+        .shared_members_in_txn(txn, vault_id)?
+        .into_iter()
+        .any(|(id, _)| id == member);
+    Ok(still_member.then_some(member))
 }
