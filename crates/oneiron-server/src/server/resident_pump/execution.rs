@@ -75,6 +75,11 @@ pub(super) fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // FIX 15011: a run its dispatch started from an event opens with the
+    // wake opener; a continued run goes on from its source's fork.
+    if !continues {
+        config.wake = claimed.wake;
+    }
     // CUA E4 (FIX 7603): a try whose TASK binds a library program runs it
     // strict on this door before its seat is born. One that met its TASK's
     // goal settles the try with no model call; one that handed off names its
