@@ -127,18 +127,24 @@ impl ScopedRead<'_> {
     /// Private diary candidates admitted under this query's snapshot. The
     /// pipeline keeps the set only for this run and still performs its final
     /// current + indexed-frontier authority checks on every resulting hit.
+    ///
+    /// The candidates are the NOTEs this read sees (FIX 5163): a room's
+    /// overlay ∪ base, each judged by its stored core, which carries its kind
+    /// (FIX 7783). Its kind registry, author, consent, policy and Grants stay
+    /// on base.
     pub(crate) fn diary_candidates_in(
         &self,
         txn: &heed::RoTxn<'_>,
         requested: &crate::gate::ResolvedRetrievalFilter,
     ) -> Result<super::ScopedDiaryCandidates> {
         let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let content = self.store_read();
         let mut admitted = HashSet::new();
         // One relationship authority for every diary this snapshot checks,
         // not one per note (FIX 11648).
         let held = super::access_gate::HeldAuthority::default();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &self.vault.store,
+            &content,
             txn,
             crate::registry::ENTITY_TYPE_NOTE,
             None,

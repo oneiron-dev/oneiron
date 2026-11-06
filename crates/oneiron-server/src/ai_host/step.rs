@@ -317,9 +317,10 @@ impl StepRunner {
                 objectives,
             });
         }
-        // FIX 6290: the memory and chat rows the step's context selected, as
-        // text read on its run's own lanes. A row that no longer reads is
-        // counted left out, never refused.
+        // FIX 6290: the memory and chat rows the step's context selected, and
+        // the results of the sibling tasks it names (FIX 7742), as text read
+        // on its run's own lanes. A row that no longer reads is counted left
+        // out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
         if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
@@ -381,6 +382,11 @@ impl StepRunner {
         }
         if let Some(chat) = selected.chat_text() {
             messages.push(message(LlmMessageRole::User, chat));
+        }
+        // The results of the sibling tasks the step names (`context_from`),
+        // read on its run's own lanes (FIX 7742): context, never a request.
+        if let Some(siblings) = selected.sibling_results_text() {
+            messages.push(message(LlmMessageRole::User, siblings));
         }
         let has_earlier = !earlier.is_empty();
         messages.extend(earlier);
@@ -729,12 +735,15 @@ impl StepRunner {
         // The estimate counts metered reservations only: on a free ladder the
         // earlier tries spent nothing, so no replay is owed. A restart across
         // a paid-to-keyless route move replays 0 for tries that paid, the
-        // same estimate class as above.
-        let charged = if continuation.is_some() || request.envelope.host_keyless {
-            0
-        } else {
-            charged
-        };
+        // same estimate class as above. A free on-device ladder is free too;
+        // a paid one, a paid provider's managed worker over its native
+        // channel, is replayed as a paid own-server one is (FIX 14889).
+        let charged =
+            if continuation.is_some() || request.envelope.host_keyless || ladder.all_free_work() {
+                0
+            } else {
+                charged
+            };
         // A step launched under a spend lease (OF-532) is bounded by it too:
         // beside its policy rows, this try may spend no more than the lease
         // has left, read live as each call is admitted (FIX 1819). Replayed
@@ -806,8 +815,14 @@ impl StepRunner {
                 actor,
             )?
         };
+        // Only a ladder with a paid rung replays, so each replay reserves on
+        // the paid line whatever the call's locality: an on-device label
+        // alone would admit it unmetered (FIX 14889).
         for _ in 0..charged {
-            let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
+            let spent = guard
+                .admit_paid_for_request(&request)
+                .map_err(budget)?
+                .lease;
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
