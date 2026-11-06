@@ -186,42 +186,113 @@ impl MicroVmSandboxAdapter {
     }
 }
 
+/// Opens `relative` under the mount `root` for reading, each directory
+/// relative to the one before through its descriptor, and no component a
+/// symlink (FIX 17063): what the caller then checks and reads is the entry
+/// this walk named, whatever moves on the path meanwhile. An entry that is
+/// no plain file is refused before it is opened, as before; the caller's
+/// check of the open handle is the one that binds. `shown` names the entry
+/// in a refusal.
+#[cfg(unix)]
+fn open_base_entry(root: &Path, relative: &Path, shown: &str) -> Result<fs::File> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, open, openat, statat};
+    use rustix::io::Errno;
+    let failed = |error: Errno, symlink: &str| match error {
+        Errno::NOENT | Errno::NOTDIR => Error::EntityNotFound,
+        Errno::LOOP => Error::Code(CodeError::MicroVmOverlayError {
+            detail: format!("base mount entry {shown} {symlink}"),
+        }),
+        _ => Error::Code(CodeError::MicroVmOverlayError {
+            detail: format!("base mount read failed for {shown}"),
+        }),
+    };
+    let directory = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let mut dir =
+        open(root, directory, Mode::empty()).map_err(|error| failed(error, "is unreachable"))?;
+    let components: Vec<_> = relative.components().collect();
+    let Some((last, parents)) = components.split_last() else {
+        return Err(overlay_error(format!(
+            "base mount entry {shown} is not a plain file"
+        )));
+    };
+    for component in parents {
+        dir = openat(
+            &dir,
+            component.as_os_str(),
+            directory | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|error| failed(error, "crosses a symlinked directory"))?;
+    }
+    let kind = statat(&dir, last.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)
+        .map(|stat| FileType::from_raw_mode(stat.st_mode))
+        .map_err(|error| failed(error, "is a symlink"))?;
+    match kind {
+        FileType::RegularFile => {}
+        FileType::Symlink => {
+            return Err(Error::Code(CodeError::MicroVmOverlayError {
+                detail: format!("base mount entry {shown} is a symlink"),
+            }));
+        }
+        _ => {
+            return Err(overlay_error(format!(
+                "base mount entry {shown} is not a plain file"
+            )));
+        }
+    }
+    let file = openat(
+        &dir,
+        last.as_os_str(),
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| failed(error, "is a symlink"))?;
+    Ok(fs::File::from(file))
+}
+
+/// [`open_base_entry`] where no descriptor walk is built: each component
+/// is checked by path, refused when a symlink, then the entry is opened by
+/// path.
+#[cfg(not(unix))]
+fn open_base_entry(root: &Path, relative: &Path, shown: &str) -> Result<fs::File> {
+    let mut walked = root.to_path_buf();
+    for component in relative.components() {
+        walked.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&walked).map_err(|_| Error::EntityNotFound)?;
+        if metadata.is_symlink() {
+            return Err(Error::Code(CodeError::MicroVmOverlayError {
+                detail: format!("base mount entry {shown} is a symlink"),
+            }));
+        }
+    }
+    fs::File::open(&walked).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => Error::EntityNotFound,
+        _ => Error::Code(CodeError::MicroVmOverlayError {
+            detail: format!("base mount read failed for {shown}"),
+        }),
+    })
+}
+
 impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
     fn read_file(&self, call: SandboxReadFile) -> Result<SandboxFileRead> {
         let host_path = self.mounts.resolve_host_path(&call.path)?;
-        // Confinement walk: the OS path resolver follows intermediate symlinks,
-        // so a symlinked directory under the mount root would smuggle host
-        // bytes from outside it — the overlay walker refuses symlinks per
-        // entry for exactly this reason. Descend each intermediate component
-        // of the relative path with `symlink_metadata` and refuse before any
-        // byte is read; the mount root itself is the trusted anchor.
+        // The mount root is the trusted anchor; no component under it may be
+        // a symlink, which would smuggle host bytes from outside it, as the
+        // overlay walker refuses them per entry. The entry checked is the
+        // entry read (FIX 17063): the checks and the read go through one
+        // handle, so a rename or symlink swap after the check opens nothing
+        // else.
         let relative = Path::new(call.path.relative_path());
-        let mut walked = host_path.clone();
+        let mut root = host_path.clone();
         for _ in relative.components() {
-            walked.pop();
+            root.pop();
         }
-        let component_total = relative.components().count();
-        for (index, component) in relative.components().enumerate() {
-            walked.push(component.as_os_str());
-            if index + 1 == component_total {
-                break; // the final component keeps the refusal below
-            }
-            let metadata = fs::symlink_metadata(&walked).map_err(|_| Error::EntityNotFound)?;
-            if metadata.is_symlink() {
-                return Err(Error::Code(CodeError::MicroVmOverlayError {
-                    detail: format!(
-                        "base mount entry {} crosses a symlinked directory",
-                        call.path.as_str()
-                    ),
-                }));
-            }
-        }
-        let metadata = fs::symlink_metadata(&host_path).map_err(|_| Error::EntityNotFound)?;
-        if metadata.is_symlink() {
-            return Err(Error::Code(CodeError::MicroVmOverlayError {
-                detail: format!("base mount entry {} is a symlink", call.path.as_str()),
-            }));
-        }
+        let file = open_base_entry(&root, relative, call.path.as_str())?;
+        let metadata = file.metadata().map_err(|_| {
+            Error::Code(CodeError::MicroVmOverlayError {
+                detail: format!("base mount read failed for {}", call.path.as_str()),
+            })
+        })?;
         let file_bytes = metadata.len();
         if file_bytes > MAX_OVERLAY_FILE_BYTES {
             return Err(overlay_error(format!(
@@ -236,12 +307,6 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
             )));
         }
 
-        let file = fs::File::open(&host_path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => Error::EntityNotFound,
-            _ => Error::Code(CodeError::MicroVmOverlayError {
-                detail: format!("base mount read failed for {}", call.path.as_str()),
-            }),
-        })?;
         let mut bytes = Vec::new();
         file.take(MAX_OVERLAY_FILE_BYTES + 1)
             .read_to_end(&mut bytes)
