@@ -229,6 +229,16 @@ impl SyncServer {
             {
                 tracing::warn!(panicked = error.is_panic(), "send lease reaper task failed");
             }
+            // FIX 4747 slice 6: an agent run whose machine closed or vanished
+            // is taken here, in the ruled order, when it can run here.
+            let runs = Arc::clone(&server);
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                super::resident_pump::reap_agent_run_leases(&runs);
+            })
+            .await
+            {
+                tracing::warn!(panicked = error.is_panic(), "agent run reaper task failed");
+            }
             server
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
                 .await;

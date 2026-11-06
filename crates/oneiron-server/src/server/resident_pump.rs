@@ -50,9 +50,9 @@ use oneiron::agent_def::{
     note_unbound_listed_run,
 };
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, HealerSlot, LeaderStarterSkills,
-    PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, AgentRunLeaseReap, HealerSlot,
+    LeaderStarterSkills, PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec,
+    SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
     resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
@@ -747,6 +747,42 @@ fn resume_due_outage_parks(vault: &Vault, now: u64) -> oneiron::Result<usize> {
         }
     }
     Ok(resumed)
+}
+
+/// One agent run lease reaper pass (FIX 4747 slice 6), on the housekeeping
+/// tick beside the send reaper: an agent run whose lease expired is taken
+/// here, in the ruled order, when it can run here
+/// ([`Vault::reap_agent_run_leases`]). The host's part of that check is this
+/// pump's own: an engine-native code host to run the run on, which every
+/// claim of the pump needs first.
+pub(super) fn reap_agent_run_leases(server: &SyncServer) {
+    let runs_here = |_: &AgentDefinition| {
+        server
+            .code_execution_host()
+            .and_then(|host| host.engine_native())
+            .is_some()
+    };
+    match server.vault().reap_agent_run_leases(&runs_here) {
+        Ok(AgentRunLeaseReap {
+            taken: 0,
+            renewed: 0,
+            waiting,
+        }) => {
+            if waiting > 0 {
+                tracing::debug!(waiting, "agent run reaper left expired runs waiting");
+            }
+        }
+        Ok(AgentRunLeaseReap {
+            taken,
+            waiting,
+            renewed,
+        }) => {
+            tracing::info!(taken, renewed, waiting, "agent run reaper ran");
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "agent run reaper failed");
+        }
+    }
 }
 
 /// Whether a run stopped on a model call no provider answered (FIX 3194):
