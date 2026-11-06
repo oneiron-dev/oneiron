@@ -584,7 +584,7 @@ impl Vault {
             if self.oauth_grant_stands_in_txn(&txn, &family.grant, now)? {
                 // The slip runs on the authority clock, which a reopened vault resumes from where
                 // it stopped, not on the wall time the token row keeps (review #6508).
-                let slip_now = self.capability_slip_now()?;
+                let slip_now = self.instant_in_txn(&txn)?.secs();
                 return Ok(row
                     .slip
                     .as_deref()
@@ -606,7 +606,7 @@ impl Vault {
 }
 
 /// The slip `slip`, an access token's row of `family` under `access_key` holds, with its holder
-/// key, while it stands at `now` on the authority clock (`Vault::capability_slip_now`, the clock
+/// key, while it stands at `now` on the authority clock (read in the caller's snapshot, the clock
 /// its expiry was minted on): `None` for a slip that does not parse, whose binding key is
 /// not the key the host issuer's secret derives for that token, or that has lapsed (the vault's
 /// credential lifetime ceiling may cut a slip shorter than its token).
