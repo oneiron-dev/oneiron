@@ -26,7 +26,11 @@ impl<R: Read> Read for DigestReader<R> {
     }
 }
 
-pub(crate) fn prepare(channel: &mut impl Read, bytes: u64, digest: [u8; 32]) -> Result<()> {
+pub(crate) fn prepare(
+    channel: &mut impl Read,
+    bytes: u64,
+    digest: [u8; 32],
+) -> Result<Vec<PathBuf>> {
     let stage = Path::new("/tmp/.oneiron-native");
     fs::create_dir(stage)?;
     fs::set_permissions(stage, fs::Permissions::from_mode(0o700))?;
@@ -65,7 +69,7 @@ pub(crate) fn prepare(channel: &mut impl Read, bytes: u64, digest: [u8; 32]) -> 
         mounts.push((source, destination));
     }
     if mounts.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     prepare_root(stage)?;
     // Parent targets precede children, even if the caller listed a child first.
@@ -82,10 +86,10 @@ pub(crate) fn prepare(channel: &mut impl Read, bytes: u64, digest: [u8; 32]) -> 
         installed.push(destination);
     }
     // Finish nested mountpoint creation before making parents read-only.
-    for destination in installed {
+    for destination in &installed {
         mount(
             None,
-            &destination,
+            destination,
             None,
             libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV,
             None,
@@ -99,7 +103,8 @@ pub(crate) fn prepare(channel: &mut impl Read, bytes: u64, digest: [u8; 32]) -> 
         None,
         libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV,
         None,
-    )
+    )?;
+    Ok(installed)
 }
 
 fn prepare_root(stage: &Path) -> Result<()> {

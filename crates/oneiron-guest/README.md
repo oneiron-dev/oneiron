@@ -165,6 +165,16 @@ need the same OverlayFS-capable kernel and system mount directories as the
 component path, plus `/usr/local/bin/oneiron-fence` and the selected command.
 No archive tool is invoked inside or outside the guest.
 
+The installed native destinations also become read/execute-only Landlock paths.
+PID 1 passes the digest-verified, canonical guest paths to the trusted fence
+launcher before its `--` delimiter and to the local proof verifier. Fenced
+containers use their `GuestSpec` destination paths in the same way. The launcher
+installs these rules alongside the unchanged system paths, and its readiness
+hash binds that exact path set; host source paths and command arguments never
+supply filesystem permissions. Non-UTF-8 paths retain their original bytes.
+Rebuild the fence launcher, native guest and host together for this argument and
+proof contract. This change does not publish replacement images or artifact pins.
+
 The native privilege drop uses Start's exact uid/gid with the original cgroup,
 rlimit, no-new-privileges and supplementary-group setup. Component execution
 continues to use its existing fixed identity. These are source contracts, not a
