@@ -165,6 +165,9 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `execute_code` runs parked on a durable wait, each entered again
+    /// once its reply is delivered (FIX 4606).
+    pub(crate) mcp_code_run_continuations: crate::api::McpCodeRunContinuations,
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,

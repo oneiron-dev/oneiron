@@ -37,7 +37,9 @@
 //! resume state on their calls' rows (FIX 9157), before it lists the pending
 //! calls, which leave out every call waiting on its connector's questions.
 //! Each pass then drives the approved, unsettled browser waits, which have
-//! no connector row and no other driver (FIX 11498).
+//! no connector row and no other driver (FIX 11498). Last, it enters again
+//! each served MCP `execute_code` run whose parked wait now has its reply:
+//! an MCP caller holds no parked attempt for a trap to wake (FIX 4606).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -125,6 +127,9 @@ async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
                 let _admission = admission;
                 let settled = settle_connector_calls(&pass, &mut held, recheck)
                     .map_err(|error| error.to_string());
+                // A delivery this pass or an answer's own drive committed
+                // readies its run (FIX 4606).
+                crate::api::reenter_ready_mcp_code_runs(&pass);
                 (held, settled)
             })
             .await;
