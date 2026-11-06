@@ -57,6 +57,16 @@ model lease; schema corrections keep that invocation and use their existing call
 ordinal. Transport retries keep the same coordinate. A fresh guard's public lease
 id is not a substitute for this original coordinate.
 
+The reservation created by that claiming admission also retains its actual birth
+lease generation. Reusing or topping up the same reservation keeps this original
+value; it is not replaced with the later live queue generation. A new explicit
+`reserve_budget` call has no claimed admission and records unknown without adding
+a queue lookup or changing its existing outcome. The private reservation encoding
+is version 3 with a mandatory `birth_generation` key; nil means this genuine
+unknown source, not an accepted older format. The consumed reservation remains
+available in the existing settlement result. This field changes no money and is
+not by itself aggregate coverage, an exclusion record or permission to pay.
+
 The existing owed-call row retains this coordinate beside the original line and
 lease. It still coalesces by attempt and logical step, and ordinary settlement
 still retires the attempt's rows. This extra provenance does not make that row an
@@ -70,6 +80,15 @@ writer runs; no caller callback runs inside it.
 A settled lease's amount keeps its native settlement convention. It is not a
 billing credit or proof that summing selected lease amounts reproduces a meter
 delta, including at counter saturation.
+
+The original line's `NativeMeterSnapshot::observed_calls` retains each selected
+call's original coordinate and lease id beside its optional typed state and
+first-settlement range from that same owned snapshot. It preserves positional
+pairing and unknown observations instead of filtering to included intervals.
+It reads no live guard and makes no payment or exclusion decision. A settled
+empty range may still qualify for existing GROSS inclusion; a missing observation
+is not Open, Aborted, unpaid or zero. The existing `included_calls` reader is
+unchanged, and no per-aggregate exclusion record is created by this reader.
 
 ### Retained native NET invoices
 

@@ -515,6 +515,9 @@ impl DreamerWakeBudgetConfig {
 pub struct DreamerBudgetReservation {
     pub budget_id: String,
     pub attempt_id: AttemptId,
+    /// Actual queue lease generation that created this reservation. Explicit
+    /// reservations have no claimed birth; later top-ups keep this value.
+    pub birth_generation: Option<u32>,
     pub reserved_units: u64,
     /// Measured spend this child owes that no settlement has charged yet
     /// (FIX 8728, 9015); its settlement or abort charges it.
