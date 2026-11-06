@@ -50,6 +50,15 @@ keeps the same backing allocation. The original owned inline outputs are not
 charged again, and staged files remain disk rather than full-file payload RAM.
 Inputs, forwarded asks and the asking client's copies are unchanged.
 
+For a locally returned mapped output, `host/outputs.rs` reads the sealed length,
+holds that many bytes in `CallRoom` before mapping, and moves the budget bytes
+into the output's `Kept` guard. That guard stays live when `native_outputs`
+borrows the output to make a separate byte-vector copy. `hold` and `keep` track
+the call budget; they do not themselves acquire a machine-floor lease. The
+absence of a separate lease field on that copy does not establish zero floor
+coverage or show that the retained frame peak is sufficient. Budget bytes,
+machine-floor reservations and actual vector capacities are distinct values.
+
 This is not complete mesh-copy memory accounting. Recording capacity after an
 allocation does not establish admission before that allocation. Codec scratch,
 allocator overhead, container metadata such as the output-guard vectors and
