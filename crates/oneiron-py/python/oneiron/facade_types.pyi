@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1251 facade rows, 4531 declarations.
-Inputs: 1182 of 1251 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1086 of 1251 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 119; unread shapes: 0.
+Census: 1266 facade rows, 4602 declarations.
+Inputs: 1196 of 1266 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1098 of 1266 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -300,8 +300,11 @@ class WakeEnvelope(TypedDict):
     actor_ref: str
     line: str
     review_ref: NotRequired[str | None]
+    room_ref: NotRequired[str | None]
+    turn_ref: NotRequired[str | None]
 class BoardWakeReply(TypedDict):
     wakes: list[WakeEnvelope]
+    opener: NotRequired[str | None]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -328,6 +331,52 @@ class ScratchpadWriteReply(TypedDict):
     sealed_prior: NotRequired[EntityId | None]
 class ScratchpadSealRequest(TypedDict):
     session_id: str
+class FoldBaseline(TypedDict):
+    total: int
+    counts: NotRequired[dict[str, int]]
+class SectionFold(TypedDict):
+    note: NotRequired[str | None]
+    keep: NotRequired[list[EntityId]]
+    baseline: NotRequired[FoldBaseline | None]
+    section_baselines: NotRequired[dict[str, FoldBaseline]]
+BoardActorClass = Literal["human", "agent", "system"]
+class BoardWhoFilterMine(TypedDict):
+    kind: Literal["mine"]
+class BoardWhoFilterActor(TypedDict):
+    kind: Literal["actor"]
+    actor: EntityId
+BoardWhoFilterClass = TypedDict("BoardWhoFilterClass", {"kind": Literal["class"], "class": BoardActorClass})
+class BoardWhoFilterGroup(TypedDict):
+    kind: Literal["group"]
+    group: EntityId
+BoardWhoFilter = BoardWhoFilterMine | BoardWhoFilterActor | BoardWhoFilterClass | BoardWhoFilterGroup
+class SectionFilter(TypedDict):
+    who: NotRequired[BoardWhoFilter | None]
+    status: NotRequired[list[str]]
+class SectionLayout(TypedDict):
+    share_pct: NotRequired[int | None]
+    fold: NotRequired[SectionFold | None]
+    filter: NotRequired[SectionFilter | None]
+class BoardLayout(TypedDict):
+    sections: NotRequired[dict[str, SectionLayout]]
+class BoardLayoutState(TypedDict):
+    live: BoardLayout
+    pending: NotRequired[BoardLayout | None]
+    owner_override: NotRequired[BoardLayout]
+class BoardFoldRequest(TypedDict):
+    section: str
+    note: NotRequired[str | None]
+    keep: NotRequired[list[EntityId]]
+class BoardSectionRequest(TypedDict):
+    section: str
+class BoardSizeRequest(TypedDict):
+    section: str
+    share_pct: NotRequired[int | None]
+class BoardFilterRequest(TypedDict):
+    section: str
+    filter: NotRequired[SectionFilter | None]
+class BoardReplaceRequest(TypedDict):
+    layout: BoardLayout
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -5073,6 +5122,98 @@ class WeaveDigestRendered(TypedDict):
     scheduled_for: int
     rendered_at: int
     narrowing: ScopedReadReceipt
+class ProactivityDigestRequest(TypedDict):
+    id: NotRequired[str | None]
+class DigestPrivateSource(TypedDict):
+    root: str
+    turn: str
+class DigestProposal(TypedDict):
+    claim_ref: str
+    revision: list[int]
+    summary: str
+    private_sources: NotRequired[list[DigestPrivateSource]]
+    unverified: NotRequired[bool]
+JudgeAskReason = Literal["revision_disagreement", "uncertainty", "rubric_recheck", "rubric_regrade"]
+class JudgeRegrade(TypedDict):
+    label: list[int]
+    rubric: list[int]
+class JudgeAsk(TypedDict):
+    id: list[int]
+    skill: str
+    responsible: str
+    campaign: str
+    evidence: str
+    reason: JudgeAskReason
+    option_a: str
+    option_b: str
+    delivered_at: NotRequired[int | None]
+    regrade: NotRequired[JudgeRegrade | None]
+class EvalSeatNamed(TypedDict):
+    named: str
+EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
+class EvalLabelAsk(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    case: EntityId
+    decision: str
+    responsible: EntityId
+    option_a: str
+    option_b: str
+    minutes: int
+    asked_at: int
+    delivered_at: NotRequired[int | None]
+    chosen: NotRequired[str | None]
+    answered_at: NotRequired[int | None]
+class DigestOffer(TypedDict):
+    offer: str
+    digest: str
+    summary: str
+class DigestCleanup(TypedDict):
+    decisions: list[str]
+    archived: int
+    skipped: int
+    proposals: list[str]
+    proposed: int
+    view: str
+class DigestNoteTombstones(TypedDict):
+    proposals: list[str]
+    view: str
+class DigestAppliedItem(TypedDict):
+    target: str
+    kind: str
+    facet: str
+    applied_at: int
+    receipt_ref: str
+class DigestApplied(TypedDict):
+    items: list[DigestAppliedItem]
+    view: str
+class DigestDrafterItem(TypedDict):
+    event: str
+    kind: str
+    versions: list[str]
+    reason: NotRequired[str | None]
+    at: int
+class DigestDrafter(TypedDict):
+    items: list[DigestDrafterItem]
+    nights: NotRequired[dict[str, int]]
+    through: str
+    view: str
+class ProactivityDigestView(TypedDict):
+    id: list[int]
+    created_at: int
+    recipient: str | None
+    urgent: bool
+    groups: dict[str, list[DigestProposal]]
+    judge_asks: list[JudgeAsk]
+    eval_label_asks: list[EvalLabelAsk]
+    offers: NotRequired[list[DigestOffer]]
+    cleanup: NotRequired[DigestCleanup | None]
+    note_tombstones: NotRequired[DigestNoteTombstones | None]
+    applied: NotRequired[DigestApplied | None]
+    drafter: NotRequired[DigestDrafter | None]
+    health_cards: NotRequired[list[ConcernCardSummary]]
+    rendered: str
+    voice_style: str
 class InboxLensRequest(TypedDict):
     identity: NotRequired[str | None]
     agent: NotRequired[str | None]
@@ -6000,6 +6141,7 @@ class SlateHolderNarrow(TypedDict):
     actor: str
     at: int
 class SlateRow(TypedDict):
+    settings_act: EntityId
     draft: SlateDraftRow
     owner_override: NotRequired[SlateOwnerOverride | None]
     holder_narrow: NotRequired[SlateHolderNarrow | None]
@@ -6646,12 +6788,23 @@ class ColdAuthorityAuditRow(TypedDict):
     parents: list[str]
     fold_valid: bool
     issue_codes: NotRequired[list[str]]
+class PendingMembershipExecutionRow(TypedDict):
+    receipt: str
+    vault_id: str
+    act: NotRequired[str | None]
+    cause: str
+    person: str
+    member: str
+    executed_at: int
+    withdrawn_grants: list[str]
+    handover: bool
 class AuthorityAuditPage(TypedDict):
     rows: list[AuthorityAuditRow]
     next_after: NotRequired[EntityId | None]
     order: AuthorityAuditOrder
     scanned: int
     cold_attested: NotRequired[list[ColdAuthorityAuditRow]]
+    pending_membership_executions: NotRequired[list[PendingMembershipExecutionRow]]
 class SignedAuthorityHistory(TypedDict):
     entries: list[str]
 class AuthorityHistoryImported(TypedDict):
@@ -7007,7 +7160,7 @@ class SharedActExport(TypedDict):
     records: int
     digest: str
     diary_reads: list[ExportDiaryRead]
-ErrorKind = Literal["storage", "verb_hook_stopped", "io", "dimension_mismatch", "invalid_vector", "invalid_edge_weight", "invalid_vad", "embedding_model_changed", "hnsw_config_changed", "storage_abi_version_changed", "storage_schema_version_changed", "db_manifest_mismatch", "vault_root_preflight", "map_full", "invalid_config", "invalid_temporal_expression", "entity_not_found", "access_grant_already_exists", "outbound_grant_already_exists", "connector_key_already_exists", "channel_identity_already_exists", "counterparty_contact_already_exists", "concurrent_write", "arithmetic_overflow", "invariant_violation", "invalid_key", "invalid_federation_grant_body", "invalid_authority_log_body", "authority_refused", "checkpoint_policy_refused", "checkpoint_policy_revision_stale", "world_recipient_limit", "world_placement_unverifiable", "invalid_access_grant_body", "invalid_outbound_grant_body", "invalid_connector_key_body", "connector_charter_compile", "connector_charter_approval_mismatch", "connector_charter_missing", "invalid_channel_identity_body", "workspace_mailbox_autonomy_not_ready", "work_companion_required", "invalid_counterparty_contact_body", "invalid_comm_record_body", "invalid_diagnostic_body", "invalid_disclosure_scope", "disclosure_clamp_violation", "invalid_consent_bound", "invalid_consent_grant_row", "invalid_consent_effect_facts", "consent_owner_not_authenticated", "consent_unauthenticated_actor", "consent_guest_not_recorded", "consent_catastrophe_not_rememberable", "consent_grant_not_found", "consent_grant_revoked", "consent_approve_once_spent", "invalid_task_body", "ask_dependency_pending", "corrupted_index", "context_pack_validation", "index_overflow", "missing_posting_entry", "invalid_entity_type", "invalid_facet", "invalid_relationship", "invalid_facet_of_edge", "facet_stamp_immutable", "invalid_claim_body", "invalid_psych_profile_body", "invalid_persona_snapshot", "persona_snapshot_consent_stale", "invalid_code_artifact_body", "invalid_blob_artifact_body", "invalid_lfs_object", "invalid_note_body", "invalid_witness_message_body", "invalid_anchor", "annotation_thread_not_found", "invalid_edit_manifest", "edit_roundtrip_failed", "live_deck_refused", "memory_floor_refused", "edit_proposal_already_settled", "edit_proposal_stale", "settle_not_authorized", "invalid_skill_body", "skill_edit_gate_retry", "skill_content_anchor_type_mismatch", "skill_package_unavailable", "invalid_agent_def_body", "invalid_embedding_setup_body", "embedding_setup_dependency_pending", "agent_definition_not_found", "agent_definition_disabled", "seeded_agent_definition_conflict", "agent_not_dispatchable", "invalid_agent_dispatch_input", "model_pin_unavailable", "invalid_recovery_artifact", "body_key_custody_unavailable", "known_value_history_unavailable", "recovery_artifact_quarantine_exhausted", "invalid_codebase_snapshot_body", "hosted_media_hash_match_known_match", "invalid_code_symbol_manifest_body", "invalid_repo_mutation_record", "repo_mutation_failed", "repo_mutation_recovery_diverged", "invalid_predicate", "reserved_predicate", "source_not_trusted_for_auto", "gate_write_rejected", "share_create_paced", "family_requires_auto_grant", "actor_lacks_claim_authority", "guest_claim_withheld", "gate_consent_stale", "maintenance_kind_not_writable", "structural_kind_zone_violation", "structural_kind_collision", "invalid_structural_kind_registration", "invalid_attempt_queue_record", "invalid_attempt_queue_transition", "surface_event_correlation_kind_collision", "entity_type_immutable", "invalid_time_range", "edge_not_found", "provenance_on_structural_edge", "actor_class_mismatch", "invalid_provenance_body", "invalid_model_substrate", "emit_adjacent_receipt_required", "claim_already_closed", "write_verb_target_stale", "claim_self_supersession", "provenance_claim_lifecycle", "not_a_provenance_claim", "provenance_claim_already_closed", "provenance_claim_id_in_use", "provenance_subject_mismatch", "provenance_self_supersession", "provenance_precedence_violation", "edge_is_provenanced", "cycle_detected", "child_of_cardinality", "incompatible_analyzer", "bm25_field_schema_changed", "invalid_rank_profile", "analyzer_asset_missing", "analyzer_error", "indexed_text_too_large", "upstream_tool_failure", "retrieval_stage_cut", "provider_unavailable", "refused", "legal_hold", "crdt_decode_error", "window_not_found", "window_busy", "live_document_waited_out", "sync_protocol_error", "sync_engine_error", "held_facet_stamps_full", "invalid_redaction_receipt_body", "kill_switch_disabled", "off_record_session_already_exists", "off_record_session_not_found", "off_record_session_closing", "off_record_overlay_full", "off_record_overlay_lease_closed", "off_record_promote_unauthenticated", "off_record_tainted_base_write", "off_record_witness_door_rejected", "off_record_guest_turn_ref_rejected", "off_record_talk_only", "off_record_turn_not_in_journal", "off_record_promote_author_missing", "off_record_not_in_room", "off_record_saving_stopped", "off_record_copy_conflict", "redaction_receipt_divergence", "receipt_attestation_invalid", "receipt_lease_unknown", "receipt_lease_revoked", "identity_topology_rejected", "identity_topology_unarmed", "identity_proposal_amendment_out_of_scope", "delta_capture_unavailable", "invalid_identity_topology_event_body", "reserved_edge_kind", "identity_topology_event_divergence", "authority_log_append_only_violation", "authority_log_store_key_mismatch", "authority_log_signer_pending", "authority_log_full", "authority_history_required", "authority_clock_corrupt", "seal_standing_unverifiable", "hold_target_erased", "invalid_secret_custody_body", "secret_name_in_use", "secret_custody_not_active", "credential_leaf_unreadable", "credential_custody_unavailable", "secret_binding_denied", "manifest_widens_floor", "secret_tier_denied", "secret_door_policy_refused", "sealed_file_withheld", "masked_copy_withheld", "secret_ref_not_found", "secret_wider_than_manifest", "secret_manifest_not_found", "secret_lease_not_found", "secret_lease_not_active", "secret_lease_path_not_declared", "secret_lease_path_conflict", "secret_lease_path_refused", "secret_lease_receipt_write_failed", "invalid_secret_lease_body", "secret_grant_stale", "secret_grant_target_mismatch", "secret_grant_spent", "secret_host_delivery_refused", "secret_grant_cleanup_kept", "invalid_secret_rotation_body", "tainted_artifact_stale", "world_key_refused", "keystore_unavailable", "unverified_kit_restore", "kit_confirmation_stale", "micro_vm_backend_unavailable", "micro_vm_backend_error", "sandbox_proposal_disk_floor", "micro_vm_overlay_error", "micro_vm_credential_destination_denied", "code_step_cancelled", "response_erased", "relay_attestation_invalid_service_identity", "relay_attestation_class_mismatch", "relay_attestation_edge_service_conflict", "relay_hosted_legal_policy_invalid", "policy_manifest_invalid", "code_emission_missing_dreamer_run_id", "code_review_context_required", "code_review_unsupported_operation", "code_review_missing_reviewer_run_id", "code_review_run_id_not_distinct", "code_review_missing_artifact_refs", "code_review_authoring_run_id_mismatch", "code_blast_radius_missing_touched_symbols", "code_blast_radius_unknown_symbol", "relay_vault_receipt_untrusted", "policy_verdict_not_in_force", "code_memory_invalid_anchor", "code_memory_invalid_anchor_transfer", "code_memory_blocks_cycle", "code_memory_blocks_actor_denied", "code_memory_blocks_source_untrusted", "code_memory_always_on_invalid", "code_memory_limit_exceeded", "compaction_packet_rejected", "git_http_invalid_repo_name", "git_http_repo_not_found", "git_http_serve_failed", "git_http_exchange_idle", "git_http_repository_busy", "lfs_read_room_waited_out", "receive_pack_door_rejected", "git_push_capability_required", "receive_pack_landing_refused", "origin_publication_beyond_owner", "vault_cleanup_restore_not_archived", "vault_cleanup_archive_marker_undecodable", "vault_cleanup_proposal_not_found", "vault_cleanup_wake_trigger_rejected", "vault_read", "invalid_project_body", "invalid_project_room_body", "project_dependency_pending", "project_revision_collision", "project_revision_write", "identity_unsettled", "project_history_over_budget", "project_authority_unresolved", "invalid_conversation_body", "conversation_state", "conversation_denied", "message_stream_recovery_failed", "key_value_write_requires_owned_door", "stream_already_active", "stream_not_active", "stream_limit", "dag_parent_outside_conversation", "head_advance_off_trunk", "invalid_conversation_dag", "invalid_scope_summary", "invalid_pairing_scope", "overlay_limit", "cooperative_deletion_requires_terminal_pact", "invalid_cooperative_deletion_request", "write_concurrent_with_revocation", "pack_kind_name_collision", "pack_kind_not_installed", "invalid_pack_byte_map", "invalid_suppression_receipt_body", "suppression_receipt_divergence", "pack_predicate_name_collision", "dreamer_actor_immutable", "pack_install_rule_blocked", "resident_owner_dependency_pending", "invalid_machine_claim_proof", "machine_claim_history_incomplete", "remote_machine_history_pending", "engine_identities_not_provisioned", "side_table_row", "side_table_key_undeclared", "scoped_read_owner_not_live", "embedding_transform_changed", "archived_vault", "host_action_requires_support_grant", "vault_served_elsewhere"]
+ErrorKind = Literal["storage", "verb_hook_stopped", "io", "dimension_mismatch", "invalid_vector", "invalid_edge_weight", "invalid_vad", "embedding_model_changed", "hnsw_config_changed", "storage_abi_version_changed", "storage_schema_version_changed", "db_manifest_mismatch", "vault_root_preflight", "map_full", "invalid_config", "invalid_temporal_expression", "entity_not_found", "access_grant_already_exists", "outbound_grant_already_exists", "connector_key_already_exists", "channel_identity_already_exists", "counterparty_contact_already_exists", "concurrent_write", "arithmetic_overflow", "invariant_violation", "invalid_key", "invalid_federation_grant_body", "invalid_authority_log_body", "authority_refused", "checkpoint_policy_refused", "checkpoint_policy_revision_stale", "world_recipient_limit", "world_placement_unverifiable", "invalid_access_grant_body", "invalid_outbound_grant_body", "invalid_connector_key_body", "connector_charter_compile", "connector_charter_approval_mismatch", "connector_charter_missing", "invalid_channel_identity_body", "workspace_mailbox_autonomy_not_ready", "work_companion_required", "invalid_counterparty_contact_body", "invalid_comm_record_body", "invalid_diagnostic_body", "invalid_disclosure_scope", "disclosure_clamp_violation", "invalid_consent_bound", "invalid_consent_grant_row", "invalid_consent_effect_facts", "consent_owner_not_authenticated", "consent_unauthenticated_actor", "consent_guest_not_recorded", "consent_catastrophe_not_rememberable", "consent_grant_not_found", "consent_grant_revoked", "consent_approve_once_spent", "invalid_task_body", "ask_dependency_pending", "corrupted_index", "context_pack_validation", "index_overflow", "missing_posting_entry", "invalid_entity_type", "invalid_facet", "invalid_relationship", "invalid_facet_of_edge", "facet_stamp_immutable", "invalid_claim_body", "invalid_psych_profile_body", "invalid_persona_snapshot", "persona_snapshot_consent_stale", "invalid_code_artifact_body", "invalid_blob_artifact_body", "invalid_lfs_object", "invalid_note_body", "invalid_witness_message_body", "invalid_anchor", "annotation_thread_not_found", "invalid_edit_manifest", "edit_roundtrip_failed", "live_deck_refused", "memory_floor_refused", "edit_proposal_already_settled", "edit_proposal_stale", "settle_not_authorized", "invalid_skill_body", "skill_edit_gate_retry", "skill_content_anchor_type_mismatch", "skill_package_unavailable", "invalid_agent_def_body", "invalid_embedding_setup_body", "embedding_setup_dependency_pending", "agent_definition_not_found", "agent_definition_disabled", "seeded_agent_definition_conflict", "agent_not_dispatchable", "invalid_agent_dispatch_input", "model_pin_unavailable", "invalid_recovery_artifact", "body_key_custody_unavailable", "known_value_history_unavailable", "recovery_artifact_quarantine_exhausted", "invalid_codebase_snapshot_body", "hosted_media_hash_match_known_match", "invalid_code_symbol_manifest_body", "invalid_repo_mutation_record", "repo_mutation_failed", "repo_mutation_recovery_diverged", "invalid_predicate", "reserved_predicate", "source_not_trusted_for_auto", "gate_write_rejected", "share_create_paced", "family_requires_auto_grant", "actor_lacks_claim_authority", "guest_claim_withheld", "gate_consent_stale", "maintenance_kind_not_writable", "structural_kind_zone_violation", "structural_kind_collision", "invalid_structural_kind_registration", "invalid_attempt_queue_record", "invalid_attempt_queue_transition", "surface_event_correlation_kind_collision", "entity_type_immutable", "invalid_time_range", "edge_not_found", "provenance_on_structural_edge", "actor_class_mismatch", "invalid_provenance_body", "invalid_model_substrate", "emit_adjacent_receipt_required", "claim_already_closed", "write_verb_target_stale", "claim_self_supersession", "provenance_claim_lifecycle", "not_a_provenance_claim", "provenance_claim_already_closed", "provenance_claim_id_in_use", "provenance_subject_mismatch", "provenance_self_supersession", "provenance_precedence_violation", "edge_is_provenanced", "cycle_detected", "child_of_cardinality", "incompatible_analyzer", "bm25_field_schema_changed", "invalid_rank_profile", "analyzer_asset_missing", "analyzer_error", "indexed_text_too_large", "upstream_tool_failure", "retrieval_stage_cut", "provider_unavailable", "durable_step_trapped", "refused", "legal_hold", "crdt_decode_error", "window_not_found", "window_busy", "live_document_waited_out", "sync_protocol_error", "sync_engine_error", "held_facet_stamps_full", "invalid_redaction_receipt_body", "kill_switch_disabled", "off_record_session_already_exists", "off_record_session_not_found", "off_record_session_closing", "off_record_overlay_full", "off_record_overlay_lease_closed", "off_record_promote_unauthenticated", "off_record_tainted_base_write", "off_record_witness_door_rejected", "off_record_guest_turn_ref_rejected", "off_record_talk_only", "off_record_turn_not_in_journal", "off_record_promote_author_missing", "off_record_not_in_room", "off_record_saving_stopped", "off_record_copy_conflict", "redaction_receipt_divergence", "receipt_attestation_invalid", "receipt_lease_unknown", "receipt_lease_revoked", "identity_topology_rejected", "identity_topology_unarmed", "identity_proposal_amendment_out_of_scope", "delta_capture_unavailable", "invalid_identity_topology_event_body", "reserved_edge_kind", "identity_topology_event_divergence", "authority_log_append_only_violation", "authority_log_store_key_mismatch", "authority_log_signer_pending", "authority_log_full", "authority_history_required", "authority_clock_corrupt", "seal_standing_unverifiable", "hold_target_erased", "invalid_secret_custody_body", "secret_name_in_use", "secret_custody_not_active", "credential_leaf_unreadable", "credential_custody_unavailable", "secret_binding_denied", "manifest_widens_floor", "secret_tier_denied", "secret_door_policy_refused", "sealed_file_withheld", "masked_copy_withheld", "secret_ref_not_found", "secret_wider_than_manifest", "secret_manifest_not_found", "secret_lease_not_found", "secret_lease_not_active", "secret_lease_path_not_declared", "secret_lease_path_conflict", "secret_lease_path_refused", "secret_lease_receipt_write_failed", "invalid_secret_lease_body", "secret_grant_stale", "secret_grant_target_mismatch", "secret_grant_spent", "secret_host_delivery_refused", "secret_grant_cleanup_kept", "invalid_secret_rotation_body", "tainted_artifact_stale", "world_key_refused", "keystore_unavailable", "unverified_kit_restore", "kit_confirmation_stale", "micro_vm_backend_unavailable", "micro_vm_backend_error", "sandbox_proposal_disk_floor", "micro_vm_overlay_error", "micro_vm_credential_destination_denied", "code_step_cancelled", "response_erased", "relay_attestation_invalid_service_identity", "relay_attestation_class_mismatch", "relay_attestation_edge_service_conflict", "relay_hosted_legal_policy_invalid", "policy_manifest_invalid", "code_emission_missing_dreamer_run_id", "code_review_context_required", "code_review_unsupported_operation", "code_review_missing_reviewer_run_id", "code_review_run_id_not_distinct", "code_review_missing_artifact_refs", "code_review_authoring_run_id_mismatch", "code_blast_radius_missing_touched_symbols", "code_blast_radius_unknown_symbol", "relay_vault_receipt_untrusted", "policy_verdict_not_in_force", "code_memory_invalid_anchor", "code_memory_invalid_anchor_transfer", "code_memory_blocks_cycle", "code_memory_blocks_actor_denied", "code_memory_blocks_source_untrusted", "code_memory_always_on_invalid", "code_memory_limit_exceeded", "compaction_packet_rejected", "git_http_invalid_repo_name", "git_http_repo_not_found", "git_http_serve_failed", "git_http_exchange_idle", "git_http_repository_busy", "lfs_read_room_waited_out", "receive_pack_door_rejected", "git_push_capability_required", "receive_pack_landing_refused", "origin_publication_beyond_owner", "vault_cleanup_restore_not_archived", "vault_cleanup_archive_marker_undecodable", "vault_cleanup_proposal_not_found", "vault_cleanup_wake_trigger_rejected", "vault_read", "invalid_project_body", "invalid_project_room_body", "project_dependency_pending", "project_revision_collision", "project_revision_write", "identity_unsettled", "project_history_over_budget", "project_authority_unresolved", "invalid_conversation_body", "conversation_state", "conversation_denied", "message_stream_recovery_failed", "key_value_write_requires_owned_door", "stream_already_active", "stream_not_active", "stream_limit", "dag_parent_outside_conversation", "head_advance_off_trunk", "invalid_conversation_dag", "invalid_scope_summary", "invalid_pairing_scope", "overlay_limit", "cooperative_deletion_requires_terminal_pact", "invalid_cooperative_deletion_request", "write_concurrent_with_revocation", "pack_kind_name_collision", "pack_kind_not_installed", "invalid_pack_byte_map", "invalid_suppression_receipt_body", "suppression_receipt_divergence", "pack_predicate_name_collision", "dreamer_actor_immutable", "pack_install_rule_blocked", "resident_owner_dependency_pending", "invalid_machine_claim_proof", "machine_claim_history_incomplete", "remote_machine_history_pending", "engine_identities_not_provisioned", "side_table_row", "side_table_key_undeclared", "scoped_read_owner_not_live", "embedding_transform_changed", "archived_vault", "host_action_requires_support_grant", "vault_served_elsewhere"]
 class DetachRemainderReasonWithdrawalFailedBody(TypedDict):
     kind: ErrorKind
 class DetachRemainderReasonWithdrawalFailed(TypedDict):
@@ -7030,6 +7183,7 @@ class SharedActExecutionReceipt(TypedDict):
     revoked_slips: list[str]
     export: NotRequired[SharedActExport | None]
     authority_entry: NotRequired[str | None]
+    authority_record_pending: NotRequired[bool]
     authorizer: NotRequired[str | None]
     detach: NotRequired[DetachReport | None]
     completed_at: int
@@ -8502,9 +8656,6 @@ class ResearchGoalPin(TypedDict):
     goal_id: EntityId
     revision: str
     project: NotRequired[tuple[EntityId, EntityId] | None]
-class EvalSeatNamed(TypedDict):
-    named: str
-EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
 class ResearchConfirmationSeat(TypedDict):
     seat: EvalSeat
     cohort: EntityId
@@ -9043,19 +9194,6 @@ class EvalExposureLedger(TypedDict):
 class EvalBlockedLabelsRequest(TypedDict):
     seat: NotRequired[EvalSeat | None]
     decision: NotRequired[str | None]
-class EvalLabelAsk(TypedDict):
-    id: EntityId
-    seat: EvalSeat
-    case: EntityId
-    decision: str
-    responsible: EntityId
-    option_a: str
-    option_b: str
-    minutes: int
-    asked_at: int
-    delivered_at: NotRequired[int | None]
-    chosen: NotRequired[str | None]
-    answered_at: NotRequired[int | None]
 class EvalLabelPickRequest(TypedDict):
     decision: str
     case: EntityId
@@ -9384,6 +9522,154 @@ class ReservoirSourcePreview(TypedDict):
     carried: int
     excluded: dict[str, int]
     sources: list[ReservoirSourceRow]
+class DrafterTarget(TypedDict):
+    model: str
+    tokenizer: str
+    runtime: str
+class DrafterListRequest(TypedDict):
+    target: NotRequired[DrafterTarget | None]
+class DrafterServingVersion(TypedDict):
+    version: EntityId
+DrafterServing = Literal["stock"] | DrafterServingVersion
+DrafterVersionState = Literal["prepared", "training", "returned", "qualified", "rejected", "erased"]
+class DrafterVersionView(TypedDict):
+    id: EntityId
+    target: DrafterTarget
+    parent: DrafterServing
+    recipe: str
+    state: DrafterVersionState
+    generation: int
+    created_at: int
+    updated_at: int
+    sources: int
+    retained: bool
+    serving: bool
+    revertible: bool
+class DrafterStatusRequest(TypedDict):
+    events_after: NotRequired[EntityId | None]
+class DrafterRecipe(TypedDict):
+    id: str
+    revision: SourcePin
+    settings: Any
+    gpu_seconds: int
+    device_memory_mib: int
+class DrafterActorOwner(TypedDict):
+    owner: EntityId
+class DrafterActorAgent(TypedDict):
+    agent: EntityId
+DrafterActor = Literal["coach", "host", "erase", "erased"] | DrafterActorOwner | DrafterActorAgent
+class DrafterPolicy(TypedDict):
+    enabled: bool
+    excluded_worlds: list[EntityId]
+    recipe: NotRequired[DrafterRecipe | None]
+    revision: int
+    set_by: NotRequired[DrafterActor | None]
+    set_at: NotRequired[int | None]
+class DrafterBinding(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    previous: DrafterServing
+    changed_by: NotRequired[EntityId | None]
+    changed_at: int
+DrafterUnservedReason = Literal["no_serving_host", "no_serving_worker", "unsupported_shared_worker", "unsupported_external_worker", "unsupported_runtime", "vault_locked", "version_not_servable", "load_set_unverified", "worker_rejected", "superseded"]
+class DrafterServedView(TypedDict):
+    target: DrafterTarget
+    serving: NotRequired[DrafterServing | None]
+    generation: NotRequired[int | None]
+    draft_digest: NotRequired[str | None]
+    worker: NotRequired[str | None]
+    epoch: NotRequired[str | None]
+    applying: bool
+    reason: NotRequired[DrafterUnservedReason | None]
+DrafterSkipReason = Literal["policy_off"]
+DrafterHoldReason = Literal["no_trainer_recipe", "no_drafter_target", "policy_moved", "empty_corpus", "corpus_missing", "training_in_progress", "no_admission"]
+DrafterTrainingFailure = Literal["refused", "trainer_failed", "receipt_unverified", "seal_failed", "over_budget", "lost", "cancelled", "erased"]
+class DrafterRetrainOutcomeSkippedBody(TypedDict):
+    reason: DrafterSkipReason
+class DrafterRetrainOutcomeSkipped(TypedDict):
+    skipped: DrafterRetrainOutcomeSkippedBody
+class DrafterRetrainOutcomeHeldBody(TypedDict):
+    reason: DrafterHoldReason
+class DrafterRetrainOutcomeHeld(TypedDict):
+    held: DrafterRetrainOutcomeHeldBody
+class DrafterRetrainOutcomeTrainedBody(TypedDict):
+    version: EntityId
+class DrafterRetrainOutcomeTrained(TypedDict):
+    trained: DrafterRetrainOutcomeTrainedBody
+class DrafterRetrainOutcomeFailedBody(TypedDict):
+    version: EntityId
+    reason: DrafterTrainingFailure
+class DrafterRetrainOutcomeFailed(TypedDict):
+    failed: DrafterRetrainOutcomeFailedBody
+DrafterRetrainOutcome = DrafterRetrainOutcomeSkipped | DrafterRetrainOutcomeHeld | DrafterRetrainOutcomeTrained | DrafterRetrainOutcomeFailed
+DrafterRollbackReason = Literal["slowdown", "output_mismatch", "worker_error"]
+class DrafterEventKindRetrainBody(TypedDict):
+    attempt: AttemptId
+    policy_revision: int
+    cutoff: int
+    outcome: DrafterRetrainOutcome
+class DrafterEventKindRetrain(TypedDict):
+    retrain: DrafterEventKindRetrainBody
+class DrafterEventKindQualifyBody(TypedDict):
+    version: EntityId
+    passed: bool
+    evaluation: NotRequired[EntityId | None]
+class DrafterEventKindQualify(TypedDict):
+    qualify: DrafterEventKindQualifyBody
+class DrafterEventKindActivateBody(TypedDict):
+    version: EntityId
+class DrafterEventKindActivate(TypedDict):
+    activate: DrafterEventKindActivateBody
+class DrafterEventKindRollbackBody(TypedDict):
+    version: EntityId
+    reason: DrafterRollbackReason
+class DrafterEventKindRollback(TypedDict):
+    rollback: DrafterEventKindRollbackBody
+class DrafterEventKindRevertBody(TypedDict):
+    version: EntityId
+class DrafterEventKindRevert(TypedDict):
+    revert: DrafterEventKindRevertBody
+class DrafterEventKindEraseBody(TypedDict):
+    versions: list[EntityId]
+    jobs: list[AttemptId]
+class DrafterEventKindErase(TypedDict):
+    erase: DrafterEventKindEraseBody
+class DrafterEventKindPolicyBody(TypedDict):
+    revision: int
+class DrafterEventKindPolicy(TypedDict):
+    policy: DrafterEventKindPolicyBody
+class DrafterEventKindServedBody(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    draft_digest: NotRequired[str | None]
+class DrafterEventKindServed(TypedDict):
+    served: DrafterEventKindServedBody
+DrafterEventKind = DrafterEventKindRetrain | DrafterEventKindQualify | DrafterEventKindActivate | DrafterEventKindRollback | DrafterEventKindRevert | DrafterEventKindErase | DrafterEventKindPolicy | DrafterEventKindServed
+DrafterBindingChange = TypedDict("DrafterBindingChange", {"target": DrafterTarget, "from": DrafterServing, "to": DrafterServing, "generation": int})
+class DrafterEvent(TypedDict):
+    id: EntityId
+    at: int
+    by: DrafterActor
+    kind: DrafterEventKind
+    change: NotRequired[DrafterBindingChange | None]
+class DrafterStatus(TypedDict):
+    policy: DrafterPolicy
+    bindings: list[DrafterBinding]
+    served: list[DrafterServedView]
+    events: list[DrafterEvent]
+class DrafterPolicySetRequest(TypedDict):
+    expected_revision: int
+    enabled: bool
+    excluded_worlds: NotRequired[list[EntityId]]
+    recipe: NotRequired[DrafterRecipe | None]
+class DrafterRevertRequest(TypedDict):
+    version: EntityId
+    expected_binding_generation: int
+class DrafterRevertReceipt(TypedDict):
+    binding: DrafterBinding
+    event: NotRequired[DrafterEvent | None]
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -10795,6 +11081,64 @@ class SlideReviewPolicyRowHolderRoute(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung
 SlideReviewPolicyRow = SlideReviewPolicyRowPrecedence | SlideReviewPolicyRowVault | SlideReviewPolicyRowRoute | SlideReviewPolicyRowHolder | SlideReviewPolicyRowHolderRoute
+class PolicyGrantMapEntry(TypedDict):
+    key: PolicyGrantValue
+    value: PolicyGrantValue
+class PolicyGrantExtension(TypedDict):
+    tag: int
+    data: list[int]
+class PolicyGrantValueNil(TypedDict):
+    kind: Literal["nil"]
+class PolicyGrantValueBoolean(TypedDict):
+    kind: Literal["boolean"]
+    value: bool
+class PolicyGrantValueInteger(TypedDict):
+    kind: Literal["integer"]
+    value: str
+class PolicyGrantValueFloat32(TypedDict):
+    kind: Literal["float32"]
+    value: list[int]
+class PolicyGrantValueFloat64(TypedDict):
+    kind: Literal["float64"]
+    value: list[int]
+class PolicyGrantValueString(TypedDict):
+    kind: Literal["string"]
+    value: str
+class PolicyGrantValueRawString(TypedDict):
+    kind: Literal["raw_string"]
+    value: list[int]
+class PolicyGrantValueBinary(TypedDict):
+    kind: Literal["binary"]
+    value: list[int]
+class PolicyGrantValueArray(TypedDict):
+    kind: Literal["array"]
+    value: list[PolicyGrantValue]
+class PolicyGrantValueMap(TypedDict):
+    kind: Literal["map"]
+    value: list[PolicyGrantMapEntry]
+class PolicyGrantValueExtension(TypedDict):
+    kind: Literal["extension"]
+    value: PolicyGrantExtension
+PolicyGrantValue = PolicyGrantValueNil | PolicyGrantValueBoolean | PolicyGrantValueInteger | PolicyGrantValueFloat32 | PolicyGrantValueFloat64 | PolicyGrantValueString | PolicyGrantValueRawString | PolicyGrantValueBinary | PolicyGrantValueArray | PolicyGrantValueMap | PolicyGrantValueExtension
+class PolicyScopedGrantRow(TypedDict):
+    actor_class: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    effector: str
+    scope: Scope
+    selectors: NotRequired[PolicyGrantValue | None]
+    budget: NotRequired[PolicyGrantValue | None]
+    receipt_required: bool
+class TeacherProbeHolderFloor(TypedDict):
+    holder_ref: str
+    min_f1_millionths: int
+class TeacherProbePolicy(TypedDict):
+    probe_id: str
+    min_f1_millionths: int
+    holders: NotRequired[list[TeacherProbeHolderFloor]]
+class SheetAnswerLimit(TypedDict):
+    artifact_ref: NotRequired[str | None]
+    sheet: NotRequired[str | None]
+    max_count: int
 class PolicyManifest(TypedDict):
     schema_version: str
     pack_id: str
@@ -10808,6 +11152,9 @@ class PolicyManifest(TypedDict):
     signatures: NotRequired[list[PolicySignature]]
     auto_checker: NotRequired[str | None]
     slide_review_policy: NotRequired[list[SlideReviewPolicyRow] | None]
+    scoped_grants: NotRequired[list[PolicyScopedGrantRow] | None]
+    teacher_probe: NotRequired[TeacherProbePolicy | None]
+    sheet_answer_limits: NotRequired[list[SheetAnswerLimit] | None]
 class PolicyManifestView(TypedDict):
     manifest_ref: str
     body_hash: str
@@ -12459,15 +12806,19 @@ class CodeWaitTarget(TypedDict):
     step_hash: str
     effect_digest: str
 CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
+CodeWaitRememberScope = Literal["connection", "asking_lineage"]
 class CodeWaitResolveRequest(TypedDict):
     target: CodeWaitTarget
     answer: CodeWaitChoice
+    remember_scope: NotRequired[CodeWaitRememberScope | None]
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
 CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
+    remember_scope: NotRequired[CodeWaitRememberScope | None]
+    remembered_grant_ref: NotRequired[str | None]
     decision_ref: str
     answered_at_ms: int
 CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
@@ -18726,6 +19077,61 @@ class ProductivityNode(TypedDict):
 class ProductivityTree(TypedDict):
     root_ref: str
     nodes: list[ProductivityNode]
+AgUiObservationKind = Literal["action", "failure", "repair", "outcome"]
+class AgUiCustomMapping(TypedDict):
+    name: str
+    kind: AgUiObservationKind
+    id: NotRequired[str | None]
+    thread_id: NotRequired[str | None]
+    run_id: NotRequired[str | None]
+    tool_call_id: NotRequired[str | None]
+    failure_id: NotRequired[str | None]
+    repair_id: NotRequired[str | None]
+    outcome: NotRequired[str | None]
+class AgUiFileImport(TypedDict):
+    claim_ref: NotRequired[str | None]
+    project_ref: str
+    app_id: str
+    custom_mappings: list[AgUiCustomMapping]
+    jsonl: str
+class AgUiFileReceipt(TypedDict):
+    claim_ref: str
+    source_hash: str
+    event_count: int
+class AgUiFileReadInput(TypedDict):
+    claim_ref: str
+    source_hash: str
+class AgUiAppObservation(TypedDict):
+    ordinal: int
+    name: str
+    kind: AgUiObservationKind
+    id: NotRequired[str | None]
+    thread_id: NotRequired[str | None]
+    run_id: NotRequired[str | None]
+    tool_call_id: NotRequired[str | None]
+    failure_id: NotRequired[str | None]
+    repair_id: NotRequired[str | None]
+    outcome: NotRequired[Any | None]
+AgUiRepairLinkStatus = Literal["linked", "missing_link", "ambiguous_link", "namespace_mismatch", "missing_outcome"]
+class AgUiRepairLink(TypedDict):
+    outcome_ordinal: int
+    repair_ordinal: NotRequired[int | None]
+    failure_ordinal: NotRequired[int | None]
+    status: AgUiRepairLinkStatus
+class AgUiFileView(TypedDict):
+    claim_ref: str
+    source_hash: str
+    capture_actor_ref: str
+    project_ref: str
+    app_id: str
+    custom_mappings: list[AgUiCustomMapping]
+    jsonl: str
+    event_count: int
+    observations: list[AgUiAppObservation]
+    repair_links: list[AgUiRepairLink]
+class AgUiFileRead(TypedDict):
+    source: NotRequired[AgUiFileView | None]
+    receipt: ScopedReadReceipt
 class AdmitImportedClaimInput(TypedDict):
     source_id: str
     source_record_id: str
@@ -22112,11 +22518,15 @@ class FoldUnfoldRequest(TypedDict):
 class FoldReplyRefused(TypedDict):
     error: str
 FoldReply = T | FoldReplyRefused
-FoldKind = Literal["repl_output"]
+FoldKind = Literal["repl_output", "program"]
+class FoldedSpeech(TypedDict):
+    verb: str
+    call: int
 class FoldedOutput(TypedDict):
     step: int
     handles: list[str]
     ids: list[str]
+    said: NotRequired[list[FoldedSpeech]]
 FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str], "kind": NotRequired[FoldKind | None], "note": NotRequired[str | None], "outputs": NotRequired[list[FoldedOutput]]})
 FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 FoldDescription = FoldDescriptionFolded | FoldDescriptionPending
@@ -23440,7 +23850,7 @@ class BoardStreamFrame(TypedDict):
     kind: FrameKind
 class BoardFrameReply(TypedDict):
     frame: BoardStreamFrame
-SubscriptionScope = Literal["my_tasks", "my_children", "consults_to_me", "memories", "worlds", "presence", "counts", "diary_reviews"]
+SubscriptionScope = Literal["my_tasks", "my_children", "consults_to_me", "memories", "worlds", "presence", "counts", "diary_reviews", "room_turns"]
 class BoardSubscriptionRequest(TypedDict):
     scopes: list[SubscriptionScope]
 class BoardSubscriptionReply(TypedDict):

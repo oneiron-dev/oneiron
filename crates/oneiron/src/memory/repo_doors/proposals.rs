@@ -168,7 +168,7 @@ pub(crate) fn repo_touched_symbols(
     if let Some(manifest) = manifest {
         for symbol in &manifest.symbols {
             if paths.contains(&symbol.path) {
-                touched.insert(code_symbol_entity_id(&manifest.repo_ref, symbol)?.to_hex());
+                touched.insert(code_symbol_entity_id(&manifest.repo_identity, symbol)?.to_hex());
             }
         }
     }
@@ -231,6 +231,31 @@ impl Memory<'_> {
         policy: Option<&dyn RepoReviewPolicy>,
         sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        self.repo_proposal_submit(binding, input, policy, sources, None)
+    }
+
+    /// A fresh run-bound review of an approved file's proved redacted
+    /// resolution. The current run reads the source and edits the target;
+    /// no authority or attribution comes from the source's old run.
+    pub fn repo_proposal_rereview_for_run(
+        &self,
+        binding: &RepoRunBinding,
+        original: EntityId,
+        input: RepoProposalSubmitInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        self.repo_proposal_submit(binding, input, policy, sources, Some(original))
+    }
+
+    fn repo_proposal_submit(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoProposalSubmitInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+        original: Option<EntityId>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
         let own = self.repo_own_work(
             binding,
             input.work,
@@ -239,6 +264,9 @@ impl Memory<'_> {
         )?;
         let now = self.vault.now_recorded_at();
         let admission = self.repo_publish_admission(binding, &own, input.declaration, now)?;
+        if let Some(original) = original {
+            self.repo_lane_reads(binding, &[original])?;
+        }
         // Unbound, the vault's own review policy (FIX 8268).
         let review = match policy {
             Some(policy) => policy.review(own.stamp.project, own.stamp.repo)?,
@@ -296,24 +324,30 @@ impl Memory<'_> {
             ..own.stamp.clone()
         };
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [input.path.as_str()]);
-        let proposed =
-            self.vault
-                .propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
-                    let now = self.vault.now_recorded_at();
-                    if let Err(refused) =
-                        admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
-                    {
-                        return Ok(Err(refused));
-                    }
-                    require_run_provenance_in_txn(
-                        self.vault,
-                        txn,
-                        sources.provenance_claim,
-                        binding.actor.entity_ref(),
-                        own.stamp.work,
-                    )?;
-                    Ok(Ok(()))
-                })?;
+        let check = |txn: &heed::RoTxn<'_>| {
+            let now = self.vault.now_recorded_at();
+            if let Err(refused) =
+                admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
+            {
+                return Ok(Err(refused));
+            }
+            require_run_provenance_in_txn(
+                self.vault,
+                txn,
+                sources.provenance_claim,
+                binding.actor.entity_ref(),
+                own.stamp.work,
+            )?;
+            Ok(Ok(()))
+        };
+        let proposed = match original {
+            Some(original) => self
+                .vault
+                .propose_repo_rereview_for_run(original, request, review, base, stamp, check)?,
+            None => self
+                .vault
+                .propose_repo_mutation_for_run(request, review, base, stamp, check)?,
+        };
         let proposal = proposed.map_err(refusal_error)?;
         // The answer names the proposal (its `repo.proposed_diff` journal
         // claim's id), its session and its provenance claim: send-time
