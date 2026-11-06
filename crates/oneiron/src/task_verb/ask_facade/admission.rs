@@ -17,7 +17,9 @@ impl Memory<'_> {
         input: &TaskAskSpec,
     ) -> MemoryResult<()> {
         let coach_ask = super::training_offer_ask::is_training_offer_ask_intent(&input.intent_key)
-            || super::training_swap_ask::is_training_swap_ask_intent(&input.intent_key);
+            || super::training_swap_ask::is_training_swap_ask_intent(&input.intent_key)
+            // FIX 3609: an owner-judged contribution pair's ask is the Coach's too.
+            || crate::task_verb::is_contribution_pair_ask_intent(&input.intent_key);
         let auto = if coach_ask {
             crate::gate::coach_offer_ask_ceiling_in_txn(
                 self.vault(),
