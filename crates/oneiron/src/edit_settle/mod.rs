@@ -119,8 +119,8 @@ pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
 
 pub(crate) use self::codec::archive_settlement_table;
-pub use self::discarded_words::DiscardedSettleWords;
 pub(crate) use self::discarded_words::discard_settle_payload_in_txn;
+pub use self::discarded_words::{DiscardedDeck, DiscardedDeckReport, DiscardedSettleWords};
 pub use self::keys::{
     SETTLE_VERB_CLASS, SETTLED_ANCHOR_KEYS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };
