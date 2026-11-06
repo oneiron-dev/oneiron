@@ -26,6 +26,7 @@ mod connector_call_types;
 mod connector_elicitation_asks;
 mod connector_elicitation_consent;
 mod connector_elicitation_receipt;
+mod connector_remember;
 mod execution;
 mod recovery;
 mod result_scrub;
