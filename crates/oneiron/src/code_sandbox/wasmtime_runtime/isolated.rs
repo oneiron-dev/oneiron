@@ -11,6 +11,7 @@ pub(super) fn run(
     step: JsCodeModeStep<'_>,
     backend: Box<dyn MicroVmBackend>,
     cancel: &StepCancellation,
+    host: &mut dyn JsCodeModeHost,
 ) -> Result<JsCodeModeStepOutcome> {
     let relay = runtime
         .foreign_egress
@@ -24,6 +25,24 @@ pub(super) fn run(
         workspace.path(),
         workspace.path(),
     );
+    let mut held = HeldOutput::default();
+    let mut output = |stream: JsCodeModeStream<'_>, frame: Vec<u8>| {
+        let target = match stream {
+            JsCodeModeStream::Console => StreamTarget::Console,
+            JsCodeModeStream::Finish { start } => StreamTarget::Finish { start },
+            JsCodeModeStream::Store { start } => StreamTarget::Store { start },
+            JsCodeModeStream::File(path) => StreamTarget::File(path.to_owned()),
+        };
+        wire::output_frame(
+            host,
+            &mut held,
+            runtime.budget.message_bytes,
+            cancel,
+            target,
+            frame,
+        )
+        .map(|_| ())
+    };
     let outcome = execute_foreign_code_on(
         step.script,
         step.boundary.tier(),
@@ -34,6 +53,7 @@ pub(super) fn run(
         runtime.proposal_spool.clone(),
         runtime.budget.foreign_budget,
         cancel,
+        &mut output,
     )?;
     for proposal in outcome.proposals {
         cancel.check()?;
@@ -44,5 +64,8 @@ pub(super) fn run(
             .propose_write(proposal.write().clone())?;
     }
     cancel.check()?;
-    wire::decode_output(&outcome.result_json, runtime.budget.message_bytes)
+    held.into_outcome(wire::decode_output(
+        &outcome.result_json,
+        runtime.budget.message_bytes,
+    )?)
 }

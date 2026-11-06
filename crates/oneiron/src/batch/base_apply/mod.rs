@@ -264,6 +264,8 @@ pub(super) fn apply_ops_with_authority_beside(
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
+    // FIX 9398: the batch's deletes drop the rooms' media copies once, as it ends.
+    let _room_media_drops = crate::embed::RoomMediaDrops::open(store, wtxn);
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
     let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
