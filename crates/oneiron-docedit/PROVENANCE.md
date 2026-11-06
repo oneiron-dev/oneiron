@@ -424,18 +424,21 @@ preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity pro
 
 ## XML identity of newly retained table-cell boundary sources
 
-The fallback records exact original raw source intervals from successful
-field-free styled output: retained edge clusters, whole unchanged paragraphs and
-wholly retained nonempty ordinary runs or direct breaks. Retained-loop source
-ranges stay local until both retained intervals and the replacement succeed; a
+The fallback records original identity source intervals from successful
+field-free styled output: retained edge clusters, whole unchanged paragraphs,
+wholly retained nonempty ordinary runs or direct breaks, and single-retained-piece
+ordinary runs whose native `partial_run` preserves the original XML. Native text
+splices change only character data, leaving original identity attribute spans
+unchanged. Retained-loop source ranges stay local until both retained intervals
+and the replacement succeed; a
 whole-paragraph source is recorded only after its original XML string is ready.
 Failed styled attempts record no ownership. If such intervals exist, a second
 render uses that same original tree, text and interval plan. Property-template
 source selection and every fallback condition depend on unchanged original nodes
 and text, not the cloned attributes.
 
-When a selected `a:rPr` lies wholly inside a recorded raw source interval, its
-original subtree survives verbatim there. Fresh copies of that subtree in any
+When a selected `a:rPr` lies wholly inside a recorded original source interval,
+its original identity attributes survive there unchanged. Fresh copies of that subtree in any
 replacement run, requested break or added/fallback paragraph omit only attributes
 whose expanded name is XML-namespace `id`. Qualified attribute names resolve
 through the original nearest namespace declarations and the reserved `xml` binding.
@@ -453,8 +456,12 @@ common prefix likewise owns its original property identity when the middle uses
 that same style source. A whole unchanged paragraph owns its property identities
 when later paired or added lines borrow its global template. The disjoint
 prefix/suffix selection and actual paragraph selection still emit each such
-original span at most once. Partial/opaque/interior-zero copies and other original
-source sites are not added to this ledger, and arbitrary schema-specific identity
+original span at most once. A successful single-piece native partial run owns
+its unchanged identity attributes in the same way; the prior serializer still
+succeeds first, and unsupported native edits keep the same static attribute path.
+A run spanning both retained pieces keeps its previous wrappers, with no guessed
+identity side. Static fallback, opaque and interior-zero copies and other source
+sites are not added to this ledger, and arbitrary schema-specific identity
 attributes are not interpreted. Internal-boundary empties, field-containing
 paragraphs, matching and field-cut receipts keep their prior behavior. This is source-only work in the existing
 17480/18510 pack, not full table-cell fallback, OF-509/OF-510, compiler, runtime or

@@ -36,9 +36,10 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// Field-free paragraph edges carry zero-text child clusters and their gaps beside
 /// positive retained text at the first/last nonempty direct child, bounded by
 /// an original first pPr or last endParaRPr. Skipped children block bridges.
-/// A second render knows the exact raw edge, whole-paragraph and whole-run
-/// source spans; fresh rPr template copies omit only XML-namespace id attributes
-/// whose original rPr survives there. Original identities, style and refs stay.
+/// A second render knows the exact original edge, whole-paragraph, whole-run
+/// and native single-piece partial-run identity sources. Fresh rPr template copies
+/// omit only XML-namespace id attributes that survive in those original sources.
+/// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
 /// attributes only when it contributes to exactly one retained head/tail piece;
@@ -287,6 +288,7 @@ fn rebuilt_pass(
                                 partial_run(bytes, tree, *at, start - position..end - position)
                             {
                                 run = original;
+                                original_runs.push(node.span.clone());
                             } else {
                                 let attributes: String = node
                                     .attr_spans
@@ -519,7 +521,7 @@ fn rebuilt_pass(
     Ok((out, emitted_sources))
 }
 
-/// A fresh template copy borrows style, not an identity carried by its raw source.
+/// A fresh template copy borrows style, not an identity carried by its retained source.
 fn copied_properties(bytes: &[u8], tree: &XmlTree, property: usize) -> String {
     let original = &tree.nodes[property];
     let mut identities = Vec::new();
