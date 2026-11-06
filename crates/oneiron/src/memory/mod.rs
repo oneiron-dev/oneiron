@@ -408,6 +408,10 @@ pub(crate) use support::{
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
+    archived_message_body,
+};
+pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
     witness_message_body,
 };
