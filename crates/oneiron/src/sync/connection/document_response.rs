@@ -27,7 +27,10 @@ impl SyncConnection {
         }
         let command = transport::decode_unsplit_document(&frame[1..])
             .map_err(|error| LoopExit::Disconnected(error.to_string()))?;
-        if command.kind != document_sub_tags::NOTE_OPS {
+        if !matches!(
+            command.kind,
+            document_sub_tags::NOTE_OPS | document_sub_tags::NOTE_FORK_UPLOAD
+        ) {
             return Err(LoopExit::Disconnected(
                 "invalid outgoing logical document".into(),
             ));
