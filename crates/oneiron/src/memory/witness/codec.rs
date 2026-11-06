@@ -39,6 +39,18 @@ const fn canonical_turn_speaker(author: WitnessAuthor) -> Option<&'static str> {
     }
 }
 
+/// The author bucket whose canonical TURN speaker is `speaker`, the inverse
+/// of [`canonical_turn_speaker`]; `None` for a speaker no bucket stamps.
+pub(super) fn turn_speaker_author(speaker: &str) -> Option<WitnessAuthor> {
+    [
+        WitnessAuthor::User,
+        WitnessAuthor::Companion,
+        WitnessAuthor::Counterparty,
+    ]
+    .into_iter()
+    .find(|author| canonical_turn_speaker(*author) == Some(speaker))
+}
+
 /// Whether a stored TURN admits the canonical MESSAGE `bodies` the way it
 /// admits an append to it (ONE-1767): its byline and its one speaker stamp
 /// decode, and every non-system body speaks as that speaker. For a copy into
