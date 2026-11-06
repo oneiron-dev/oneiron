@@ -58,6 +58,20 @@ impl AppliedRecordDocument {
         Ok(())
     }
 
+    pub(crate) fn entity(&self) -> crate::EntityId {
+        self.installed.entity()
+    }
+
+    /// Compare only a real completed batch result with the committed rows.
+    /// Its outer materializer still owns commit, failure and retry markers.
+    pub(crate) fn matches_stored_in_txn(
+        &self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        self.installed.matches_stored_in_txn(store, txn)
+    }
+
     pub(crate) fn into_entity(self) -> crate::EntityId {
         let Self {
             installed,
@@ -65,6 +79,15 @@ impl AppliedRecordDocument {
         } = self;
         drop(content_writes);
         installed.entity()
+    }
+}
+
+impl std::fmt::Debug for AppliedRecordDocument {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppliedRecordDocument")
+            .field("entity", &self.entity())
+            .finish_non_exhaustive()
     }
 }
 

@@ -91,4 +91,30 @@ impl PendingRecordDocument {
         }
         Ok(())
     }
+
+    /// Truth about this real installed output in a committed read view.
+    /// A match grants no admission and is not an outer commit receipt.
+    pub(crate) fn matches_stored_in_txn(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<bool> {
+        if store
+            .port_entity_raw(txn, &self.entity)?
+            .is_none_or(|raw| blake3::hash(&raw).as_bytes() != &self.physical)
+            || storage::record_head_bytes(store, txn, &self.entity)?.as_deref()
+                != Some(self.head.as_slice())
+            || SKILL_ORIGIN.get(store, txn, &self.entity)? != self.skill_origin
+            || CLAIM_ORIGIN.get(store, txn, &self.entity)? != self.claim_origin
+            || read_control(store, txn, &self.entity)? != self.control
+        {
+            return Ok(false);
+        }
+        for (slot, digest) in &self.documents {
+            if document_rows_digest(store, txn, *slot)? != *digest {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
