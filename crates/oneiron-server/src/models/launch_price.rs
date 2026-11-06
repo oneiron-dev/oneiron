@@ -3,8 +3,10 @@
 //! A local agent's run is a generative-role call (`ai_host/step.rs`), so its
 //! native tokens are priced at the model its launch plan resolved, a pinned
 //! model included, when the launch carries one (FIX 3043); else at the model
-//! that role binds: the manifest's pin at the slot's route, else the role's
-//! seat. An unregistered seat with no manifest is priced at its sole engine
+//! that role binds: the manifest's pin at the slot's route, else the active
+//! model pack's served pick, else the role's seat. The pack is read in the
+//! launch statement's own snapshot. An unregistered seat with no manifest is
+//! priced at its sole engine
 //! model only when every rung and every possible owner fallback uses that
 //! model; a multi-model seat stays unknown. A plan's model with no registry
 //! row quotes nothing; it never falls
@@ -91,9 +93,27 @@ impl LaunchUsdPrices for LaunchUsdQuote {
         };
         // A price never blocks a statement: a binding or row that does not
         // read quotes nothing.
-        let model = match planned {
-            Some(model) => model.clone(),
-            None => match vault.price_model_for_role_in_txn(
+        let pack_model = if planned.is_none() {
+            match self.runtime.upgrade().and_then(|runtime| {
+                let seat = runtime.seat(ModelRole::GenerativeReasoner)?;
+                Some(runtime.model_pack_route_in_txn(
+                    vault,
+                    txn,
+                    ModelRole::GenerativeReasoner,
+                    seat,
+                ))
+            }) {
+                Some(Ok(Some(route))) => Some(route.model),
+                Some(Err(_)) => return Ok(None),
+                Some(Ok(None)) | None => None,
+            }
+        } else {
+            None
+        };
+        let model = match (planned, pack_model) {
+            (Some(model), _) => model.clone(),
+            (None, Some(model)) => model,
+            (None, None) => match vault.price_model_for_role_in_txn(
                 txn,
                 ModelRole::GenerativeReasoner,
                 &self.seat,

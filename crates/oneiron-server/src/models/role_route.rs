@@ -267,6 +267,38 @@ impl ModelRuntime {
         else {
             return Ok(None);
         };
+        self.model_pack_route_for_choice(role, seat, choice)
+    }
+
+    /// The pack route in the launch statement's snapshot, not a newer read.
+    pub(crate) fn model_pack_route_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        role: ModelRole,
+        seat: &Seat,
+    ) -> Result<Option<RoleRoute>, RoleRefusal> {
+        let Some(router) = self.router.as_ref() else {
+            return Ok(None);
+        };
+        let Some(choice) = vault
+            .model_pack_role_choice_in_txn(txn, role, &router.access_snapshot())
+            .map_err(RoleRefusal::refused)?
+        else {
+            return Ok(None);
+        };
+        self.model_pack_route_for_choice(role, seat, choice)
+    }
+
+    fn model_pack_route_for_choice(
+        &self,
+        role: ModelRole,
+        seat: &Seat,
+        choice: oneiron::llm::model_pack::ModelPackRoleChoice,
+    ) -> Result<Option<RoleRoute>, RoleRefusal> {
+        let Some(router) = self.router.as_ref() else {
+            return Ok(None);
+        };
         let model = choice.model().clone();
         let route = if choice.variant.access == ModelPackAccess::LocalGpu {
             ModelLocality::OnDevice
