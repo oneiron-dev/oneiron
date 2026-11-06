@@ -67,6 +67,18 @@ struct Stamp {
 /// One entity's birth-position stamp, keyed by entity id.
 const SCOPE_RECORD: SideTable<EntityId, Stamp, LegacyJson> =
     SideTable::new(&side_table::SCOPE_RECORD);
+
+/// Records only a successful native position write in the active setup trace.
+fn put_stamp(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    stamp: &Stamp,
+) -> Result<()> {
+    SCOPE_RECORD.put(store, txn, id, stamp)?;
+    crate::agent_def::setup_trace::observe_position(store, *id, &stamp.scope);
+    Ok(())
+}
 /// The vault's record-scope revision, bumped on every stamp change.
 const SCOPE_RECORD_REVISION: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::SCOPE_RECORD_REVISION);

@@ -275,7 +275,7 @@ pub(crate) fn install_in_txn(
     if SCOPE_RECORD.get(&vault.store, txn, &row.id)?.is_some() {
         return Ok(());
     }
-    SCOPE_RECORD.put(
+    super::put_stamp(
         &vault.store,
         txn,
         &row.id,

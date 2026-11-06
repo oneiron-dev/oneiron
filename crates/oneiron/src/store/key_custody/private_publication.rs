@@ -44,19 +44,32 @@ fn for_owner(owner: &KeyCustody) -> Option<Rc<RefCell<PrivatePublications>>> {
     })
 }
 
-fn for_custody(custody: &LocalCustody<'_>) -> Option<Rc<RefCell<PrivatePublications>>> {
-    let owner = custody.private_owner()?;
+fn custody_layers(custody: &LocalCustody<'_>) -> Vec<Rc<RefCell<PrivatePublications>>> {
+    let Some(owner) = custody.private_owner() else {
+        return Vec::new();
+    };
     PUBLICATIONS.with(|publications| {
         publications
             .borrow()
             .iter()
-            .rev()
-            .find(|entry| {
+            .filter(|entry| {
                 let entry = entry.borrow();
                 entry.owner == owner && entry.binding.as_ref() == Some(custody.binding())
             })
             .cloned()
+            .collect()
     })
+}
+
+fn for_custody(custody: &LocalCustody<'_>) -> Option<Rc<RefCell<PrivatePublications>>> {
+    custody_layers(custody).pop()
+}
+
+fn held_secret(custody: &LocalCustody<'_>, id: &CustodyId) -> Option<CustodySecret> {
+    custody_layers(custody)
+        .into_iter()
+        .rev()
+        .find_map(|state| state.borrow().entries.get(id).map(copy_secret))
 }
 
 fn copy_secret(secret: &CustodySecret) -> CustodySecret {
@@ -74,9 +87,12 @@ pub(crate) struct PrivateCustodyPublications<'a> {
 
 impl<'a> PrivateCustodyPublications<'a> {
     pub(crate) fn open(owner: &'a KeyCustody) -> Self {
+        let binding = for_owner(owner)
+            .map(|parent| parent.borrow().binding.clone())
+            .unwrap_or_else(|| owner.binding.get().cloned());
         let state = Rc::new(RefCell::new(PrivatePublications {
             owner: std::ptr::from_ref(owner) as usize,
-            binding: owner.binding.get().cloned(),
+            binding,
             entries: BTreeMap::new(),
             publications: Vec::new(),
         }));
@@ -179,31 +195,30 @@ pub(super) fn bind(
 }
 
 pub(super) fn read(custody: &LocalCustody<'_>, id: &CustodyId) -> Option<Result<CustodySecret>> {
-    let state = for_custody(custody)?;
-    if !state.borrow().entries.contains_key(id) {
+    if !contains(custody, id) {
         return None;
     }
     Some((|| {
         if custody.retired(id)? {
             return Err(id.kind().corrupt());
         }
-        state
-            .borrow()
-            .entries
-            .get(id)
-            .map(copy_secret)
-            .ok_or_else(|| id.kind().corrupt())
+        held_secret(custody, id).ok_or_else(|| id.kind().corrupt())
     })())
 }
 
 pub(super) fn contains(custody: &LocalCustody<'_>, id: &CustodyId) -> bool {
-    for_custody(custody).is_some_and(|state| state.borrow().entries.contains_key(id))
+    custody_layers(custody)
+        .iter()
+        .any(|state| state.borrow().entries.contains_key(id))
 }
 
 pub(super) fn ids(custody: &LocalCustody<'_>) -> Vec<CustodyId> {
-    for_custody(custody).map_or_else(Vec::new, |state| {
-        state.borrow().entries.keys().cloned().collect()
-    })
+    custody_layers(custody)
+        .into_iter()
+        .flat_map(|state| state.borrow().entries.keys().cloned().collect::<Vec<_>>())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(super) fn get_or_create(
@@ -215,9 +230,13 @@ pub(super) fn get_or_create(
         if custody.retired(id)? {
             return Err(id.kind().corrupt());
         }
-        let held = state.borrow().entries.get(id).map(copy_secret);
+        let held = held_secret(custody, id);
         if let Some(secret) = held {
             let mut state = state.borrow_mut();
+            state
+                .entries
+                .entry(id.clone())
+                .or_insert_with(|| copy_secret(&secret));
             state.publications.push(Publication::Entry(id.clone()));
             state.publications.push(Publication::Mint(id.clone()));
             return Ok(secret);
@@ -249,7 +268,7 @@ pub(super) fn publish(
         if custody.retired(id)? {
             return Err(id.kind().corrupt());
         }
-        if let Some(held) = state.borrow().entries.get(id) {
+        if let Some(held) = held_secret(custody, id) {
             if held.expose() != secret.expose() {
                 return Err(id.kind().corrupt());
             }
