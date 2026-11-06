@@ -263,6 +263,47 @@ pub(crate) fn record_is_append_only_in_txn(
     }
 }
 
+/// Whether this core TURN request already exists unchanged in this room.
+/// This grants no put permit; its caller may only return the existing result.
+pub(crate) fn exact_core_turn_retry_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    conversation: &EntityId,
+    occurred: crate::TimeRange,
+    learned_at: u64,
+    body: &[u8],
+) -> Result<bool> {
+    if store.port_deletion_state(txn, id)?.deleted
+        || store.port_deletion_state(txn, conversation)?.deleted
+        || crate::batch::stored_entity_type(store, txn, conversation)?
+            != Some(ENTITY_TYPE_CONVERSATION)
+        || !record_is_append_only_in_txn(store, txn, id)?
+    {
+        return Ok(false);
+    }
+    let Some(row) = store.port_entity_record(txn, id)? else {
+        return Ok(false);
+    };
+    if (row.entity_type, row.occurred, row.learned_at) != (ENTITY_TYPE_TURN, occurred, learned_at)
+        || row.body != body
+    {
+        return Ok(false);
+    }
+    if BODY_PINS.get(store, txn, id)?.is_some_and(|pin| {
+        pin == WITHDRAWN_PIN || pin != body_pin(ENTITY_TYPE_TURN, occurred, learned_at, body)
+    }) || MIGRATED
+        .get(store, txn, conversation)?
+        .is_some_and(|marker| marker != [1])
+        || room_turn_owner(store, txn, id)? != Some(*conversation)
+    {
+        return Ok(false);
+    }
+    Ok(store
+        .port_edge_get(txn, id, EdgeKind::ChildOf, conversation)?
+        .is_some_and(|edge| edge.weight == 1.0))
+}
+
 /// The pin of the TURN stored at `id` now, or `None` when `id` holds no TURN.
 fn stored_record_pin(
     store: &impl ManifestDbs,
