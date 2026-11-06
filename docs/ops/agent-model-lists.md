@@ -49,8 +49,28 @@ its kept tree, not placed again. A missing kept tree adds no evidence.
 
 The context is not serialized into the durable task pin. Existing pins,
 warm-seat reuse, planned-model overrides and admission rules keep their
-current behavior. Generic code runs, reader children and turn programs have
-no qualified project carrier here and keep their unprojected state. The
-native routed-verdict request door accepts this context, but its existing
-verdict caller still supplies none; no project-aware verdict caller is
+current behavior. Generic code runs and turn programs have no qualified
+project carrier here and keep their unprojected state. Read and summary
+children use their frozen parent project and per-job type stamp; scoped
+children keep their existing lookup. The native routed-verdict request door
+accepts this context, but its existing verdict caller still supplies none; no project-aware verdict caller is
 claimed.
+
+## Reader task-type snapshots
+
+A new Read or Summarize job freezes its type stamp after the original
+scope and cutoff checks. It selects the project's admitted team-shape fork,
+then the vault's newest admitted team-shape revision, then the seeded tree.
+The placement uses the new job's ask and the rule rung; it does not copy the
+parent's measurements or model choice.
+
+The selection reads the same transaction that publishes the job. A session
+uses that transaction's composed overlay/base read view, even when its write
+route has flipped to base. Installed default-hub provenance uses the same
+content view; machine history, authority and critical-confirm obligations
+remain with the owning vault. The session supplies its actual hosting
+privacy posture, not a base-vault content handle from the spend book.
+
+An already queued job keeps its original stamp. A tree-read error keeps the
+existing warning and an absent stamp; it adds no refusal or synthetic root.
+Scoped children keep their existing path.

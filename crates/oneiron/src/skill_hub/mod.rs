@@ -51,7 +51,7 @@ pub use default_hub::{
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
-pub(crate) use package_codec::remove_hub_package_in_txn;
+pub(crate) use package_codec::{remove_hub_package_in_txn, runtime_skill_package_in_read};
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
 pub(crate) use ref_sync::{RefFetch, pinned_tracking};

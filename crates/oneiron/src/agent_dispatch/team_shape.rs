@@ -62,8 +62,26 @@ pub(crate) fn team_shape_root_sourced_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<(EntityId, Option<crate::skill_hub::HubRef>)> {
-    let (holder, lookup) =
-        vault.default_hub_skill_with_source_in_txn(txn, TEAM_SHAPE_SKILL_NAME)?;
+    team_shape_root_from(vault.default_hub_skill_with_source_in_txn(txn, TEAM_SHAPE_SKILL_NAME)?)
+}
+
+pub(super) fn team_shape_root_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+) -> Result<EntityId> {
+    team_shape_root_from(crate::skill_hub::default_hub_skill_with_source_in_read(
+        read,
+        txn,
+        posture,
+        TEAM_SHAPE_SKILL_NAME,
+    )?)
+    .map(|(root, _)| root)
+}
+
+fn team_shape_root_from(
+    (holder, lookup): (Option<EntityId>, Option<crate::skill_hub::HubRef>),
+) -> Result<(EntityId, Option<crate::skill_hub::HubRef>)> {
     if let Some(holder) = holder {
         return Ok((holder, lookup));
     }
