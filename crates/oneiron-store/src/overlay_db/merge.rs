@@ -10,6 +10,7 @@ use std::sync::Arc;
 use heed::types::Bytes;
 use heed::{DefaultComparator, RoPrefix};
 
+use crate::session_overlay::snapshot::SnapshotValue;
 use crate::session_overlay::{OverlaySnapshot, SnapshotMergePlan, SnapshotMergeRow};
 use oneiron_contracts::error::{Error, Result};
 
@@ -21,26 +22,51 @@ pub(super) enum Direction {
     Reverse,
 }
 
-pub struct MergedRows<'txn, I>
+enum MergeRow<'txn, V> {
+    Base((&'txn [u8], &'txn [u8])),
+    Overlay(Vec<u8>, V),
+}
+
+/// A database value borrowed from its base transaction or retained from the
+/// exact immutable overlay view that supplied it.
+#[derive(Debug)]
+pub enum ReadBytes<'txn> {
+    Borrowed(&'txn [u8]),
+    Overlay(SnapshotValue),
+}
+
+impl std::ops::Deref for ReadBytes<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Overlay(SnapshotValue::Owned(bytes)) => bytes,
+            Self::Overlay(SnapshotValue::Retained(row)) => row.bytes(),
+        }
+    }
+}
+
+struct MergeRows<'txn, I, V>
 where
     I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
 {
     base: Option<I>,
     base_next: Option<heed::Result<(&'txn [u8], &'txn [u8])>>,
     base_done: bool,
-    overlay: Peekable<std::vec::IntoIter<SnapshotMergeRow>>,
+    overlay: Peekable<std::vec::IntoIter<SnapshotMergeRow<V>>>,
     deleted_keys: BTreeSet<Vec<u8>>,
     direction: Direction,
     _snapshot: Arc<OverlaySnapshot>,
 }
 
-impl<'txn, I> MergedRows<'txn, I>
+impl<'txn, I, V> MergeRows<'txn, I, V>
 where
     I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
 {
     pub(super) fn new(
         base: Option<I>,
-        mut plan: SnapshotMergePlan,
+        mut plan: SnapshotMergePlan<V>,
         direction: Direction,
         snapshot: Arc<OverlaySnapshot>,
     ) -> Self {
@@ -71,7 +97,7 @@ where
         direction: Direction,
         key: &[u8],
         value: &[u8],
-        row: &SnapshotMergeRow,
+        row: &SnapshotMergeRow<V>,
     ) -> Ordering {
         let ordering = match row {
             SnapshotMergeRow::Single {
@@ -95,11 +121,11 @@ where
         deleted_keys.contains(key)
     }
 
-    fn take_base(&mut self) -> Option<Result<KvPair<'txn>>> {
-        self.base_next.take().map(convert_pair)
+    fn take_base(&mut self) -> Option<Result<MergeRow<'txn, V>>> {
+        self.base_next.take().map(|row| Ok(MergeRow::Base(row?)))
     }
 
-    fn take_overlay(&mut self) -> Option<KvPair<'txn>> {
+    fn take_overlay(&mut self) -> Option<MergeRow<'txn, V>> {
         let row = self.overlay.next()?;
         match row {
             SnapshotMergeRow::Single {
@@ -110,18 +136,18 @@ where
                 key,
                 present: Some(value),
                 ..
-            } => Some((Cow::Owned(key), Cow::Owned(value))),
+            } => Some(MergeRow::Overlay(key, value)),
             SnapshotMergeRow::Single { value: None, .. }
             | SnapshotMergeRow::Duplicate { present: None, .. } => None,
         }
     }
 }
 
-impl<'txn, I> Iterator for MergedRows<'txn, I>
+impl<'txn, I, V> Iterator for MergeRows<'txn, I, V>
 where
     I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
 {
-    type Item = Result<KvPair<'txn>>;
+    type Item = Result<MergeRow<'txn, V>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -188,6 +214,84 @@ where
                 }
             }
         }
+    }
+}
+
+pub struct MergedRows<'txn, I>
+where
+    I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
+{
+    inner: MergeRows<'txn, I, Vec<u8>>,
+}
+
+impl<'txn, I> MergedRows<'txn, I>
+where
+    I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
+{
+    pub(super) fn new(
+        base: Option<I>,
+        plan: SnapshotMergePlan,
+        direction: Direction,
+        snapshot: Arc<OverlaySnapshot>,
+    ) -> Self {
+        Self {
+            inner: MergeRows::new(base, plan, direction, snapshot),
+        }
+    }
+}
+
+impl<'txn, I> Iterator for MergedRows<'txn, I>
+where
+    I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
+{
+    type Item = Result<KvPair<'txn>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|row| {
+            Ok(match row? {
+                MergeRow::Base(pair) => borrow_pair(pair),
+                MergeRow::Overlay(key, value) => (Cow::Owned(key), Cow::Owned(value)),
+            })
+        })
+    }
+}
+
+pub(super) struct RetainedMergedRows<'txn, I>
+where
+    I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
+{
+    inner: MergeRows<'txn, I, SnapshotValue>,
+}
+
+impl<'txn, I> RetainedMergedRows<'txn, I>
+where
+    I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
+{
+    pub(super) fn new(
+        base: Option<I>,
+        plan: SnapshotMergePlan<SnapshotValue>,
+        direction: Direction,
+        snapshot: Arc<OverlaySnapshot>,
+    ) -> Self {
+        Self {
+            inner: MergeRows::new(base, plan, direction, snapshot),
+        }
+    }
+}
+
+impl<'txn, I> Iterator for RetainedMergedRows<'txn, I>
+where
+    I: Iterator<Item = heed::Result<(&'txn [u8], &'txn [u8])>>,
+{
+    type Item = Result<(Cow<'txn, [u8]>, ReadBytes<'txn>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|row| {
+            Ok(match row? {
+                MergeRow::Base((key, value)) => (Cow::Borrowed(key), ReadBytes::Borrowed(value)),
+                MergeRow::Overlay(key, value) => (Cow::Owned(key), ReadBytes::Overlay(value)),
+            })
+        })
     }
 }
 
@@ -269,6 +373,12 @@ where
 
 pub(super) struct StrBytes<I>(I);
 
+impl<I> StrBytes<I> {
+    pub(super) fn new(inner: I) -> Self {
+        Self(inner)
+    }
+}
+
 impl<'txn, I> Iterator for StrBytes<I>
 where
     I: Iterator<Item = heed::Result<(&'txn str, &'txn [u8])>>,
@@ -314,19 +424,23 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(|row| {
             let (key, value) = row?;
-            let key = match key {
-                Cow::Borrowed(key) => {
-                    Cow::Borrowed(std::str::from_utf8(key).map_err(|_| {
-                        Error::InvariantViolation("non-UTF-8 base key in sync_state")
-                    })?)
-                }
-                Cow::Owned(key) => Cow::Owned(String::from_utf8(key).map_err(|_| {
-                    Error::InvariantViolation("non-UTF-8 key in sync_state overlay")
-                })?),
-            };
+            let key = str_key(key)?;
             Ok((key, value))
         })
     }
+}
+
+pub(super) fn str_key<'txn>(key: Cow<'txn, [u8]>) -> Result<Cow<'txn, str>> {
+    Ok(match key {
+        Cow::Borrowed(key) => Cow::Borrowed(
+            std::str::from_utf8(key)
+                .map_err(|_| Error::InvariantViolation("non-UTF-8 base key in sync_state"))?,
+        ),
+        Cow::Owned(key) => Cow::Owned(
+            String::from_utf8(key)
+                .map_err(|_| Error::InvariantViolation("non-UTF-8 key in sync_state overlay"))?,
+        ),
+    })
 }
 
 pub(super) fn duplicate_identity(value: &[u8]) -> &[u8] {

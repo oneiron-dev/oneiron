@@ -32,22 +32,54 @@ pub struct OverlaySnapshot {
     pub(super) segment: Option<u64>,
 }
 
+/// One present Single row, retaining the exact snapshot that owns its bytes.
+/// This can keep the overlay's existing read lease alive through replay.
+pub struct RetainedSingleRow {
+    snapshot: Arc<OverlaySnapshot>,
+    keyspace: OverlayKeyspace,
+    key: Vec<u8>,
+}
+
+impl RetainedSingleRow {
+    pub fn bytes(&self) -> &[u8] {
+        self.snapshot
+            .staged_value(self.keyspace, &self.key)
+            .expect("retained Single row remains present in its immutable snapshot")
+    }
+}
+
+impl std::fmt::Debug for RetainedSingleRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedSingleRow")
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A merge plan's payload: Single rows retain their native owner; duplicate
+/// postings keep their existing owned representation.
+#[derive(Debug)]
+pub enum SnapshotValue {
+    Owned(Vec<u8>),
+    Retained(RetainedSingleRow),
+}
+
 pub enum SnapshotLookup {
     Passthrough,
     Tombstone,
     Present(Vec<u8>),
 }
 
-pub enum SnapshotMergeRow {
+pub enum SnapshotMergeRow<V = Vec<u8>> {
     Single {
         key: Vec<u8>,
-        value: Option<Vec<u8>>,
+        value: Option<V>,
     },
     Duplicate {
         key: Vec<u8>,
         identity: Vec<u8>,
         deleted: BTreeSet<Vec<u8>>,
-        present: Option<Vec<u8>>,
+        present: Option<V>,
     },
 }
 
@@ -57,10 +89,10 @@ pub struct StagedRows {
     pub rows: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
 
-pub struct SnapshotMergePlan {
+pub struct SnapshotMergePlan<V = Vec<u8>> {
     pub clear_base: bool,
     pub deleted_keys: BTreeSet<Vec<u8>>,
-    pub rows: Vec<SnapshotMergeRow>,
+    pub rows: Vec<SnapshotMergeRow<V>>,
 }
 
 impl OverlaySnapshot {
@@ -124,6 +156,39 @@ impl OverlaySnapshot {
         keyspace: OverlayKeyspace,
         include_key: impl Fn(&[u8]) -> bool,
     ) -> SnapshotMergePlan {
+        self.merge_plan_with(keyspace, include_key, |_, value| value.to_vec())
+    }
+
+    /// Builds the same merge plan without copying Single-row payloads. Keys
+    /// and plan metadata are still owned; each value retains this exact view.
+    pub fn retained_merge_plan(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        include_key: impl Fn(&[u8]) -> bool,
+    ) -> SnapshotMergePlan<SnapshotValue> {
+        let single = matches!(
+            self.state.keyspaces[keyspace.slot()].as_ref(),
+            KeyspaceState::Single { .. }
+        );
+        self.merge_plan_with(keyspace, include_key, |key, value| {
+            if single {
+                SnapshotValue::Retained(RetainedSingleRow {
+                    snapshot: Arc::clone(self),
+                    keyspace,
+                    key: key.to_vec(),
+                })
+            } else {
+                SnapshotValue::Owned(value.to_vec())
+            }
+        })
+    }
+
+    fn merge_plan_with<V>(
+        &self,
+        keyspace: OverlayKeyspace,
+        include_key: impl Fn(&[u8]) -> bool,
+        mut map_value: impl FnMut(&[u8], &[u8]) -> V,
+    ) -> SnapshotMergePlan<V> {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { clear_base, rows } => SnapshotMergePlan {
                 clear_base: *clear_base,
@@ -134,7 +199,7 @@ impl OverlaySnapshot {
                     .map(|(key, value)| SnapshotMergeRow::Single {
                         key: key.clone(),
                         value: match value {
-                            OverlayValue::Present(value) => Some(value.clone()),
+                            OverlayValue::Present(value) => Some(map_value(key, value)),
                             OverlayValue::Tombstone => None,
                         },
                     })
@@ -160,7 +225,10 @@ impl OverlaySnapshot {
                     for (identity, deleted) in by_identity {
                         merge_rows.push(SnapshotMergeRow::Duplicate {
                             key: key.clone(),
-                            present: delta.present.get(&identity).cloned(),
+                            present: delta
+                                .present
+                                .get(&identity)
+                                .map(|value| map_value(key, value)),
                             identity,
                             deleted,
                         });

@@ -27,3 +27,25 @@ This provider alone does not complete the N-API codebase-snapshot boundary.
 That caller must separately ask and serve the manifest-file limit, obtain its
 required concurrency admission, reserve before marshaling, and retain/grow the
 same lease through all DTO, path, content and core-vector allocations.
+
+## Pending document-update replay
+
+The document loader keeps its original order: it imports the stored snapshot
+and validates birth first. It then collects every pending-update row and its
+storage errors before importing any of those updates.
+
+Base update bytes borrow the same transaction. A staged Single-row update
+retains the exact immutable overlay view that supplied it, rather than copying
+its encoded payload into the merge plan. Reading that value performs an
+exact-key lookup in the retained view, not a new prefix scan or a fresh view.
+The owned read APIs and their callers are unchanged.
+
+A retained update can keep the whole captured snapshot and its existing read
+lease alive through update imports. Closing, zeroization and the native held
+state's charge can therefore last longer than the old collect-time iterator.
+This is data ownership, not a new row grant or a separate memory ledger.
+
+This removes an encoded-payload copy; it does not admit the whole replay heap.
+Keys, plan metadata, outer vectors, iterator metadata, Loro state, decoded data
+and caches still need their own accounting. It is not a runtime, no-hang or
+whole-heap certificate.

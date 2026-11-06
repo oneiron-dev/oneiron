@@ -23,7 +23,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
-use crate::overlay_db::{OverlayDb, OverlayStrDb};
+use crate::overlay_db::{OverlayDb, OverlayStrDb, ReadBytes};
 use crate::secret_record::CustodyWrite;
 use crate::store::ManifestDbs;
 
@@ -294,7 +294,7 @@ pub(crate) fn decodes<V, C: SideCodec<V>>(bytes: &[u8]) -> bool {
 
 type RawRows<'txn> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + 'txn>;
 type RawRowsWithBorrowedValues<'txn> =
-    Box<dyn Iterator<Item = Result<(Vec<u8>, Cow<'txn, [u8]>)>> + 'txn>;
+    Box<dyn Iterator<Item = Result<(Vec<u8>, ReadBytes<'txn>)>> + 'txn>;
 
 /// The exclusive upper bound of every key that starts with `prefix`; `None` when no byte string
 /// is above them all.
@@ -590,7 +590,8 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     }
 
     /// Forward raw rows, retaining transaction-backed values as borrowed bytes.
-    /// Overlay-owned values remain owned; keys still name the suffix after the table prefix.
+    /// Single overlay values retain their captured owner without copying the body;
+    /// keys still name the suffix after the table prefix.
     pub(crate) fn iter_raw_borrowed_values_from<'txn>(
         &self,
         dbs: &impl SideTableDbs,
@@ -603,12 +604,12 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         Ok(match self.decl.db {
             SideDb::VaultMeta => Box::new(
                 dbs.side_vault_meta()
-                    .prefix_iter(txn, &scan)?
+                    .prefix_iter_retained(txn, &scan)?
                     .map(move |row| row.map(|(key, value)| (key[prefix_len..].to_vec(), value))),
             ),
             SideDb::SyncState => Box::new(
                 dbs.side_sync_state()?
-                    .prefix_iter(txn, self.str_key(&scan)?)?
+                    .prefix_iter_retained(txn, self.str_key(&scan)?)?
                     .map(move |row| {
                         row.map(|(key, value)| (key.as_bytes()[prefix_len..].to_vec(), value))
                     }),

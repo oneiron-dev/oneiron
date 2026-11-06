@@ -77,11 +77,11 @@ pub(crate) struct PendingUpdate {
     pub(crate) bytes: Vec<u8>,
 }
 
-/// A pending update whose encoded bytes may borrow the caller's transaction.
+/// A pending update borrowing base bytes or retaining its captured overlay owner.
 #[derive(Debug)]
 pub(crate) struct BorrowedPendingUpdate<'txn> {
     pub(crate) seq: Option<UpdateSeq>,
-    pub(crate) bytes: std::borrow::Cow<'txn, [u8]>,
+    pub(crate) bytes: crate::overlay_db::ReadBytes<'txn>,
 }
 
 pub(crate) trait DocumentRowStore: Transactions {
@@ -152,7 +152,8 @@ pub(crate) trait DocumentRowStore: Transactions {
         txn: &Self::Read<'_>,
         slot: DocumentSlot,
     ) -> Result<Vec<PendingUpdate>>;
-    /// Collects every update before replay; base bytes borrow the same transaction.
+    /// Collects every update before replay; base bytes borrow the same transaction,
+    /// and staged bytes retain their immutable overlay owner through import.
     fn port_document_updates_borrowed<'txn>(
         &self,
         txn: &'txn Self::Read<'_>,
