@@ -8,7 +8,7 @@ use super::{CapturePosition, SelectedTeamType, capture_claim_in_txn};
 use crate::agent_dispatch::{AgentDispatchStatus, decode_agent_dispatch_input};
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::VadPostcommitScope;
-use crate::claim::{ClaimLifecycleStatus, PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
+use crate::claim::{ClaimLifecycleStatus, PointRead, ReadRow, ScopedRead};
 use crate::store::dreamer_attempt_payload::{
     KEY_PRODUCER_SOURCE, decode_dreamer_attempt_payload, decode_value,
     encode_dreamer_attempt_payload, encode_value,
@@ -141,8 +141,8 @@ impl TeamAttemptSource {
 
 /// The actual live caller, borrowed for this one enqueue. Nothing is serialized
 /// into a replacement caller, owner key, or native-row permission.
-pub(crate) struct TeamAttemptCapture {
-    key: ScopedReadActorKey,
+pub(crate) struct TeamAttemptCapture<'a> {
+    reader: ScopedRead<'a>,
     position: CapturePosition,
     envelope: WriteEnvelope,
     team: crate::agent_dispatch::TeamRunStamp,
@@ -150,19 +150,22 @@ pub(crate) struct TeamAttemptCapture {
     _body_pins: Option<crate::store::result_body_pins::ResultBodyPin>,
 }
 
-impl TeamAttemptCapture {
+impl<'a> TeamAttemptCapture<'a> {
     pub(crate) fn new(
-        vault: &Vault,
+        vault: &'a Vault,
         selected: &crate::memory::ClaimScope,
         envelope: WriteEnvelope,
-        key: ScopedReadActorKey,
+        reader: ScopedRead<'a>,
         team: &crate::agent_dispatch::TeamRunStamp,
         host_parent_read: &TeamParentRead,
     ) -> Option<Self> {
+        if !std::ptr::eq(reader.vault(), vault) {
+            return None;
+        }
         let position = CapturePosition::resolve(vault, selected)?;
-        vault.scoped_read(key.clone()).persist_grant_clock().ok()?;
+        reader.persist_grant_clock().ok()?;
         Some(Self {
-            key,
+            reader,
             position,
             envelope,
             team: team.clone(),
@@ -221,7 +224,7 @@ impl TeamAttemptCapture {
             &self.envelope,
             now,
         )?;
-        let reader = vault.scoped_read(self.key.clone());
+        let reader = &self.reader;
         let input =
             decode_agent_dispatch_input(&decode_dreamer_attempt_payload(&record.payload)?.input)?;
         let type_source = type_selection
@@ -229,7 +232,7 @@ impl TeamAttemptCapture {
                 input.project_ref == Some(selected.project)
                     && input.type_ref == selected.placed_type
             })
-            .and_then(|selected| CapturedTeamType::capture(&reader, &child, selected));
+            .and_then(|selected| CapturedTeamType::capture(reader, &child, selected));
         let source = TeamAttemptSource {
             claim,
             claim_hash: *blake3::hash(&encode_claim_body(&body)?).as_bytes(),

@@ -199,6 +199,13 @@ pub trait AgentVerbDoor: Send + Sync {
         None
     }
 
+    /// The actual Memory supplying this host turn's reads, when the door
+    /// lends it. Optional source capture borrows its own read lane; neither
+    /// this handle nor that lane grants reads of private native attempt input.
+    fn host_turn_memory(&self) -> Option<crate::memory::Memory<'_>> {
+        None
+    }
+
     /// Whether the run's own `vault.search`, admitted with a key, keeps only
     /// surfaceable claims, as the memory surface's own BM25 channel serves
     /// them. A door that answers `false` has its search filtered by the

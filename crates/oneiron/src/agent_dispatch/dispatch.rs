@@ -61,7 +61,7 @@ pub struct AgentDispatcher<'a> {
     /// The host's observer of each AGENT_DEF a dispatch resolves (FIX 9180),
     /// when a code run's spawn binds one: told, never asked.
     seats: Option<&'a (dyn Fn(EntityId) + Sync)>,
-    team_attempt_capture: Option<&'a crate::team::run::TeamAttemptCapture>,
+    team_attempt_capture: Option<&'a crate::team::run::TeamAttemptCapture<'a>>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -91,7 +91,7 @@ impl<'a> AgentDispatcher<'a> {
     /// rows and workflow wrappers never inherit this caller's publication.
     pub(crate) fn capturing_team_attempts(
         mut self,
-        capture: Option<&'a crate::team::run::TeamAttemptCapture>,
+        capture: Option<&'a crate::team::run::TeamAttemptCapture<'a>>,
     ) -> Self {
         self.team_attempt_capture = capture;
         self
