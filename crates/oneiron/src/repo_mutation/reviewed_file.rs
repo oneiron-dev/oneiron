@@ -243,7 +243,9 @@ pub(super) fn require_document_base(
     snapshot: &StoredRepoSnapshot,
 ) -> Result<()> {
     let repo = RepoRef::parse(&row.repo)?;
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
+    // The repository's code-document identity, as the landing door resolves
+    // it (FIX 12761).
+    let scope = vault.resolve_repo_identity(&repo)?.as_str().to_owned();
     if row.is_file_bundle() {
         return require_bundle_document_bases(vault, row, snapshot, &scope);
     }
@@ -269,7 +271,7 @@ pub(super) fn require_stacked_document(
     composed: &str,
 ) -> Result<()> {
     let repo = RepoRef::parse(&row.repo)?;
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
+    let scope = vault.resolve_repo_identity(&repo)?.as_str().to_owned();
     let (path, _) = row.ordinary_file()?;
     require_document_edit(vault, row, &scope, path, staged, composed, false)
 }
