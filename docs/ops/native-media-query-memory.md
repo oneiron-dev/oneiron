@@ -117,15 +117,27 @@ storage, number internals and other record fields remain outside that charge.
 Existing queue behavior is unchanged.
 
 The detached clone also records the actual slot capacities of its signal,
-result-ID and score-breakdown vectors on that same private lease. Each uses
-its native element size. These are separate buffers created by the record
-clone, not the original pipeline's vectors. The slot charge applies even when
-the cloned record has no replay inputs, provided the caller supplied the line.
-The score-breakdown entries' inner component buffers remain outside this charge.
+result-ID, score-breakdown and degradation vectors on that same private lease.
+Each uses its native element size. Each cloned score-breakdown entry also
+records its component vector's actual slot capacity, separately from the outer
+score-breakdown vector. Component fields and degradation variants have no
+owned inner storage. These are separate buffers created by the record clone,
+not the original pipeline's vectors. The slot charge applies even when the
+cloned record has no replay inputs, provided the caller supplied the line.
 The same clone also records the actual capacities of its optional query-expander
 ID and empty-reason strings. These are outer record fields, separate from the
-two nested replay references and config strings. Absent fields and strings with zero capacity add no string backing; no length
-estimate or extra copy is used.
+two nested replay references and config strings. Absent fields and strings with
+zero capacity add no string backing; no length estimate or extra copy is used.
+
+A present cloned trace records its per-channel vector's actual slot capacity,
+each channel's candidate vector and the candidate vectors in its fused,
+blended, reranked and final stages. Each candidate vector includes its entries'
+component-vector backing, using the same capacity calculation as the cloned
+record's top-level score breakdown. These cloned buffers are distinct even
+when their entries describe the same results. All extend the same private
+lease and single materialized charge. An absent trace adds no trace backing;
+an unbound caller performs no added accounting walk. Policy and quality
+backing, serialized row bytes and later decoded records remain separate.
 
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
