@@ -49,6 +49,7 @@ mod legal_hold;
 mod live_run;
 mod live_voice;
 mod mesh;
+mod model_catalog_output;
 mod model_manifest;
 mod note_history;
 mod off_record;

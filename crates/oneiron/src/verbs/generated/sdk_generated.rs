@@ -25880,10 +25880,14 @@ pub fn invoke(
         "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
         "ai.anonymous_chat" => encode(ai_anonymous_chat(memory, decode(value)?)?),
         "vault.models.catalog.refresh" => {
-            encode(vault_models_catalog_refresh(memory, decode(value)?)?)
+            model_catalog_output::revision(vault_models_catalog_refresh(memory, decode(value)?)?)
         }
-        "vault.models.catalog.get" => encode(vault_models_catalog_get(memory, decode(value)?)?),
-        "vault.models.catalog.diff" => encode(vault_models_catalog_diff(memory, decode(value)?)?),
+        "vault.models.catalog.get" => {
+            model_catalog_output::revision(vault_models_catalog_get(memory, decode(value)?)?)
+        }
+        "vault.models.catalog.diff" => {
+            model_catalog_output::diff(vault_models_catalog_diff(memory, decode(value)?)?)
+        }
         "vault.models.trials.nominate" => {
             encode(vault_models_trials_nominate(memory, decode(value)?)?)
         }
