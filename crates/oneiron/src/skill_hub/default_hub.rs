@@ -131,25 +131,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         name: &str,
     ) -> Result<(Option<EntityId>, Option<HubRef>)> {
-        let hub = default_skill_hub_id()?;
-        // Only absence/deletion returns None: a live row of another type, a
-        // corrupt header, or a misconfigured hub still errors below. The type
-        // read alone still answers for a deleted shell, so deletion is
-        // checked too.
-        if TombstoneStoreRead::port_deletion_state(&self.store, txn, &hub)?.deleted
-            || self.get_entity_type_in_txn(txn, &hub)?.is_none()
-        {
-            return Ok((None, None));
-        }
-        let configured = self.default_skill_hub_in_txn(txn)?;
-        let root = &configured.skills.hub_ref;
-        let source = HubRef::new(
-            root.hub_id,
-            format!("{}/{}", root.ref_string, name),
-            root.pin.clone(),
-        )?;
-        let holder = self.installed_hub_skill_in_txn(txn, &source, name)?;
-        Ok((holder, Some(source)))
+        default_hub_skill_with_source_from(&self.store, txn, name, |source| {
+            self.installed_hub_skill_in_txn(txn, source, name)
+        })
     }
 
     fn check_default_skill_source_in_txn(
@@ -522,6 +506,48 @@ impl Vault {
         txn.commit()?;
         Ok((entity, true))
     }
+}
+
+/// The installed default-hub holder from the caller's content snapshot.
+/// Machine history and owner confirmations still use the owning vault.
+pub(crate) fn default_hub_skill_with_source_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+    name: &str,
+) -> Result<(Option<EntityId>, Option<HubRef>)> {
+    default_hub_skill_with_source_from(read, txn, name, |source| {
+        super::index::installed_hub_skill_in_read(read, txn, posture, source, name)
+    })
+}
+
+fn default_hub_skill_with_source_from(
+    read: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+    mut installed: impl FnMut(&HubRef) -> Result<Option<EntityId>>,
+) -> Result<(Option<EntityId>, Option<HubRef>)> {
+    let hub = default_skill_hub_id()?;
+    // Only absence/deletion returns None: a live row of another type, a
+    // corrupt header, or a misconfigured hub still errors below. The type
+    // read alone still answers for a deleted shell, so deletion is
+    // checked too.
+    if TombstoneStoreRead::port_deletion_state(read, txn, &hub)?.deleted
+        || crate::ports::EntityStoreRead::port_entity_record(read, txn, &hub)?
+            .map(|row| row.entity_type)
+            .is_none()
+    {
+        return Ok((None, None));
+    }
+    let configured = default_skill_hub_in_read(read, txn)?;
+    let root = &configured.skills.hub_ref;
+    let source = HubRef::new(
+        root.hub_id,
+        format!("{}/{}", root.ref_string, name),
+        root.pin.clone(),
+    )?;
+    let holder = installed(&source)?;
+    Ok((holder, Some(source)))
 }
 
 /// Default hub configuration from the same content snapshot; provenance, not a grant.
