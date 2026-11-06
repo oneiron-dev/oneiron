@@ -1091,6 +1091,11 @@ export_facade! {
     let output = client.vault_inbox_concerns_review(&input)?;
     crate::codec::lift_record("vault.inbox.concerns.review", &output)
 };
+"vault.proactivity.digest" => fn vault_proactivity_digest(&self, input: ProactivityDigestRequest) -> Option<ProactivityDigestView> = |client| {
+    let input: oneiron::memory::ProactivityDigestRequest = crate::codec::lower_record("vault.proactivity.digest", input)?;
+    let output = client.vault_proactivity_digest(&input)?;
+    crate::codec::lift_record("vault.proactivity.digest", &output)
+};
 "vault.inbox.lens" => fn vault_inbox_lens(&self, input: InboxLensRequest) -> InboxLensPage = |client| {
     let input: oneiron::agent_inbox_lens::InboxLensRequest = crate::codec::lower_record("vault.inbox.lens", input)?;
     let output = client.vault_inbox_lens(&input)?;
@@ -2385,6 +2390,36 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ReservoirSourcesRequest = crate::codec::lower_record("vault.coach.training_offers.sources", input)?;
     let output = client.vault_coach_training_offers_sources(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.sources", &output)
+};
+"vault.drafters.list" => fn vault_drafters_list(&self, input: DrafterListRequest) -> Vec<DrafterVersionView> = |client| {
+    let input: oneiron::drafter::DrafterListRequest = crate::codec::lower_record("vault.drafters.list", input)?;
+    let output = client.vault_drafters_list(&input)?;
+    crate::codec::lift_record("vault.drafters.list", &output)
+};
+"vault.drafters.list_as" => fn vault_drafters_list_as(&self, input: DrafterListRequest) -> Vec<DrafterVersionView> = |client| {
+    let input: oneiron::drafter::DrafterListRequest = crate::codec::lower_record("vault.drafters.list_as", input)?;
+    let output = client.vault_drafters_list_as(&input)?;
+    crate::codec::lift_record("vault.drafters.list_as", &output)
+};
+"vault.drafters.status" => fn vault_drafters_status(&self, input: DrafterStatusRequest) -> DrafterStatus = |client| {
+    let input: oneiron::drafter::DrafterStatusRequest = crate::codec::lower_record("vault.drafters.status", input)?;
+    let output = client.vault_drafters_status(&input)?;
+    crate::codec::lift_record("vault.drafters.status", &output)
+};
+"vault.drafters.policy.set" => fn vault_drafters_policy_set(&self, input: DrafterPolicySetRequest) -> DrafterPolicy = |client| {
+    let input: oneiron::drafter::DrafterPolicySetRequest = crate::codec::lower_record("vault.drafters.policy.set", input)?;
+    let output = client.vault_drafters_policy_set(&input)?;
+    crate::codec::lift_record("vault.drafters.policy.set", &output)
+};
+"vault.drafters.revert" => fn vault_drafters_revert(&self, input: DrafterRevertRequest) -> DrafterRevertReceipt = |client| {
+    let input: oneiron::drafter::DrafterRevertRequest = crate::codec::lower_record("vault.drafters.revert", input)?;
+    let output = client.vault_drafters_revert(&input)?;
+    crate::codec::lift_record("vault.drafters.revert", &output)
+};
+"vault.drafters.revert_as" => fn vault_drafters_revert_as(&self, input: DrafterRevertRequest) -> DrafterRevertReceipt = |client| {
+    let input: oneiron::drafter::DrafterRevertRequest = crate::codec::lower_record("vault.drafters.revert_as", input)?;
+    let output = client.vault_drafters_revert_as(&input)?;
+    crate::codec::lift_record("vault.drafters.revert_as", &output)
 };
 "vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
     let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
