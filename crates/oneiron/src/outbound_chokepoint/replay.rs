@@ -555,6 +555,15 @@ fn step_uncertain_send<T: OutboundTransport>(
             let released = record_definite_non_delivery(vault, record.id, now_ms)?;
             replay_record(vault, authority, released, prepared, now_ms, transport)
         }
+        // A provider's time-bounded dedupe proves nothing: the row is sent
+        // again still Pending and uncertain, never recorded as a non-delivery,
+        // so a resend resumed after the window looks up again (review #6555).
+        UncertainSendStep::ResendDeduplicated => {
+            let uncertain = record_possible_delivery(vault, record.id)?;
+            send_pending_with_gate(
+                vault, authority, uncertain, prepared, None, now_ms, true, transport,
+            )
+        }
         UncertainSendStep::Hold => {
             let uncertain = record_possible_delivery(vault, record.id)?;
             Ok(effect_result(&uncertain, None, true, None))

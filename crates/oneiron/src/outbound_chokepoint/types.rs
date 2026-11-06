@@ -245,6 +245,10 @@ pub(crate) enum UncertainSendStep {
     /// The owner answered resend: the row is sent once more, still marked
     /// as one that may have gone out before.
     OwnerReleased,
+    /// The provider would drop a resend under the same id for now: the row
+    /// is sent again, still Pending and marked as one that may have gone, so
+    /// a resend resumed later asks the lookup again (review #6555).
+    ResendDeduplicated,
     /// Nobody can tell: the row stays Pending and uncertain, nothing is
     /// sent, and the caller asks the owner.
     Hold,
