@@ -9,8 +9,9 @@ mod ag_ui;
 pub(crate) use ag_ui::project_ag_ui_file;
 pub use ag_ui::{
     AG_UI_FILE_PREDICATE, AG_UI_SOURCE_ID, AgUiAppObservation, AgUiCustomMapping, AgUiDecodedEvent,
-    AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
-    AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
+    AgUiEventLinks, AgUiFileImport, AgUiFileMetadata, AgUiFileMetadataRead, AgUiFileRead,
+    AgUiFileReadInput, AgUiFileReceipt, AgUiFileView, AgUiObservationKind, AgUiRepairLink,
+    AgUiRepairLinkStatus, AgUiRepairTaskDeclaration, AgUiSource,
 };
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
@@ -85,7 +86,6 @@ pub use self::types::{
     IngestError, IngestResult, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote,
     NormalizedIngestRecord,
 };
-
 #[cfg(test)]
 mod bulk_review_tests;
 #[cfg(test)]

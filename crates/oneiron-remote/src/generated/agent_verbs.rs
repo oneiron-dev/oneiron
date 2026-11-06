@@ -1419,6 +1419,9 @@ impl OneironClient {
                 "vault.evals.inventory" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalAuthoringInventory,
                 >(client, verb, &input),
+                "vault.evals.repair.nominate" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalRepairNominations,
+                >(client, verb, &input),
                 "vault.evals.repair.prepare" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalRepairCasePreparation,
                 >(client, verb, &input),
@@ -9532,6 +9535,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.evals.inventory", value)
+    }
+    pub fn vault_evals_repair_nominate(
+        &self,
+        input: &oneiron::skill_optimize::EvalRepairNominationRequest,
+    ) -> Result<oneiron::skill_optimize::EvalRepairNominations, MemoryError> {
+        oneiron::memory::caps::check_limit_nonzero(input.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.repair.nominate", value)
     }
     pub fn vault_evals_repair_prepare(
         &self,

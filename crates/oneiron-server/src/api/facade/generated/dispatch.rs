@@ -14363,6 +14363,28 @@ async fn vault_evals_inventory(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_evals_repair_nominate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.evals.repair.nominate",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_evals_repair_prepare(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40982,6 +41004,9 @@ async fn call_verb_row(
             Box::pin(vault_research_archive_coverage(server, call, input)).await
         }
         "vault.evals.inventory" => Box::pin(vault_evals_inventory(server, call, input)).await,
+        "vault.evals.repair.nominate" => {
+            Box::pin(vault_evals_repair_nominate(server, call, input)).await
+        }
         "vault.evals.repair.prepare" => {
             Box::pin(vault_evals_repair_prepare(server, call, input)).await
         }

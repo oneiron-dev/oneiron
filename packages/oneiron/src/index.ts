@@ -1745,6 +1745,8 @@ export class Oneiron {
       /** The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup. */
       inventory: (input: Facade.EvalInventoryWire): Facade.EvalAuthoringInventory => this.#call(() => this.#client.vaultEvalsInventory(input) as Facade.EvalAuthoringInventory),
       repair: {
+        /** Discover source-declared Repair recipes through scoped native reads. Returns pins, receipts and errors, never task inputs or expected responses. */
+        nominate: (input: Facade.EvalRepairNominationRequest): Facade.EvalRepairNominations => this.#call(() => this.#client.vaultEvalsRepairNominate(input) as Facade.EvalRepairNominations),
         /** Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case. */
         prepare: (input: Facade.EvalRepairTaskSource): Facade.EvalRepairCasePreparation => this.#call(() => this.#client.vaultEvalsRepairPrepare(input) as Facade.EvalRepairCasePreparation),
         /** The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger. */

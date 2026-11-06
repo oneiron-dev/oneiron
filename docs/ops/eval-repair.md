@@ -1,6 +1,6 @@
-# Explicit Repair eval cases
+# Repair eval case preparation
 
-The native facade exposes two calls for an explicitly mapped task in a linked
+The native facade prepares and records explicitly mapped tasks from a linked
 AG-UI capture. They use the caller's existing source-reading rights. A source
 hash or task hash is a reconstruction pin, not a read grant.
 
@@ -34,6 +34,41 @@ These calls provide an explicit preparation and recording path. They do not add
 automatic capture discovery, change the receipt-based authoring inventory or its
 plan format, or authorize training. Existing family purposes, sealed-cohort
 exposure, source erasure, and measurement release checks still apply.
+
+## Discover source-declared tasks
+
+The owner-selected AG-UI import includes a required `repair_tasks` list. Each
+entry names `outcome_ordinal`, a `task_pointer` into the linked failure event,
+and an explicit native `seat`. An empty list declares no tasks. The declarations
+are stored in the same capture and covered by its native source fingerprint.
+They are data, not app-role identity, an outcome label, or training permission.
+Capture does not add task validation gates; the existing compiler validates a
+declared task when it is prepared. Manual pinned preparation remains available
+without a declaration.
+
+`vault.evals.repair.nominate` accepts an optional native claim-list
+`subject_ref` and a required capture `limit`. A null subject searches all
+ordinary admitted claims, not only one project. It uses the original Memory
+handle's Recorded claim reader with the AG-UI predicate, then authenticates each
+capture through the same scoped projection and binding checks as a pinned read.
+The metadata read computes the native fingerprint; it does not trust a hash
+recreated from a claim-list projection. Each declaration is then compiled by the
+existing exact pinned Repair reader under that same handle.
+
+The result contains the discovery receipt and one entry per selected capture.
+Each entry contains a metadata result and task preparation results in declaration
+order. Successful metadata contains only native pins, source time and declarations.
+Missing or withheld metadata returns a null source and no task results. Each task
+returns a recipe or null, with its own actual read receipt. A metadata or task
+error remains an error in that entry; it does not suppress unrelated declarations
+or captures. No source text, task input, expected response, case ledger or label
+is returned. A discovery failure remains the call's outer error.
+
+The capture limit retains native claim-list ordering and truncation. This is not
+an exhaustive inventory or a shared snapshot across all reads. Discovery writes
+no case or family, chooses no family purpose, runs no task, and grants no rights.
+The owner may use the prepared recipes with the existing record/setup calls.
+Receipt-based automatic authoring plans are unchanged.
 
 ## Record explicit recipes before cohort cuts
 

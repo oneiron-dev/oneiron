@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1317 code-mode rows (1277 host rows, 40 run rows), 4651 declarations.
-// Replies: 1128 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1318 code-mode rows (1278 host rows, 40 run rows), 4658 declarations.
+// Replies: 1128 fully typed, 189 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1771,9 +1771,26 @@ declare namespace Sdk {
   type UncutFamily = { family: EntityId; cases: number; first_at: number; last_at: number };
   type SeatInventory = { seat: EvalSeat; families: PurposeCounts; cases: number; cohorts: CohortSummary[]; uncut: UncutFamily[] };
   type EvalAuthoringInventory = { inventory_digest: string; built_at: number; from: number; groups: EvalSourceGroup[]; candidates: EvalCandidate[]; seats: SeatInventory[] };
+  type EvalRepairNominationRequest = { subject_ref?: string | null; limit: number };
+  type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null };
+  type MemoryPolicyExceptionProposal = { action: string; row_ref: string; required_role: string };
+  type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
+  type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
+  type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
+  type LegalHoldState = "retained_for_law" | "use_restricted";
+  type LegalHoldBoundKind = "law";
+  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
+  type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string };
+  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[]; legal_hold?: LegalHoldNotice | null };
+  type MemoryResult<T> = { Ok: T } | { Err: MemoryError };
+  type AgUiRepairTaskDeclaration = { outcome_ordinal: number; task_pointer: string; seat: EvalSeat };
+  type AgUiFileMetadata = { claim_ref: string; source_hash: string; source_at: number; repair_tasks: AgUiRepairTaskDeclaration[] };
+  type AgUiFileMetadataRead = { source?: AgUiFileMetadata | null; receipt: ScopedReadReceipt };
   type EvalRepairTaskSource = { claim_ref: string; source_hash: string; outcome_ordinal: number; task_pointer: string; seat: EvalSeat };
   type EvalRepairCaseRecipe = { source: EvalRepairTaskSource; task_hash: number[] };
   type EvalRepairCasePreparation = { recipe?: EvalRepairCaseRecipe | null; receipt: ScopedReadReceipt };
+  type EvalRepairSourceNominations = { claim_ref: string; metadata: MemoryResult<AgUiFileMetadataRead>; tasks: MemoryResult<EvalRepairCasePreparation>[] };
+  type EvalRepairNominations = { sources: EvalRepairSourceNominations[]; receipt: ScopedReadReceipt };
   type EvalRepairCaseRequest = { recipe: EvalRepairCaseRecipe; purpose: FamilyPurpose };
   type EvalRepairCaseReference = { case_ref?: EntityId | null; receipt: ScopedReadReceipt };
   type FamilyDecision = { group: string; purpose: FamilyPurpose };
@@ -2059,8 +2076,6 @@ declare namespace Sdk {
   type LiftAndEraseShownState = { title: string; prompt: string; records: EntityId[]; claim_free_partition?: boolean; holds: ShownCustomerHold[] };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[]; claim_free_partition?: boolean; shown_state: LiftAndEraseShownState };
   type ErasePendingReason = "historical_sweep" | "custody_retirement" | "veto_window";
-  type LegalHoldBoundKind = "law";
-  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
@@ -3695,8 +3710,6 @@ declare namespace Sdk {
   type ThingDecideOutput = { pack: string; state: string; questions: number; missing: string[] };
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
-  type LegalHoldState = "retained_for_law" | "use_restricted";
-  type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string };
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string; legal_hold?: LegalHoldNotice | null };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
   type ClaimRefRequest = { claim_ref: string };
@@ -3852,13 +3865,13 @@ declare namespace Sdk {
   type ProductivityTree = { root_ref: string; nodes: ProductivityNode[] };
   type AgUiObservationKind = "action" | "failure" | "repair" | "outcome";
   type AgUiCustomMapping = { name: string; kind: AgUiObservationKind; id?: string | null; thread_id?: string | null; run_id?: string | null; tool_call_id?: string | null; failure_id?: string | null; repair_id?: string | null; outcome?: string | null };
-  type AgUiFileImport = { claim_ref?: string | null; project_ref: string; app_id: string; custom_mappings: AgUiCustomMapping[]; jsonl: string };
+  type AgUiFileImport = { claim_ref?: string | null; project_ref: string; app_id: string; custom_mappings: AgUiCustomMapping[]; repair_tasks: AgUiRepairTaskDeclaration[]; jsonl: string };
   type AgUiFileReceipt = { claim_ref: string; source_hash: string; event_count: number };
   type AgUiFileReadInput = { claim_ref: string; source_hash: string };
   type AgUiAppObservation = { ordinal: number; name: string; kind: AgUiObservationKind; id?: string | null; thread_id?: string | null; run_id?: string | null; tool_call_id?: string | null; failure_id?: string | null; repair_id?: string | null; outcome?: unknown | null };
   type AgUiRepairLinkStatus = "linked" | "missing_link" | "ambiguous_link" | "namespace_mismatch" | "missing_outcome";
   type AgUiRepairLink = { outcome_ordinal: number; repair_ordinal?: number | null; failure_ordinal?: number | null; status: AgUiRepairLinkStatus };
-  type AgUiFileView = { claim_ref: string; source_hash: string; capture_actor_ref: string; project_ref: string; app_id: string; custom_mappings: AgUiCustomMapping[]; jsonl: string; event_count: number; observations: AgUiAppObservation[]; repair_links: AgUiRepairLink[] };
+  type AgUiFileView = { claim_ref: string; source_hash: string; capture_actor_ref: string; project_ref: string; app_id: string; custom_mappings: AgUiCustomMapping[]; repair_tasks: AgUiRepairTaskDeclaration[]; jsonl: string; event_count: number; observations: AgUiAppObservation[]; repair_links: AgUiRepairLink[] };
   type AgUiFileRead = { source?: AgUiFileView | null; receipt: ScopedReadReceipt };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
@@ -3896,12 +3909,6 @@ declare namespace Sdk {
   type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "access_verified"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null; evidence: EsignSigningEvidence; items: EsignItem[] } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][]; item_profiles: SealProfileEvidence[] } | { event: "reseal_requested"; owner: string; authority: string };
   type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
   type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
-  type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null };
-  type MemoryPolicyExceptionProposal = { action: string; row_ref: string; required_role: string };
-  type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
-  type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
-  type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
-  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[]; legal_hold?: LegalHoldNotice | null };
   type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError };
   type EsignDocumentView = EsignDocumentTrail & { document_ref: string; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
@@ -6317,6 +6324,8 @@ declare const vault: Sdk.VaultHost & {
         /** The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses. */
         setup(input: Sdk.EvalRepairCohortSetup): Promise<Sdk.EvalRepairCohortReport | StoredResult>;
       };
+      /** Discover source-declared Repair recipes through scoped native reads. Returns pins, receipts and errors, never task inputs or expected responses. */
+      nominate(input: Sdk.EvalRepairNominationRequest): Promise<Sdk.EvalRepairNominations | StoredResult>;
       /** Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case. */
       prepare(input: Sdk.EvalRepairTaskSource): Promise<Sdk.EvalRepairCasePreparation | StoredResult>;
       /** The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger. */

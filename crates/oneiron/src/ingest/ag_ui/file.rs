@@ -13,10 +13,20 @@ use crate::ingest::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, json_to_msgpack_value,
 };
 use crate::memory::{Memory, MemoryResult};
+use crate::skill_optimize::eval_set::EvalSeat;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
 pub const AG_UI_FILE_PREDICATE: &str = "ingest.ag_ui.file";
+
+/// Explicit task selection on this capture, not an app role or a training grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgUiRepairTaskDeclaration {
+    pub outcome_ordinal: usize,
+    pub task_pointer: String,
+    pub seat: EvalSeat,
+}
 
 /// Registration is snapshotted with this file. It grants no app or training authority.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -26,6 +36,7 @@ pub struct AgUiFileImport {
     pub project_ref: String,
     pub app_id: String,
     pub custom_mappings: Vec<AgUiCustomMapping>,
+    pub repair_tasks: Vec<AgUiRepairTaskDeclaration>,
     pub jsonl: String,
 }
 
@@ -36,6 +47,7 @@ struct StoredFile {
     project_ref: String,
     app_id: String,
     custom_mappings: Vec<AgUiCustomMapping>,
+    repair_tasks: Vec<AgUiRepairTaskDeclaration>,
     jsonl: String,
 }
 
@@ -60,6 +72,7 @@ pub struct AgUiFileView {
     pub project_ref: String,
     pub app_id: String,
     pub custom_mappings: Vec<AgUiCustomMapping>,
+    pub repair_tasks: Vec<AgUiRepairTaskDeclaration>,
     pub jsonl: String,
     pub event_count: usize,
     pub observations: Vec<AgUiAppObservation>,
@@ -69,6 +82,21 @@ pub struct AgUiFileView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgUiFileRead {
     pub source: Option<AgUiFileView>,
+    pub receipt: ScopedReadReceipt,
+}
+
+/// Native capture pins and declarations, without event or task contents.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgUiFileMetadata {
+    pub claim_ref: String,
+    pub source_hash: String,
+    pub source_at: u64,
+    pub repair_tasks: Vec<AgUiRepairTaskDeclaration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgUiFileMetadataRead {
+    pub source: Option<AgUiFileMetadata>,
     pub receipt: ScopedReadReceipt,
 }
 
@@ -108,6 +136,7 @@ impl Vault {
             project_ref: project.to_hex(),
             app_id: input.app_id.clone(),
             custom_mappings: input.custom_mappings.clone(),
+            repair_tasks: input.repair_tasks.clone(),
             jsonl: input.jsonl.clone(),
         };
         let hash = fingerprint(&file)?;
@@ -183,6 +212,16 @@ pub(crate) fn project_ag_ui_file(
     input: &AgUiFileReadInput,
     rows: Vec<Option<crate::ports::ReadRow>>,
 ) -> Result<Option<(AgUiFileView, u64)>> {
+    project_ag_ui_file_with_pin(vault, txn, id, Some(&input.source_hash), rows)
+}
+
+fn project_ag_ui_file_with_pin(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    expected_hash: Option<&str>,
+    rows: Vec<Option<crate::ports::ReadRow>>,
+) -> Result<Option<(AgUiFileView, u64)>> {
     let Some(row) = rows.into_iter().next().flatten() else {
         return Ok(None);
     };
@@ -215,7 +254,7 @@ pub(crate) fn project_ag_ui_file(
         ));
     }
     let hash = fingerprint(&file)?;
-    if hash != input.source_hash {
+    if expected_hash.is_some_and(|expected| hash != expected) {
         return Err(Error::InvalidClaimBody("AG-UI source fingerprint changed"));
     }
     validate_mappings(&file.custom_mappings)?;
@@ -230,6 +269,7 @@ pub(crate) fn project_ag_ui_file(
             project_ref: file.project_ref,
             app_id: file.app_id,
             custom_mappings: file.custom_mappings,
+            repair_tasks: file.repair_tasks,
             jsonl: file.jsonl,
             event_count: events.len(),
             observations,
@@ -247,6 +287,33 @@ impl Memory<'_> {
         input: &AgUiFileImport,
     ) -> MemoryResult<AgUiFileReceipt> {
         Ok(self.vault().ingest_ag_ui_file(owner, input)?)
+    }
+
+    /// Discover native pins under the same scoped source authentication as a
+    /// pinned read. Missing/withheld rows reveal no declarations or fingerprint.
+    pub fn read_ag_ui_file_metadata(&self, claim_ref: &str) -> MemoryResult<AgUiFileMetadataRead> {
+        let id = EntityId::from_hex(claim_ref)?;
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let read = lane.read_projected(
+            &[crate::claim::PointRead::id(id)],
+            None,
+            |txn, rows| -> Result<Option<AgUiFileMetadata>> {
+                Ok(
+                    project_ag_ui_file_with_pin(self.vault(), txn, id, None, rows)?.map(
+                        |(view, source_at)| AgUiFileMetadata {
+                            claim_ref: view.claim_ref,
+                            source_hash: view.source_hash,
+                            source_at,
+                            repair_tasks: view.repair_tasks,
+                        },
+                    ),
+                )
+            },
+        )?;
+        Ok(AgUiFileMetadataRead {
+            source: read.value,
+            receipt: read.receipt,
+        })
     }
 
     /// Read exactly this capture under the caller's normal credential, locality

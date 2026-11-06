@@ -601,6 +601,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.research.archive.repropose" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive.coverage" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.inventory" => a.spec.clone().ok_or_else(invalid),
+        "vault.evals.repair.nominate" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.repair.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.repair.record" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.repair.cohorts.setup" => a.spec.clone().ok_or_else(invalid),
@@ -2957,6 +2958,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.evals.inventory" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.evals.repair.nominate" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.evals.repair.prepare" => {
@@ -13471,6 +13475,14 @@ async fn execute_agent_verb_row_on(
                 listed,
             ));
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.evals.repair.nominate" => {
+            let input: oneiron::skill_optimize::EvalRepairNominationRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_evals_repair_nominate(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
