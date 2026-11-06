@@ -297,11 +297,19 @@ impl ScopedRead<'_> {
         opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
-        // A file-plane ASSET's body file is read in the snapshot this read
-        // opens, so the bodies are pinned before it opens (FIX 12149).
-        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
-        let txn = self.grant_read_txn()?;
+        let _bodies = self.prepare_point_read::<E>()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.read_projected_opaque_in_txn(&txn, reads, requested, opaque, project)
+    }
+
+    /// Prepare grant time and pin point-read bodies before opening a snapshot.
+    /// Hold the returned guard through the snapshot and its projections.
+    pub(crate) fn prepare_point_read<E: From<Error>>(
+        &self,
+    ) -> std::result::Result<Option<oneiron_store::result_body_pins::ResultBodyPin>, E> {
+        let bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
+        self.persist_grant_clock()?;
+        Ok(bodies)
     }
 
     /// The ordinary point read and projection in the caller's snapshot.

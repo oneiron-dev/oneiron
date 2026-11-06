@@ -29,27 +29,35 @@ pub(crate) fn audit_mutation_in_txn(
     txn: &mut heed::RwTxn<'_>,
     mutation: MutationAudit<'_>,
 ) -> Result<()> {
+    let record = prepare_mutation_audit_in_txn(store, txn, mutation)?;
+    store.port_changelog_append(txn, &record)
+}
+
+/// Allocate the audit record at the mutation's native transaction position.
+/// Recording its time can write the clock floors in this writer.
+pub(crate) fn prepare_mutation_audit_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    mutation: MutationAudit<'_>,
+) -> Result<ChangeLogRecord> {
     let id = store.clock.ulid()?;
     let recorded_at = recorded_at_in_txn(store, txn)?;
-    store.port_changelog_append(
-        txn,
-        &ChangeLogRecord {
-            id,
-            entity: mutation.entity,
-            op: mutation.op,
-            actor_principal: match mutation.actor_principal {
-                Some(actor) => actor,
-                None => storage_service_principal()?,
-            },
-            // A principal's person is a separate relationship. Never infer equality.
-            actor_person: None,
-            occurred_at: mutation.occurred_at,
-            recorded_at,
-            input_hash: *blake3::hash(mutation.input).as_bytes(),
-            patch: None,
-            reason: mutation.reason.map(str::to_owned),
+    Ok(ChangeLogRecord {
+        id,
+        entity: mutation.entity,
+        op: mutation.op,
+        actor_principal: match mutation.actor_principal {
+            Some(actor) => actor,
+            None => storage_service_principal()?,
         },
-    )
+        // A principal's person is a separate relationship. Never infer equality.
+        actor_person: None,
+        occurred_at: mutation.occurred_at,
+        recorded_at,
+        input_hash: *blake3::hash(mutation.input).as_bytes(),
+        patch: None,
+        reason: mutation.reason.map(str::to_owned),
+    })
 }
 
 pub(crate) struct EntityPutAudit<'a> {
@@ -68,6 +76,19 @@ pub(crate) fn audit_entity_put_in_txn(
     txn: &mut heed::RwTxn<'_>,
     put: EntityPutAudit<'_>,
 ) -> Result<()> {
+    match prepare_entity_put_audit_in_txn(store, txn, put)? {
+        Some(record) => store.port_changelog_append(txn, &record),
+        None => Ok(()),
+    }
+}
+
+/// Select and allocate an audit row against the put's current native prefix.
+/// An unchanged put has no audit row and does not allocate an audit time.
+pub(crate) fn prepare_entity_put_audit_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    put: EntityPutAudit<'_>,
+) -> Result<Option<ChangeLogRecord>> {
     let old = store.entities.get(txn, put.id.as_bytes())?;
     if let Some(raw) = old.as_ref()
         && let Some(header) = EntityMetadataHeader::parse(raw)
@@ -76,7 +97,7 @@ pub(crate) fn audit_entity_put_in_txn(
         && header.occurred_end == put.occurred.end
         && header.learned_at == put.learned_at
     {
-        return Ok(());
+        return Ok(None);
     }
     let mut op = if old.is_some() {
         ChangeOp::Update
@@ -118,7 +139,7 @@ pub(crate) fn audit_entity_put_in_txn(
         .transition
         .and_then(VerifiedClaimTransition::closed_at)
         .unwrap_or(put.occurred.start);
-    audit_mutation_in_txn(
+    prepare_mutation_audit_in_txn(
         store,
         txn,
         MutationAudit {
@@ -130,4 +151,5 @@ pub(crate) fn audit_entity_put_in_txn(
             reason: None,
         },
     )
+    .map(Some)
 }
