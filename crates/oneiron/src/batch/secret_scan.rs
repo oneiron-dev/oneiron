@@ -45,7 +45,8 @@ pub(crate) use self::mask::carrier::{
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::rebind_mask_origin_in_txn;
 pub(crate) use self::mask::retained_repo::read::{
-    project_marked_retained_repo_blob, project_marked_retained_repo_blob_with_reader,
+    RepoKnownCheck, project_marked_retained_repo_blob,
+    project_marked_retained_repo_blob_with_reader, retained_repo_known_places,
 };
 pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,

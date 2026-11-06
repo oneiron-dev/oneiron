@@ -156,6 +156,9 @@ impl Vault {
             })));
         }
         let bytes = read_asset_blob_in_txn(self, txn, content_hash)?;
-        project_repo_bytes_in_txn_with_reader(self, txn, &marks, bytes, reader).map(Some)
+        // In the caller's snapshot, which may be a writer's: the stored
+        // spans alone (FIX 8966 wires the known-value pass at the reads
+        // that own their snapshot).
+        project_repo_bytes_in_txn_with_reader(self, txn, &marks, bytes, reader, None).map(Some)
     }
 }
