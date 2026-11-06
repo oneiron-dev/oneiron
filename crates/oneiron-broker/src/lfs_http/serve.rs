@@ -229,13 +229,25 @@ async fn write_rewrites(
 fn lfs_echo_forms(credential: &Credential) -> Vec<Zeroizing<Vec<u8>>> {
     let installed = credential.header.as_bytes();
     let mut forms = git_echo_forms(&credential.watched);
-    forms.push(Zeroizing::new(installed.to_vec()));
-    if let Ok(text) = std::str::from_utf8(installed)
-        && let Ok(quoted) = serde_json::to_string(text).map(Zeroizing::new)
-    {
-        forms.push(Zeroizing::new(
-            quoted.as_bytes()[1..quoted.len() - 1].to_vec(),
-        ));
+    // The whole installed value, and the credentials after its scheme on
+    // their own: an auth scheme reads the same in any case and after any
+    // run of spaces (`basic dXNl…` authenticates as `Basic dXNl…`), so the
+    // payload alone is watched too, with no short-token filter, raw and in
+    // its JSON spelling.
+    let payload = installed
+        .iter()
+        .position(|byte| *byte == b' ')
+        .map(|space| installed[space..].trim_ascii())
+        .filter(|payload| !payload.is_empty());
+    for form in std::iter::once(installed).chain(payload) {
+        forms.push(Zeroizing::new(form.to_vec()));
+        if let Ok(text) = std::str::from_utf8(form)
+            && let Ok(quoted) = serde_json::to_string(text).map(Zeroizing::new)
+        {
+            forms.push(Zeroizing::new(
+                quoted.as_bytes()[1..quoted.len() - 1].to_vec(),
+            ));
+        }
     }
     forms
 }
