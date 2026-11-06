@@ -69,6 +69,7 @@ pub(crate) mod room_facts;
 pub(crate) use crate::room_codec::room_parts;
 pub(crate) mod room_turns;
 pub(crate) mod row_birth;
+pub(crate) mod origin_positions;
 pub mod schema;
 pub mod selector;
 pub mod server_state;

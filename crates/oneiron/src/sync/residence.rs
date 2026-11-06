@@ -556,6 +556,9 @@ pub fn promotion_covers_full_window_for(
     }
     // A body reference stands beside each owner the grant kept (FIX 5532).
     super::asset_body::references::copy_refs_within(source, &selected)?;
+    if own_machine {
+        super::origin_positions::copy_for_own_machines(source, &selected)?;
+    }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

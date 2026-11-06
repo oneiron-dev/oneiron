@@ -749,11 +749,10 @@ pub(super) fn remove_entity_crdt_carriers(
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
         removed = true;
     }
-    // The row's birth leaves with its carrier.
-    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
-        && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
-    {
-        removed = true;
+    // The row's birth and optional position data leave with its carrier.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map) {
+        removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
+        removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
     }
     Ok(removed)
 }

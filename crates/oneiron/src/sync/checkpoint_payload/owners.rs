@@ -36,6 +36,7 @@ use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
+use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::withdrawn_cutoffs::{
@@ -43,13 +44,14 @@ use crate::sync::withdrawn_cutoffs::{
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 21] = [
+pub(super) const WINDOW_ROOTS: [&str; 22] = [
     "entities",
     "edges",
     "tombstones",
     HELD_EDIT_CAUSALITY_MAP,
     "retained_claim_worlds",
     ROW_BIRTHS_MAP,
+    ORIGIN_POSITIONS_MAP,
     PEER_ORIGIN_MAP,
     WITHDRAWN_CUTOFFS_MAP,
     "documents",
@@ -126,6 +128,7 @@ pub(crate) fn root_entry(
             _ => undecodable(),
         },
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::entry(key, value),
+        ORIGIN_POSITIONS_MAP => crate::sync::origin_positions::checkpoint_entry(key, value),
         PEER_ORIGIN_MAP => match (entity, admit_peer_origin_carrier(key, &binary(value))) {
             (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
@@ -217,6 +220,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         | "retained_claim_worlds"
         | "entity_documents"
         | ROW_BIRTHS_MAP
+        | ORIGIN_POSITIONS_MAP
         | PEER_ORIGIN_MAP
         | ROOM_TURNS_MAP
         | ASSET_BODY_REFS_MAP => id_key(key),
