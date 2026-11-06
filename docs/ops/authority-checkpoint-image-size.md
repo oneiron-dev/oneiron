@@ -47,8 +47,9 @@ part of the residence baseline.
 An image at or below the trigger keeps both. An image still above it after
 compaction is encoded with all remaining bodies intact. The trigger itself
 does not cause a refusal. Neither compaction drops `AgentGrantAct` bodies.
-Checkpoint fold schema 24 describes this residence baseline and the replay
-representation above. There is no older-schema reader or migration.
+Checkpoint fold schema 25 retains this residence baseline and replay
+representation, and carries each pact's scope-commitment nonce and epoch.
+There is no older-schema reader or migration.
 
 ## Transport slicing and stage charge
 
