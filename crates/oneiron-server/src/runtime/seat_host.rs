@@ -271,6 +271,7 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             floor: Some(Arc::clone(&self.floor)),
             stop: self.stop.clone(),
             helper_env: None,
+            model_env: None,
         };
         let ttl_secs = budget.wall_clock_secs.clamp(1, SECRET_GRANT_MAX_TTL_SECS);
         let grants = match &self.destinations {
@@ -288,7 +289,8 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
                 return Err(error);
             }
         };
-        seat.helper_env = helper.as_ref().map(SeatHelper::env);
+        seat.helper_env = helper.as_ref().and_then(SeatHelper::env);
+        seat.model_env = helper.as_ref().and_then(SeatHelper::model_env);
         let ran = seat.run(spec, checkout, boundary, budget, authorize);
         let mut taints = match (grants, &self.destinations) {
             (Some(grants), Some(destinations)) => grants.revoke(self.vault, self.run, destinations),
