@@ -258,29 +258,47 @@ impl PreparedHomeClaimActors {
         {
             return Ok(None);
         }
-        for required in &self.copy.required {
+        Ok(self
+            .copy
+            .requirements_current_in_txn(vault, txn, &self.binding)?
+            .then_some(&self.copy))
+    }
+}
+
+impl RetainedHomeClaimActors {
+    pub(crate) fn sender_peer(&self) -> crate::authority::PeerMachine {
+        self.sender.peer()
+    }
+
+    pub(crate) fn requirements_current_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        binding: &CustodyBinding,
+    ) -> Result<bool> {
+        if vault.authority_view_readonly_in_txn(txn)?.vault_id != Some(self.vault_id) {
+            return Ok(false);
+        }
+        for required in &self.required {
             let item = required.item()?;
             let Some(found) = instance::instance_in_txn(&vault.store, txn, &item)? else {
-                return Ok(None);
+                return Ok(false);
             };
             if found.lifecycle != Lifecycle::Active
                 || found.generation != required.generation
                 || vault.carrier_actor_erased_in_txn(txn, &required.owner)?
             {
-                return Ok(None);
+                return Ok(false);
             }
-            let subject = item.subject(&self.binding)?;
+            let subject = item.subject(binding)?;
             if retirement_in_txn(&vault.store, txn, &subject)?
                 .is_some_and(|intent| intent.through >= required.generation)
             {
-                return Ok(None);
+                return Ok(false);
             }
         }
-        Ok(Some(&self.copy))
+        Ok(true)
     }
-}
-
-impl RetainedHomeClaimActors {
     pub(crate) fn entity_id(&self) -> EntityId {
         self.entity_id
     }
