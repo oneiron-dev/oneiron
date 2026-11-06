@@ -8,6 +8,11 @@
 //! binary or media reply ([`Shape::streams`]) streams back in chunks instead,
 //! each form of the key in it redacted as the chunks pass (FIX 6103, 1896).
 //!
+//! Its second adapter (OSH-3, [`GitCallHeader`]) sends one exchange of git's
+//! smart HTTP to one repository with the credential it installs alone: the
+//! body spooled and checked before the credential comes, the reply relayed
+//! byte for byte and cut if it echoes the credential.
+//!
 //! It runs no model and no generated code, and it does not link the engine.
 //! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the
 //! checks in [`CallHeader::check`], so the daemon refuses a bad request before
@@ -21,6 +26,7 @@ mod digest;
 mod error;
 mod form;
 mod frame;
+mod git_http;
 mod responses;
 mod route_keys;
 mod send;
@@ -45,6 +51,12 @@ pub use digest::{is_auth_header, request_digest};
 pub use error::{BrokerError, Failure, Refusal};
 pub use form::FormData;
 pub use frame::{MAX_BODY, MAX_SECRET, MAX_STREAM, PROTOCOL_VERSION};
+pub use git_http::{
+    GitCallHeader, GitExchange, GitRepository, GitRequestDigest, GitService, GitTarget,
+    check_git_headers, git_request_digest,
+};
+#[cfg(unix)]
+pub use git_http::{GitReply, PreparedGitCall};
 pub use send::SendPolicy;
 pub use shape::{Shape, json_member};
 pub use strip::{MARKER, strip};
