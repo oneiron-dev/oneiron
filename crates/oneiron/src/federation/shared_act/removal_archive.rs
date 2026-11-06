@@ -15,8 +15,9 @@
 //! not share these rows refuses the slip once it folds that entry (FIX
 //! 11862). A pact-bound transfer is served only while its pact holds, and
 //! the row logs each serve under that pact (FIX 11860).
-//! The archive's bytes are a file the row names, owned by its removal
-//! receipt (FIX 3679, [`super::removal_file`]); the row is metadata. An
+//! The archive's bytes are a file the row names, held under the row's own
+//! owner, its removed member and its receipt (FIX 3679,
+//! [`super::removal_file`]); the row is metadata. An
 //! erase reaches these copies in its own commit (FIX-LIST 2241): from it on,
 //! no read answers an erased record an archive froze, and the erase owes
 //! the file's instance its retirement. The rewrite without those records,
@@ -30,8 +31,7 @@ use std::collections::BTreeSet;
 
 use super::removal_file::ArchiveFile;
 use super::{
-    REMOVAL_EXPORT, RemovalExportCopy, RemovalExportDelivery, removal_export_key,
-    removal_export_receipt,
+    ArchiveRow, REMOVAL_EXPORT, RemovalExportCopy, RemovalExportDelivery, removal_export_key,
 };
 use crate::authority::{ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode};
 use crate::error::{Error, Result};
@@ -96,6 +96,15 @@ pub(crate) struct KeptRemovalCopy {
 }
 
 impl KeptRemovalCopy {
+    /// The archive row this copy is kept under: its removed member and its
+    /// receipt.
+    fn row(&self) -> Result<ArchiveRow> {
+        Ok(ArchiveRow {
+            member: EntityId::from_hex(&self.member)?,
+            receipt: EntityId::from_hex(&self.receipt_id)?,
+        })
+    }
+
     /// The copy its holder receives: `archive`, the bytes it is answered,
     /// and their `digest`.
     fn with_archive(self, archive: Vec<u8>, digest: String) -> RemovalExportCopy {
@@ -319,9 +328,9 @@ impl Vault {
         stored: StoredRemovalExport,
         admits: Option<&dyn Fn(EntityId, Option<&Scope>) -> bool>,
     ) -> Result<Option<RemovalExportCopy>> {
-        let receipt = EntityId::from_hex(&stored.copy.receipt_id)?;
+        let row = stored.copy.row()?;
         let whole = |vault: &Self, stored: StoredRemovalExport| -> Result<RemovalExportCopy> {
-            let archive = vault.read_removal_archive_in_txn(txn, receipt, &stored.file)?;
+            let archive = vault.read_removal_archive_in_txn(txn, row, &stored.file)?;
             let digest = stored.digest();
             Ok(stored.copy.with_archive(archive, digest))
         };
@@ -355,7 +364,7 @@ impl Vault {
             return whole(self, stored).map(Some);
         }
         let TransferMode::ProjectStoredSnapshot = REMOVAL_ARCHIVE_TRANSFER_MODE;
-        let archive = self.read_removal_archive_in_txn(txn, receipt, &stored.file)?;
+        let archive = self.read_removal_archive_in_txn(txn, row, &stored.file)?;
         match crate::batch::export::project_stored_archive(&archive, &archived, &kept) {
             Ok(bytes) => {
                 let ProjectedDigest::ProjectedBytes = REMOVAL_ARCHIVE_PROJECTED_DIGEST;
@@ -440,20 +449,20 @@ impl Vault {
         let erased: BTreeSet<EntityId> = erased.iter().copied().collect();
         let mut owed = false;
         for (row_key, mut stored) in REMOVAL_EXPORT.scan(&self.store, txn)? {
-            let receipt = removal_export_receipt(&row_key);
+            let row = ArchiveRow::from_key(&row_key);
             match stored.after_erase(&erased) {
                 ErasedFromArchive::Untouched => {}
                 ErasedFromArchive::Rewrite { cause } => {
-                    if let Some(receipt) = receipt {
-                        self.owe_removal_archive_erase_in_txn(txn, receipt, &stored.file, cause)?;
+                    if let Some(row) = row {
+                        self.owe_removal_archive_erase_in_txn(txn, row, &stored.file, cause)?;
                     }
                     REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
                     owed = true;
                 }
                 ErasedFromArchive::Dropped { cause } => {
                     REMOVAL_EXPORT.delete(&self.store, txn, &row_key)?;
-                    if let Some(receipt) = receipt {
-                        self.release_removal_archives_in_txn(txn, receipt, Some(cause))?;
+                    if let Some(row) = row {
+                        self.release_removal_archives_in_txn(txn, row, Some(cause))?;
                     }
                 }
             }
@@ -518,10 +527,10 @@ impl Vault {
     /// [`Self::finish_removal_archive_rewrites`] for the row `row_key`, as
     /// `stored` read it. `false` when the row changed or went meanwhile.
     fn rewrite_removal_archive(&self, row_key: &str, stored: &StoredRemovalExport) -> Result<bool> {
-        let receipt = removal_export_receipt(row_key)
+        let row = ArchiveRow::from_key(row_key)
             .ok_or(Error::InvariantViolation("removal archive row key"))?;
         let row_key = &row_key.to_owned();
-        let rewritten = self.rewritten_removal_archive(receipt, stored)?;
+        let rewritten = self.rewritten_removal_archive(row, stored)?;
         let mut txn = self.store.env.write_txn()?;
         let Some(mut current) = REMOVAL_EXPORT.get(&self.store, &txn, row_key)? else {
             return Ok(false);
@@ -532,7 +541,7 @@ impl Vault {
         let old = current.file.clone();
         match rewritten {
             Some((staged, positions)) => {
-                current.file = self.bind_removal_archive_in_txn(&mut txn, receipt, &staged)?;
+                current.file = self.bind_removal_archive_in_txn(&mut txn, row, &staged)?;
                 current.positions = positions;
                 current.erased.clear();
                 REMOVAL_EXPORT.put(&self.store, &mut txn, row_key, &current)?;
@@ -541,7 +550,7 @@ impl Vault {
                 REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)?;
             }
         }
-        self.release_removal_archive_in_txn(&mut txn, receipt, &old)?;
+        self.release_removal_archive_in_txn(&mut txn, row, &old)?;
         txn.commit()?;
         Ok(true)
     }
@@ -552,7 +561,7 @@ impl Vault {
     /// record is left: the archive goes.
     fn rewritten_removal_archive(
         &self,
-        receipt: EntityId,
+        row: ArchiveRow,
         stored: &StoredRemovalExport,
     ) -> Result<Option<(super::removal_file::StagedArchive, Vec<u8>)>> {
         let receipt_hex = stored.copy.receipt_id.as_str();
@@ -576,7 +585,7 @@ impl Vault {
             let _pin = self.pin_all_result_bodies();
             let _custody = self.store.gate_custody_read_guard()?;
             let txn = self.store.env.read_txn()?;
-            self.read_removal_archive_in_txn(&txn, receipt, &stored.file)
+            self.read_removal_archive_in_txn(&txn, row, &stored.file)
         };
         let Ok(archive) = archive else {
             return unreadable("stored archive");
@@ -612,13 +621,13 @@ impl Vault {
         let archives = REMOVAL_EXPORT.scan_keys(&self.store, wtxn, prefix.as_bytes())?;
         let mut records = 0_usize;
         for row_key in &archives {
-            if let Some(receipt) = removal_export_receipt(row_key) {
-                if EXPORT_RECORD_KEYS.delete(&self.store, wtxn, &HexId(receipt))? {
+            if let Some(row) = ArchiveRow::from_key(row_key) {
+                if EXPORT_RECORD_KEYS.delete(&self.store, wtxn, &HexId(row.receipt))? {
                     records += 1;
                 }
-                // Read from the receipt's descriptors, so a row that does
-                // not decode strands no file; this erase retires each.
-                self.release_removal_archives_in_txn(wtxn, receipt, Some(*actor))?;
+                // Read from the row's archive descriptors, so a row that
+                // does not decode strands no file; this erase retires each.
+                self.release_removal_archives_in_txn(wtxn, row, Some(*actor))?;
             }
             REMOVAL_EXPORT.delete(&self.store, wtxn, row_key)?;
         }

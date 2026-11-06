@@ -63,11 +63,27 @@ fn removal_export_key(member: &str, receipt_id: &str) -> String {
     format!("{member}:{receipt_id}")
 }
 
-/// The receipt id an archive row key names, its archive file's owner.
-fn removal_export_receipt(row_key: &str) -> Option<EntityId> {
-    row_key
-        .split_once(':')
-        .and_then(|(_, receipt)| EntityId::from_hex(receipt).ok())
+/// One archive row by its key's two halves: the removed member and the
+/// removal receipt. Its archive file is held under this pair
+/// ([`removal_file::removal_archive_owner`]), never the receipt alone, so
+/// one member's expiry or erase reaches no other member's archive of the
+/// same receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveRow {
+    pub(crate) member: EntityId,
+    pub(crate) receipt: EntityId,
+}
+
+impl ArchiveRow {
+    /// The row an archive row key names; `None` for a key that does not
+    /// read.
+    fn from_key(row_key: &str) -> Option<Self> {
+        let (member, receipt) = row_key.split_once(':')?;
+        Some(Self {
+            member: EntityId::from_hex(member).ok()?,
+            receipt: EntityId::from_hex(receipt).ok()?,
+        })
+    }
 }
 
 /// The acts the shared preset lists. Their names are the policy row names.

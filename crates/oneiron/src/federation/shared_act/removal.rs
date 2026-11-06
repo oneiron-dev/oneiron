@@ -81,8 +81,8 @@ impl Vault {
                 .is_some_and(|stored| now >= stored.copy.expires_at);
             if lapsed && REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)? {
                 self.drop_removal_deliveries_for_export_in_txn(&mut txn, row_key)?;
-                if let Some(receipt) = removal_export_receipt(row_key) {
-                    self.release_removal_archives_in_txn(&mut txn, receipt, None)?;
+                if let Some(row) = ArchiveRow::from_key(row_key) {
+                    self.release_removal_archives_in_txn(&mut txn, row, None)?;
                 }
                 dropped += 1;
             }
