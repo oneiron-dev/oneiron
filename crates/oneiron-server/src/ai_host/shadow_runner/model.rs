@@ -3,8 +3,8 @@
 //! code: the whole request as stored, bound to the model and locality that
 //! answered it, admitted as a raw call naming that model meets, through the
 //! route clamp of the role whose admission sent it (FIX 6359), sent on the
-//! one model's own ladder with no fallback, and only while that ladder's one
-//! picked rung is the rung that answered it, and that rung's route prompt
+//! one rung that answered it with no fallback: the role's rung, else the
+//! model's raw rung (FIX 18546). It goes only while that rung's route prompt
 //! and route pin (route, offer, catalog revision, wire model, prompt digest)
 //! are the ones the capture pinned, by digest. Only then is
 //! the capture's route prompt read from its capsule's body, each secret in
@@ -34,7 +34,6 @@ use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunRecei
 use oneiron::llm::{BudgetDenied, BudgetGuard, DEFAULT_BUDGET_RESERVE_UNITS, mark_solo};
 use oneiron::{BudgetExhaustionPolicy, EntityId, Error, LlmError, LlmResponse, Vault};
 
-use crate::models::RoleCall;
 use crate::server::SyncServer;
 
 /// One call's receipts, kept for the arm and passed on to the host's own
@@ -105,20 +104,21 @@ impl Gateway<'_> {
         // alone on an own server that batches (INF 1). The sent body records
         // the marker; the source digest stays the capture's.
         mark_solo(&mut request);
-        // The model a raw call naming it meets, never swapped for the role's
-        // route, which still clamps it: a model not served here now is no
-        // replay, and no other model stands in. The role is the one whose
-        // admission sent the captured call (FIX 6359), and no other role
-        // stands in for it.
-        let Ok(RoleCall { request, ladder }) =
-            runtime.admit_seat_bound(self.vault, binding.role, request)
-        else {
+        // The captured model, never swapped for the role's pick. The role's
+        // route still clamps it: a model not served here now is no replay,
+        // and no other model stands in. The role is the one whose admission
+        // sent the captured call (FIX 6359), and no other role stands in.
+        let Ok(admission) = runtime.admit_replay(self.vault, binding.role, request) else {
             let unavailable = ShadowUnavailable::new(Reason::ModelUnavailable, "model_not_served");
             return Ok(refused(receipt, unavailable));
         };
-        // The rung that answered the capture, as it is configured now; a
-        // ladder with no such rung is no exact replay.
-        let Some(replay) = ladder.for_replay_binding(&binding.model, binding.locality) else {
+        let (request, routes) = (admission.request, admission.routes);
+        // The rung that answered the capture, as it is configured now: on
+        // the role's route, else on the model's raw route (FIX 18546). No
+        // such rung is no exact replay.
+        let Some((ladder, replay)) =
+            routes.exact_rung(&binding.model, binding.locality, binding.prompt_digest)
+        else {
             let unavailable = ShadowUnavailable::new(Reason::RouteUnavailable, "no_exact_rung");
             return Ok(refused(receipt, unavailable));
         };
