@@ -29,11 +29,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
-pub(crate) use self::receipts::recorded_call;
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
     VERB_HOOK_STOPPED, is_write, meets, never_ran_mark, row_identity, standing_refusal,
 };
+pub(crate) use self::receipts::{recorded_call, write_receipt_may_have_run};
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it

@@ -97,7 +97,8 @@ pub use self::contribution::{
     ReplayAnchor, ScoredFork, contribution_fork_receipts, run_contribution_forks,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
+    ExecutorCallSite, agent_attempt_run_ref, check_write_gate_against_vault, recorded_verb_call,
+    write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,

@@ -1,7 +1,7 @@
 //! A verb write's receipt: its identity, its read, and how a step's write
-//! rows are compared with it.
+//! rows are compared with it. A continuation also asks here whether a
+//! receipt past its cut may have run (FIX 4199).
 
-use crate::EntityId;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
 };
@@ -10,6 +10,7 @@ use crate::code_run::storage::derived_executor_id;
 use crate::code_run::types::{SelfDeniedResult, SelfDispatchOutcome, SelfEffect};
 use crate::error::{Error, Result};
 use crate::task_verb::sdk::AgentVerb;
+use crate::{EntityId, Vault};
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -98,15 +99,63 @@ impl HostSelfDispatcher<'_> {
         step_start: u64,
         ordinal: u64,
     ) -> Result<EntityId> {
-        derived_executor_id(
-            AGENT_VERB_RECEIPT_DOMAIN,
-            &[
-                self.run_ref.as_bytes(),
-                run_id.as_bytes(),
-                &step_start.to_le_bytes(),
-                &ordinal.to_le_bytes(),
-            ],
-        )
+        derive_write_receipt_id(&self.run_ref, run_id, step_start, ordinal)
+    }
+}
+
+/// The id of a write receipt: the run reference `run_ref` the run's
+/// dispatcher holds, the run, the step's first bridge position, and how many
+/// verb writes the step made before the write. The dispatcher and
+/// [`write_receipt_may_have_run`] both derive it here.
+fn derive_write_receipt_id(
+    run_ref: &str,
+    run_id: EntityId,
+    step_start: u64,
+    ordinal: u64,
+) -> Result<EntityId> {
+    derived_executor_id(
+        AGENT_VERB_RECEIPT_DOMAIN,
+        &[
+            run_ref.as_bytes(),
+            run_id.as_bytes(),
+            &step_start.to_le_bytes(),
+            &ordinal.to_le_bytes(),
+        ],
+    )
+}
+
+/// Whether a write receipt of a step, from the write at `ordinal` on, may
+/// have run (FIX 4199). `run_ref` is the run reference the run's dispatcher
+/// held. `run_id`, `step_start` and `ordinal` place the write as the
+/// dispatcher keyed its receipt. The read is in `rtxn` and writes nothing.
+///
+/// A step keeps a write's answer on its receipt before the run's row keeps
+/// the write's bridge call. A crash between the two leaves a receipt with no
+/// bridge call, so the row alone does not show that write.
+///
+/// The receipts are read in order until one is absent. A write refused
+/// before its door ran keeps no receipt and halts the bridge, so no later
+/// write of the step keeps one. Only a never-ran mark on a receipt's first
+/// row shows that its write did not run. An empty reservation, a kept answer
+/// and a receipt that does not read may each have run. This query never
+/// says that a write committed or did not commit: that positive commit
+/// marker is the work of FIX 12507 and FIX 11887.
+pub(crate) fn write_receipt_may_have_run(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    run_ref: &str,
+    run_id: EntityId,
+    step_start: u64,
+    mut ordinal: u64,
+) -> Result<bool> {
+    loop {
+        let receipt_id = derive_write_receipt_id(run_ref, run_id, step_start, ordinal)?;
+        match vault.get_code_run_replay_record_in_txn(rtxn, &receipt_id) {
+            Ok(None) => return Ok(false),
+            Ok(Some(receipt)) if receipt.bridge_calls.first().is_some_and(never_ran) => {}
+            Ok(Some(_)) | Err(_) => return Ok(true),
+        }
+        ordinal += 1;
     }
 }
 
