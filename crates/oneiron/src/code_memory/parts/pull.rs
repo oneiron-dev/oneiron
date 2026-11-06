@@ -57,8 +57,9 @@ type PullNoteCandidates = Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlot
 /// Returns at most `request.limit` notes, every one of them already admitted
 /// by [`payload_visible_in_txn`] on THIS snapshot, plus the always-on
 /// registrations of every retained symbol (which the caller's note limit never
-/// cuts), and the count of examined payloads stored but withheld from the
-/// actor (a missing payload is absence of data and is not counted).
+/// cuts), and the count of examined, non-opaque payload rows that the actor's
+/// floor admits but whose payload projection withholds. Missing or floor-denied
+/// rows are not counted.
 ///
 /// TWO BOUNDS, BOTH LOAD-BEARING:
 ///
@@ -122,7 +123,13 @@ fn collect_pull_candidates(
                         {
                             Some(true) => {}
                             Some(false) => {
-                                withheld.set(withheld.get() + 1);
+                                withheld.set(
+                                    withheld.get()
+                                        + scoped_read.code_memory_payload_suppression_in(
+                                            rtxn,
+                                            &value.payload.entity_id(),
+                                        ),
+                                );
                                 continue;
                             }
                             None => continue,
@@ -317,7 +324,8 @@ pub fn pull_code_memory(
             match payload_visible_in_txn(&vault.store, &rtxn, scoped_read, contract.payload)? {
                 Some(true) => {}
                 Some(false) => {
-                    withheld += 1;
+                    withheld += scoped_read
+                        .code_memory_payload_suppression_in(&rtxn, &contract.payload.entity_id());
                     continue;
                 }
                 None => continue,

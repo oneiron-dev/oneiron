@@ -46,6 +46,22 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// [`Self::read_lane`] for rows that go on to `destination` as well
+    /// (FIX 10105): the key meets it, so it only narrows, and the caller's
+    /// grants and room ceilings stay. A row a world keeps from there reads
+    /// as withheld.
+    pub(crate) fn read_lane_for_destination(
+        &self,
+        claims: ClaimReadStatus,
+        destination: &crate::settings::ReadDestination,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self.actor_read_key()?.for_destination(destination);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
     /// The queue-exhaust Owner's reader, retaining this handle's actual
     /// credential, destination and room ceiling. It never changes the
     /// ordinary read key's owner-binding rule.
@@ -183,6 +199,14 @@ impl Memory<'_> {
         }
         self.host_action = Some(action.clone());
         Ok(self)
+    }
+
+    /// Rechecks a bound host action in the caller's writing snapshot.
+    pub(crate) fn recheck_host_action_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if let Some(action) = &self.host_action {
+            action.guard().holds_in(self.vault, txn)?;
+        }
+        Ok(())
     }
 
     /// The bound actor's read key by identity alone.
