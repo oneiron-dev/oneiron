@@ -1,6 +1,6 @@
 //! Terminal-pact per-world stale stamping (FED-04).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
 
 use crate::authority::{AuthorityFold, FederationPactStatus};
@@ -25,6 +25,8 @@ use crate::vault::Vault;
 // The first terminal transition to reach a world therefore wins permanently:
 // re-sweeping, replaying a later terminal transition, or a second pact going
 // terminal never rewrites an existing stamp's reason, epoch, or timestamp.
+// A read treats a world as stale only while no Active pact delivers it
+// (FIX 4312): the stamp is history, and a live pact's content refreshes.
 // ---------------------------------------------------------------------------
 
 /// Why a foreign world's federated content stopped refreshing.
@@ -500,8 +502,30 @@ pub(crate) fn stale_stamped_worlds(
                 });
             }
         }
+        // A world a live pact delivers refreshes again, whatever an earlier
+        // pact's terminal stamp says: the stamp stays, as that pact's history,
+        // and the world does not read stale while the live pact stands
+        // (FIX 4312).
+        for world in live_registered_worlds(store, rtxn, &fold)? {
+            stale.remove(&world);
+        }
     }
     Ok(stale)
+}
+
+/// Every world an Active pact registered as delivered, in `fold`'s snapshot.
+fn live_registered_worlds(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+) -> Result<BTreeSet<EntityId>> {
+    let mut live = BTreeSet::new();
+    for (pact_id, state) in &fold.federation_pacts {
+        if state.status == FederationPactStatus::Active {
+            live.extend(registered_worlds(store, txn, pact_id)?);
+        }
+    }
+    Ok(live)
 }
 
 /// `fedstale:{world_id_hex}` — one stamp per world, never per pact.
