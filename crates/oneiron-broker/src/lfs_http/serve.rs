@@ -337,7 +337,8 @@ fn lfs_credential(header: &LfsCallHeader, secret: &[u8]) -> Result<Option<Creden
 
 /// The exchange's request: its target's method and URL, identity coding,
 /// an action's own headers as given (but for the credential in place of
-/// each `Authorization:` placeholder, when the action carries it), the
+/// each header's placeholder, under that header's own name, when the
+/// action carries it), the
 /// media types its target derives where an action names none of its own,
 /// and for a batch the credential as the one auth header. A body goes at
 /// the spool's exact length, unless an action names its own
@@ -365,10 +366,10 @@ fn request(
         .header(ACCEPT_ENCODING, "identity");
     for (name, value) in &header.headers {
         builder = match credential {
-            // The credential again, where the batch reply's rewrite put the
-            // placeholder for it.
-            Some(credential) if is_credential_placeholder(name, value) => {
-                builder.header(AUTHORIZATION, credential.header.clone())
+            // The credential again, under the header's own name, where the
+            // batch reply's rewrite put the placeholder for it.
+            Some(credential) if is_credential_placeholder(value) => {
+                builder.header(name.as_str(), credential.header.clone())
             }
             _ => builder.header(name.as_str(), value.as_str()),
         };
