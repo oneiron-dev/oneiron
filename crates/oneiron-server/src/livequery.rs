@@ -20,6 +20,7 @@ mod budget;
 mod error;
 mod history;
 mod residence;
+mod reply;
 pub(crate) use residence::{
     ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
 };
@@ -190,6 +191,17 @@ impl RpcReply {
         request_id: u64,
         result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
     ) -> Result<Self, ProtocolError> {
+        Self::prepare_attributed(server, auth, attribution, call, request_id, result).encode()
+    }
+
+    fn prepare_attributed(
+        server: &crate::server::SyncServer,
+        auth: &CoreAuth,
+        attribution: Option<&call_receipt::ForwardedAttribution>,
+        call: RpcCall,
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> reply::PreparedRpcReply {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         // A `reveal.wait` reply is digested with its value masked (OF-560).
         let mut masked = None;
@@ -252,20 +264,11 @@ impl RpcReply {
                 served,
             },
         );
-        let (frames, rows) = match packed {
-            Ok((prepared, rows)) => {
-                match wire::prepared_result_chunks(request_id, prepared, &stamp) {
-                    Ok(frames) => (frames, Some(rows)),
-                    Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-                }
-            }
-            Err(error) => (rpc_error(request_id, error, &stamp)?, None),
-        };
-        Ok(Self {
+        reply::PreparedRpcReply {
             request_id,
-            frames,
-            rows,
-        })
+            packed,
+            stamp,
+        }
     }
 
     /// [`Self::answer`] for a machine-only home handoff or exact pad call
@@ -495,23 +498,54 @@ pub(crate) async fn rpc_reply(
     context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
     crate::api::answer_hold::until_encoded(async move {
-        let mut call = RpcCall::captured(server, &request);
-        let room_note = context.room_note_call(server, auth, &request.method, &request.params);
-        let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
-            server,
-            auth,
-            &context,
-            &request.method,
-            request.params,
-        ))
-        .await;
-        call.attempt = attempt;
-        // OF-063: judged on arrival and again before the receipt is written, so
-        // a session closed mid-call keeps its call's exception.
-        call.anonymous = room_note || context.anonymous(server, auth);
-        RpcReply::answer(server, auth, call, request.request_id, result)
+        let (call, request_id, result) = rpc_answer(server, auth, request, &context).await;
+        RpcReply::answer(server, auth, call, request_id, result)
     })
     .await
+}
+
+/// The ordinary socket's answer, framed and queued while its encode holds live.
+pub(crate) async fn rpc_reply_to(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    auth: &CoreAuth,
+    request: RpcRequest,
+    context: SocketCallContext,
+    conn: u32,
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    crate::api::answer_hold::until_encoded(async move {
+        let (call, request_id, result) = rpc_answer(server, auth, request, &context).await;
+        RpcReply::prepare_attributed(server, auth, None, call, request_id, result)
+            .send(conn, direct_tx)
+    })
+    .await
+}
+
+async fn rpc_answer(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    auth: &CoreAuth,
+    request: RpcRequest,
+    context: &SocketCallContext,
+) -> (
+    RpcCall,
+    u64,
+    Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+) {
+    let mut call = RpcCall::captured(server, &request);
+    let room_note = context.room_note_call(server, auth, &request.method, &request.params);
+    let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
+        server,
+        auth,
+        context,
+        &request.method,
+        request.params,
+    ))
+    .await;
+    call.attempt = attempt;
+    // OF-063: judged on arrival and again before the receipt is written, so
+    // a session closed mid-call keeps its call's exception.
+    call.anonymous = room_note || context.anonymous(server, auth);
+    (call, request.request_id, result)
 }
 
 /// A page size a scoped view asks for, or `default`, within the facade's

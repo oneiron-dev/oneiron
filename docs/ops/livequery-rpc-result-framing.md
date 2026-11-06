@@ -18,13 +18,14 @@ encoder. It keeps a full fragment until another byte arrives, or serialization
 ends, so an exact multiple of 64 KiB has the same terminal fragment and no extra
 empty one. The old generic packing and subscription framing paths are unchanged.
 
-This removes the server RPC path's contiguous packed-result buffer. It does not
-make the complete path streaming: the parsed JSON value stays alive through the
-second serialization, all encoded frames are still queued together, and the
-client still collects the whole result before decoding it. There are two
-serialization passes. No runtime latency, total retained-memory bound, or
-end-to-end streaming claim follows from this change. No result limits, wire
-formats or configuration settings change, and no result is spooled to disk.
+This removes the server RPC path's contiguous packed-result buffer. Batch
+callers use two serialization passes and still retain all encoded frames before
+returning them. The ordinary asynchronous facade RPC sender uses the three
+passes described below instead. The parsed JSON value stays alive through its
+last serialization, and the client still collects the whole result before
+decoding it. No runtime latency, total retained-memory bound, or end-to-end
+streaming claim follows from this change. No result limits, wire formats or
+configuration settings change, and no result is spooled to disk.
 
 ## Client result chunks
 
@@ -46,16 +47,28 @@ it does not complete end-to-end streaming.
 
 ## Routing queued frames
 
-The ordinary asynchronous facade RPC path routes each already encoded frame as
-it enqueues it on the existing reply channel. It does not first build a second
-complete vector of routed frames. Callers that need a frame batch still collect
-the same iterator.
+The ordinary asynchronous facade RPC path keeps the prepared JSON value, its
+receipt stamp and its rows rather than an encoded result batch. After the
+count-and-hash pass and receipt creation, it validates every stamped frame while
+dropping each completed frame. A framing failure produces the original single
+bare refusal before any success frame is enqueued.
 
-All result frames are still encoded before the first success frame is enqueued.
-An encoding failure therefore keeps the original single-refusal behavior; no
-partially encoded success is introduced. The per-request frame order, routing
-rows and downstream release checks are unchanged.
+On validation success, the sender serializes the same immutable value again with
+the same stamp. It routes and enqueues each completed frame on the existing reply
+channel. These are three serialization passes in total: count/hash, validate/drop,
+and send. Both framed passes use the same encoder and fragment boundaries. The
+answer's encode holds remain alive through all three passes and enqueue.
 
-The existing reply channel is unbounded, and the encoded result batch is still
-retained before enqueue. Lazy routing does not establish a queue bound or finish
-end-to-end streaming.
+Delivery errors remain separate from encoding errors. If the existing reply
+channel closes, the sender returns the same channel-closed protocol error; it
+does not turn that error into a byte-limit refusal or send a refusal after a
+queued success prefix. The per-request frame order, routing rows and downstream
+release checks are unchanged. Batch and own-machine callers retain their eager
+frame APIs.
+
+The sender retains one raw fragment plus transient encoding and routing buffers,
+not a complete encoded result batch. During routing, the encoded frame and its
+routed copy can coexist. The existing reply channel is still unbounded, so
+enqueued frames can accumulate. The owned value, routing rows, answer-owned holds
+and client collection also remain. This is not a queue bound, a total-memory
+bound, or completed end-to-end streaming.

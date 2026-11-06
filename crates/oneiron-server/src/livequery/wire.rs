@@ -110,26 +110,45 @@ pub(super) fn prepare_result(value: Value) -> Result<PreparedResult, ProtocolErr
     })
 }
 
+/// What `write_prepared_result` reports: an encoding failure under the original
+/// over-limit mapping, or the send callback's own delivery failure, retained
+/// unchanged so a closed channel is never confused with too-large bytes.
+pub(super) enum ResultFramesError {
+    Encoding(ProtocolError),
+    Delivery(ProtocolError),
+}
+
 struct ResultFrames<'a> {
     id: u64,
     stamp: &'a CallStamp,
     chunk: Vec<u8>,
-    frames: Vec<Vec<u8>>,
+    seq: u64,
+    send: &'a mut (dyn FnMut(Vec<u8>) -> Result<(), ProtocolError> + Send),
+    error: Option<ResultFramesError>,
 }
 
 impl ResultFrames<'_> {
     fn push_chunk(&mut self, last: bool) -> std::io::Result<()> {
-        let frame = stamped_frame(
+        let frame = match stamped_frame(
             TAG_RPC,
             "rpc.res",
             self.id,
-            self.frames.len() as u64,
+            self.seq,
             last,
             serde_bytes::Bytes::new(&self.chunk),
             self.stamp,
-        )
-        .map_err(|_| std::io::Error::other("app result frame too large"))?;
-        self.frames.push(frame);
+        ) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.error.get_or_insert(ResultFramesError::Encoding(error));
+                return Err(std::io::Error::other("app result frame too large"));
+            }
+        };
+        if let Err(error) = (self.send)(frame) {
+            self.error.get_or_insert(ResultFramesError::Delivery(error));
+            return Err(std::io::Error::other("app result frame too large"));
+        }
+        self.seq += 1;
         self.chunk.clear();
         Ok(())
     }
@@ -154,6 +173,45 @@ impl Write for ResultFrames<'_> {
     }
 }
 
+/// Re-encode the same immutable JSON value directly into its stamped frames,
+/// handing each completed frame to `send` in seq order instead of collecting
+/// them. Only one raw chunk plus one in-progress frame is retained. The prepared
+/// result is borrowed so the same value can be framed again unchanged.
+pub(super) fn write_prepared_result(
+    id: u64,
+    result: &PreparedResult,
+    stamp: &CallStamp,
+    send: &mut (dyn FnMut(Vec<u8>) -> Result<(), ProtocolError> + Send),
+) -> Result<(), ResultFramesError> {
+    let mut writer = ResultFrames {
+        id,
+        stamp,
+        chunk: Vec::with_capacity(result.bytes.min(CHUNK_BYTES)),
+        seq: 0,
+        send,
+        error: None,
+    };
+    let encoded = result
+        .value
+        .serialize(&mut rmp_serde::Serializer::new(&mut writer).with_struct_map());
+    encoded.map_err(|_| match writer.error.take() {
+        Some(ResultFramesError::Delivery(error)) => ResultFramesError::Delivery(error),
+        _ => ResultFramesError::Encoding(ProtocolError::FrameTooLarge {
+            size: MAX_RESULT_BYTES + 1,
+            max: MAX_RESULT_BYTES,
+        }),
+    })?;
+    writer
+        .push_chunk(true)
+        .map_err(|_| match writer.error.take() {
+            Some(ResultFramesError::Delivery(error)) => ResultFramesError::Delivery(error),
+            _ => ResultFramesError::Encoding(ProtocolError::FrameTooLarge {
+                size: MAX_RESULT_BYTES + 1,
+                max: MAX_RESULT_BYTES,
+            }),
+        })
+}
+
 /// Re-encode the same immutable JSON value directly into its stamped frames.
 /// Only one raw chunk is retained; the completed frames are still queued together.
 pub(super) fn prepared_result_chunks(
@@ -161,26 +219,15 @@ pub(super) fn prepared_result_chunks(
     result: PreparedResult,
     stamp: &CallStamp,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
-    let mut writer = ResultFrames {
-        id,
-        stamp,
-        chunk: Vec::with_capacity(result.bytes.min(CHUNK_BYTES)),
-        frames: Vec::new(),
+    let mut frames = Vec::new();
+    let mut collect = |frame: Vec<u8>| -> Result<(), ProtocolError> {
+        frames.push(frame);
+        Ok(())
     };
-    result
-        .value
-        .serialize(&mut rmp_serde::Serializer::new(&mut writer).with_struct_map())
-        .map_err(|_| ProtocolError::FrameTooLarge {
-            size: MAX_RESULT_BYTES + 1,
-            max: MAX_RESULT_BYTES,
-        })?;
-    writer
-        .push_chunk(true)
-        .map_err(|_| ProtocolError::FrameTooLarge {
-            size: MAX_RESULT_BYTES + 1,
-            max: MAX_RESULT_BYTES,
-        })?;
-    Ok(writer.frames)
+    write_prepared_result(id, &result, stamp, &mut collect).map_err(|error| match error {
+        ResultFramesError::Encoding(error) | ResultFramesError::Delivery(error) => error,
+    })?;
+    Ok(frames)
 }
 
 pub(super) fn decode<T: serde::de::DeserializeOwned>(
