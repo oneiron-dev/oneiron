@@ -223,7 +223,7 @@ pub(super) fn materialize_tombstones_from_delta(
 /// One tombstone staged out of the delta, owned so the batch transaction can
 /// apply it without borrowing the Loro event.
 #[derive(Debug)]
-struct TombstoneWork {
+pub(super) struct TombstoneWork {
     id: EntityId,
     crdt_key: String,
     raw_value: Vec<u8>,
@@ -242,37 +242,23 @@ enum TombstoneFailureStage {
     ReceiverScrub,
 }
 
-/// Applies every staged tombstone under ONE top-level write transaction
-/// (ONE-521).
-///
-/// Per-item isolation comes from LMDB nested transactions used as savepoints:
-/// each item applies into a child of the batch transaction, and the child is
-/// committed into the parent only when the replay AND (for a hard tombstone)
-/// the receiver-outbox scrub both succeeded. Aborting a child drops exactly
-/// that item's writes — earlier and later siblings keep theirs, and the batch
-/// still ends in a single durable commit with no per-entity fsync.
-///
-/// An ITEM failure never aborts the batch: protected-record rejections take
-/// the existing `x:` quarantine path and every other failure flags the
-/// entity-scoped `rm:` retry marker, both written on the PARENT so they
-/// survive the aborted child. Errors are logged after the commit.
-///
-/// A failure of the parent transaction itself is a batch-level storage
-/// failure — nothing was applied, so it is logged once rather than dressed up
-/// as partial success. The tombstones stay in the CRDT map, which is both the
-/// resurrection gate for entity materialization and the replay source for
-/// forward rematerialization, so the work is not lost.
-fn apply_tombstone_batch(
-    vault: &Vault,
-    window_key: &str,
-    staged: &[TombstoneWork],
-) -> Option<Vec<EntityId>> {
-    let mut failures = Vec::<(&TombstoneWork, TombstoneFailureStage, Error)>::new();
-    let mut applied = Vec::new();
+/// Staged deletion bookkeeping retained until the parent transaction finishes.
+#[derive(Default)]
+pub(super) struct TombstoneBatch<'work> {
+    failures: Vec<(&'work TombstoneWork, TombstoneFailureStage, Error)>,
+    applied: Vec<EntityId>,
+}
 
-    #[cfg(test)]
-    note_tombstone_batch_top_level_txn();
-    let batch = vault.with_write_txn_grouped(|parent| {
+impl<'work> TombstoneBatch<'work> {
+    /// Applies prepared tombstones through their savepoints in the caller's writer.
+    pub(super) fn stage_in_txn(
+        &mut self,
+        vault: &Vault,
+        window_key: &str,
+        staged: &'work [TombstoneWork],
+        parent: &mut heed::RwTxn<'_>,
+    ) -> Result<(Vec<EntityId>, Vec<(crate::attempt_queue::AttemptId, u32)>)> {
+        let Self { failures, applied } = self;
         // SCAN C049: one decision-ledger scan answers the hard items' probes.
         let _probes = vault.batch_tombstone_scope_probes_in_txn(
             parent,
@@ -328,7 +314,9 @@ fn apply_tombstone_batch(
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
-            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value) {
+            if let Err(fence_err) =
+                vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value)
+            {
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
@@ -353,10 +341,7 @@ fn apply_tombstone_batch(
         // applies (mirrors set_remat_marker_in_txn parent bookkeeping).
         for work in staged.iter().filter(|work| !work.hard) {
             if let Err(marker_err) = quarantine::enqueue_tombstone_reassert_marker_in_txn(
-                vault,
-                parent,
-                window_key,
-                &work.id,
+                vault, parent, window_key, &work.id,
             ) {
                 tracing::error!(
                     tombstone = %work.crdt_key,
@@ -367,7 +352,41 @@ fn apply_tombstone_batch(
             }
         }
         Ok((affected, cancelled))
-    });
+    }
+}
+
+/// Applies every staged tombstone under ONE top-level write transaction
+/// (ONE-521).
+///
+/// Per-item isolation comes from LMDB nested transactions used as savepoints:
+/// each item applies into a child of the batch transaction, and the child is
+/// committed into the parent only when the replay AND (for a hard tombstone)
+/// the receiver-outbox scrub both succeeded. Aborting a child drops exactly
+/// that item's writes — earlier and later siblings keep theirs, and the batch
+/// still ends in a single durable commit with no per-entity fsync.
+///
+/// An ITEM failure never aborts the batch: protected-record rejections take
+/// the existing `x:` quarantine path and every other failure flags the
+/// entity-scoped `rm:` retry marker, both written on the PARENT so they
+/// survive the aborted child. Errors are logged after the commit.
+///
+/// A failure of the parent transaction itself is a batch-level storage
+/// failure — nothing was applied, so it is logged once rather than dressed up
+/// as partial success. The tombstones stay in the CRDT map, which is both the
+/// resurrection gate for entity materialization and the replay source for
+/// forward rematerialization, so the work is not lost.
+fn apply_tombstone_batch(
+    vault: &Vault,
+    window_key: &str,
+    staged: &[TombstoneWork],
+) -> Option<Vec<EntityId>> {
+    let mut state = TombstoneBatch::default();
+
+    #[cfg(test)]
+    note_tombstone_batch_top_level_txn();
+    let batch = vault
+        .with_write_txn_grouped(|parent| state.stage_in_txn(vault, window_key, staged, parent));
+    let TombstoneBatch { failures, applied } = state;
 
     if let Err(e) = &batch {
         tracing::error!(

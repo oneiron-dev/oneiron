@@ -9,7 +9,11 @@
 //! without a turn, never refused and never reported Healthy.
 //!
 //! Artifact validation yields between its ordered groups over one immutable
-//! source; each group's row walks, encoding and hashing still run whole.
+//! source. Manifest/order rows, window rows, NOTE and generic document rows,
+//! their indexes and asset body reference checks use the existing row page
+//! size. Expected-container construction, each row's nested history/body
+//! checks, retained-parent and workflow checks, other groups, encoding and
+//! hashing still run whole.
 //! Aborted-transaction preflight, the NOTE workflow plan and the final snapshot
 //! comparison also run whole. Recapture yields between structural stages while
 //! retaining one store read view. The
@@ -39,7 +43,7 @@ use crate::{EntityId, Vault};
 /// The phase a recovery stands in, in the order it runs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecoveryPhase {
-    /// The artifact as this vault recovers it, one validation group per turn.
+    /// The artifact as this vault recovers it, one group or window-row page per turn.
     Validate,
     /// The fresh window, a page of rows at a time.
     Rebuild,
@@ -217,7 +221,7 @@ impl RecoveryWork {
                 if !self
                     .validation
                     .get_or_insert_with(CanonicalValidation::default)
-                    .advance(&self.source)?
+                    .advance(&self.source, page)?
                 {
                     return Ok(());
                 }
@@ -300,7 +304,12 @@ impl RecoveryWork {
             .doc
             .take()
             .ok_or_else(|| invalid("recovery preflight"))?;
-        crate::sync::bridge::preflight_canonical_recovery(vault, materializer, &self.source, &doc)?;
+        crate::sync::bridge::preflight_validated_canonical_recovery(
+            vault,
+            materializer,
+            &self.source,
+            &doc,
+        )?;
         let prepared = prepare_rebuilt(&self.path, &self.source, self.budget, doc)?;
         // A task whose fact the source refused reads as a refusal here before
         // the replay can read its authority.

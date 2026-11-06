@@ -11,7 +11,7 @@ use crate::attempt_queue::{
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::entity_id::EntityId;
 use crate::gate::CampaignLegFacts;
-use crate::llm::decision::ladder::{AskTo, HumanDecisionRequest};
+use crate::llm::decision::{AskTo, HumanDecisionRequest};
 use crate::model_decision::{
     AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
 };
