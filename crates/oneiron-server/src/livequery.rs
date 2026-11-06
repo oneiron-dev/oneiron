@@ -315,6 +315,7 @@ impl RpcReply {
             rows,
         })
     }
+
     /// The frames as `conn`'s send door takes them: each chunk of a result
     /// carries the rows the release judges again (DEC-0005).
     pub(crate) fn queued(self, conn: u32) -> Vec<Vec<u8>> {

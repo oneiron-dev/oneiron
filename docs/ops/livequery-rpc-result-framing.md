@@ -21,7 +21,25 @@ empty one. The old generic packing and subscription framing paths are unchanged.
 This removes the server RPC path's contiguous packed-result buffer. It does not
 make the complete path streaming: the parsed JSON value stays alive through the
 second serialization, all encoded frames are still queued together, and the
-client still assembles the result before decoding it. There are two serialization
-passes. No runtime latency, total retained-memory bound, or end-to-end streaming
-claim follows from this change. No result limits, wire formats or configuration
-settings change, and no result is spooled to disk.
+client still collects the whole result before decoding it. There are two
+serialization passes. No runtime latency, total retained-memory bound, or
+end-to-end streaming claim follows from this change. No result limits, wire
+formats or configuration settings change, and no result is spooled to disk.
+
+## Client result chunks
+
+The opened-item RPC client moves each received binary or string payload's bytes
+into a chunk list instead of copying them into one assembled buffer. It checks
+the same cumulative 32 MiB limit and the same request id, sequence, reply kind and
+collection deadline. A home refusal remains separate from a failed call.
+
+Decoding still starts only after the terminal reply, so parser work does not add
+backpressure inside the existing collection deadline. A consuming reader supplies
+the chunks in order and releases each exhausted raw chunk as decoding advances.
+The MessagePack reader, like the prior slice decoder, decodes one value without
+requiring trailing EOF. No task, channel or clock policy is added.
+
+All raw chunks remain retained until the terminal reply. The decoder can also
+allocate a field-sized scratch buffer and the parsed JSON value. Removing the
+assembled concatenation is not a total memory or peak-allocation guarantee, and
+it does not complete end-to-end streaming.
