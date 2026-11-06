@@ -21,6 +21,7 @@
 use std::path::Path;
 
 use heed::RoTxn;
+use rmpv::Value;
 
 use super::super::door::DoorAdmissionStamp;
 use super::super::evidence::{
@@ -221,30 +222,18 @@ impl Vault {
         self.require_receive_pack_host_for(root, stamp)
     }
 
-    /// The accepted stamp of `operation` on the physical ingress at `root`,
-    /// for the exact-forward intake (FIX 10270): `Some` only while its
-    /// ingress proof still stands for exactly this stamp at this ingress;
-    /// `None` for an ordinary operation, a missing intent, or a proof that
-    /// no longer validates, which all stay on the proposal path.
-    ///
-    /// # Errors
-    /// A store failure reading the intent.
-    pub(in crate::origin::smart_http) fn forward_stamp_for_operation(
+    /// The proof and host authority accepted for this physical ingress,
+    /// read from producer-pinned admission evidence even after intent pruning.
+    /// A missing or no-longer-standing ingress stays on the proposal path.
+    pub(in crate::origin::smart_http) fn forward_admission_for_operation(
         &self,
         root: &Path,
         operation: EntityId,
-    ) -> Result<Option<DoorAdmissionStamp>> {
+    ) -> Result<Option<(RepoProjectionIngressProof, Option<OriginAuthorityStamp>)>> {
         let txn = self.store.env.read_txn()?;
-        let Some(stamp) = self.receive_pack_stamp_in_txn(&txn, root, operation)? else {
-            return Ok(None);
-        };
-        if stamp.ingress_proof.is_none() {
-            return Ok(None);
-        }
-        let stands = self
-            .validated_ingress_store_in_txn(&txn, &stamp, root)
-            .is_some();
-        Ok(stands.then_some(stamp))
+        super::super::push_projection::admitted_projection_ingress_in_txn(
+            self, &txn, root, operation,
+        )
     }
 
     /// The LFS pointers the ingress outcome `provenance` observed (FIX

@@ -19,10 +19,9 @@ use super::super::evidence::RefUpdate;
 use super::super::landing_lfs::{
     admit_landing_lfs_pointers, attach_landing_lfs_pointers, ref_required_lfs_oids,
 };
-use super::recovery::recover_projection_ingress;
 use super::{
     ReceivedPushTarget, RepoProjectionIngressProof, classify_received_projection,
-    complete_received_push_target, validate_projection_ingress_in_txn,
+    complete_received_push_target,
 };
 use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, ErrorKind, Result};
@@ -40,7 +39,7 @@ use crate::origin::secret_marks::{
 use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionExactForward, RepoProjectionRecord,
 };
-use crate::origin::secret_projection::git::{projection_ingress_dir, reopen_repo_git_projection};
+use crate::origin::secret_projection::git::projection_ingress_dir;
 use crate::{EntityId, TimeRange, Vault};
 
 /// One exact forward: the canonical ref and the old and new tips the push
@@ -144,6 +143,28 @@ fn import_ingress_history_to_canonical(
     Ok(())
 }
 
+/// Every incoming object, following all commit parents, trees and tags.
+/// Only the proven old canonical tip prunes the walk.
+fn incoming_history(
+    wire: &GitWire<'_>,
+    ingress: &GitWireRepo,
+    new: &GitOid,
+    old: Option<&GitOid>,
+) -> Result<Vec<GitOid>> {
+    let mut pending = vec![new.clone()];
+    let mut seen = BTreeSet::new();
+    while let Some(oid) = pending.pop() {
+        if old == Some(&oid) || !seen.insert(oid.clone()) {
+            continue;
+        }
+        let object = wire.read_object_to_spool(ingress, &oid)?;
+        for edge in git_object_edges(&object)? {
+            pending.push(edge.target().clone());
+        }
+    }
+    Ok(seen.into_iter().collect())
+}
+
 /// Tries the ExactForward arm for one projected update. `false` always
 /// means "run today's proposal path" and writes no candidate hold or
 /// attachment. A failed attempt can leave an idempotent forward record,
@@ -223,44 +244,27 @@ pub(crate) fn try_forward_exact_ingress_update(
     let Some(pusher) = publication.actor_id.id() else {
         return Ok(false);
     };
-    let Some(stamp) =
-        (match vault.forward_stamp_for_operation(ingress.common_dir(), source.operation) {
-            Ok(stamp) => stamp,
+    let Some((admission_proof, _)) =
+        (match vault.forward_admission_for_operation(ingress.common_dir(), source.operation) {
+            Ok(admission) => admission,
             Err(error) => return forward_error(error),
         })
     else {
         return Ok(false);
     };
 
+    if admission_proof.canonical_store() != source.canonical_store
+        || admission_proof.graph() != source.graph
+    {
+        return Ok(false);
+    }
     let changed = {
         let txn = vault.store.env.read_txn()?;
         RepoProjectionClaim::changed_copies_in_txn(vault, &txn, &source.graph)?
     };
-    let boundary = if let Some(old) = &old {
-        vec![old.clone()]
-    } else {
-        let Some(copy) = (match reopen_repo_git_projection(vault, wire, &source.graph) {
-            Ok(copy) => copy,
-            Err(error) => return forward_error(error),
-        }) else {
-            return Ok(false);
-        };
-        let mut tips: Vec<GitOid> = copy
-            .refs()
-            .iter()
-            .map(|(_, _, copy)| copy.clone())
-            .collect();
-        if let Some((_, private)) = copy.private_root() {
-            tips.push(private.clone());
-        }
-        let mut boundary = Vec::new();
-        for tip in tips {
-            match wire.merge_base(&ingress, new.as_str(), tip.as_str()) {
-                Ok(base) => boundary.push(base),
-                Err(_) => return Ok(false),
-            }
-        }
-        boundary
+    let boundary = match incoming_history(wire, &ingress, &new, old.as_ref()) {
+        Ok(history) => history,
+        Err(_) => return Ok(false),
     };
     if complete_received_push_target(classify_received_projection(
         &changed,
@@ -280,25 +284,17 @@ pub(crate) fn try_forward_exact_ingress_update(
         Ok(true) => {}
         _ => return Ok(false),
     }
-    let proof = {
-        let txn = vault.store.env.read_txn()?;
-        let Some(recovered) = recover_projection_ingress(vault, &txn, &source.ingress, &stamp)?
-        else {
-            return Ok(false);
-        };
-        let proof = RepoProjectionIngressProof::reopen(recovered, ingress.common_dir());
-        if proof.canonical_store() != source.canonical_store {
-            return Ok(false);
-        }
-        let valid = match validate_projection_ingress_in_txn(vault, &txn, &proof, &stamp) {
-            Ok(valid) => valid,
+    let Some((proof, authority)) =
+        (match vault.forward_admission_for_operation(ingress.common_dir(), source.operation) {
+            Ok(admission) => admission,
             Err(error) => return forward_error(error),
-        };
-        if !valid {
-            return Ok(false);
-        }
-        proof
+        })
+    else {
+        return Ok(false);
     };
+    if proof.canonical_store() != source.canonical_store || proof.graph() != source.graph {
+        return Ok(false);
+    }
     let marks = {
         let txn = vault.store.env.read_txn()?;
         let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
@@ -361,7 +357,7 @@ pub(crate) fn try_forward_exact_ingress_update(
     if let Err(error) = vault.put_origin_publication_intent(&publication) {
         return forward_error(error);
     }
-    let receipt = match stamp.origin_authority.as_ref() {
+    let receipt = match authority.as_ref() {
         Some(authority) => match authority.lease() {
             Ok(lease) => vault.publish_origin_ref_authorized(wire, publication, &lease),
             Err(error) => return forward_error(error),
