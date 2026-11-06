@@ -90,6 +90,7 @@ impl Vault {
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
+            .transpose()?
             .unwrap_or_default();
         for (_, blob) in &opened_entities {
             validate_checkpoint_entity_row(blob)?;
@@ -307,6 +308,11 @@ impl Vault {
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
+            // A NOTE that cites a record this restore did not open, or one
+            // the source erased since the cut, loses that citation and its
+            // quote, history included, as the live erase scrubs it (FIX
+            // 18270). Every row it reads is back by now.
+            crate::note::erase_restored_citations_in_txn(&vault, txn, &erased)?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(cancelled)

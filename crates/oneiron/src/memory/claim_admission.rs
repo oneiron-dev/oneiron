@@ -1,4 +1,5 @@
 //! Explicit claim positions on the public door; the ordinary candidate writer still owns the write.
+use super::claims::{BatchClaim, BatchRefusal};
 use super::{
     ClaimInput, CommitOutcome, CommitReceipt, Memory, MemoryError, MemoryResult, RecordRefusal,
 };
@@ -62,6 +63,17 @@ pub struct ScopedCommitRequest {
     pub claims: Vec<ScopedClaimInput>,
 }
 
+/// One scoped claim resolved outside its writer (`Memory::prepare_scoped_claim`).
+struct PreparedScopedClaim {
+    claim: ClaimInput,
+    world: EntityId,
+    facet: EntityId,
+    project: EntityId,
+    sensitivity: Option<u8>,
+    evidence: Vec<EntityId>,
+    birth: RowBirth,
+}
+
 impl ClaimScope {
     pub(super) fn of_body(body: &crate::claim::ClaimBody) -> Self {
         Self {
@@ -87,17 +99,21 @@ impl Memory<'_> {
         self.commit_scoped_one(input, false)
     }
 
-    /// Per-element admission and receipts, as on the ordinary commit door.
+    /// `vault.commit` (`proposed` false): one atomic batch (FIX 9403; ARCH-0040,
+    /// ARCH-0045). Each element is prepared and gated on its own, and every
+    /// element lands or none does; a refused element answers its typed
+    /// refusal and every other element that it was rolled back with it.
+    /// `vault.claims.seed` (`proposed` true) keeps per-element admission and
+    /// receipts: each seed lands Proposed or is refused on its own.
     pub fn commit_scoped(
         &self,
         claims: &[ScopedClaimInput],
         proposed: bool,
     ) -> MemoryResult<Vec<CommitOutcome>> {
-        let row = if proposed {
-            "vault.claims.seed"
-        } else {
-            "vault.commit"
-        };
+        if !proposed {
+            return self.commit_scoped_batch(claims);
+        }
+        let row = "vault.claims.seed";
         Ok(claims
             .iter()
             .enumerate()
@@ -115,6 +131,46 @@ impl Memory<'_> {
                 },
             )
             .collect())
+    }
+
+    /// The atomic `vault.commit` batch: every element prepared outside the
+    /// writer (a preparation refusal lands nothing), then one write in which
+    /// each element's position, facet and evidence are checked again.
+    fn commit_scoped_batch(&self, claims: &[ScopedClaimInput]) -> MemoryResult<Vec<CommitOutcome>> {
+        let row = "vault.commit";
+        let refused =
+            |index: Option<usize>, error: MemoryError| -> MemoryResult<Vec<CommitOutcome>> {
+                Ok(self.refused_batch_outcomes(row, claims.len(), BatchRefusal { index, error }))
+            };
+        let lane = match self.read_lane(crate::claim::ClaimReadStatus::Recorded) {
+            Ok(lane) => lane,
+            Err(error) => return refused(None, error),
+        };
+        let mut prepared = Vec::with_capacity(claims.len());
+        for (index, input) in claims.iter().enumerate() {
+            match self.prepare_scoped_claim(input, &lane) {
+                Ok(claim) => prepared.push(claim),
+                Err(error) => return refused(Some(index), error),
+            }
+        }
+        let lane = &lane;
+        let checks: Vec<Box<dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()> + '_>> = prepared
+            .iter()
+            .map(|claim| {
+                Box::new(move |txn: &heed::RoTxn<'_>| self.scoped_claim_check(txn, claim, lane))
+                    as Box<dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()> + '_>
+            })
+            .collect();
+        let batch: Vec<BatchClaim<'_>> = prepared
+            .iter()
+            .zip(&checks)
+            .map(|(claim, check)| BatchClaim {
+                input: &claim.claim,
+                in_writer: check.as_ref(),
+                birth: Some(&claim.birth),
+            })
+            .collect();
+        self.commit_claim_batch(row, &batch)
     }
 
     fn commit_scoped_one(
@@ -141,6 +197,29 @@ impl Memory<'_> {
         replace: bool,
         guard: &dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()>,
     ) -> MemoryResult<CommitReceipt> {
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let prepared = self.prepare_scoped_claim(input, &lane)?;
+        self.commit_one_guarded_with_birth(
+            &prepared.claim,
+            replace,
+            proposed.then_some(ClaimApprovalStatus::Proposed),
+            || {},
+            &|txn| {
+                guard(txn)?;
+                self.scoped_claim_check(txn, &prepared, &lane)
+            },
+            Some(&prepared.birth),
+        )
+    }
+
+    /// One scoped claim resolved outside its writer: its references, its
+    /// position, the ordinary claim input it lands as, its readable evidence
+    /// turns and its birth.
+    fn prepare_scoped_claim(
+        &self,
+        input: &ScopedClaimInput,
+        lane: &crate::claim::ScopedRead<'_>,
+    ) -> MemoryResult<PreparedScopedClaim> {
         let world = self.resolve_ref(&input.scope.world_id)?;
         let facet = self.resolve_ref(&input.scope.scope_facet_id)?;
         let project = self.resolve_ref(&input.scope.scope_project_id)?;
@@ -183,7 +262,6 @@ impl Memory<'_> {
             confidence_details: None,
         };
         super::caps::check_claim_input(&claim)?;
-        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let evidence = lane
             .read(
                 &input
@@ -219,32 +297,47 @@ impl Memory<'_> {
         .ok_or_else(|| {
             MemoryError::bad_request("a concluded claim must name its evidence turns")
         })?;
-        self.commit_one_guarded_with_birth(
-            &claim,
-            replace,
-            proposed.then_some(ClaimApprovalStatus::Proposed),
-            || {},
-            &|txn| {
-                guard(txn)?;
-                self.admit_claim_position(txn, world, facet, project, input.sensitivity)?;
-                if self.vault.get_entity_type_in_txn(txn, &facet)?
-                    != Some(crate::registry::ENTITY_TYPE_FACET)
-                {
-                    return Err(Error::InvalidClaimBody("scope facet must name a FACET"));
-                }
-                if lane
-                    .entities_readable_in_txn(txn, &inputs)?
-                    .iter()
-                    .any(|readable| !readable)
-                {
-                    return Err(Error::InvalidClaimBody(
-                        "claim evidence is no longer readable",
-                    ));
-                }
-                Ok(())
-            },
-            Some(&birth),
-        )
+        Ok(PreparedScopedClaim {
+            claim,
+            world,
+            facet,
+            project,
+            sensitivity: input.sensitivity,
+            evidence: inputs,
+            birth,
+        })
+    }
+
+    /// The checks a prepared scoped claim's writer runs: its position under
+    /// the caller's credential, its facet, and its evidence still readable.
+    fn scoped_claim_check(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        prepared: &PreparedScopedClaim,
+        lane: &crate::claim::ScopedRead<'_>,
+    ) -> crate::Result<()> {
+        self.admit_claim_position(
+            txn,
+            prepared.world,
+            prepared.facet,
+            prepared.project,
+            prepared.sensitivity,
+        )?;
+        if self.vault.get_entity_type_in_txn(txn, &prepared.facet)?
+            != Some(crate::registry::ENTITY_TYPE_FACET)
+        {
+            return Err(Error::InvalidClaimBody("scope facet must name a FACET"));
+        }
+        if lane
+            .entities_readable_in_txn(txn, &prepared.evidence)?
+            .iter()
+            .any(|readable| !readable)
+        {
+            return Err(Error::InvalidClaimBody(
+                "claim evidence is no longer readable",
+            ));
+        }
+        Ok(())
     }
 
     fn admit_claim_position(

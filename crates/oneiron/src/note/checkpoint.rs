@@ -11,11 +11,13 @@
 //! A proposal head's Loro snapshot splits through the shared Loro projection
 //! under its NOTE ([`loro`], FIX 6072): its stamps' and authorship records'
 //! actors out, and the join writing the same history back with every actor
-//! that did not open erased. A shallow one, one that is no value-only
-//! proposal, and one whose fork no one decided and whose fork record did not
-//! split beside it stay under the vault-wide seal, named with the NOTE. The live documents' rows are split by the entity-document
-//! getter through the same NOTE codec, and a NOTE core's author by the
-//! entity-row getter ([`body`]). Nothing calls this until KS7-5, and only
+//! that did not open erased; its pins stay in it, and the restore's
+//! citation erase takes out each one whose record went (FIX 18270). A
+//! shallow one, and one whose fork no one decided and whose fork record did
+//! not split beside it, stay under the vault-wide seal, named with the NOTE.
+//! The live documents' rows are split by the entity-document getter through
+//! the same NOTE codec, and a NOTE core's author by the entity-row getter
+//! ([`body`]). Nothing calls this until KS7-5, and only
 //! once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
