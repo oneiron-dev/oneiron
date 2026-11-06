@@ -220,6 +220,17 @@ fn text_copy_in_txn(
     }
 }
 
+/// The document release's own copy decision, without updating its lineage.
+pub(crate) fn document_text_would_project_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    id: &EntityId,
+    text: &str,
+) -> Result<bool> {
+    Ok(text_copy_in_txn(vault, txn, marks, id, text)?.is_some())
+}
+
 fn project_text_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,

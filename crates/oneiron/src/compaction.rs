@@ -69,6 +69,7 @@ mod fold_kinds;
 mod fold_words;
 mod folds;
 mod gate;
+mod home_pins;
 mod hooks;
 pub mod output;
 mod packet_source;
@@ -84,11 +85,15 @@ pub use folds::{
 };
 
 pub use conversation::{
-    ChatLog, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
+    ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
-    read_action_pinned_log, read_chat_log, seal_conversation_flight,
+    read_action_chat_log, read_action_pinned_log, read_chat_log, read_first_chat_log,
+    seal_conversation_flight,
 };
-pub(crate) use conversation::{conversation_receipt_in, put_conversation_receipt_in_txn};
+pub(crate) use conversation::{
+    FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
+    put_conversation_receipt_in_txn, summary_stands_in,
+};
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
@@ -100,11 +105,11 @@ pub use epoch::{
     encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
-    EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
+    EpochMint, EpochPlacement, EpochScope, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
     epoch_sources_admitted_in,
 };
 pub(crate) use epoch_floor::{
-    epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_session_epoch_floor_in_txn,
+    epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_epoch_scope_floor_in_txn,
 };
 pub use epoch_vector::{EpochEmbedder, TurnVector, room_turn_vector};
 pub(crate) use fold_words::{
@@ -120,6 +125,8 @@ pub use gate::{
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
+pub use home_pins::HOME_PART_SELF_MODEL;
+pub(crate) use home_pins::{home_pins_stand_in, self_written_execution_in};
 pub(crate) use hooks::host_compact_as_owner;
 pub use hooks::{CompactHooks, HOST_COMPACT, check_host_compact_rewrite, compact_invocation};
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
@@ -130,7 +137,8 @@ pub(crate) use self_writer::{
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,
     CompactionLandingReceipt, CompactionStepRef, CompactionUsage, HOME_PART_WORN,
-    SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
+    SelfCompactionUnavailable, compaction_home_worn_parts, compaction_home_worn_rows,
+    compaction_usage_projection,
 };
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};

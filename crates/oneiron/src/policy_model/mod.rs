@@ -116,8 +116,9 @@ pub use owner_rows::{
     policy_row_grant_target,
 };
 pub(crate) use owner_rows::{
-    holds_vault_policy_power_in_txn, is_live_vault_owner_for_store_in_txn,
-    is_live_vault_owner_in_txn, owners_for_store_in_txn, owners_in_txn, sole_recorded_owner_in_txn,
+    holds_live_ownership_in_txn, holds_vault_policy_power_in_txn,
+    is_live_vault_owner_for_store_in_txn, is_live_vault_owner_in_txn, owners_for_store_in_txn,
+    owners_in_txn, sole_recorded_owner_in_txn,
 };
 mod notes;
 mod notice;

@@ -15,7 +15,7 @@
 //! ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
@@ -359,8 +359,18 @@ impl BrokerBackend {
         &self,
         header: &CallHeader,
         body: &[u8],
+        release: oneiron::llm::DispatchRelease<'_>,
     ) -> LlmResult<oneiron_broker::BrokerReply> {
-        call_with_key(&self.client, &self.keys, &self.secret, header, body).await
+        call_with_key_released(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            header,
+            body,
+            Some(release),
+            None,
+        )
+        .await
     }
 
     /// The provider's answer as the adapter reads it, its model labelled as
@@ -377,6 +387,7 @@ impl BrokerBackend {
         wire_model: &str,
         model: &ModelId,
         execution: Option<&CacheDigest>,
+        publisher: Option<&oneiron::llm::InferencePublisher>,
     ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
@@ -386,6 +397,19 @@ impl BrokerBackend {
                 .map(|(name, value)| (name.to_ascii_lowercase(), value))
                 .collect();
             let body = parsed.unwrap_or(JsonValue::Null);
+            if let (Wire::OpenAi(_), Some(publisher)) = (&self.wire, publisher) {
+                let mut observed = body.clone();
+                // As on the plain transport, an error does not establish
+                // an answering alias; only native carried measurements do.
+                super::openai::carry_sent_reply_evidence(
+                    status,
+                    &mut observed,
+                    Some(wire_model),
+                    None,
+                    execution,
+                );
+                super::openai::observe_broker_reply(publisher, &observed, model);
+            }
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
                 Wire::Anthropic(_) => classify_anthropic_status(status, &headers, &body),
@@ -406,8 +430,18 @@ impl BrokerBackend {
                     answering.as_ref(),
                     execution,
                 );
+                if let Some(publisher) = publisher {
+                    // A reply that later fails strict parsing still keeps
+                    // the native work its body actually reported.
+                    super::openai::observe_broker_reply(publisher, &body, model);
+                }
                 let mut answer = parse_openai_chat_response(&body)?;
                 answer.usage.bind_inference_model(model);
+                if let Some(publisher) = publisher {
+                    if let Some(receipt) = answer.usage.inference_calls().pop() {
+                        publisher.finish(receipt);
+                    }
+                }
                 Ok(answer)
             }
             Wire::Anthropic(_) => {
@@ -640,13 +674,27 @@ impl LlmBackend for BrokerBackend {
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
-            let reply = self.send(&header, &body).await?;
+            let publisher = Mutex::new(None);
+            let observe = matches!(&self.wire, Wire::OpenAi(_));
+            let release = || {
+                if observe {
+                    *publisher.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(oneiron::llm::InferencePublisher::begin(lease));
+                }
+                Ok(())
+            };
+            let reply = self.send(&header, &body, &release).await?;
+            let publisher = publisher
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
             self.answer(
                 reply.outcome,
                 &reply.body,
                 &header.wire_model,
                 &request.model,
                 execution.as_ref(),
+                publisher.as_ref(),
             )
         })
     }

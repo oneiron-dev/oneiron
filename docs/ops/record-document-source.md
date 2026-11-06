@@ -119,3 +119,45 @@ not an old-format reader. It does not connect the real operations classifier,
 outer carrier field, variable piece-count reconstruction, row-slice export or
 authenticated native source writer. SKILL root activation remains off. Opened
 history and newly derived digests remain data, not native operation authority.
+
+
+## Final native window classification
+
+`PreparedRecordDocuments::classify` now drives the real root-map capture with
+native SKILL head, entities-row and snapshot/FIRST part ownership. It matches
+values by their actual `Site::Op` or shallow `Site::Root`, key and native bytes.
+Every source sharing a write contributes its rightful holders. Digest keys are
+withheld under the union of their source holders. Ordinary window families
+still use their existing classifier, including the manifest-noting pass.
+
+The returned `ClassifiedRecordDocuments` owns the final `Parts`, ordinary
+plans/homes and all native source bindings together. Native plans do not hold
+original head, row, part or digest-key bytes for scalar emission. Its native
+slot set must exactly equal all value/key uses in the bound source bank,
+including repeated descriptor positions and aliases. This private, non-wire
+product cannot be passed to the ordinary scalar-slot emitter.
+
+This is source classification, not activation. The production window root
+registry and `operations::prepare` remain unchanged. The actual outer carrier,
+variable native write expansion, source-aware restore and authenticated applying
+writer still need integration. Opening a holder compartment is custody/data
+authentication, not native operation authority. No source is selected in place
+of another, no extra part is discarded and no old part count becomes a bound.
+
+## Authenticated window restore source and writer
+
+The real checkpoint payload open now constructs a private window restore
+source only after the artifact's custody plan has opened its original
+bundles. It binds the same image carrier records, authenticated window
+compartments and unopened-owner set. The sync restore port consumes this
+source instead of accepting those three independently supplied arguments.
+Holder metadata and an opened-home answer remain data checks, not a way to
+construct the source or admit a native operation.
+
+The joined rows remain in a private prepared product through the original
+write-budget calculation. The original restore writer consumes that product
+after the content/carrier bundles and before call rows. Row order, errors,
+markers, erasure filtering and snapshot/pending/queue slicing are unchanged.
+This connects the authenticated source to the actual applying writer; it does
+not yet connect the native source bank or implement variable piece-count
+reconstruction. Native root and producer activation remain off.

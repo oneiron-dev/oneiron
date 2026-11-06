@@ -223,6 +223,9 @@ pub struct ManagedArgs {
     /// start the supervisor hands one. In a vault VM only the bootstrap's,
     /// beside its anchor handoff (`vm_anchor`).
     pub custody_anchor_credentials_fd: Option<RawFd>,
+    /// The supervisor-pinned public recipient for checkpoint host-order
+    /// members, on a separate pipe; no recipient never vetoes a start.
+    pub checkpoint_host_holds_recipient_fd: Option<RawFd>,
     /// A vault VM's custody anchor handoff from its bootstrap (FIX 6517):
     /// the URL its host bound and the socket that reaches it.
     pub(crate) vm_anchor: Option<VmAnchorHandoff>,

@@ -42,6 +42,7 @@ use super::seal::{
 };
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::store::retirement_in_txn;
 use crate::store::{INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES, Store};
 
 /// The vault subkey every snapshot's data key is wrapped under.
@@ -413,10 +414,15 @@ impl Vault {
         let Some(body) = body else {
             return Ok(Some(None));
         };
-        let Some(sealed) = SealedSnapshot::parse(&body).ok().filter(|sealed| {
-            sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
-        }) else {
-            return Ok(Some(None));
+        let sealed = match SealedSnapshot::parse(&body) {
+            Ok(sealed)
+                if sealed.seal_id() == record.seal_id
+                    && body.len() as u64 == record.sealed_bytes =>
+            {
+                sealed
+            }
+            Ok(_) | Err(Error::CorruptedIndex(_)) => return Ok(Some(None)),
+            Err(error) => return Err(error),
         };
         let plaintext = match open_snapshot_with_expected_len(
             &key,
@@ -588,10 +594,11 @@ impl Vault {
         Ok(unlinked)
     }
 
-    /// Brings the catalog and the body files back in step at startup: a
-    /// row whose body file is missing or is not the length it names
-    /// retires, and every file no row names is unlinked, with the staged
-    /// retirements carried out. Publication waits for it.
+    /// Brings the catalog, custody and body files back in step at startup:
+    /// a row whose body file is missing or is not the length it names
+    /// retires, and a published key with no row or standing retirement has
+    /// its retirement staged. Every body file no row names is unlinked,
+    /// with the staged retirements carried out. Publication waits for it.
     ///
     /// # Errors
     /// Storage, custody and file faults.
@@ -618,6 +625,19 @@ impl Vault {
                     &id,
                 )?;
             }
+        }
+        // Publication holds the same files guard, so a rowless entry cannot
+        // belong to a publish whose catalog transaction is still in flight.
+        let named: BTreeSet<SnapshotId> = catalog::rows(store, &wtxn)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        for subject in store.inference_snapshot_key_subjects()? {
+            let id = SnapshotId(subject.item().try_into().map_err(|_| corrupt())?);
+            if named.contains(&id) || retirement_in_txn(store, &wtxn, &subject)?.is_some() {
+                continue;
+            }
+            store.stage_inference_snapshot_retirement_in_txn(&mut wtxn, &id.0)?;
         }
         wtxn.commit()?;
         let unlinked = self.sweep_inference_snapshots(&files)?;

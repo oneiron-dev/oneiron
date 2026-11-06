@@ -107,6 +107,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The context-pack input line, round robin across authenticated callers.
+    pub(crate) context_reads: crate::admission::Admission<String>,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
