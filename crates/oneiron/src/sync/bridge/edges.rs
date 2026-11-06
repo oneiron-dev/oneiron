@@ -744,6 +744,39 @@ impl EdgeMaterialization {
     }
 }
 
+fn publish_hydrated_endpoints(vault: &Vault, hydrated_endpoints: &[(EntityId, Vec<u8>)]) {
+    for (id, blob) in hydrated_endpoints {
+        crate::sync::ingest::note_born(vault, *id, blob);
+    }
+}
+
+/// An isolated candidate's edge effects, retained until its root commits.
+pub(in crate::sync) struct EdgeImportEffects {
+    staged: EdgeMaterialization,
+    affected: Vec<EntityId>,
+}
+
+impl EdgeImportEffects {
+    pub(in crate::sync) fn publish_after_commit(self, vault: &Vault) -> Vec<EntityId> {
+        publish_hydrated_endpoints(vault, &self.staged.hydrated_endpoints);
+        self.affected
+    }
+}
+
+/// Runs the complete native edge gauntlet in the isolated candidate's writer.
+pub(in crate::sync) fn stage_isolated_edges_in_txn(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<EdgeImportEffects> {
+    let mut staged = EdgeMaterialization::default();
+    let affected = staged.stage_in_txn(doc, delta, vault, window_key, lease_vault_id, wtxn)?;
+    Ok(EdgeImportEffects { staged, affected })
+}
+
 /// Materialize edge changes from a Loro MapDelta to LMDB.
 ///
 /// Accumulates all edge ops from the delta into a single LMDB write
@@ -785,9 +818,7 @@ pub(super) fn materialize_edges_from_delta(
     if result.is_ok() {
         // A hydrated endpoint was written where no row was stored: a birth a
         // federated import may be watching (Sol R11 F1 on #1432).
-        for (id, blob) in &hydrated_endpoints {
-            crate::sync::ingest::note_born(vault, *id, blob);
-        }
+        publish_hydrated_endpoints(vault, &hydrated_endpoints);
     }
     if let Err(e) = &result {
         // ONE-1147: whole-txn failure — same marker semantics and
