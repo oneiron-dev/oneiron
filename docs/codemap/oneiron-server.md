@@ -173,8 +173,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/body_codec.rs` | src | s | 2 crate-vis | — | Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604) |
 | `src/api/body_spool.rs` | src | m | 23 crate-vis | — | An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5) |
 | `src/api/body_spool/hex.rs` | src | s | 6 crate-vis | — | One lowercase-hex bulk member decoded into an anonymous file as it is read |
-| `src/api/body_spool/json.rs` | src | m | 16 crate-vis | — | One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5) |
-| `src/api/body_spool/memory.rs` | src | s | 5 crate-vis | — | Fixed spool-reader and streamed string-decoder buffers on the process line |
+| `src/api/body_spool/json.rs` | src | m | 18 crate-vis | — | One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5) |
+| `src/api/body_spool/memory.rs` | src | s | 7 crate-vis | — | Fixed spool-reader and streamed string-decoder buffers on the process line |
 | `src/api/body_spool/owner_json.rs` | src | s | 5 crate-vis | — | Every `/v1/owner` JSON route's body (FIX 8195, Rule 5) |
 | `src/api/booking.rs` | src | m | 19 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 3 crate-vis | — | — |
@@ -245,7 +245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/controls.rs` | src | m | 22 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
 | `src/api/context_pack/instruction_files.rs` | src | s | 1 crate-vis | — | The instruction-file handles a context-pack response carries |
 | `src/api/context_pack/interlocutor.rs` | src | m | 8 crate-vis | — | Interlocutor-set resolution and third-party party inputs for context-pack requests |
-| `src/api/context_pack/media_query.rs` | src | m | 7 crate-vis | — | The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's… |
+| `src/api/context_pack/media_query.rs` | src | m | 8 crate-vis | — | The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's… |
 | `src/api/context_pack/mod.rs` | src | s | 8 crate-vis | — | Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through… |
 | `src/api/context_pack/reader.rs` | src | s | 2 crate-vis | — | The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent… |
 | `src/api/context_pack/resolve.rs` | src | m | 10 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |

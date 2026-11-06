@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6556 | 895 | 170 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6560 | 895 | 169 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 63 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -106,7 +106,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_document` | dir | 14 | m | yes | Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested… |
 | `code_memory` | file+dir | 7 | m | — | Symbol-anchored memory slots, transfers and scoped pulls |
 | `code_revision` | dir | 26 | m | yes | Code revisions, tested forks and reviewed import promotion |
-| `code_run` | dir | 207 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_run` | dir | 208 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
 | `code_sandbox` | dir | 53 | L | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 14 | m | yes | Code-symbol manifests, semantic changes and producing-operation views |
 | `code_view` | dir | 5 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
@@ -190,7 +190,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `linear_sync` | dir | 16 | m | yes | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `linkedin_connector` | dir | 9 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
 | `linkedin_lead_preload` | file+dir | 5 | m | yes | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
-| `llm` | dir | 170 | L | yes | Engine-facing LLM invocation seam |
+| `llm` | dir | 172 | L | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 3 | s | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `machine_destination` | file | 1 | s | — | Machine destinations and folded read-location values |
 | `mail_pack` | dir | 12 | m | yes | The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and… |
@@ -202,7 +202,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `model_step_effect` | file | 1 | s | — | Durable model-step identity frozen into outbound effects |
 | `model_step_error` | file | 1 | s | — | Durable model-step failure and reply-check contracts |
 | `note` | file+dir | 73 | L | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
-| `off_record` | dir | 35 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
+| `off_record` | dir | 36 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `office_body` | dir | 45 | L | yes | Live office body records and Vault doors |
 | `origin` | dir | 150 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 67 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
