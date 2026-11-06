@@ -765,8 +765,9 @@ suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", 
     const capture = JSON.parse(await readFile(resolve(engine.artifacts.root, name), "utf8")) as {
       stdout: string; stderr: string; stdoutTruncated: boolean; stderrTruncated: boolean;
     };
-    if (capture.stdoutTruncated || capture.stderrTruncated) {
-      throw new BlockedDoor("inconclusive HOOKS-03 progress proof: server diagnostics were truncated");
+    if (typeof capture.stdout !== "string" || typeof capture.stderr !== "string"
+      || capture.stdoutTruncated !== false || capture.stderrTruncated !== false) {
+      throw new BlockedDoor("inconclusive HOOKS-03 progress proof: server diagnostics are missing or truncated");
     }
     const diagnostic = `${capture.stdout}\n${capture.stderr}`;
     if (diagnostic.includes("a settled verb hook ask waits for the next pass")
