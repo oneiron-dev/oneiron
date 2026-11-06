@@ -216,28 +216,21 @@ pub struct OfferLadder {
 /// (FIX 14889). Budget rules keep reading the offer directly; this value
 /// only annotates host work and receipts.
 fn physical_for(binding: &OfferBinding) -> WorkPhysical {
-<<<<<<< HEAD
-    physical_for_host(&binding.locality, &binding.payer, &binding.custody)
+    if offer_is_free_work(binding) {
+        WorkPhysical::KeylessOwnServer
+    } else {
+        WorkPhysical::Paid
+    }
 }
 
 pub(crate) fn physical_for_paid(binding: &PaidConnector) -> WorkPhysical {
-    physical_for_host(&binding.locality, &binding.payer, &binding.custody)
-}
-
-fn physical_for_host(
-    locality: &ModelLocality,
-    payer: &Payer,
-    custody: &KeyCustody,
-) -> WorkPhysical {
-    let free_route = match locality {
-        ModelLocality::OnDevice => true,
-        ModelLocality::OwnServer => custody == &KeyCustody::Keyless,
+    let free_route = match binding.locality {
+        ModelLocality::OnDevice | ModelLocality::OwnServer => {
+            binding.custody == KeyCustody::Keyless
+        }
         ModelLocality::ThirdParty => false,
     };
-    if payer == &Payer::Local && free_route {
-=======
-    if offer_is_free_work(binding) {
->>>>>>> origin/main
+    if binding.payer == Payer::Local && free_route {
         WorkPhysical::KeylessOwnServer
     } else {
         WorkPhysical::Paid
