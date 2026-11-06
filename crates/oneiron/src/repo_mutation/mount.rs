@@ -107,7 +107,8 @@ impl Vault {
                         continue;
                     }
                     let bytes = match entry.kind {
-                        StoredRepoSnapshotEntryKind::File => entry.content,
+                        StoredRepoSnapshotEntryKind::File
+                        | StoredRepoSnapshotEntryKind::Gitlink => entry.content,
                         StoredRepoSnapshotEntryKind::Symlink => entry
                             .symlink_target
                             .ok_or(Error::CorruptedIndex("symlink target missing"))?

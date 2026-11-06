@@ -33,6 +33,7 @@ pub mod opc_xml;
 pub mod pptx_comments;
 pub mod resource;
 pub mod retained_opc;
+pub mod worksheet_preserve;
 pub mod xlfn;
 pub mod xlsx_body;
 mod xlsx_error;

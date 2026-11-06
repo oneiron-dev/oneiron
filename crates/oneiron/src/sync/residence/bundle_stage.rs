@@ -19,6 +19,12 @@ pub struct SealedBundleStaged {
     pub total: u64,
     /// The bytes staged so far.
     pub staged: u64,
+    /// An immutable execution's owner; `None` for an ordinary upload handle.
+    pub work_id: Option<[u8; 32]>,
+    /// Unpublished stored-copy bytes already written for this work.
+    pub prepared: u64,
+    /// Only physical cleanup remains; it needs no further copy reservation.
+    pub terminal: bool,
 }
 
 /// Every upload the home stages now and that has not idled out. A header
@@ -56,8 +62,12 @@ pub fn sealed_bundle_stages(vault: &Vault) -> Result<Vec<SealedBundleStaged>> {
                 object,
                 total: stage.total,
                 staged,
+                work_id: None,
+                prepared: 0,
+                terminal: false,
             });
         }
     }
+    out.extend(super::bundle::work_stages_in(vault, &txn)?);
     Ok(out)
 }

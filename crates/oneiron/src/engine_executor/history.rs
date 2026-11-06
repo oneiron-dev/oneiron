@@ -11,7 +11,9 @@ use crate::compaction::{FoldDescription, FoldList, FoldReply, FoldUnfold, SelfFo
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Error, Result, Vault};
 
-use super::store::{load_context_output, observation_output_path, script_output_path};
+use super::store::{
+    load_context_output, load_script_context, observation_output_path, script_output_path,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldHistory {
@@ -140,7 +142,7 @@ pub fn read_fold_history(
         {
             return Err(Error::InvalidConfig("history source was withdrawn".into()));
         }
-        let code = load_context_output(&storage, &record, &script_output_path(step))?;
+        let code = load_script_context(&storage, &record, &script_output_path(step), None)?;
         // A feedback row that cannot be read leaves the step without one.
         let feedback = (code != CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
             .then(|| vault.type_diagnostics_row((run, step, 0)).ok().flatten())

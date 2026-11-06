@@ -1,5 +1,6 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
+use super::door::CalendarConnectorOperation;
 use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -13,7 +14,7 @@ use super::seat::{
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
-use crate::calendar::ingest::admit_calendar_import_claim;
+use crate::calendar::ingest::{admit_calendar_import_claim, admit_calendar_import_claim_in_txn};
 use crate::calendar::passport::live_passport_for;
 use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
@@ -34,17 +35,19 @@ use crate::vault::Vault;
 /// failures. A failure applies nothing further and enqueues nothing.
 pub fn run_calendar_connector_sync(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     now: u64,
     jitter_seed: u64,
 ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
     seat.validate()?;
     if seat.kill_switch_engaged() {
         // No pull, no write, no next attempt — and nothing erased.
         return Ok(CalendarSyncOutcome::Killed);
     }
 
+    operation.revalidate(vault)?;
     let batch = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
@@ -55,6 +58,7 @@ pub fn run_calendar_connector_sync(
     for change in &batch.changes {
         apply_remote_change(
             vault,
+            operation,
             seat,
             transport.provider_key(),
             change,
@@ -95,6 +99,7 @@ struct SyncCounters {
 /// Applies one pulled change under the echo law.
 fn apply_remote_change(
     vault: &Vault,
+    operation: &CalendarConnectorOperation,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     change: &RemoteCalendarChange,
@@ -102,6 +107,9 @@ fn apply_remote_change(
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
     let system = seat.config.system.as_str();
+    // FIX 4797: the vault's one calendar admission turn, from the echo
+    // classification through the sweep and the remote object row.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
     match change {
         RemoteCalendarChange::Upsert(object) => {
             let feed = super::remote::parse_remote_resource(object)?;
@@ -167,6 +175,7 @@ fn apply_remote_change(
             )?;
             write_remote_object(
                 vault,
+                operation,
                 &CalendarRemoteObjectRow {
                     system: system.to_owned(),
                     calendar_ref: seat.config.calendar_ref.clone(),
@@ -177,7 +186,9 @@ fn apply_remote_change(
                     content_hash: super::remote::ics_content_hash(&object.ics, &primary.uid)?,
                     last_seen_at: now,
                     source_blob_ref: Some(source_blob_ref),
+                    carrier: None,
                 },
+                None,
             )?;
             Ok(())
         }
@@ -286,6 +297,31 @@ pub(super) fn admit_screened(
     Ok(screened.value)
 }
 
+pub(super) fn admit_screened_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event_ref: EntityId,
+    body: &CalendarInboundBody,
+    source_record_id: &str,
+    predicate: &str,
+    value: rmpv::Value,
+    now: u64,
+) -> Result<EntityId, CalendarConnectorError> {
+    let screened = screen_then_claim(false, None, body, |_request| {
+        admit_calendar_import_claim_in_txn(
+            vault,
+            txn,
+            &event_ref,
+            predicate,
+            value,
+            source_record_id,
+            now,
+        )
+    })
+    .map_err(CalendarError::from)?;
+    Ok(screened.value)
+}
+
 /// Enqueues the next poll attempt, due inside the configured jitter window.
 ///
 /// Attempt-queue work, not a new recurrence primitive: the generation-scoped
@@ -327,11 +363,15 @@ fn enqueue_next_sync(
 /// a reconciliation pull that itself fails must not mask it.
 pub(super) fn reconcile_remote_object(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     uid: &str,
     now: u64,
 ) {
+    if operation.revalidate(vault).is_err() {
+        return;
+    }
+    let seat = &operation.registration().seat;
     let Ok(batch) = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
@@ -361,6 +401,7 @@ pub(super) fn reconcile_remote_object(
         .ok();
         let _ = write_remote_object(
             vault,
+            operation,
             &CalendarRemoteObjectRow {
                 system: seat.config.system.clone(),
                 calendar_ref: seat.config.calendar_ref.clone(),
@@ -371,7 +412,9 @@ pub(super) fn reconcile_remote_object(
                 content_hash: parsed.content_hash,
                 last_seen_at: now,
                 source_blob_ref,
+                carrier: None,
             },
+            None,
         );
     }
 }

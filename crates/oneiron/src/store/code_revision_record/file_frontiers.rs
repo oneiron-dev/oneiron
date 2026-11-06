@@ -1,16 +1,13 @@
-//! Pure tested-file frontier map validation and codecs.
+//! Core half of `store::code_revision_record::file_frontiers`: its store-layer items live in `oneiron_store::code_revision_record::file_frontiers` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::code_revision_record::file_frontiers::*;
 
 use super::CodeRevision;
 use crate::error::{ArtifactError, Error, Result};
 use crate::store::code_document_values::CodeDocumentFrontier;
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
-
-pub(crate) fn invalid() -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-        "invalid tested file frontier map",
-    ))
-}
 
 pub(crate) fn validate(revision: &CodeRevision) -> Result<()> {
     let mut paths = BTreeSet::new();
@@ -38,26 +35,4 @@ pub(crate) fn to_value(revision: &CodeRevision) -> Result<Value> {
         })
         .collect::<Result<Vec<_>>>()
         .map(Value::Array)
-}
-
-pub(crate) fn from_value(value: &Value) -> Result<BTreeMap<[u8; 32], CodeDocumentFrontier>> {
-    let Value::Array(entries) = value else {
-        return Err(invalid());
-    };
-    let mut out = BTreeMap::new();
-    for entry in entries {
-        let Value::Binary(bytes) = entry else {
-            return Err(invalid());
-        };
-        let mut cursor = std::io::Cursor::new(bytes);
-        let frontier: CodeDocumentFrontier =
-            serde::Deserialize::deserialize(&mut rmp_serde::Deserializer::new(&mut cursor))
-                .map_err(|_| invalid())?;
-        if cursor.position() != bytes.len() as u64
-            || out.insert(frontier.document_id, frontier).is_some()
-        {
-            return Err(invalid());
-        }
-    }
-    Ok(out)
 }

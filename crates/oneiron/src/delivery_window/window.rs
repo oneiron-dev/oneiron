@@ -62,6 +62,48 @@ impl DeliveryWindowTimeWindow {
         };
         Some(delivery_epoch_secs.saturating_add(u64::from(minutes_until_end) * 60))
     }
+
+    pub(super) fn retry_at_after_zoned(
+        self,
+        delivery_epoch_secs: u64,
+        local_minute_of_day: u16,
+        iana_zone: Option<&str>,
+    ) -> Option<u64> {
+        let nominal = self.retry_at_after(delivery_epoch_secs, local_minute_of_day)?;
+        // Public fields can bypass `new`; retain their old arithmetic rather
+        // than search for an exit from a malformed or all-day window.
+        if self.start_minute >= MINUTES_PER_DAY
+            || self.end_minute >= MINUTES_PER_DAY
+            || self.start_minute == self.end_minute
+        {
+            return Some(nominal);
+        }
+        let Some(zone) =
+            iana_zone.and_then(|name| crate::calendar::tz::ResolvedTimeZone::new(name).ok())
+        else {
+            return Some(nominal);
+        };
+        let Some(mut at) = (delivery_epoch_secs / 60)
+            .checked_add(1)
+            .and_then(|minute| minute.checked_mul(60))
+        else {
+            return Some(nominal);
+        };
+        // A fold can leave a window before its nominal end; a gap can skip
+        // the end. Walk UTC minute edges under the same native offset reader.
+        loop {
+            let Some(offset) = zone.offset_minutes_at(at) else {
+                return Some(nominal);
+            };
+            if !self.contains(crate::calendar::tz::local_minute_of_day_at(at, offset)) {
+                return Some(at);
+            }
+            let Some(next) = at.checked_add(60) else {
+                return Some(nominal);
+            };
+            at = next;
+        }
+    }
 }
 
 pub(super) fn decode_time_window(value: &Value) -> Result<DeliveryWindowTimeWindow> {

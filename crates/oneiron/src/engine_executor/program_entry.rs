@@ -296,7 +296,10 @@ impl<'a> EngineNativeExecutor<'a> {
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<(CodeRunReplayRecord, Option<CodeRunReplayGeneration>)> {
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
-            if record.determinism != config.determinism {
+            let determinism = record.determinism.ok_or_else(|| {
+                Error::InvalidConfig("a turn program's code run has unknown determinism".to_owned())
+            })?;
+            if determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "a turn program's code run holds another determinism".to_owned(),
                 )
@@ -547,6 +550,10 @@ impl<'a> EngineNativeExecutor<'a> {
             .keep_preparation(&mut record, ran)?
             .or(pinned_preparation);
         let script = format!("pinned:{}@{}", entry.skill.to_hex(), entry.content_hash);
+        // Where the entry's calls end, and what its guest read (FIX 6354,
+        // FIX 6351, FIX 6352).
+        let (end, context) =
+            self.step_context(config, &record, bridge_start, host.context_capture)?;
         let state_hash = prepared_step_state_hash(
             previous_state_hash(&record),
             seq,
@@ -561,13 +568,19 @@ impl<'a> EngineNativeExecutor<'a> {
             },
             None,
             &record.bridge_calls[bridge_start..],
+            end,
         )?;
-        record.step_checkpoints.push(CodeRunStepCheckpoint::new(
-            seq,
-            checkpoint_label(seq),
-            state_hash,
-            config.determinism.frozen_unix_ms.saturating_add(seq),
-        )?);
+        let bridge_end = record.bridge_calls.len();
+        record.step_checkpoints.push(
+            CodeRunStepCheckpoint::new(
+                seq,
+                checkpoint_label(seq),
+                state_hash,
+                config.determinism.frozen_unix_ms.saturating_add(seq),
+            )?
+            .ending_at(end.bridge_end)
+            .with_bridge_calls(bridge_start, bridge_end),
+        );
         let parked = parked_wait(&record, Some(&status), bridge_start);
         let resume = ProgramResumeCommit {
             attempt: entry.attempt,
@@ -594,6 +607,7 @@ impl<'a> EngineNativeExecutor<'a> {
             &host.receipts,
             parked.as_ref(),
             &resume,
+            &context,
         ) {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!(
@@ -605,6 +619,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     &host.receipts,
                     parked.as_ref(),
                     &resume,
+                    &context,
                 )?
             }
             result => result?,

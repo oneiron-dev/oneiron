@@ -16,7 +16,9 @@
 //! 5. The per-`(system × UID)` diff: create/attach, skip, update, or mark
 //!    one source's passport absent. EVENT cancellation derives through
 //!    `calendar.status` only when every live inbound passport reports
-//!    absence — never on a parse/fetch failure.
+//!    absence — never on a parse/fetch failure. The diff and its writes run
+//!    in the vault's one calendar admission turn (`turn.rs`, FIX 4797), which
+//!    every inbound door holds, so two admissions never both mint one UID.
 //! 6. Every semantic claim candidate is `ClaimSource::Imported` and crosses
 //!    the Gate through `admit_imported_evidence_claim*`; immediately before
 //!    each admission the candidate passes through CAL-09's
@@ -54,28 +56,32 @@ pub mod feed_door;
 mod fetch;
 mod poll;
 pub(in crate::calendar) mod property_claims;
+mod turn;
+pub(in crate::calendar) use turn::admission_turn;
 
 // Moved bodies still spell `super::ics`, `super::passport`, and
 // `super::safeguard` (their `super` used to be `calendar`); these aliases keep
 // those paths byte-identical now that `super` is `ingest`.
 pub(crate) use super::{ics, passport, safeguard};
 
-pub(in crate::calendar) use self::admission::admit_calendar_import_claim;
 pub use self::admission::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload, ics_import_actor_id,
     run_ics_property_continuation,
+};
+pub(in crate::calendar) use self::admission::{
+    admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
 };
 pub use self::fetch::{
     CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedSource, IcsFetchResponse, IcsHttpResponse,
     IcsHttpTransport,
 };
+pub(crate) use self::poll::calendar_ics_feed_cursor_accepts_masked;
 pub use self::poll::{
     ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedPauseException, IcsFeedPollConfig,
     IcsFeedPollPayload, IcsPollRunState, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
     ics_feed_pause_exceptions, ics_feed_poll_dedupe_key, run_ics_feed_poll,
     run_ics_feed_poll_with_screener,
 };
-pub(crate) use self::poll::calendar_ics_feed_cursor_accepts_masked;
 
 use super::CalendarError;
 

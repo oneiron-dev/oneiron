@@ -35,6 +35,24 @@ const ITEM11_UNREADABLE_HOME_DISCOVERY: bool = true;
 /// unavailable.
 pub(super) const ITEM11_UNREADABLE_HOME_PROMOTION: bool = true;
 
+/// The home's digest-bound answer to an opened-item queue send.
+pub(crate) enum ResidenceReceipt {
+    Durable([u8; 32]),
+    Held([u8; 32]),
+}
+
+impl ResidenceReceipt {
+    pub(crate) fn digest(&self) -> &[u8; 32] {
+        match self {
+            Self::Durable(digest) | Self::Held(digest) => digest,
+        }
+    }
+
+    pub(crate) fn is_durable(&self) -> bool {
+        matches!(self, Self::Durable(_))
+    }
+}
+
 /// Client-side sync engine.
 pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
@@ -59,14 +77,20 @@ pub struct SyncClient {
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
+    /// This connection's sealed world updates whose isolated check waits on
+    /// an edge endpoint, in their envelopes: their capsules install once the
+    /// check passes (FIX 10474). Their bytes share the bound of
+    /// `staged_world_updates`. Cleared at every connect.
+    pub(crate) deferred_sealed_updates: Vec<super::window_pads::DeferredSealedUpdate>,
     pub(crate) root_bootstrapped: bool,
-    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
-    /// the BLAKE3 of each acknowledged row's own bytes, set once its window
-    /// pad receipt bound what was sent for it.
-    pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
+    /// This connection's home replies to opened-item queue sends, keyed by
+    /// sequence and bound to the raw row's BLAKE3. Only Durable retires a row;
+    /// Held answers the exchange while its row remains queued.
+    pub(crate) residence_acks: HashMap<u64, ResidenceReceipt>,
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
+    pub(crate) document_parts: Mutex<crate::sync::transport::DocumentAssembly>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -86,6 +110,9 @@ pub struct SyncClient {
     /// This connection's custody carrier leaf-key requests (FIX 11785).
     /// Started again at every connect.
     pub(super) leaf_key_sends: super::leaf_keys::LeafKeySends,
+    /// This connection's place in the sealed world-update relay (DEC-0005
+    /// fix 8). Started again at every connect.
+    pub(super) sealed_updates: super::sealed_updates::SealedUpdateSession,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
@@ -187,9 +214,11 @@ impl SyncClient {
             requested_windows: Mutex::new(HashSet::new()),
             pending_world_windows: Mutex::new(HashSet::new()),
             staged_world_updates: Vec::new(),
+            deferred_sealed_updates: Vec::new(),
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             window_pads: Mutex::default(),
+            document_parts: Mutex::default(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -200,6 +229,7 @@ impl SyncClient {
             artifact_publication_resend: HashMap::new(),
             asset_bodies: Default::default(),
             leaf_key_sends: Default::default(),
+            sealed_updates: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
             status: SyncStatus::Disconnected,
             event_tx,

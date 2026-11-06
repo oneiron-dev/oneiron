@@ -2,7 +2,7 @@
 //! the group commit, preflight, apply, commit, VAD postcommit.
 
 use super::super::*;
-use super::preflight::preflight_gate_decisions_in_txn;
+use super::preflight::{DeferredPreflight, preflight_gate_decisions_in_txn};
 use super::reference_read;
 use super::{BatchBuilder, CommitCheck};
 
@@ -186,6 +186,21 @@ impl BatchBuilder<'_> {
         self.commit_inner(None, None, guard, |_| Ok(()), None)
     }
 
+    /// The target guard and retained-denial behavior, with atomic hooks
+    /// after successful preflight and after apply. Either hook's error rolls
+    /// back the batch and its allow receipts. This terminal has no reader
+    /// savepoint: its hooks share the batch's writer. A guard returning false
+    /// has verified an exact replay: it succeeds without applying any op or
+    /// running either hook, and still waits for the group's durable commit.
+    pub(crate) fn commit_with_target_guard_and_hooks(
+        self,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
+        before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner_with_before_apply(None, None, guard, before_apply, after_apply, None)
+    }
+
     /// Promotion's checker-aware terminal owns the transaction so a preflight
     /// refusal commits only its actual receipt through the ordinary batch path.
     /// The checker runs once, before any batch writes. Promotion's `after_apply`
@@ -223,10 +238,29 @@ impl BatchBuilder<'_> {
     }
 
     fn commit_inner(
-        mut self,
+        self,
         checker: Option<&BoundedAutoChecker>,
         reader: Option<&ScopedRead<'_>>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+        writer_hold_site: Option<&'static str>,
+    ) -> Result<()> {
+        self.commit_inner_with_before_apply(
+            checker,
+            reader,
+            |txn| target_guard(txn).map(|_| true),
+            |_| Ok(()),
+            after_apply,
+            writer_hold_site,
+        )
+    }
+
+    fn commit_inner_with_before_apply(
+        mut self,
+        checker: Option<&BoundedAutoChecker>,
+        reader: Option<&ScopedRead<'_>>,
+        target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<bool>,
+        before_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
         writer_hold_site: Option<&'static str>,
     ) -> Result<()> {
@@ -255,6 +289,7 @@ impl BatchBuilder<'_> {
         let births = std::mem::take(&mut self.births);
         let asset_files = std::mem::take(&mut self.asset_files);
         let replicated_puts = std::mem::take(&mut self.replicated_puts);
+        let marked_carriers = std::mem::take(&mut self.marked_carriers);
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
@@ -267,8 +302,20 @@ impl BatchBuilder<'_> {
             // The caller's writer-hold site, when it named one: started
             // here so the span is this closure's hold only (FIX 12511).
             let _hold = writer_hold_site.map(crate::store::writer_hold::WriterHold::start);
-            if let Err(err) = target_guard(wtxn) {
-                return Rows::Discard(Err(err.into()));
+            match target_guard(wtxn) {
+                Ok(true) => {}
+                Ok(false) => {
+                    #[cfg(feature = "sync")]
+                    rows.clear();
+                    return Rows::Discard(Ok(Committed {
+                        changes_claims: false,
+                        tasks: Vec::new(),
+                        staged_gate_decisions: Vec::new(),
+                        approved_vad_ids: Vec::new(),
+                        pad_windows: BTreeSet::new(),
+                    }));
+                }
+                Err(err) => return Rows::Discard(Err(err.into())),
             }
             #[cfg(feature = "sync")]
             if let Err(err) =
@@ -276,20 +323,6 @@ impl BatchBuilder<'_> {
             {
                 return Rows::Discard(Err(err.into()));
             }
-            // A generic put of a projector-only `comm.*` class leaves the
-            // batch here, before the gate stages anything for it, for the
-            // projector. Its source event is written only once the preflight
-            // passes, so a batch the preflight refuses keeps its receipts and
-            // lands no routed event or head. A bound writer's puts stay with
-            // the door, judged by its read below.
-            let routed = if reader.is_none() {
-                match crate::comm::take_projector_only_batch_puts_in_txn(vault, &*wtxn, &mut ops) {
-                    Ok(routed) => routed,
-                    Err(err) => return Rows::Discard(Err(err.into())),
-                }
-            } else {
-                None
-            };
             // A bound writer takes only rows its read reads, judged against
             // their originals before anything stages (FIX 6068); its CLAIMs'
             // record refs are judged over the staged batch below (FIX 1223).
@@ -303,9 +336,19 @@ impl BatchBuilder<'_> {
                 Ok(Some(None)) => return Rows::Discard(Err(Error::EntityNotFound.into())),
                 Err(err) => return Rows::Discard(Err(err.into())),
             };
+            // Trusted routing keeps its existing path. A bound input stays
+            // through its original caller policy/source preflight first.
+            let routed = if reader.is_none() {
+                match crate::comm::take_projector_only_batch_puts_in_txn(vault, &*wtxn, &mut ops) {
+                    Ok(routed) => routed,
+                    Err(err) => return Rows::Discard(Err(err.into())),
+                }
+            } else {
+                None
+            };
             let mut staged_gate_decisions = Vec::new();
             let mut preflight_gate_decision_ids = HashMap::new();
-            if let Err(err) = preflight_gate_decisions_in_txn(
+            let mut deferred = match preflight_gate_decisions_in_txn(
                 &vault.store,
                 &ops,
                 wtxn,
@@ -315,55 +358,66 @@ impl BatchBuilder<'_> {
                 origin,
                 &caller_envelopes,
                 &births,
+                reader.is_some() && !gated.is_empty(),
             ) {
-                // A gate rejection is itself an intentional ledger event. Keep
-                // that denial receipt, matching the historical gate semantics;
-                // later phase-2 failures drop this transaction and its receipt.
-                return match crate::ports::recorded_at_in_txn(&vault.store, wtxn) {
-                    Ok(_) => Rows::Refuse(Refused {
-                        err,
-                        staged_gate_decisions,
-                    }),
-                    Err(err) => Rows::Discard(Err(err.into())),
-                };
-            }
-            // The routed puts' events project here, before the gate, VAD and
-            // lexical staging of the ops that remain. From here an unbound
-            // writer's batch commits or is discarded whole.
-            let mut routed_changes_claims = false;
-            if let Some(routed) = routed {
-                let written = match routed.record_in_txn(vault, wtxn) {
-                    Ok(written) => written,
-                    Err(err) => return Rows::Discard(Err(err.into())),
-                };
-                routed_changes_claims = !written.is_empty();
-                // The rows the live mirror takes: the ops that remain, the
-                // routed source events and the heads they wrote.
-                #[cfg(feature = "sync")]
-                {
-                    rows = super::super::vad_postcommit::ops_written_rows(&ops);
-                    rows.extend(written);
+                Ok(deferred) => deferred,
+                Err(err) => {
+                    // A gate rejection is itself an intentional ledger event. Keep
+                    // that denial receipt, matching the historical gate semantics;
+                    // later phase-2 failures drop this transaction and its receipt.
+                    return match crate::ports::recorded_at_in_txn(&vault.store, wtxn) {
+                        Ok(_) => Rows::Refuse(Refused {
+                            err,
+                            staged_gate_decisions,
+                        }),
+                        Err(err) => Rows::Discard(Err(err.into())),
+                    };
                 }
-                #[cfg(not(feature = "sync"))]
-                drop(written);
+            };
+            let probes = deferred
+                .as_mut()
+                .map(|pending| std::mem::take(&mut pending.probes))
+                .unwrap_or_default();
+            if let Err(err) = before_apply(wtxn) {
+                return Rows::Discard(Err(err.into()));
+            }
+            let routed = if reader.is_some() {
+                match crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(
+                    vault, &*wtxn, &mut ops, &births,
+                ) {
+                    Ok(routed) => routed,
+                    Err(err) => return Rows::Discard(Err(err.into())),
+                }
+            } else {
+                routed
+            };
+            #[cfg(feature = "sync")]
+            {
+                rows = super::super::vad_postcommit::ops_written_rows(&ops);
             }
             let batch = AdmittedBatch {
+                routed,
+                bound_inputs: reader.is_some(),
                 ops,
                 text_index_trusted,
                 gate_mode: ApplyOpsGateMode::new(false, true)
                     .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                    .with_pending_auto_probes(probes)
                     .with_birth_mask(birth_mask)
                     .with_text_births(text_births)
                     .with_births(births)
                     .with_asset_files(asset_files)
                     .with_replicated_puts(replicated_puts)
+                    .with_marked_carriers(marked_carriers)
                     .with_caller_envelopes(caller_envelopes)
                     .with_prepared(prepared),
                 origin,
             };
-            let applied = match reader.filter(|_| !gated.is_empty()) {
-                None => apply_admitted(vault, wtxn, batch, after_apply).map(Judged::Applied),
-                Some(reader) => apply_judged(vault, wtxn, batch, after_apply, reader, &gated),
+            let applied = match reader.filter(|_| !gated.is_empty() || batch.routed.is_some()) {
+                None => apply_admitted(vault, wtxn, batch, after_apply, None).map(Judged::Applied),
+                Some(reader) => {
+                    apply_judged(vault, wtxn, batch, after_apply, reader, gated, deferred)
+                }
             };
             let applied = match applied {
                 Ok(Judged::Applied(applied)) => Ok(applied),
@@ -385,10 +439,22 @@ impl BatchBuilder<'_> {
                         Err(err) => Rows::Discard(Err(err.into())),
                     };
                 }
+                Ok(Judged::Pended(pending)) => {
+                    let settled =
+                        settle_pending_in(&vault.store, wtxn, staged_gate_decisions, *pending);
+                    return match settled {
+                        Ok(refused) => Rows::Refuse(refused),
+                        Err(err) => Rows::Discard(Err(err.into())),
+                    };
+                }
                 Err(err) => Err(err),
             };
             match applied {
-                Ok((changes_claims, tasks, approved_vad_ids, pad_windows)) => {
+                Ok((changes_claims, tasks, approved_vad_ids, pad_windows, routed_rows)) => {
+                    #[cfg(feature = "sync")]
+                    rows.extend(routed_rows);
+                    #[cfg(not(feature = "sync"))]
+                    drop(routed_rows);
                     // FIX 7957, 9599: the rows this batch changed and the
                     // edges it removed leave their windows durable markers.
                     #[cfg(feature = "sync")]
@@ -401,7 +467,7 @@ impl BatchBuilder<'_> {
                         return Rows::Discard(Err(Refused::from(err)));
                     }
                     Rows::Commit(Committed {
-                        changes_claims: changes_claims || routed_changes_claims,
+                        changes_claims,
                         tasks,
                         staged_gate_decisions,
                         approved_vad_ids,
@@ -428,6 +494,7 @@ impl BatchBuilder<'_> {
         };
         if changes_claims {
             vault.store.notify_proactivity_changes();
+            vault.verb_hook_bindings_changed();
         }
         vault.store.notify_task_updates(tasks);
         vault.store.notify_attempt_observers();
@@ -459,6 +526,8 @@ impl BatchBuilder<'_> {
 
 /// A batch past its gate preflight, ready to apply in the writer.
 struct AdmittedBatch<'a> {
+    routed: Option<crate::comm::RoutedBatchPuts>,
+    bound_inputs: bool,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
@@ -472,9 +541,24 @@ struct AdmittedBatch<'a> {
 fn apply_admitted(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
-    batch: AdmittedBatch<'_>,
+    mut batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
 ) -> Result<Applied> {
+    let routed_rows = match batch.routed {
+        Some(routed) => {
+            if batch.bound_inputs {
+                super::comm_input::admit_routed_inputs(
+                    vault,
+                    wtxn,
+                    routed.inputs(),
+                    &mut batch.gate_mode,
+                )?;
+            }
+            routed.record_with_admission_in_txn(vault, wtxn, admission)?
+        }
+        None => BTreeSet::new(),
+    };
     let rekeys = crate::channel_identity::AssignmentRekeys::begin(&vault.store);
     let pending_vad_ids =
         super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &batch.ops)?;
@@ -484,14 +568,23 @@ fn apply_admitted(
     // content bytes rather than to any departing holder.
     // A write to a watched unit queues the proactivity wake too, as the
     // caller-transaction terminal does (FIX 11705).
-    let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops)
+    let changes_claims = !routed_rows.is_empty()
+        || super::super::vad_postcommit::ops_change_proactivity(&batch.ops)
         || super::super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &batch.ops)?;
     let tasks = super::super::vad_postcommit::ops_put_tasks(&batch.ops);
     // A WORLD delete stages its pads' tombstones under this scope (FIX 3334).
     // Only their windows are taken from it: this terminal reads the rest of
     // its post-commit work from the ops.
     let pad_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
-    let derived = crate::embed::repo_derived_batch(&batch.ops);
+    let put_roots: BTreeSet<_> = batch
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            BatchOp::Put { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let mut derived = crate::embed::repo_derived_batch(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -504,6 +597,7 @@ fn apply_admitted(
     )?;
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
+    derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
     crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     // OF-533: a delegated TASK's terminal result reaches its parked runs here.
@@ -511,7 +605,9 @@ fn apply_admitted(
         crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;
     }
     rekeys.finish(&vault.store, wtxn)?;
+    let rederive_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
+    let changes_claims = rederive_scope.finish().proactivity_changed || changes_claims;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     // The approval's commit carries its consolidation debt (FIX 9598).
     if !approved_vad_ids.is_empty() {
@@ -519,7 +615,13 @@ fn apply_admitted(
         crate::store::owe_claim_vad_in_txn(&vault.store, wtxn, &approved_vad_ids, now)?;
     }
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    Ok((changes_claims, tasks, approved_vad_ids, pad_windows))
+    Ok((
+        changes_claims,
+        tasks,
+        approved_vad_ids,
+        pad_windows,
+        routed_rows,
+    ))
 }
 
 /// The changes a batch's apply leaves: whether claims changed, the TASKs
@@ -530,6 +632,7 @@ type Applied = (
     Vec<crate::entity_id::EntityId>,
     Vec<crate::entity_id::EntityId>,
     BTreeSet<String>,
+    BTreeSet<crate::entity_id::EntityId>,
 );
 
 /// A bound writer's apply, judged.
@@ -538,6 +641,9 @@ enum Judged {
     /// The claim gate's denial of a record ref the writer's read does not
     /// resolve; nothing the apply staged stays.
     Denied(Box<reference_read::StagedDenial>),
+    /// No reference denied, so the first preflight Pending remains; the
+    /// complete probe is discarded rather than committed.
+    Pended(Box<DeferredPreflight>),
 }
 
 /// [`apply_admitted`] for a bound writer whose batch gates CLAIMs: the batch
@@ -550,16 +656,43 @@ fn apply_judged(
     batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     reader: &ScopedRead<'_>,
-    gated: &[reference_read::GatedClaim],
+    mut gated: Vec<reference_read::GatedClaim>,
+    deferred: Option<DeferredPreflight>,
 ) -> Result<Judged> {
     let mut staged = vault.store.env.nested_write_txn(wtxn)?;
-    let applied = apply_admitted(vault, &mut staged, batch, after_apply)?;
-    let denial = reference_read::staged_reference_denial(vault, &mut staged, reader, gated)?;
+    let mut admission = super::comm_projection::CommHeadWrites::reader(reader);
+    let applied = apply_admitted(vault, &mut staged, batch, after_apply, Some(&mut admission))?;
+    gated.extend(admission.gated_claims(vault, &staged)?);
+    let denial = reference_read::staged_reference_denial(vault, &mut staged, reader, &gated)?;
     if let Some(denial) = denial {
         return Ok(Judged::Denied(Box::new(denial)));
     }
+    if let Some(pending) = deferred {
+        return Ok(Judged::Pended(Box::new(pending)));
+    }
     staged.commit()?;
     Ok(Judged::Applied(applied))
+}
+
+/// The rollback-only probe left all preflight receipts in the outer writer.
+/// Keep only its first native Pending, as an ordinary preflight refusal does.
+fn settle_pending_in(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    mut decisions: Vec<crate::gate::RecordedClaimGateDecision>,
+    pending: DeferredPreflight,
+) -> Result<Refused> {
+    for decision in &decisions {
+        if decision.decision_id() != pending.first_decision {
+            store.delete_gate_decision_in_txn(txn, decision.decision_id())?;
+        }
+    }
+    decisions.retain(|decision| decision.decision_id() == pending.first_decision);
+    crate::ports::recorded_at_in_txn(store, txn)?;
+    Ok(Refused {
+        err: pending.err,
+        staged_gate_decisions: decisions,
+    })
 }
 
 /// What a committed batch still owes after its group commits.

@@ -7,9 +7,9 @@ use rmpv::Value;
 use super::keys::{
     KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR, KEY_ANCHOR_THREAD_ID, KEY_ANCHORS,
     KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_DECK, KEY_DOCX_JUDGMENTS,
-    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS,
-    KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT,
-    KEY_SHEET_ANSWERS, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS,
+    KEY_GRANT_REF, KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS,
+    KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION,
+    KEY_SETTLED_AT, KEY_SHEET_ANSWERS, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS,
     SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
@@ -184,6 +184,10 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
         (Value::from(KEY_SHEET_ANSWERS), sheet_answers),
         (Value::from(KEY_DECK), deck),
         (Value::from(KEY_DOCX_JUDGMENTS), docx_judgments),
+        (
+            Value::from(KEY_GRANT_REF),
+            option_str_value(record.grant_ref.as_deref()),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -235,6 +239,7 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
         settled_at: field_u64(&entries, KEY_SETTLED_AT)?,
         actor_ref: field_opt_str(&entries, KEY_ACTOR_REF)?,
         brief_ref: field_opt_str(&entries, KEY_BRIEF_REF)?,
+        grant_ref: field_opt_str(&entries, KEY_GRANT_REF)?,
         before_version: field_opt_u64(&entries, KEY_BEFORE_VERSION)?,
         version: field_opt_u64(&entries, KEY_VERSION)?,
         content_hash: field_opt_hash(&entries, KEY_CONTENT_HASH)?,

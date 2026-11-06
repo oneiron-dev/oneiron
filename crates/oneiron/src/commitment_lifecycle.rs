@@ -123,8 +123,9 @@ fn terminal_learned_at_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -
 /// forge a link or write one direction without the other. It takes no
 /// [`WriteEnvelope`] because edge rows carry no envelope evidence — it sits in
 /// the same ungated `&Vault` trust class as every other commitment verb — and
-/// it proves both endpoint classes BEFORE writing: the source must be a stored
-/// `ENTITY_TYPE_TASK` brief, the target an OPEN `commitment.record`.
+/// it proves both endpoint classes in the link writer's snapshot before either
+/// edge is written: the source must be a stored `ENTITY_TYPE_TASK` brief, the
+/// target an OPEN `commitment.record`.
 ///
 /// # Errors
 ///
@@ -137,28 +138,6 @@ pub fn link_brief_fulfillment(
     commitment_ref: &EntityId,
     linked_at: u64,
 ) -> Result<()> {
-    let Some(raw_brief) = vault.get_raw(brief_ref)? else {
-        return Err(Error::InvalidClaimBody(
-            "fulfillment source is not a task brief",
-        ));
-    };
-    let header = EntityMetadataHeader::parse(&raw_brief)
-        .ok_or(Error::CorruptedIndex("task brief header"))?;
-    if header.entity_type != ENTITY_TYPE_TASK {
-        return Err(Error::InvalidClaimBody(
-            "fulfillment source is not a task brief",
-        ));
-    }
-
-    let Some(record) = vault.get_commitment_claim(commitment_ref)? else {
-        return Err(Error::EntityNotFound);
-    };
-    if record.status != CommitmentStatus::Open {
-        return Err(Error::InvalidClaimBody(
-            "brief fulfillment link requires an open commitment",
-        ));
-    }
-
     // Structural rows: explicit weight, no VAD, no provenance hot flags. The
     // kinds carry no default prior precisely so this door states the weight.
     let edge_value = EdgeValueFields {
@@ -176,7 +155,34 @@ pub fn link_brief_fulfillment(
             brief_ref,
             edge_value,
         )
-        .commit()
+        .commit_with_target_guard(|txn| {
+            let Some(raw_brief) = vault.get_raw_sealed_in_txn(txn, brief_ref)? else {
+                return Err(Error::InvalidClaimBody(
+                    "fulfillment source is not a task brief",
+                ));
+            };
+            let header = EntityMetadataHeader::parse(&raw_brief)
+                .ok_or(Error::CorruptedIndex("task brief header"))?;
+            if header.entity_type != ENTITY_TYPE_TASK {
+                return Err(Error::InvalidClaimBody(
+                    "fulfillment source is not a task brief",
+                ));
+            }
+
+            let head = vault.commitment_head_in_txn(txn, commitment_ref)?;
+            let body = vault
+                .get_claim_in_txn(txn, &head)?
+                .ok_or(Error::EntityNotFound)?;
+            let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
+                Error::InvalidClaimBody("claim predicate is not commitment.record"),
+            )?;
+            if record.status != CommitmentStatus::Open {
+                return Err(Error::InvalidClaimBody(
+                    "brief fulfillment link requires an open commitment",
+                ));
+            }
+            Ok(())
+        })
 }
 
 /// The single explicit status-effect dispatcher.

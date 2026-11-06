@@ -24,6 +24,8 @@ use loro::{LoroDoc, Subscription};
 
 mod admission;
 mod device_only;
+mod discard_ingress;
+mod discard_projection;
 mod egress;
 mod forward;
 mod history_free;
@@ -41,10 +43,13 @@ pub mod test_hooks;
 mod tombstones;
 mod withdrawn;
 
-pub(in crate::sync) use self::admission::validate_promotion_snapshot;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
-pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;
+pub(in crate::sync) use self::admission::{
+    check_promotion_snapshot, check_window_update_residence_with_vault,
+    check_window_update_with_staged_worlds, validate_promotion_snapshot,
+    validate_window_update_with_staged_worlds,
+};
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
@@ -53,6 +58,15 @@ pub use self::device_only::{
     raw_update_verdict_for, selector_update_verdict_for_peer,
 };
 pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for};
+pub(in crate::sync) use self::discard_ingress::persist_window_arrival;
+pub(crate) use self::discard_ingress::{project_unsent_update, update_holds_discarded};
+pub(in crate::sync) use self::discard_projection::{
+    DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
+    projection_floor_in,
+};
+pub(crate) use self::discard_projection::{
+    forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
+};
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
 pub(in crate::sync) use self::egress::{
@@ -78,10 +92,12 @@ pub use self::pad_custody::{
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
-pub(in crate::sync) use self::replacement::{ReplacementByteBound, prepare_bounded_replacement};
+pub(in crate::sync) use self::replacement::{
+    ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,
+};
 pub use self::repo_manifest_conflict::{
-    RepoManifestConflictDiscard, RepoManifestConflictReview, discard_reviewed_repo_manifest_carrier_as,
-    review_repo_manifest_conflict,
+    RepoManifestConflictDiscard, RepoManifestConflictReview,
+    discard_reviewed_repo_manifest_carrier_as, review_repo_manifest_conflict,
 };
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
@@ -317,8 +333,11 @@ pub(crate) fn persist_window_doc_in_txn(
     state: &[u8],
     vv: &[u8],
 ) -> Result<()> {
+    // The owner's discard of a world copy takes what it owns from a BASE
+    // window's state before that state persists (FIX 14534 part E).
+    let state = discard_ingress::project_snapshot_in_txn(vault, wtxn, key, state)?;
     // Its pads persist by reference where custody here holds them (FIX 7107).
-    let state = pad_custody::persisted_window_pads(vault, key, state, None);
+    let state = pad_custody::persisted_window_pads(vault, key, &state, None);
     WINDOW_SNAPSHOT.put(
         &vault.store,
         wtxn,

@@ -9,8 +9,9 @@ use super::archive_index::{
     ArchiveIndex, FLAG_PROVENANCE, IndexedArchive, Loc, QUEUE_PROVENANCE, Tag, edge_key, id_at,
     id_list, ids_of, ready_key,
 };
-use super::document_import::{import_edge, matches_row, parse_id};
+use super::document_import::{import_edge, matches_row, parse_id, stamp_archived_birth};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
+use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::{
@@ -251,15 +252,30 @@ pub(super) fn restore<R: Read + Seek>(
         rows.push((row, id, body));
         after = Some(row_key);
     }
-    let loc = archive
-        .index
-        .get(Tag::MappedEdge, &subject)?
-        .ok_or_else(|| invalid("provenance subject edge missing from archive"))?;
-    let edge = mapped_edge(
-        &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
-        &archive.index,
-    )?;
-    stage_edge(vault, txn, &edge, &archive.index)?;
+    // Blind-review P1c (REVIEW-4389): an authored cut (FIX 7755) keeps its
+    // active provenance Claim while the subject edge is gone, so a
+    // whole-vault export carries the wrapper without its edge. When the edge
+    // row is absent but both endpoints survive as archived entities, the
+    // cohort restores without staging — and never recreates — the deleted
+    // link. Any other absence stays a fail-closed archive defect.
+    let cut = match archive.index.get(Tag::MappedEdge, &subject)? {
+        Some(loc) => {
+            let edge = mapped_edge(
+                &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
+                &archive.index,
+            )?;
+            stage_edge(vault, txn, &edge, &archive.index)?;
+            false
+        }
+        None => {
+            let source = id_at(&subject, 0)?;
+            let target = id_at(&subject, ENTITY_ID_LEN + 1)?;
+            if archive.entity(&source)?.is_none() || archive.entity(&target)?.is_none() {
+                return Err(invalid("provenance subject edge missing from archive"));
+            }
+            true
+        }
+    };
     let new_ids = rows
         .iter()
         .filter_map(|(_, id, _)| {
@@ -270,9 +286,55 @@ pub(super) fn restore<R: Read + Seek>(
             }
         })
         .collect::<std::result::Result<BTreeSet<_>, _>>()?;
-    let (inserted, unchanged) = restore_cohort(vault, txn, &rows)?;
+    // Typed puts can regenerate a cut link before or during this cohort.
+    // Preserve an existing link on a pre-existing source, not one minted
+    // by this import's earlier entity pass.
+    let cut_subject = if cut {
+        if subject.len() != EDGE_KEY_LEN {
+            return Err(invalid("archive cohort subject is not an edge"));
+        }
+        let kind = crate::edge::EdgeKind::try_from_u8(subject[ENTITY_ID_LEN])
+            .ok_or_else(|| invalid("archive cohort subject is not an edge"))?;
+        Some((
+            id_at(&subject, 0)?,
+            kind,
+            id_at(&subject, ENTITY_ID_LEN + 1)?,
+        ))
+    } else {
+        None
+    };
+    let preserve_subject_edge = match cut_subject {
+        Some((source, kind, target)) => {
+            !archive.index.contains(Tag::Inserted, source.as_bytes())?
+                && crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
+                .is_some()
+        }
+        None => false,
+    };
+    let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut)?;
+    if let Some((source, kind, target)) = cut_subject
+        && !preserve_subject_edge
+        && crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
+            .is_some()
+    {
+        vault
+            .batch_in()
+            .delete_edge(&source, kind, &target)
+            .apply(txn)?;
+    }
     if inserted != new_ids.len() {
         return Err(Error::InvariantViolation("provenance import count drift"));
+    }
+    // FIX 1178: each landed row's archived birth, stamped once its final
+    // body compares exact.
+    for (_, id, _) in &rows {
+        stamp_archived_birth(vault, txn, archive, id)?;
     }
     archive.index.remove(Tag::CohortPending, key.as_bytes())?;
     for (_, id, _) in &rows {
@@ -284,10 +346,30 @@ fn restore_cohort(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     rows: &[(ExportEntity, EntityId, ClaimBody)],
+    cut: bool,
 ) -> Result<(usize, usize)> {
     let mut inserted = 0;
     let mut unchanged = 0;
-    for (row, id, body) in rows {
+    // The last row this restore inserted: on a learned-at tie the implicit
+    // strictly-older closure cannot close it, so a successor names it as its
+    // explicit prior when the archive holds it Superseded (FIX 9594).
+    // REVIEW-4378 P1: IDs order nothing, so a tie may list the closer
+    // before the Superseded row it closes. Restore every tied Superseded
+    // row before its tie-mates (stable) so the closer still names it.
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by_key(|&i| {
+        (
+            rows[i].0.learned_at,
+            if rows[i].2.lifecycle == ClaimLifecycleStatus::Superseded {
+                0
+            } else {
+                1
+            },
+        )
+    });
+    let mut previous: Option<(EntityId, u64, ClaimLifecycleStatus)> = None;
+    for &i in &order {
+        let (row, id, body) = &rows[i];
         let expected = ExportBody::from_bytes(
             &crate::write_envelope::claim_body::encode_claim_body(body)?,
             row.entity_type,
@@ -301,8 +383,55 @@ fn restore_cohort(
                 return Err(invalid("archive provenance ID collision"));
             }
             unchanged += 1;
+            // Blind-review P1 (REVIEW-4378-kimi): an existing row breaks the
+            // tied-prior chain when the tracked prior is already closed —
+            // re-naming it fails ProvenanceClaimAlreadyClosed.
+            // Blind-review P1 (REVIEW-4378.md): a newly inserted still-live
+            // tied prior survives the unchanged row so a later missing
+            // tie-mate closes it; otherwise the final exact comparison
+            // aborts a valid partially present cohort.
+            let prior_live = previous
+                .map(|(prior, _, _)| {
+                    crate::vault::live_entity_row_in_txn(&vault.store, txn, &prior)
+                        .map(|row| row.is_live())
+                })
+                .transpose()?
+                .unwrap_or(false);
+            // Blind-review P1 rounds 5-6 (REVIEW-4378.md + REVIEW-4378-kimi.md):
+            // the archived closer itself is already present, so no later
+            // missing row will close the newly restored tied prior. Close it
+            // through the owner door now (edge restamped from the surviving
+            // cohort inside), then break the chain as round 3 did; anything
+            // else keeps round-4 behavior. A tied Retracted row closes the
+            // prior the same way: retraction never reopens it.
+            let closer_present = match previous {
+                Some((_, prior_learned_at, lifecycle))
+                    if prior_learned_at == row.learned_at
+                        && lifecycle == ClaimLifecycleStatus::Superseded
+                        && matches!(
+                            body.lifecycle,
+                            ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
+                        ) =>
+                {
+                    true
+                }
+                _ => false,
+            };
+            if closer_present && prior_live {
+                if let Some((prior, _, _)) = previous {
+                    vault.close_restored_tied_prior_in_txn(txn, &prior, id, row.learned_at, cut)?;
+                }
+                previous = None;
+            } else if !prior_live {
+                previous = None;
+            }
             continue;
         }
+        let explicit_prior = previous.and_then(|(prior, prior_learned_at, prior_lifecycle)| {
+            (prior_learned_at == row.learned_at
+                && prior_lifecycle == ClaimLifecycleStatus::Superseded)
+                .then_some(prior)
+        });
         vault.restore_archived_provenance_in_txn(
             txn,
             id,
@@ -312,8 +441,11 @@ fn restore_cohort(
                 end: row.occurred_end,
             },
             row.learned_at,
+            explicit_prior.as_ref(),
+            cut,
         )?;
         inserted += 1;
+        previous = Some((*id, row.learned_at, body.lifecycle));
     }
     // A superseded row is never silently resurrected if its closing history
     // was absent or ambiguous. Every final lifecycle must reproduce exactly.
