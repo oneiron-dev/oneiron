@@ -272,6 +272,14 @@ the staging call, before the caller's lease. They are distinct from the
 original capture, detached provisional clone and encoded final-row buffers.
 An absent field adds no backing, and an unbound finalizer adds no walk.
 
+The first observation uses the same known-backing helper as the pre-put and
+trace-fork lookups. In addition to those stable fields, it includes this
+decode's result-ID and score vectors, component vectors, all trace vector
+backing, empty-reason string, replay reference strings and known config
+backing. Later old-buffer measurements retain byte counts for their existing
+retirement steps; they do not add those already charged buffers again.
+Unbound finalizers still perform no added accounting walk.
+
 After its existing surfaced-ID assignment, that finalizer also records the
 actual backing capacity of the newly copied result-ID vector, using the native
 ID element size. The assignment still drops the old decoded ID vector first;
@@ -335,12 +343,13 @@ Unbound finalizers add no capacity work. Allocation internals before the new
 post-allocation measurements, pre-growth admission and a full construction peak
 remain outside these charges.
 
-Immediately before the original trace mutations, the same optional lease also
-records the decoded trace's known backing. A shared local calculation counts
-its per-channel slots, every channel and stage candidate vector, and each
-candidate's component vector, using the same capacities and native element sizes
-as the existing current-trace measurement. The trace is a separate owned decode,
-not the top-level score vector, canonical inputs or provisional record clone.
+The decoded trace's known backing joins that first observation. Immediately
+before the original trace mutations, a shared local calculation remeasures its
+already charged old extent: per-channel slots, every channel and stage
+candidate vector, and each candidate's component vector. It uses the same
+capacities and native element sizes as the current-trace measurement, without
+adding the old charge again. These trace buffers are distinct from the
+top-level score vector, canonical inputs and provisional record clone.
 
 The original retains keep candidate-vector backing while dropping removed
 entries' component buffers; the original final-stage assignment drops its old
@@ -373,20 +382,24 @@ write retains both in the same owner. Synchronous session-overlay and admitted
 finalizers keep their existing input handling; this pre-queue charge applies
 only to the canonical detached write.
 
-Before those original empty-reason and pack replacements, the same optional
-lease also records the old decoded empty-reason string's actual capacity. If a
-pack value will be assigned, it records only the replaced old pack value's known
-string, array-slot and object-key backing through the same lower calculation.
-The surrounding config's retained pack key is not part of this discarded value.
-A missing replacement or missing replay inputs adds no old-pack charge.
+The first decoded-record observation also includes the old empty-reason
+string, both replay-reference strings and the config's full known string,
+array-slot and object-key backing through the same lower calculation. Before
+the original empty-reason and pack replacements, the finalizer remembers that
+full old extent without adding it again. This includes the retained pack key
+and other unchanged replay fields; it is not just the discarded pack value.
+Absent fields add no backing.
 
-After both original assignments have dropped their old values, the lease
-releases only that remembered old backing before the unchanged current-record
-measurement. Those discarded decoded buffers are distinct from the canonical
-finalizer inputs, original capture and provisional clone. No old charge is
-released while its buffer is live or retained as part of the final record.
-An unbound finalizer adds no walk. This remains post-allocation accounting, not
-construction-peak, config-map, number-internal or full-working-set coverage.
+After the same original assignments, the lease adds the full current known
+empty-reason and replay extent first, then retires the full remembered old
+extent, then the original input-backing charge. Unchanged replay references
+and config buffers remain paid throughout this transfer. The old empty-reason
+and replaced pack values have already dropped, while retained backing may
+briefly be counted twice without a duplicate final charge. These decoded
+buffers remain distinct from the canonical finalizer inputs, original capture
+and provisional clone. An unbound finalizer adds no walk. This remains
+post-allocation accounting, not construction-peak, config-map, number-internal
+or full-working-set coverage.
 
 The finalizer's private trace-membership scratch uses a separate copied ID
 vector, sorted and deduplicated only for membership lookup. The caller's ID
