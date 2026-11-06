@@ -115,24 +115,42 @@ pub fn js_public_names(root: &Path, entry_name: &str, entry: &str) -> Result<JsP
     }
     let mut result = JsPublicNames::default();
     for (file, module) in &modules {
-        result.unresolved.extend(
-            module
-                .unresolved
-                .iter()
-                .map(|site| format!("js:{entry_name}::{file}#{site}")),
-        );
+        result
+            .unresolved
+            .extend(module.unresolved.iter().map(|site| {
+                format!(
+                    "js:{}::{}#{}",
+                    name_segment(entry_name),
+                    name_segment(file),
+                    name_segment(site)
+                )
+            }));
     }
     for name in &surfaces[entry] {
         let origins = resolve_binding(&modules, entry, name);
         if origins.is_some_and(|origins| origins.len() == 1) {
-            result.names.insert(format!("js:{entry_name}::{name}"));
+            result.names.insert(format!(
+                "js:{}::{}",
+                name_segment(entry_name),
+                name_segment(name)
+            ));
         } else {
-            result
-                .unresolved
-                .insert(format!("js:{entry_name}::{entry}#export:{name}"));
+            result.unresolved.insert(format!(
+                "js:{}::{}#export:{}",
+                name_segment(entry_name),
+                name_segment(entry),
+                name_segment(name)
+            ));
         }
     }
     Ok(result)
+}
+
+fn name_segment(value: &str) -> String {
+    value
+        .replace('%', "%25")
+        .replace(':', "%3A")
+        .replace('#', "%23")
 }
 
 fn read_module(root: &Path, file: &str) -> Result<Module> {
@@ -212,21 +230,30 @@ fn read_module(root: &Path, file: &str) -> Result<Module> {
             Statement::ExportNamedDeclaration(declaration) => {
                 for specifier in &declaration.specifiers {
                     let local = specifier.local.name().to_string();
-                    let binding = if let Some(source) = &declaration.source {
-                        Binding::From {
-                            request: source.value.to_string(),
-                            name: local,
-                        }
-                    } else {
-                        imports
-                            .get(&local)
-                            .cloned()
-                            .unwrap_or(Binding::Local(local))
+                    let binding = imports
+                        .get(&local)
+                        .cloned()
+                        .unwrap_or(Binding::Local(local));
+                    module
+                        .bindings
+                        .insert(specifier.exported.name().to_string(), binding);
+                }
+            }
+            Statement::ExportFromDeclaration(declaration) => {
+                for specifier in &declaration.specifiers {
+                    let binding = Binding::From {
+                        request: declaration.source.value.to_string(),
+                        name: specifier.local.name().to_string(),
                     };
                     module
                         .bindings
                         .insert(specifier.exported.name().to_string(), binding);
                 }
+            }
+            Statement::TSExportAssignment(_) => {
+                module
+                    .unresolved
+                    .insert("typescript:export-assignment".to_owned());
             }
             Statement::ExportAllDeclaration(declaration) => {
                 let request = declaration.source.value.to_string();

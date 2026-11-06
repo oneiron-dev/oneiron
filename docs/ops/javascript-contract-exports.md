@@ -28,7 +28,10 @@ and side-effect imports do not become public names.
 
 Names are `js:<entry-name>::<export-name>`. The declared entry name, not an
 implementation filename, is the public identity. Moving its source file does not
-by itself remove its exports. Rust name spelling is unchanged.
+by itself remove its exports. Name segments percent-escape `%`, `:` and `#`, so
+entry/export delimiters cannot collapse two different names. Rust name spelling
+is unchanged. TypeScript `export =` is recorded as unresolved, not treated as an
+observed empty surface.
 
 Relative re-exports follow exact files within the worktree. Paths normalize
 relative `.` and `..` components without escaping the root. The existing resolver
