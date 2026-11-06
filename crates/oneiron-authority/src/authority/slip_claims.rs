@@ -78,6 +78,13 @@ pub struct SlipMintAction {
     /// crosses it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renews: Option<[u8; 32]>,
+    /// The vault Owner or member who approved the pairing that minted this
+    /// holder's slip (FIX 11713): set at redemption from the link's
+    /// approving owner, and carried unchanged by every renewal. `None` where
+    /// no person approved it, such as a host-only link. An identifier for
+    /// the person an agent acts for, never a permission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minting_member: Option<oneiron_contracts::EntityId>,
 }
 impl SlipMintAction {
     pub fn validate(&self) -> Result<()> {
