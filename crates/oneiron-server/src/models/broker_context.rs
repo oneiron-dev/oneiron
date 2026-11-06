@@ -320,6 +320,43 @@ impl SystemOneTransport for SystemOneLeg {
         })
     }
 
+    fn send_released<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+        release: oneiron::llm::DispatchRelease<'a>,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            let url = reqwest::Url::parse(&request.endpoint)
+                .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+            let header = CallHeader::new(
+                lease.id().to_owned(),
+                Shape::SystemOne,
+                url.origin().ascii_serialization(),
+                url.path().to_owned(),
+                request.headers,
+                request.model,
+                is_cloud_node(),
+                &request.body,
+            );
+            let mut answer = self
+                .context
+                .send_released(
+                    &self.secret,
+                    &header,
+                    &request.body,
+                    request.time_left,
+                    release,
+                    lease,
+                )
+                .await?;
+            Ok(SystemOneHttpResponse {
+                status: answer.status,
+                body: std::mem::take(&mut *answer.body),
+            })
+        })
+    }
+
     fn preflight(&self) -> LlmResult<()> {
         self.context.ready(&self.secret)
     }

@@ -71,6 +71,8 @@ pub struct RunAdmission {
     submit_key: Option<String>,
     /// Host scheduling and physical-custody context for this handle (R4).
     work_context: Option<WorkContext>,
+    /// Call-owned credential liveness; never shared with other run handles.
+    send_guard: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Capture targets carried only by permits admitted through this handle.
     pub(super) capture: SettlementCapture,
 }
@@ -235,6 +237,7 @@ impl RunAdmission {
             initiator: None,
             submit_key: None,
             work_context: None,
+            send_guard: None,
             capture: SettlementCapture::default(),
         }
     }
@@ -291,6 +294,35 @@ impl RunAdmission {
             work_context: Some(context),
             ..self.clone()
         }
+    }
+
+    /// This handle with an additional call-owned credential check. Rebinding
+    /// conjoins the checks; it cannot replace an earlier caller's condition.
+    #[must_use]
+    pub fn with_send_guard(&self, guard: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        let guard = match &self.send_guard {
+            Some(previous) => {
+                let previous = Arc::clone(previous);
+                Arc::new(move || previous() && guard()) as Arc<dyn Fn() -> bool + Send + Sync>
+            }
+            None => guard,
+        };
+        Self {
+            send_guard: Some(guard),
+            ..self.clone()
+        }
+    }
+
+    /// The actual call's optional credential check, borrowed for its send.
+    /// Absence keeps the ordinary transport path unchanged.
+    #[must_use]
+    pub fn send_guard(&self) -> Option<&(dyn Fn() -> bool + Send + Sync)> {
+        self.send_guard.as_deref()
+    }
+
+    #[must_use]
+    pub fn may_send(&self) -> bool {
+        self.send_guard().is_none_or(|guard| guard())
     }
 
     /// The effective context for device admission. Explicit context wins;

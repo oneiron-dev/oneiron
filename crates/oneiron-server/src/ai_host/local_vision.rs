@@ -237,7 +237,7 @@ impl DecisionModel for LocalVisionModel {
                         &run,
                         admitted.request,
                         None,
-                        &|| true,
+                        &|| run.may_send(),
                         wait_budget,
                     ),
                 )

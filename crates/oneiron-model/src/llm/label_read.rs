@@ -104,6 +104,20 @@ pub trait LabelReadModel: Send + Sync {
     fn cost_per_thousand(&self) -> Option<f64> {
         None
     }
+    /// Reads while this call's credential remains live. The default checks
+    /// once; native transports override it to check each physical attempt.
+    fn read_while(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LabelReadResponse> {
+        if !may_send() {
+            return Err(super::FatalLlmError::Auth.into());
+        }
+        self.read(request, lease)
+    }
+
     fn read(
         &self,
         request: &LabelReadRequest<'_>,

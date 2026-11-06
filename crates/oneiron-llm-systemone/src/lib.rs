@@ -6,6 +6,7 @@
 //! adds the key from the vault for one call at a time).
 
 use oneiron::code_run::model_call::native_seat_read_digests;
+use oneiron::llm::DispatchRelease;
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
@@ -62,6 +63,21 @@ pub trait SystemOneTransport: Send + Sync {
         request: SystemOneHttpRequest,
         lease: &'a BudgetLease,
     ) -> SystemOneTransportFuture<'a>;
+
+    /// Sends with this call's release check. Native transports override this
+    /// to place the check after their own preparation, before physical I/O.
+    fn send_released<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            release()?;
+            lease.begin_physical_attempt();
+            self.send(request, lease).await
+        })
+    }
 
     /// Every check the transport makes before it sends, with no I/O (a
     /// broker it cannot reach, a key its custody door would refuse); `Ok`,
@@ -221,12 +237,25 @@ impl SystemOneSeat {
         })
     }
 
+    /// A recorded read with its caller's release checked at the transport's
+    /// physical send boundary. The seat never stores the borrowed check.
+    pub fn ask_recorded_released<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: Duration,
+        release: DispatchRelease<'a>,
+    ) -> SeatReadFuture<'a> {
+        Box::pin(self.ask_inner(request, lease, time_left, true, Some(release)))
+    }
+
     async fn ask_inner(
         &self,
         request: SeatRequest,
         lease: &BudgetLease,
         time_left: Duration,
         capture: bool,
+        release: Option<DispatchRelease<'_>>,
     ) -> SeatRead {
         let mut digests = None;
         let result = async {
@@ -240,7 +269,10 @@ impl SystemOneSeat {
                     .and_then(|body| native_seat_read_digests(&body).ok());
             }
             let model = sent.model.clone();
-            let response = self.transport.send(sent, lease).await?;
+            let response = match release {
+                Some(release) => self.transport.send_released(sent, lease, release).await?,
+                None => self.transport.send(sent, lease).await?,
+            };
             if !(200..300).contains(&response.status) {
                 return Err(if response.status >= 500 || response.status == 429 {
                     RetryableLlmError::ServerError.into()
@@ -293,7 +325,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
         time_left: std::time::Duration,
     ) -> SeatFuture<'a> {
         Box::pin(async move {
-            self.ask_inner(request, lease, time_left, false)
+            self.ask_inner(request, lease, time_left, false, None)
                 .await
                 .result
         })
@@ -305,7 +337,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
         lease: &'a BudgetLease,
         time_left: Duration,
     ) -> SeatReadFuture<'a> {
-        Box::pin(self.ask_inner(request, lease, time_left, true))
+        Box::pin(self.ask_inner(request, lease, time_left, true, None))
     }
 }
 
@@ -331,6 +363,55 @@ impl SystemOneTransport for BearerTransport {
             for (name, value) in &request.headers {
                 post = post.header(name.as_str(), value.as_str());
             }
+            let mut response = post
+                .body(request.body)
+                .send()
+                .await
+                .map_err(transport_error)?;
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                return Ok(SystemOneHttpResponse {
+                    status,
+                    body: Vec::new(),
+                });
+            }
+            if response
+                .content_length()
+                .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
+            {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+                if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(SystemOneHttpResponse {
+                status,
+                body: bytes,
+            })
+        })
+    }
+
+    fn send_released<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            let mut post = self
+                .client
+                .post(&request.endpoint)
+                .timeout(request.time_left)
+                .bearer_auth(&self.bearer);
+            for (name, value) in &request.headers {
+                post = post.header(name.as_str(), value.as_str());
+            }
+            release()?;
+            lease.begin_physical_attempt();
             let mut response = post
                 .body(request.body)
                 .send()
@@ -512,6 +593,5 @@ fn transport_error(error: reqwest::Error) -> oneiron::LlmError {
         RetryableLlmError::ServerError.into()
     }
 }
-
 #[cfg(test)]
 mod tests;
