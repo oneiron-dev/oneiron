@@ -96,6 +96,33 @@ impl GraphFsResolver<'_, '_> {
         self.cursor_scope(call).seal(&cursor.to_owned())
     }
 
+    pub(crate) fn open_public_cursor_with_reader(
+        &self,
+        call: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Option<String>> {
+        let scope = self.cursor_scope_with(call, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        scope.open_with(
+            cursor,
+            quantum,
+            || checkpoint(reader),
+            |bytes| copy_utf8_field(bytes, reader, quantum),
+        )
+    }
+
+    pub(crate) fn seal_public_cursor_with_reader(
+        &self,
+        call: &str,
+        cursor: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<String> {
+        let scope = self.cursor_scope_with(call, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        scope.seal_bytes_with(cursor.as_bytes(), quantum, || checkpoint(reader))
+    }
+
     /// Imported file states share their snapshot's recorded transaction
     /// time. No host filesystem mtime is inferred for retained bytes.
     pub(super) fn snapshot_newer_than(&self, newer_than: u64) -> Result<bool> {
