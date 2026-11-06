@@ -69,3 +69,33 @@ writer runs; no caller callback runs inside it.
 A settled lease's amount keeps its native settlement convention. It is not a
 billing credit or proof that summing selected lease amounts reproduces a meter
 delta, including at counter saturation.
+
+### Retained native NET invoices
+
+A separate private financial row retains each original admitted call by its full
+attempt, generation, invocation and corrective ordinal. It is not another funding
+reservation. The row freezes the original line, logical request hash and lease
+metadata before bytes leave. This best-effort write is independent of the existing
+owed-call writer; failure cannot prevent that original writer or the model call.
+
+The physical response producer records `input.total + output.total` before schema
+validation or corrective-response aggregation. A known zero stays a zero invoice.
+An error without a response stays unknown, not a synthetic zero. Local responses
+can have positive native NET usage while their guard charge is zero. These records
+retain the quantity the response actually supplied; they do not prove that every
+provider-reported or unreported expense is known.
+
+The explicit payment primitive reads the retained line and invoice. Its existing
+BUDGET money mutation and paid fact share one writer. It charges the line directly,
+not a later generation's reservation or its owed sum. Repeating the same original
+call finds its paid fact without charging again. These rows are live financial
+state, excluded from checkpoint images, and are not removed by logical memo forget,
+step-mark cleanup or ordinary owed-call retirement.
+
+Automatic payment is not activated. Neither the response producer nor the wake
+aggregate driver calls that primitive. Before activation, the actual invoice
+coverage must travel through each native NET or GROSS producer and its settlement.
+A scalar aggregate minus native usage, or a sum of selected lease states, is not
+proof of the covered guard delta. The existing driver charge, owed-unit SUM and
+logical paid marks remain unchanged; this source does not close the late-call or
+continuation-transfer accounting gap.
