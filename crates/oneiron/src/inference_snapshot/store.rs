@@ -304,14 +304,18 @@ impl Vault {
             if !self.snapshot_admission_holds(admission) {
                 return Ok(false);
             }
-            let earlier: Vec<SnapshotId> = catalog::rows(store, &wtxn)?
+            let mut earlier: Vec<SnapshotId> = Vec::new();
+            for id in catalog::rows(store, &wtxn)?
                 .into_iter()
                 .filter(|(_, row)| {
                     row.as_ref()
                         .is_some_and(|row| same_session(&row.manifest, &record.manifest))
                 })
                 .map(|(id, _)| id)
-                .collect();
+            {
+                earlier.try_reserve(1).map_err(std::io::Error::from)?;
+                earlier.push(id);
+            }
             store.publish_inference_snapshot_key_in_txn(&mut wtxn, &record.id.0, wrapped)?;
             CATALOG.put(store, &mut wtxn, &record.id, record)?;
             catalog::put_conversation_entry(
