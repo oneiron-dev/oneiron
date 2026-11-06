@@ -1370,6 +1370,15 @@ request, so it no longer counts against the window. `self.unfold({fold})`
 appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
 fold may lie over a whole-step fold; that fold still hides its steps.
 
+`self.fold({kind: "program", ...})` folds the other half: each step keeps its
+console, and its exec frame shows comment lines in place of the program:
+`// ⟨f4 · program folded⟩ self.unfold({fold: "f4"}) brings it back`, then one
+line per speech call the step made (`// self.speak: "..."`, `self.think`,
+`self.express`, with the text it dispatched) and the ids the program names.
+Each step checkpoint keeps the range of bridge calls its step made
+(`bridge_calls`), which is how the stub finds them. Unfold appends the raw
+programs, labelled `unfolded program from tA–tB`.
+
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
 where it was found and whether a reveal would deliver at once, ask the owner
