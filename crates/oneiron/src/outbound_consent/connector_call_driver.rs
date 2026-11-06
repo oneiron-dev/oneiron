@@ -28,6 +28,7 @@ use super::connector_call::{
 };
 use super::connector_call_dispatch::{escalation_code, step_from_host};
 use super::connector_call_erase::put_pending_call_in_txn;
+use super::connector_call_input_resume::ConnectorResumeState;
 use super::scope::{
     DataClass, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
 };
@@ -309,9 +310,16 @@ impl Vault {
         // the same write, and their waiters wake once it committed (FIX 2551).
         let put_row = |call_ref: &EntityId,
                        row: &PendingConnectorCall,
-                       outcome: Option<&ConnectorCallOutcome>| {
+                       outcome: Option<&ConnectorCallOutcome>,
+                       resume: Option<&ConnectorResumeState>| {
             let mut row = row.clone();
             let withdrawn = self.with_write_txn(|txn| {
+                if let (Some(input), Some(resume)) = (row.input.as_mut(), resume)
+                    && input.generation == resume.generation
+                    && !input.uncertain
+                {
+                    input.resume = resume.seal_in_txn(self, txn, call_ref);
+                }
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
                     self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
                 } else {
@@ -338,7 +346,7 @@ impl Vault {
         };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
-            put_row(&call_ref, pending, None)?;
+            put_row(&call_ref, pending, None, None)?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
         let settle = |call_ref: Option<EntityId>,
@@ -349,7 +357,7 @@ impl Vault {
                     settled: Some(settled),
                     ..pending.clone()
                 };
-                put_row(&call_ref, &row, Some(outcome))?;
+                put_row(&call_ref, &row, Some(outcome), None)?;
             }
             Ok::<_, IntentLedgerError>(())
         };
@@ -389,7 +397,7 @@ impl Vault {
                 // resolved once and the row plus the live outcome commit in
                 // one writer, so the wait settles with the actual questions.
                 // Bind the live handle before the commit can publish its reply.
-                // Durable resume persistence follows the commit, never precedes it.
+                // The first round's sealed resume state commits with that row.
                 let resolved = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
                 let handle = input.handle.clone();
                 let outcome = ConnectorCallOutcome::AwaitingInput {
@@ -398,7 +406,8 @@ impl Vault {
                     input,
                 };
                 host.bind_awaiting_call(&handle, resolved);
-                match put_row(&resolved, &row, Some(&outcome)) {
+                let resume = host.take_awaiting_resume(&handle, resolved);
+                match put_row(&resolved, &row, Some(&outcome), resume.as_ref()) {
                     Ok(()) => {
                         host.awaiting_call_committed(&handle, resolved);
                         outcome

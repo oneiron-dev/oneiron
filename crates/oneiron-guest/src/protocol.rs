@@ -13,7 +13,6 @@ pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
 pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
 pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
 pub(crate) const MAX_CHUNK: usize = oneiron_sandbox_contract::MAX_CHUNK_BYTES;
-pub(crate) const MAX_TOTAL: usize = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES;
 pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
@@ -46,6 +45,10 @@ enum HostFrame {
     Ready,
     Receipt {
         accepted: bool,
+    },
+    Failure {
+        code: String,
+        detail: String,
     },
 }
 
@@ -244,13 +247,18 @@ impl<T: Read + Write> Session<T> {
         Ok(())
     }
 
-    /// One frame of the open file. Frames are not requests: the host answers
-    /// none, and a file of any size spends no request budget.
-    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<()> {
+    /// One frame of the open file. Wait for its receipt without spending a
+    /// logical request, so a file's size never spends the request budget.
+    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<std::result::Result<(), String>> {
         if self.finished || bytes.len() > MAX_CHUNK {
             return Err(Error::Protocol("proposal frame bounds"));
         }
-        self.send(&GuestFrame::WriteChunk { bytes })
+        self.send(&GuestFrame::WriteChunk { bytes })?;
+        match self.read()? {
+            HostFrame::Receipt { accepted: true } => Ok(Ok(())),
+            HostFrame::Failure { code, detail } => Ok(Err(format!("{code}: {detail}"))),
+            _ => Err(Error::Protocol("expected proposal chunk receipt")),
+        }
     }
 
     pub(crate) fn close_write(&mut self) -> Result<()> {

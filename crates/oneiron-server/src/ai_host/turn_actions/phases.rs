@@ -9,22 +9,43 @@ use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault};
 
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
-    AnswerOpen, CONTINUE_INSTRUCTION, chat_request, text_message, witness_turn,
+    AnswerOpen, CONTINUE_INSTRUCTION, chat_request, text_message, turn_tail, witness_turn,
 };
 use crate::api::{ChatContextCapture, PromptBoard};
 use crate::models::{RoleCall, Seat};
 
 /// What admission reads of the action's context: the saved reply a
-/// Continue extends, and the index of the user turn the board rides before.
+/// Continue extends, the index of the user turn the board rides before, and
+/// the opener that closes the turn (I1 = C).
 pub(super) struct ActionText {
     pub(super) saved: String,
     pub(super) answers: usize,
+    pub(super) opener: Option<String>,
 }
 
-/// Admits the action's call, with `board` before its user turn where the
-/// board may ride, else as the call always was; the board's capture and
-/// rows when it rode (independent of whether a capture was available).
-/// The reason it was not admitted otherwise.
+/// `messages` with the turn's close right after the user turn at `answers`:
+/// the board's query part when `board` rides, then the opener (I1 = C turn
+/// order, FIX 14677); the opener alone otherwise (FIX 14676).
+fn closed(
+    mut messages: Vec<LlmMessage>,
+    answers: usize,
+    board: Option<&PromptBoard>,
+    opener: Option<&str>,
+) -> Vec<LlmMessage> {
+    let query = board.and_then(|board| board.board.query.as_ref());
+    if let Some(tail) = turn_tail(query, opener) {
+        let after = (answers + 1).min(messages.len());
+        messages.insert(after, text_message(LlmMessageRole::User, tail));
+    }
+    messages
+}
+
+/// Admits the action's call, with `board` in two parts where the board may
+/// ride (its state part before the user turn, its query part and the
+/// opener right after it), else as the call always was, closed by the
+/// opener; the board's capture and rows when it rode (independent of
+/// whether a capture was available). The reason it was not admitted
+/// otherwise.
 pub(super) fn admit_action(
     vault: &Arc<Vault>,
     ai: &AiHandle,
@@ -61,6 +82,17 @@ pub(super) fn admit_action(
     // A call its role does not admit with the board, first or with its
     // suffix, is admitted exactly as it always was, and so is the final call
     // admitted where the board may not go (FIX 7257), never sent with it.
+    let opener = text.opener.as_deref();
+    // Without the board, the call closes with the opener alone; a role that
+    // does not admit it so admits it as it always was.
+    let bare = |messages: Vec<LlmMessage>| {
+        if opener.is_some()
+            && let Ok(admitted) = request(closed(messages.clone(), text.answers, None, opener))
+        {
+            return Ok(admitted);
+        }
+        request(messages)
+    };
     let (admitted, board_context, board_rows) = match board {
         Some(board) => {
             let mut framed = messages.clone();
@@ -68,20 +100,21 @@ pub(super) fn admit_action(
                 text.answers,
                 text_message(LlmMessageRole::User, board.board.block.clone()),
             );
+            let framed = closed(framed, text.answers + 1, Some(&board), opener);
             match request(framed) {
                 Ok(admitted) if board.rides(vault, &admitted) => {
                     (admitted, board.board.context, Some(board.board.rows))
                 }
-                Ok(_) => (request(messages)?, None, None),
+                Ok(_) => (bare(messages)?, None, None),
                 Err(_) => {
                     tracing::info!(
                         "a turn action's call was not admitted with its context board; it goes without it"
                     );
-                    (request(messages)?, None, None)
+                    (bare(messages)?, None, None)
                 }
             }
         }
-        None => (request(messages)?, None, None),
+        None => (bare(messages)?, None, None),
     };
     Ok((admitted, board_context, board_rows))
 }

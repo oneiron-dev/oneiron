@@ -22,6 +22,7 @@ oneiron-server = { path = "../oneiron-server", optional = true }
 napi = { version = "3", default-features = false, features = ["napi8", "serde-json"] }
 napi-derive = "3"
 base64 = "0.22"
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Linux libtest is not hosted by Node. Use napi-rs's supported dynamic

@@ -23,6 +23,8 @@
 mod backup_folder;
 mod drain;
 mod home_fetch;
+mod issuer_transfer;
+pub use issuer_transfer::IssuerSeedTransferReport;
 mod pad_worlds;
 mod status;
 
@@ -334,7 +336,7 @@ impl Vault {
                 return self.custody_status_of(publication);
             }
         };
-        self.store.note_custody_policy(&recipients, &policy)?;
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
             .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
@@ -357,9 +359,9 @@ impl Vault {
         targets.extend(shipped.iter().map(|target| target as &dyn CustodyTarget));
         targets.extend(declared.iter().map(|target| target as &dyn CustodyTarget));
         let outboxes: Vec<&OutboxTarget> = shipped.iter().collect();
-        let publication = self
-            .store
-            .publish_custody(&recipients, &targets, &outboxes, anchor)?;
+        let publication =
+            self.store
+                .publish_custody(&recipients, &standing, &targets, &outboxes, anchor)?;
         self.custody_status_of(publication)
     }
 
@@ -437,8 +439,9 @@ impl Vault {
                 return Ok(None);
             }
         };
-        self.store.note_custody_policy(&recipients, &policy)?;
-        self.store.custody_batch_for(spec, recipients.of(spec))
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
+        self.store
+            .custody_batch_for(spec, recipients.of(spec), &standing)
     }
 
     /// Accepts a member's acknowledgement of `batch`, once it names exactly

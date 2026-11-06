@@ -76,6 +76,7 @@ use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod authority_enrollment;
 pub(crate) mod pad_access;
 pub(crate) mod root_doors;
 pub(crate) mod secret_anchor;
@@ -94,6 +95,7 @@ pub(super) fn owner_table() -> OwnerTable {
         },
         post(run),
     )];
+    table.extend(authority_enrollment::owner_table());
     table.extend(pad_access::owner_table());
     table.extend(root_doors::owner_table());
     table.extend(secret_anchor::owner_table());

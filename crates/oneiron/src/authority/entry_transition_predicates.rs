@@ -18,6 +18,8 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::GrantTravelSet(_)
             | AuthorityOp::CheckpointPolicySet(_)
             | AuthorityOp::HomeNodePick(_)
+            | AuthorityOp::OriginCut(_)
+            | AuthorityOp::DeviceSuccession(_)
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::PolicySettingSet(_)

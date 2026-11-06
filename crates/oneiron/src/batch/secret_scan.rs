@@ -10,7 +10,7 @@ mod provider_tokens;
 mod release_read;
 mod shapes;
 mod whole_read;
-mod wordlist;
+use oneiron_store::batch::secret_scan::wordlist;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;

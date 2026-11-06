@@ -2,7 +2,7 @@
 
 use crate::code_run::SelfCall;
 use crate::code_run::fold_api::FoldMarkRequest;
-use crate::compaction::SelfFoldCall;
+use crate::compaction::{FoldKind, SelfFoldCall};
 use crate::runtime_hooks::{VerbHookPre, hook_class};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EntityId, WriteActor};
@@ -17,6 +17,7 @@ pub struct PreHookedFold {
     from: u64,
     through: u64,
     note: Option<String>,
+    kind: Option<FoldKind>,
 }
 
 impl PreHookedFold {
@@ -34,13 +35,15 @@ impl PreHookedFold {
             from: input.from,
             through: input.through,
             note: input.note,
+            kind: input.kind,
         })
     }
 
     pub(in crate::code_run) fn covers(&self, actor: WriteActor, call: &SelfCall) -> bool {
         self.actor == actor.entity_ref()
             && self.class == hook_class(actor.actor_class())
-            && matches!(call, SelfCall::Fold(SelfFoldCall::Mark { from, through, note })
-                if *from == self.from && *through == self.through && *note == self.note)
+            && matches!(call, SelfCall::Fold(SelfFoldCall::Mark { from, through, note, kind })
+                if *from == self.from && *through == self.through && *note == self.note
+                    && *kind == self.kind)
     }
 }

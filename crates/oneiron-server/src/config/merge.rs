@@ -306,6 +306,7 @@ struct FileServeConfig {
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
     oauth_resource_indicator: Option<String>,
+    git_door_base: Option<String>,
     kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
@@ -353,6 +354,7 @@ struct FileServeConfig {
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
     device_sync: Option<super::DeviceSyncConfig>,
+    shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
@@ -377,6 +379,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer,
             oauth_jwks_uri: value.oauth_jwks_uri,
             oauth_resource_indicator: value.oauth_resource_indicator,
+            git_door_base: value.git_door_base,
             kit_bundle_public_urls: value.kit_bundle_public_urls,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
@@ -424,6 +427,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             gpu: value.gpu,
             native_mail: value.native_mail,
             device_sync: value.device_sync,
+            shared_env: value.shared_env,
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
@@ -454,6 +458,7 @@ struct PartialServeConfig {
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
     oauth_resource_indicator: Option<String>,
+    git_door_base: Option<String>,
     kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
@@ -508,6 +513,9 @@ struct PartialServeConfig {
     native_mail: Option<super::NativeMailConfig>,
     /// `[device_sync]` is file-only, as `[native_mail]` is.
     device_sync: Option<super::DeviceSyncConfig>,
+    /// `[[shared_env]]` is file-only: explicit dedicated-env paths and
+    /// credentials, never discovered through the process environment.
+    shared_env: Option<Vec<super::SharedEnvConfig>>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     /// `[embedding]` is file-only, as `[models]` is.
@@ -551,6 +559,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_issuer", &self.oauth_issuer)
             .field("oauth_jwks_uri", &self.oauth_jwks_uri)
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
+            .field("git_door_base", &self.git_door_base)
             .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
@@ -610,6 +619,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
+            .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
@@ -656,6 +666,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
+            git_door_base: value.git_door_base.clone(),
             kit_bundle_public_urls: value.kit_bundle_public_urls.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
@@ -710,6 +721,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: None,
             connectors: None,
             embedding: None,
             line: None,

@@ -265,7 +265,32 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoProposalSubmitInput,
         policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        self.repo_proposal_submit(binding, input, policy, sources, None)
+    }
+
+    /// A fresh run-bound review of an approved file's proved redacted
+    /// resolution. The current run reads the source and edits the target;
+    /// no authority or attribution comes from the source's old run.
+    pub fn repo_proposal_rereview_for_run(
+        &self,
+        binding: &RepoRunBinding,
+        original: EntityId,
+        input: RepoProposalSubmitInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        self.repo_proposal_submit(binding, input, policy, sources, Some(original))
+    }
+
+    fn repo_proposal_submit(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoProposalSubmitInput,
+        policy: Option<&dyn RepoReviewPolicy>,
         mut sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+        original: Option<EntityId>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
         let own = self.repo_own_work(
             binding,
@@ -275,6 +300,9 @@ impl Memory<'_> {
         )?;
         let now = self.vault.now_recorded_at();
         let admission = self.repo_publish_admission(binding, &own, input.declaration, now)?;
+        if let Some(original) = original {
+            self.repo_lane_reads(binding, &[original])?;
+        }
         // Unbound, the vault's own review policy (FIX 8268).
         let review = match policy {
             Some(policy) => policy.review(own.stamp.project, own.stamp.repo)?,
@@ -333,34 +361,43 @@ impl Memory<'_> {
             .with_session_id(sources.open.session())
             .with_provenance_claim_id(sources.provenance_claim)
             .with_op_provenance(sources.op_provenance.clone());
-            let proposed = self
-                .vault
-                .propose_repo_mutation_for_run(
+            let check = |txn: &mut heed::RwTxn<'_>| {
+                let now = self.vault.now_recorded_at();
+                if let Err(refused) =
+                    admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
+                {
+                    return Ok(Err(RepoSourceAttempt::Refused(refused)));
+                }
+                let Some(opened) = sources.apply_in_txn(self.vault, txn)? else {
+                    return Ok(Err(RepoSourceAttempt::ChangedSession));
+                };
+                require_run_provenance_in_txn(
+                    self.vault,
+                    txn,
+                    sources.provenance_claim,
+                    binding.actor.entity_ref(),
+                    own.stamp.work,
+                )?;
+                Ok(Ok(opened))
+            };
+            let proposed = match original {
+                Some(original) => self.vault.propose_repo_rereview_for_run(
+                    original,
                     request,
                     review.clone(),
                     base,
                     stamp.clone(),
-                    |txn| {
-                        let now = self.vault.now_recorded_at();
-                        if let Err(refused) =
-                            admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
-                        {
-                            return Ok(Err(RepoSourceAttempt::Refused(refused)));
-                        }
-                        let Some(opened) = sources.apply_in_txn(self.vault, txn)? else {
-                            return Ok(Err(RepoSourceAttempt::ChangedSession));
-                        };
-                        require_run_provenance_in_txn(
-                            self.vault,
-                            txn,
-                            sources.provenance_claim,
-                            binding.actor.entity_ref(),
-                            own.stamp.work,
-                        )?;
-                        Ok(Ok(opened))
-                    },
-                )
-                .inspect_err(|error| sources.open.reopen_on_storage_error(self.vault, error))?;
+                    check,
+                ),
+                None => self.vault.propose_repo_mutation_for_run(
+                    request,
+                    review.clone(),
+                    base,
+                    stamp.clone(),
+                    check,
+                ),
+            }
+            .inspect_err(|error| sources.open.reopen_on_storage_error(self.vault, error))?;
             match proposed {
                 Err(RepoSourceAttempt::ChangedSession) => continue,
                 Err(RepoSourceAttempt::Refused(refused)) => return Err(refusal_error(refused)),

@@ -53,7 +53,10 @@ impl Arm {
 fn models_runtime(models: &Models, rt: &tokio::runtime::Runtime) -> Result<ModelRuntime, String> {
     let runtime = {
         let _entered = rt.enter();
-        ModelRuntime::build(Some(&models.config))
+        ModelRuntime::build(
+            Some(&models.config),
+            oneiron::HostingPrivacyPosture::default(),
+        )
     };
     let provider = &models.model.provider;
     let status = runtime

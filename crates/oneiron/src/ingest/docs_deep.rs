@@ -179,13 +179,14 @@ fn asset_file_body_in_txn(
 /// dependents in the same transaction as the replacement. `asset_file` is the
 /// put's filed body, when `next` is its manifest rather than its bytes.
 pub(crate) fn invalidate_docs_source_before_put(
-    store: &crate::store::Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     kind: u8,
     next: &[u8],
     asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> Result<()> {
+    let store = write.store;
     if !matches!(
         kind,
         ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
@@ -221,7 +222,7 @@ pub(crate) fn invalidate_docs_source_before_put(
     };
     if changed {
         crate::ports::invalidate_source_in_txn(
-            store,
+            write,
             txn,
             id,
             crate::ports::DependentWalkDoor::ChangedDocsSource,

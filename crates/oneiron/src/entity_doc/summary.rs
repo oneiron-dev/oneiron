@@ -151,9 +151,12 @@ pub(crate) fn birth_summary_in_txn(
         &row.body,
         &pointer,
     )?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, &entity, &pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        &entity,
+        &pointer,
+    )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -188,6 +191,9 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, summary, actor)?;
             self.authorize_shared_content_write_in_txn(txn, *summary, &actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, summary)? {
+                return Err(refusal);
+            }
             let (mut head, doc) = summary_doc(self, txn, summary)?;
             if doc.frontier() != frontier {
                 return Err(Error::ConcurrentWrite(

@@ -146,6 +146,11 @@ pub const COACH_FORK_PROMOTE_FACET: &str = "coach.fork_promote";
 /// when its turns moved, and each quiet thread with open TASKs a Proposed
 /// nudge for the room's host. A closed-form job.
 pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
+/// Fold suggestions per agent type (FIX 12572): which kinds of spans each
+/// agent type folds and keeps folded, as a Proposed fold default for that
+/// type in the owner's run tray. A suggestion only, and a closed-form job
+/// (see [`super::fold_suggestions`]).
+pub const COACH_FOLD_SUGGESTIONS_FACET: &str = "coach.fold_suggestions";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
@@ -156,6 +161,9 @@ pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_thresh
 pub const COACH_THINK_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.think_threshold.proposal";
 /// Predicate of the Coach's Proposed room nudge, its subject the room's host.
 pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
+/// Predicate of the Coach's Proposed fold default, its subject the agent
+/// type's AGENT_DEF row.
+pub const COACH_FOLD_DEFAULT_PREDICATE: &str = "coach.fold_default.suggestion";
 /// One room nudge as `read` reads it in `txn`, for the host's own upkeep
 /// read and voice (OF-417); `None` for anything else. It writes nothing.
 pub(crate) fn room_upkeep_nudge_in_txn(
@@ -192,7 +200,7 @@ const HOST_FACETS: [&str; 19] = [
     COACH_FEEDBACK_DELIVERY_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 10] = [
+const MAINTENANCE_FACETS: [&str; 11] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -204,6 +212,7 @@ const MAINTENANCE_FACETS: [&str; 10] = [
     super::agent_health::COACH_HEALTH_TRENDS_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,
+    COACH_FOLD_SUGGESTIONS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned

@@ -72,14 +72,58 @@ pub(super) async fn rendered(
     sources: Option<Vec<EntityId>>,
     replay: Option<MediaReplayKey>,
 ) -> MemoryResult<AiAnswer> {
+    rendered_in_step(
+        server, operation, request, voices, run, sources, replay, None,
+    )
+    .await
+}
+
+pub(super) async fn rendered_in_step(
+    server: &SyncServer,
+    operation: AiOperation,
+    request: MediaRequest,
+    voices: Option<RungVoices>,
+    run: Option<&RunAdmission>,
+    sources: Option<Vec<EntityId>>,
+    replay: Option<MediaReplayKey>,
+    media_step: Option<&crate::server::RunMediaStep>,
+) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match run {
-        Some(run) => {
-            media
-                .run_admitted(run, request, voices.as_ref(), replay)
+        Some(run) => match media_step {
+            Some(step) => {
+                let ctx = step.context();
+                let admitted = std::sync::atomic::AtomicBool::new(false);
+                match oneiron::llm::call_media_as_step(&ctx, request, &admitted, |request| {
+                    media.run_admitted_for_step(run, request, voices.as_ref(), replay, &admitted)
+                })
                 .await
-        }
+                {
+                    Ok(oneiron::llm::MediaStepOutcome::Finished(response)) => Ok(response),
+                    Ok(oneiron::llm::MediaStepOutcome::Trapped { .. }) => {
+                        step.mark_trapped();
+                        return Err(MemoryError::from(oneiron::Error::DurableStepTrapped));
+                    }
+                    Err(oneiron::llm::DurableStepError::Llm(error)) => Err(error),
+                    Err(oneiron::llm::DurableStepError::Engine(error)) => {
+                        return Err(MemoryError::from(error));
+                    }
+                    Err(_) => {
+                        return Err(MemoryError::new(
+                            MEMORY_CODE_INTERNAL,
+                            "the durable media step could not be recorded",
+                            &[],
+                        ));
+                    }
+                }
+            }
+            None => {
+                media
+                    .run_admitted(run, request, voices.as_ref(), replay)
+                    .await
+            }
+        },
         None => {
             media
                 .run_replayed(request, voices.as_ref(), None, sources, None, replay)

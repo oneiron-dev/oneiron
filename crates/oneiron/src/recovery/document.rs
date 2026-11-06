@@ -211,14 +211,18 @@ pub(super) fn capture(
             }
             let head = *head.as_bytes();
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
-            let row = from_doc(
-                entity.id,
+            // This row comes from the host's own admitted proposal store.
+            // Canonical recovery carries its value, never its operation authority.
+            let (text, title) = crate::note::documents::stored_proposal_values(note, &doc)?;
+            let row = CanonicalDocument {
+                entity_id: entity.id,
                 head,
-                &doc,
-                false,
-                core.author_ref.id().map(|author| *author.as_bytes()),
-                header.learned_at,
-            )?;
+                text,
+                title,
+                birth_actor: core.author_ref.id().map(|author| *author.as_bytes()),
+                birth_at: header.learned_at,
+                authorship: Vec::new(),
+            };
             take_document(budget, &row, &mut overrun)?;
             snapshot.doc_snapshots.push(row);
         }
@@ -294,7 +298,22 @@ pub(super) fn from_doc(
     birth_actor: Option<[u8; 16]>,
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
-    let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    let (text, title, mut authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    if live {
+        let author = birth_actor.map(id).transpose()?.map_or(
+            crate::note::NoteActor::Erased,
+            crate::note::NoteActor::Actor,
+        );
+        // Canonical values bind only an existing birth to this actual core.
+        // Rebuilding native history removes its author literal again.
+        for record in &mut authorship {
+            if record.operation.as_bytes() == &entity_id
+                && record.actor == crate::note::NoteActor::Erased
+            {
+                record.actor = author;
+            }
+        }
+    }
     if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }

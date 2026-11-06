@@ -14,6 +14,12 @@ use crate::side_table::ActorScrub;
 
 use super::tombstone::HARD_DELETE_MARKER;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PayloadEraseScope {
+    MarkerBound,
+    AcceptedHardPurge,
+}
+
 /// The accepted hard-erase continuation, borrowing its exact writer and
 /// target. Only deletion's hard branches may construct one; receipt scrubs
 /// cannot turn an actor id or an old marker into write authority.
@@ -21,6 +27,7 @@ pub(crate) struct ActorErasureWriter<'write, 'env> {
     vault: &'write Vault,
     wtxn: &'write mut heed::RwTxn<'env>,
     actor: EntityId,
+    payload_scope: PayloadEraseScope,
 }
 
 impl<'write, 'env> ActorErasureWriter<'write, 'env> {
@@ -29,7 +36,25 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
         wtxn: &'write mut heed::RwTxn<'env>,
         actor: EntityId,
     ) -> Self {
-        Self { vault, wtxn, actor }
+        Self {
+            vault,
+            wtxn,
+            actor,
+            payload_scope: PayloadEraseScope::MarkerBound,
+        }
+    }
+
+    pub(in crate::deletion) fn for_hard_purge(
+        vault: &'write Vault,
+        wtxn: &'write mut heed::RwTxn<'env>,
+        actor: EntityId,
+    ) -> Self {
+        Self {
+            vault,
+            wtxn,
+            actor,
+            payload_scope: PayloadEraseScope::AcceptedHardPurge,
+        }
     }
 
     /// Removes only this hard-erased target's frozen pattern revision witness.
@@ -73,18 +98,21 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 pub(super) fn erase_actor_fields_in_txn(
     mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<()> {
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    let accepted_hard_purge = erase.payload_scope == PayloadEraseScope::AcceptedHardPurge;
     let (vault, wtxn, actor) = erase.parts();
     let actor = &actor;
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
     let hard =
         HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
-    // The asks of the spawns it seated leave the code-run replay rows and
-    // their step starts before its other fields go (FIX 9180).
-    if hard {
+    // An accepted full purge may write its marker later. Its spawn asks leave
+    // the replay rows and step starts before its other fields go (FIX 9180).
+    if hard || accepted_hard_purge {
         let erased = BTreeSet::from([*actor]);
         crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+    }
+    if hard {
         crate::agent_dispatch::AgentDispatcher::erase_planned_pack_revision_in_txn(
             &vault.store,
             wtxn,
@@ -107,14 +135,12 @@ pub(super) fn erase_actor_fields_in_txn(
         )?;
     }
     scrub_actor_fields_in_txn(&mut erase)?;
-    if hard {
-        let (vault, wtxn, actor) = erase.parts();
-        vault
-            .store
-            .attempt_operations
-            .erase_attempt_payload_actor_in_txn(&vault.store, wtxn, &actor)?;
+    if hard || accepted_hard_purge {
+        return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
+            &mut erase, act,
+        );
     }
-    Ok(())
+    Ok(Vec::new())
 }
 
 /// The sweep's scrubs without the attempt payloads, which a restore's sweep
@@ -136,6 +162,7 @@ fn scrub_actor_fields_in_txn(erase: &mut ActorErasureWriter<'_, '_>) -> Result<(
     // Marker-only replay and checkpoint restore reach this sweep, so a
     // restored receipt never brings back a hard-erased actor.
     crate::context_board::scrub_section_fit_receipt_actors_in_txn(erase)?;
+    crate::inbox::scrub_finding_notification_subjects_in_txn(erase)?;
     let (vault, wtxn, actor) = erase.parts();
     for scrub in crate::side_table::actor_scrubs() {
         scrub(vault, wtxn, &actor)?;
@@ -161,6 +188,17 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
     crate::ports::hard_erased_ids_in_txn(&vault.store, rtxn)
 }
 
+/// The authenticated image writer's actual erase targets, derived while
+/// the original restore continuation and its transaction are still borrowed.
+pub(crate) fn restore_erased_payload_targets_in_txn(
+    restore: &mut crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
+) -> Result<BTreeSet<EntityId>> {
+    let (vault, wtxn, live) = restore.parts();
+    let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
+    erased.extend(live);
+    Ok(erased)
+}
+
 /// A checkpoint restore's actor sweep, in its image-write transaction once
 /// the type index is back (FIX 3655): every id a restored hard-delete marker
 /// names, and each of `live`, gets the erase's actor sweep again, so a
@@ -169,10 +207,9 @@ fn hard_erased_ids_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTree
 /// the rest of the restored content stays.
 pub(crate) fn rerun_actor_scrubs_in_txn(
     mut restore: crate::recovery::checkpoint::RestoreActorScrubWriter<'_, '_>,
-) -> Result<()> {
-    let (vault, wtxn, live) = restore.parts();
-    let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
-    erased.extend(live);
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+    let erased = restore_erased_payload_targets_in_txn(&mut restore)?;
+    let (vault, wtxn, _) = restore.parts();
     // The spawn asks the image brings back for any of them, actor or not,
     // leave its replay rows and step starts again (FIX 9180).
     crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
@@ -202,11 +239,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     }
     // Their dispatch text, carried back by the image's attempt rows, goes
     // again: one pass over the ledger for every id (FIX 7076).
-    vault
-        .store
-        .attempt_operations
-        .erase_attempt_payload_actors_in_txn(&vault.store, wtxn, &erased)?;
-    Ok(())
+    crate::attempt_queue::ForceCancelAuthority::erase_restored_payloads_in_txn(&mut restore)
 }
 
 /// A legal hold's release, in its own transaction (FIX 6280): the births a

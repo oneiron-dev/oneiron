@@ -9,7 +9,9 @@
 //! `receipt.json` is read again; one without is an outstanding or unknown
 //! job, and no second GPU job starts for it. No time limit cuts a run short,
 //! and a lost waiter leaves the process running to its receipt. The files
-//! stay for the owner's evidence whatever the outcome.
+//! stay for the owner's evidence whatever the outcome unless the owner
+//! explicitly removes a completed run's staging copies. Its output, receipt,
+//! stderr and idempotency directory remain.
 //!
 //! The worker inherits the host's runtime environment except `ONEIRON_SECRET`,
 //! `ONEIRON_BINDING_KEY`, `ONEIRON_TOKEN` and `ONEIRON_AUTH_SECRET`. Its inputs
@@ -17,6 +19,9 @@
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
+
+mod cleanup;
+pub(crate) use cleanup::{TrainingInputCleanup, cleanup_training_job_inputs};
 
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::training_pack::{

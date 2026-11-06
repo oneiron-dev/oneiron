@@ -4,7 +4,12 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
 use crate::attempt_queue::{AttemptEvent, AttemptRecord, AttemptState, attempt_record_order};
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
+use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
+use crate::dreamer_runner::{
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, decode_dreamer_attempt_payload,
+};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 
@@ -313,7 +318,21 @@ fn attempt_metadata(record: &AttemptRecord) -> AttemptMetadata {
     }
 
     AttemptMetadata {
-        parent_id: retry_parent,
+        parent_id: retry_parent.or_else(|| {
+            if !matches!(
+                record.kind.as_str(),
+                DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+                    | DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+                    | MAINTENANCE_QUEUE_KIND
+                    | COACH_HOST_QUEUE_KIND
+            ) {
+                return None;
+            }
+            decode_dreamer_attempt_payload(&record.payload)
+                .ok()?
+                .parent_attempt
+                .map(|parent| bytes_to_hex_lower(parent.as_bytes()))
+        }),
         worker_kind: record.kind.clone(),
         agent_id: None,
     }

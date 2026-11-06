@@ -248,6 +248,8 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_EXPORT_ACT => super::export_act::decode_export_act(entries),
         OP_KIND_OWNER_KEY_ENROLL => super::owner_key_enrollment::decode_owner_key_enroll(entries),
         OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
+        OP_KIND_ORIGIN_CUT => super::origin_cut::decode_origin_cut(entries),
+        OP_KIND_DEVICE_SUCCESSION => super::device_succession::decode_device_succession(entries),
         _ => Err(invalid_authority()),
     }
 }

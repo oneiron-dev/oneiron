@@ -118,9 +118,9 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
-    let [holds, host_holds] = legal_hold::target_prefixes();
-    [retirement_prefix(), holds, host_holds]
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
+    let [holds] = legal_hold::target_prefixes();
+    [retirement_prefix(), holds]
 }
 
 /// Each claim, body instance and known-value history key-retirement intent

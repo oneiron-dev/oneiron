@@ -23,8 +23,9 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION,
-    ENTITY_TYPE_EVENT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -66,8 +67,11 @@ impl Vault {
     /// require [`Self::import_whole_vault_archive_with_actor`] and a local Auto grant.
     /// Skills return as candidates;
     /// agent definitions are disabled and proposed until locally reviewed.
+    /// Missing claim-class vocabulary returns through its native setting door,
+    /// without foreign owner stamps; enforcement follows this build's compiled
+    /// equivalence. An exact normalized repeat is unchanged.
     ///
-    /// Same-ID divergent rows are refused, never overwritten. Maintenance rows,
+    /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
     /// witness messages, notes, other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
@@ -192,6 +196,7 @@ impl Vault {
         super::provenance_import::index_provenance(&mut archive)?;
         super::expression_import::index_expressions(&mut archive)?;
         let mut pending = 0;
+        let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
@@ -247,6 +252,31 @@ impl Vault {
                 }
                 return Err(invalid("import ID collides with different entity data"));
             }
+            if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+                let state =
+                    crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &wtxn, &id)?;
+                if state.deleted
+                    || state.stale
+                    || self.local_hard_delete_marker_exists_in_txn(&wtxn, &id)?
+                {
+                    return Err(invalid("import ID collides with a deleted entity"));
+                }
+                crate::comm::import_claim_class_descriptor_in_txn(
+                    self,
+                    &mut wtxn,
+                    &id,
+                    &row.body.to_bytes_in(&archive.files)?,
+                    TimeRange {
+                        start: row.occurred_start,
+                        end: row.occurred_end,
+                    },
+                    row.learned_at,
+                )?;
+                stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
+                archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
+                inserted_descriptors += 1;
+                continue;
+            }
             self.store.validate_public_entity_type(row.entity_type)?;
             // Only the row's id and what it waits on stay pending, in the
             // row index (FIX 2766, 3678): its body is built again when it
@@ -279,7 +309,7 @@ impl Vault {
             archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
             pending += 1;
         }
-        let mut inserted_entities = pending + model_imports.inserted;
+        let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -1423,7 +1453,8 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
-/// vault's MODEL rows through the row index.
+/// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
+/// by its owning adapter without carrying a foreign owner approval.
 fn imported_body(
     row: &ExportEntity,
     index: &ArchiveIndex<'_>,
@@ -1432,6 +1463,11 @@ fn imported_body(
     let bytes = row.body.to_bytes_in(files)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
     match row.entity_type {
+        ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => {
+            let descriptor =
+                crate::comm::imported_claim_class_descriptor(&parse_id(&row.id)?, &bytes)?;
+            crate::comm::encode_claim_class_descriptor(&descriptor)
+        }
         ENTITY_TYPE_CLAIM => {
             let mut body = decode_import_claim(&bytes)?;
             match &mut body.subject {

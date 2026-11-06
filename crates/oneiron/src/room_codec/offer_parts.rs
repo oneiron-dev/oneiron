@@ -1,7 +1,8 @@
-//! Large Offer wording rides as parts; its actor fields stay editable inline.
+//! Large Offer text rides as parts; its actor fields stay editable inline.
 //!
-//! The empty inline `what` is a codec placeholder, never an admitted whole
-//! Offer. Readers restore its canonical JSON string before returning a row.
+//! The empty inline `what` and missing `artifact_ref` are codec placeholders,
+//! never an admitted whole Offer. Readers restore their canonical JSON payload
+//! before returning a row.
 
 use loro::LoroMap;
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,14 @@ const MANIFEST: &[u8] = b"\0offer-parts\0";
 #[serde(deny_unknown_fields)]
 pub(crate) struct OfferManifest {
     pub(crate) header: RoomSideRow,
-    what: Parts,
+    text: Parts,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfferText {
+    what: String,
+    artifact_ref: Option<String>,
 }
 
 fn refused(reason: &'static str) -> Error {
@@ -39,13 +47,19 @@ impl OfferManifest {
     }
 
     fn valid(&mut self) -> bool {
+        // No size gate: only the writer's whole-row bound decides production,
+        // and a native header erase may shrink a live manifest's logical row
+        // below it while its text parts are still missing.
         self.header
             .offer_what_mut()
             .is_some_and(|what| what.is_empty())
+            && self
+                .header
+                .offer_artifact_mut()
+                .is_some_and(|artifact| artifact.is_none())
             && self.header.place().is_some()
             && self.header.well_formed()
-            && self.what.well_formed()
-            && self.what.len > ROOM_FACT_MAX_ROW_BYTES as u64
+            && self.text.well_formed()
     }
 
     fn encode(&self) -> Result<Vec<u8>> {
@@ -55,13 +69,18 @@ impl OfferManifest {
     }
 
     pub(crate) fn parts(&self) -> Parts {
-        self.what.clone()
+        self.text.clone()
     }
 
-    /// The full canonical row length, not just the detached string's length.
+    /// The full canonical row length, not just the detached payload's length.
     pub(crate) fn logical_len(&self) -> Option<u64> {
         let head = u64::try_from(serde_json::to_vec(&self.header).ok()?.len()).ok()?;
-        head.checked_add(self.what.len)?.checked_sub(2)
+        let empty = OfferText {
+            what: String::new(),
+            artifact_ref: None,
+        };
+        let placeholder = u64::try_from(serde_json::to_vec(&empty).ok()?.len()).ok()?;
+        head.checked_add(self.text.len)?.checked_sub(placeholder)
     }
 
     pub(crate) fn joined(mut self, map: &LoroMap) -> Option<Vec<u8>> {
@@ -69,12 +88,13 @@ impl OfferManifest {
         if !assembly_fits(len) {
             return None;
         }
-        let bytes = join_parts(map, &self.what)?;
-        let what: String = serde_json::from_slice(&bytes).ok()?;
-        if serde_json::to_vec(&what).ok()? != bytes {
+        let bytes = join_parts(map, &self.text)?;
+        let text: OfferText = serde_json::from_slice(&bytes).ok()?;
+        if serde_json::to_vec(&text).ok()? != bytes {
             return None;
         }
-        *self.header.offer_what_mut()? = what;
+        *self.header.offer_what_mut()? = text.what;
+        *self.header.offer_artifact_mut()? = text.artifact_ref;
         let row = serde_json::to_vec(&self.header).ok()?;
         (u64::try_from(row.len()).ok()? == len).then_some(row)
     }
@@ -93,8 +113,9 @@ impl OfferManifest {
     }
 }
 
-/// Writes this representation only when the wording alone needs parts and
-/// the remaining header fits inline. Every other row keeps its ordinary split.
+/// Writes this representation when the whole row is past its bound and the
+/// empty-text header plus its Parts manifest fits inline; the text alone
+/// may fit within the bound. Every other row keeps its ordinary split.
 pub(crate) fn write_row(map: &LoroMap, key: &str, row: &[u8], max: usize) -> Result<bool> {
     if max != ROOM_FACT_MAX_ROW_BYTES || row.len() <= max {
         return Ok(false);
@@ -109,12 +130,17 @@ pub(crate) fn write_row(map: &LoroMap, key: &str, row: &[u8], max: usize) -> Res
         return Ok(false);
     };
     let what = std::mem::take(what);
-    let bytes = serde_json::to_vec(&what).map_err(|_| refused("wording does not encode"))?;
-    if bytes.len() <= max {
+    let Some(artifact) = header.offer_artifact_mut() else {
         return Ok(false);
-    }
-    let (what, pieces) = split_parts(&bytes)?;
-    let mut manifest = OfferManifest { header, what };
+    };
+    let artifact = std::mem::take(artifact);
+    let text = OfferText {
+        what,
+        artifact_ref: artifact,
+    };
+    let bytes = serde_json::to_vec(&text).map_err(|_| refused("wording does not encode"))?;
+    let (text, pieces) = split_parts(&bytes)?;
+    let mut manifest = OfferManifest { header, text };
     if !manifest.valid() {
         return Ok(false);
     }

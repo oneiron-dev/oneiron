@@ -8,6 +8,7 @@
 //! caller that leaves ends it. Every other call keeps the vault's longest
 //! wait as the bound of its waits alone.
 use std::future::Future;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use oneiron::llm::media::MediaRequest;
@@ -328,7 +329,7 @@ impl OfferLadder {
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices, None)
+        self.media_from(run, request, selector, deadline, true, voices, None, None)
             .await
     }
 
@@ -340,8 +341,11 @@ impl OfferLadder {
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
         release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices, release)
-            .await
+        self.media_from(
+            run, request, selector, deadline, true, voices, release, admitted,
+        )
+        .await
     }
 }

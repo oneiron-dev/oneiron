@@ -118,6 +118,16 @@ impl HomeSearch {
         self.ask(query, limit, Some(scope), as_of, caller).await
     }
 
+    pub(crate) async fn media_vectors_for(
+        &self,
+        space: &str,
+        ids: &[crate::EntityId],
+    ) -> Result<Vec<(crate::EntityId, crate::embed::MediaVectorReplica)>, TransportError> {
+        let mut config = self.config.clone();
+        config.residence_mode = *self.mode.borrow();
+        crate::sync::client::request_media_vectors(&self.vault, &config, space, ids).await
+    }
+
     async fn ask(
         &self,
         query: &str,
@@ -141,6 +151,27 @@ impl HomeSearch {
             caller,
         )
         .await
+    }
+}
+
+impl HomeSearch {
+    pub(crate) async fn default_claim_vector(
+        &self,
+        id: crate::EntityId,
+    ) -> crate::Result<Option<crate::embed::home_vectors::ReceivedHomeClaimVector>> {
+        // Unlike an opened-item search, this derivation read is also used by
+        // an All device. The machine proof, not a selector, grants this read.
+        crate::sync::client::default_claim_vector(&self.vault, &self.config, id).await
+    }
+}
+
+impl Vault {
+    pub(crate) fn embedding_home(&self) -> Option<Arc<HomeSearch>> {
+        self.home_search
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .search
+            .upgrade()
     }
 }
 

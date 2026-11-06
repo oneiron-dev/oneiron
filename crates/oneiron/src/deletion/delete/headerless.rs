@@ -149,6 +149,7 @@ impl Vault {
         } else {
             Default::default()
         };
+        let mut cancelled = Vec::new();
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -198,10 +199,10 @@ impl Vault {
                     crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                     crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 }
-                crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                     crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
                     owner_act,
-                )?;
+                )?);
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -225,6 +226,8 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
+            crate::attempt_queue::AttemptQueue::new(self)
+                .erased_payload_cancellations_committed(&cancelled);
             pending_cloud_revokes.publish();
             // Hard reasons only: only they wrote the marker above.
             if reason.active_store_hard_purge_v1() {
@@ -246,7 +249,7 @@ impl Vault {
         } else {
             std::collections::BTreeSet::new()
         };
-        let (existed, citing) = self.purge_entity_active_store_in_txn(
+        let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
             Some(&tombstone.request_id),
@@ -254,6 +257,7 @@ impl Vault {
             owner_act,
         )?;
         affected.extend(citing);
+        cancelled.extend(purged_cancelled);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -286,12 +290,17 @@ impl Vault {
             )?;
             crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
                 .erase_planned_pack_revision()?;
+            crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
+            )?;
             let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id);
             crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
             crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            crate::attempt_queue::AttemptQueue::new(self)
+                .erased_payload_cancellations_committed(&cancelled);
             pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
@@ -329,6 +338,8 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        crate::attempt_queue::AttemptQueue::new(self)
+            .erased_payload_cancellations_committed(&cancelled);
         pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         if crdt_persisted {

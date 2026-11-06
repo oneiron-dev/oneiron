@@ -163,10 +163,13 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
 
         match CLAIM_BODY_KEYS[index] {
             "pred" => {
-                let Some(pred) = value.as_str() else {
+                let Value::String(pred) = value else {
                     return Err(Error::InvalidClaimBody("pred must be a string"));
                 };
-                predicate = Some(pred.to_owned());
+                predicate = Some(
+                    pred.into_str()
+                        .ok_or(Error::InvalidClaimBody("pred must be a string"))?,
+                );
             }
             "val" => claim_value = Some(value),
             "conf" => {
@@ -251,11 +254,14 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
                 stale = Some(flag);
             }
             "sess" => {
-                let Some(tag) = value.as_str() else {
+                let Value::String(tag) = value else {
                     return Err(Error::InvalidClaimBody("sess must be a string"));
                 };
-                validate_session_tag(tag)?;
-                session_tag = Some(tag.to_owned());
+                let tag = tag
+                    .into_str()
+                    .ok_or(Error::InvalidClaimBody("sess must be a string"))?;
+                validate_session_tag(&tag)?;
+                session_tag = Some(tag);
             }
             _ => unreachable!("index resolved from CLAIM_BODY_KEYS"),
         }

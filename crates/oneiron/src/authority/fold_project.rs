@@ -246,6 +246,16 @@ pub(super) fn project_once(
         home_pick: merged.as_ref().map_or_else(Default::default, |state| {
             super::home_pick::folded_home_pick(state, context.pin, context.machine_standing)
         }),
+        origin_cuts: merged.as_ref().map_or_else(Default::default, |state| {
+            super::origin_cut::folded_origin_cuts(state, context.pin, context.machine_standing)
+        }),
+        device_successions: merged.as_ref().map_or_else(Default::default, |state| {
+            super::device_succession::folded_device_successions(
+                state,
+                context.pin,
+                context.machine_standing,
+            )
+        }),
         conversation_training: merged.as_ref().map_or_else(Default::default, |state| {
             super::conversation_training::folded_conversation_training(
                 state,

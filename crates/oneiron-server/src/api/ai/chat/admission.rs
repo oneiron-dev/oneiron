@@ -330,12 +330,13 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // deliveries. FIX 8133: the newcomer mark still precedes this read; FIX
     // 6794: the board still rides the dynamic tail, before anything the turn
     // witnesses.
-    let board = recall::turn_board(
+    let mut board = recall::turn_board(
         server,
         auth,
         &request.text,
         &request.conversation_ref,
         request.agent_ref.as_deref(),
+        agent,
     )
     .await;
     // Admitted through its role on the current snapshot, after hydration:
@@ -350,21 +351,16 @@ pub(in crate::api::ai::chat) async fn start_turn(
         .iter()
         .rposition(|message| message.role == LlmMessageRole::User);
     // The turn's now-time opener (I1 = C turn order), sampled once, here at
-    // the turn's final boundary, after its board was read: it closes a
-    // call its board rides.
-    let opener = match settings.turn_opener {
-        crate::config::models::TurnOpener::Clock => Some(oneiron::context_board::turn_opener_line(
-            vault.now_recorded_ms(),
-        )),
-        crate::config::models::TurnOpener::Off => None,
-    };
+    // the turn's final boundary, after its board was read: it closes the
+    // call, after the board's query part when the board rides (FIX 14676).
+    let opener = recall::turn_opener(settings.turn_opener, &vault);
     // DESIGN-V2 R2: the messages and the board as assembled, for the call's
     // segment manifest: its state part, and the tail its query part and
     // opener make (I1 = C).
     let assembled = messages.clone();
     let read_board = board.as_ref().ok().and_then(Option::as_ref);
     let board_view = read_board.map(|board| segments::BoardView {
-        state: (board.block.clone(), board.sections.clone()),
+        state: Some((board.block.clone(), board.sections.clone())),
         tail: recall::turn_tail(board.query.as_ref(), opener.as_deref()).map(|text| {
             segments::TurnTail {
                 text,
@@ -378,12 +374,18 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }),
     });
     let board_rows = read_board.map(|board| board.rows.clone());
+    let rider_ack = board
+        .as_mut()
+        .ok()
+        .and_then(Option::as_mut)
+        .and_then(|board| board.rider_ack.take());
     let recall::AdmittedTurn {
         call: admitted,
         recalled,
         context,
         omitted,
         noted,
+        opened,
     } = recall::admit(
         &server.ai,
         &vault,
@@ -399,16 +401,23 @@ pub(in crate::api::ai::chat) async fn start_turn(
         sources.add(board_rows.as_deref());
     }
     // The board's place holds the board, or the note of its omission, which
-    // the call's segments name as one unnamed board section, with no tail.
+    // the call's segments name as one unnamed board section; a call its
+    // board does not ride ends with the opener alone (FIX 14676).
     let board_view = if recalled {
         board_view
     } else {
-        omitted
+        let state = omitted
             .filter(|_| noted)
-            .map(|omission| segments::BoardView {
-                state: (omission.note(), Vec::new()),
-                tail: None,
-            })
+            .map(|omission| (omission.note(), Vec::new()));
+        let tail = opener
+            .as_ref()
+            .filter(|_| opened)
+            .map(|opener| segments::TurnTail {
+                text: opener.clone(),
+                sections: Vec::new(),
+                opener: true,
+            });
+        (state.is_some() || tail.is_some()).then_some(segments::BoardView { state, tail })
     };
     let mut admitted = admitted.map_err(&role_refused)?;
     if self_chat.is_some() {
@@ -585,15 +594,29 @@ pub(in crate::api::ai::chat) async fn start_turn(
         answering,
     );
     // DESIGN-V2 R2: once the reply lands whole, the session coordinator
-    // stages its canonical successor.
+    // stages its canonical successor; I1 = C: then prepares beside it what
+    // the next turn puts right after the history, when the board rode: the
+    // craft where the layout puts it there (FIX 14888), then the state part.
+    let next = recalled.then(|| {
+        Arc::new(super::next_turn::ChatNextTurn {
+            server: Arc::clone(server),
+            reader: session_reader.clone(),
+            agent,
+            conversation: origin,
+        }) as Arc<dyn crate::models::NextTurnSource>
+    });
     let answering = segments::commit_on_answer(
         turn_segments,
         &session_reader,
         &credential,
         written.as_deref(),
         turn,
+        next,
         answering,
     );
+    if recalled && let Some(rider_ack) = rider_ack {
+        rider_ack.commit(server).await;
+    }
     Ok(Started {
         stream: request.stream,
         conversation_ref: request.conversation_ref,

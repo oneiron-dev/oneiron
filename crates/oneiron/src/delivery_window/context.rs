@@ -13,6 +13,7 @@ use super::validate::invalid_claim;
 pub struct DeliveryWindowEvaluationContext {
     pub delivery_epoch_secs: u64,
     pub(super) local_minute_of_day: u16,
+    pub(super) iana_zone: Option<Box<str>>,
     pub verb_class: DeliveryWindowVerbClass,
     pub channel: Option<String>,
     pub active_contexts: Vec<DeliveryWindowContextCondition>,
@@ -38,6 +39,7 @@ impl DeliveryWindowEvaluationContext {
         Ok(Self {
             delivery_epoch_secs,
             local_minute_of_day,
+            iana_zone: None,
             verb_class,
             channel: None,
             active_contexts: Vec::new(),
@@ -51,6 +53,14 @@ impl DeliveryWindowEvaluationContext {
     #[must_use]
     pub const fn local_minute_of_day(&self) -> u16 {
         self.local_minute_of_day
+    }
+
+    /// Uses the native zone's future offsets when finding a window's retry
+    /// edge. An unknown zone retains the caller's nominal-minute arithmetic.
+    #[must_use]
+    pub fn iana_timezone(mut self, zone: &str) -> Self {
+        self.iana_zone = Some(zone.into());
+        self
     }
 
     #[must_use]

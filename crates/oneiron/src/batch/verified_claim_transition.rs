@@ -274,7 +274,7 @@ impl VerifiedClaimTransition {
             &raw[ENTITY_METADATA_HEADER_LEN..],
             false,
         )?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next = crate::claim::validate_claim_body_and_decode_in_txn(store, txn, data, false)?;
         if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed {
             return Err(Error::InvalidClaimBody(
                 "consent predecessor must be Proposed",
@@ -369,7 +369,7 @@ impl VerifiedClaimTransition {
                 "a proposal in the tray rejects through its consent",
             ));
         }
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next = crate::claim::validate_claim_body_and_decode_in_txn(store, txn, data, false)?;
         let mut expected = prior;
         expected.approval = oneiron_contracts::claim::ClaimApprovalStatus::Rejected;
         expected.lifecycle = oneiron_contracts::claim::ClaimLifecycleStatus::Retracted;
@@ -400,7 +400,7 @@ impl VerifiedClaimTransition {
             &raw[ENTITY_METADATA_HEADER_LEN..],
             false,
         )?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next = crate::claim::validate_claim_body_and_decode_in_txn(store, txn, data, false)?;
         store
             .pending_gate_consent_in_txn(txn, id)?
             .ok_or(Error::InvalidClaimBody(
@@ -434,7 +434,7 @@ impl VerifiedClaimTransition {
             &raw[ENTITY_METADATA_HEADER_LEN..],
             false,
         )?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next = crate::claim::validate_claim_body_and_decode_in_txn(store, txn, data, false)?;
         let mut expected = prior.clone();
         expected.approval = oneiron_contracts::claim::ClaimApprovalStatus::Approved;
         if prior.approval != oneiron_contracts::claim::ClaimApprovalStatus::Proposed
@@ -477,7 +477,7 @@ impl VerifiedClaimTransition {
                 "a MACHINE claim's body is owned by its signed history",
             ));
         }
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next = crate::claim::validate_claim_body_and_decode_in_txn(store, txn, data, false)?;
         let text_form = format!("{}{handle}]", crate::file_secret_marks::HANDLE_TEXT_OPEN);
         let mut expected = prior;
         let mut changed = false;

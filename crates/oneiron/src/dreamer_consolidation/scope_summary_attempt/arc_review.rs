@@ -419,6 +419,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 ));
             }
             Err(other) => {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &other
+                {
+                    charges.record_usage(usage);
+                }
                 return Ok(Called::Exit(
                     charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)),
                 ));

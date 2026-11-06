@@ -219,6 +219,9 @@ pub fn siwc_authorize_request(
     redirect_uri: String,
     verifier: &str,
     state: String,
+    nonce: String,
+    ext_agent_host_id: String,
+    agent_name_hint: Option<String>,
     scope: Option<String>,
 ) -> Result<SiwcAuthorizeRequest, String> {
     Ok(SiwcAuthorizeRequest {
@@ -226,6 +229,9 @@ pub fn siwc_authorize_request(
         redirect_uri,
         code_challenge: pkce_s256_challenge(verifier).map_err(|error| error.to_string())?,
         state,
+        nonce,
+        ext_agent_host_id,
+        agent_name_hint,
         scope,
     })
 }

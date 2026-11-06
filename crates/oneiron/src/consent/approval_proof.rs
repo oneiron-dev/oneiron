@@ -39,6 +39,8 @@ pub(crate) enum PinnedApprovalFamily {
     CampaignLeg,
     /// A scoped-MCP tool call on a catalogued connector (FIX 6424 part 3).
     ScopedMcp,
+    /// An ordinary dispatch with a frozen Communication, Calendar or HttpBundle target.
+    ConnectorSlate,
 }
 
 impl PinnedApprovalFamily {
@@ -47,6 +49,7 @@ impl PinnedApprovalFamily {
             Self::LinearDispatch => 1,
             Self::CampaignLeg => 2,
             Self::ScopedMcp => 3,
+            Self::ConnectorSlate => 4,
         }
     }
 }

@@ -474,6 +474,8 @@ pub(crate) async fn vault_repo_checkout_bind(
     input: LiveRunRequest<RepoCheckoutBindInput>,
 ) -> Listed<RepoCheckoutBindOutput> {
     let verb = "vault.repo.checkout.bind";
+    // FIX 7181: the operator's own Git door base wins over the run's.
+    let host_base = server.config.git_door_base.clone();
     on_repo_run(
         server,
         auth,
@@ -481,7 +483,12 @@ pub(crate) async fn vault_repo_checkout_bind(
         invocation,
         verb,
         input,
-        |memory, binding, spec, _request| memory.repo_checkout_bind_for_run(binding, spec),
+        move |memory, binding, spec, _request| {
+            memory.repo_checkout_bind_for_run(
+                binding,
+                oneiron::memory::repo_doors::with_host_door_base(spec, host_base.as_deref()),
+            )
+        },
     )
     .await
 }
