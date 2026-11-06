@@ -23,7 +23,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod receipt_page;
 
-pub use receipt_page::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
+pub use receipt_page::VaultReceiptsPage;
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -530,7 +530,23 @@ impl Memory<'_> {
         )?;
         let mut out = Vec::with_capacity(ranked.len());
         for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
-            let body = row.body.as_deref().and_then(decode_body_json);
+            let mut body = row.body.as_deref().and_then(decode_body_json);
+            if let Some(value) = &mut body {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                if self.reads_lifted_keys_masked_in_txn(&txn)? {
+                    let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                        &self.vault.store,
+                        &txn,
+                        value,
+                    )?;
+                    keys.mask_json(value);
+                }
+            }
             let snippet = body.as_ref().and_then(|body| {
                 body.get("content")
                     .and_then(serde_json::Value::as_str)
@@ -715,6 +731,17 @@ impl Memory<'_> {
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
         })
+    }
+}
+
+impl Memory<'_> {
+    /// A room's own Hook `records` in the `vault.receipts` shape
+    /// ([`family_receipt`]), for the receipt tail a verb hook chain in that
+    /// room reads beside base's (FIX 5429).
+    pub(crate) fn room_tail_receipts(
+        records: Vec<crate::receipt::ReceiptRecord>,
+    ) -> Vec<MemoryReceipt> {
+        records.into_iter().map(family_receipt).collect()
     }
 }
 

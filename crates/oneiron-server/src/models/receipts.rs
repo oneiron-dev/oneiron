@@ -293,7 +293,7 @@ impl RunReceiptSink for ServerReceipts {
         denied: &oneiron::llm::BudgetDenied,
     ) {
         if let Some(vault) = &self.hooks {
-            vault.budget_denied_hooks(denied, guard, seat, None);
+            vault.budget_denied_hooks(denied, guard, seat, None, None);
         }
     }
 }

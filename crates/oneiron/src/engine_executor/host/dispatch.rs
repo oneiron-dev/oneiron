@@ -9,11 +9,22 @@ impl RecordingJsHost<'_, '_> {
     /// large for one reply, stored whole as a body of the run as it is
     /// encoded. The guest and the replay row get its handle
     /// (`result_handle_json`), never the answer; nothing is refused for size.
+    /// Typed large replies and direct native team-start receipts spill
+    /// pre-record below (FIX449), same card the guest's spill gets.
     pub(super) fn store_large_answer(
         &mut self,
         seq: u64,
         mut outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
+        // Typed replies use the guest's sweeping sink and full result card.
+        if matches!(
+            &outcome,
+            SelfDispatchOutcome::InferenceDefaults(_)
+                | SelfDispatchOutcome::TaskAskStatus(_)
+                | SelfDispatchOutcome::Team(_)
+        ) {
+            return self.store_large_typed_reply(outcome);
+        }
         let answer = match &mut outcome {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
@@ -38,6 +49,89 @@ impl RecordingJsHost<'_, '_> {
         }
         *answer = self.store_answer(seq, |sink| write_json(sink, &*answer))?;
         Ok(outcome)
+    }
+
+    /// A typed reply too large for one message (FIX449): the inference
+    /// defaults, a settled ask, a world-privacy answer, or a direct team's
+    /// native receipt, spilled through the sweeping result sink and tainted
+    /// card with facets, never `store_answer`. Under the inline size, or with no
+    /// result store, the original outcome stays inline, unchanged.
+    fn store_large_typed_reply(
+        &mut self,
+        outcome: SelfDispatchOutcome,
+    ) -> Result<SelfDispatchOutcome> {
+        use crate::code_run::{SelfStoredReply, SelfStoredReplyKind};
+        use crate::task_verb::{TaskAskStatus, TaskAskWait};
+        // No store: inline, as `fit_reply` sends it (a storageless large
+        // inference replace must not become `Failed` or leave a gap).
+        if self.storage.is_none() {
+            return Ok(outcome);
+        }
+        // The EXACT guest body `reply_body` would emit for the outcome, so a
+        // pre-record spill happens exactly when the guest's spill would. JSON
+        // only: the guest consumes JSON, and the `TaskAskWait` JSON is already
+        // the durable form; no raw RMP is stored or rehydrated.
+        let (kind, body) = match &outcome {
+            SelfDispatchOutcome::InferenceDefaults(text) => (
+                SelfStoredReplyKind::InferenceDefaults,
+                json!({"json": text}),
+            ),
+            SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Settled(result)) => (
+                SelfStoredReplyKind::TaskAskSettled,
+                json!({"output": TaskAskWait::Ready(result.clone())}),
+            ),
+            SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::WorldPrivacy(request)) => (
+                SelfStoredReplyKind::TaskAskWorldPrivacy,
+                json!({"output": TaskAskWait::WorldPrivacyReady(request.clone())}),
+            ),
+            SelfDispatchOutcome::Team(result)
+                if result.source_rows.is_some()
+                    && matches!(
+                        &result.answer,
+                        crate::team::TeamRunAnswer::Started { .. }
+                            | crate::team::TeamRunAnswer::ProposedWiden { .. }
+                    ) =>
+            {
+                (
+                    SelfStoredReplyKind::TeamStartReceipt,
+                    json!({"output": result.answer}),
+                )
+            }
+            _ => return Ok(outcome),
+        };
+        let mut size = ByteCount::default();
+        serde_json::to_writer(&mut size, &body).map_err(|error| {
+            Error::InvalidConfig(format!("verb answer encoding failed: {error}"))
+        })?;
+        if size.0 <= RESULT_REPLY_INLINE_BYTES {
+            return Ok(outcome);
+        }
+        // SAME split as `fit_reply` (`wire.rs`): store `body["output"]` when
+        // the body has one, else the whole body. `Ok(None)` keeps the original
+        // inline; errors propagate, never swallowed.
+        let stored = if body.get("output").is_some() {
+            &body["output"]
+        } else {
+            &body
+        };
+        let card = if let SelfDispatchOutcome::Team(result) = &outcome {
+            let storage = self.storage.expect("result store checked above");
+            let mut sink = storage.code_run_output_sink()?;
+            write_json(&mut sink, stored)?;
+            Some(
+                self.bind_stored_sourced(storage, sink, None, &[], result.source_rows.clone())?
+                    .1,
+            )
+        } else {
+            self.store_reply(stored)?
+        };
+        match card {
+            Some(card) => Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
+                kind,
+                output: card,
+            })),
+            None => Ok(outcome),
+        }
     }
 
     /// Stores what `write` puts in a sink as a body of the run, bound to the
@@ -130,6 +224,7 @@ impl RecordingJsHost<'_, '_> {
                     effect: SelfEffect::SkillsCall,
                     error,
                     code: None,
+                    disk_floor: None,
                 }),
                 None,
             )
@@ -228,16 +323,24 @@ impl RecordingJsHost<'_, '_> {
             Err(Error::Code(CodeError::CodeStepCancelled)) => {
                 failed(CodeError::CodeStepCancelled.to_string()).0
             }
-            Err(error @ Error::Code(CodeError::SandboxProposalDiskFloor { .. })) => {
-                SelfDispatchOutcome::Failed(SelfFailedResult {
-                    effect: SelfEffect::SkillsCall,
-                    error: error.to_string(),
-                    code: Some(
-                        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
-                            .to_owned(),
-                    ),
-                })
-            }
+            Err(
+                error @ Error::Code(CodeError::SandboxProposalDiskFloor {
+                    needed,
+                    available,
+                    reserve,
+                }),
+            ) => SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::SkillsCall,
+                error: error.to_string(),
+                code: Some(
+                    oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR.to_owned(),
+                ),
+                disk_floor: Some(crate::code_run::SelfSandboxProposalDiskFloor {
+                    needed,
+                    available,
+                    reserve,
+                }),
+            }),
             Err(error) => failed(error.to_string()).0,
         };
         // The post chain reads the answer as the guest gets it: a large one
@@ -268,7 +371,21 @@ impl RecordingJsHost<'_, '_> {
         if let Some(injection) = self.injection.as_mut() {
             match injection.answer(&call) {
                 InjectedAnswer::Live => {}
-                InjectedAnswer::Settled { outcome, view } => {
+                InjectedAnswer::Settled { seq, outcome, view } => {
+                    // The injected card replaces `store_reply`: consume its
+                    // exact occurrence before another same-byte store replays.
+                    if let SelfDispatchOutcome::StoredReply(reply) = &*outcome
+                        && let Some(reference) = reply
+                            .output
+                            .get("ref")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|reference| reference.starts_with("occurrence:"))
+                        && let Some((output, _)) =
+                            self.resolve_result(&JsResultRef::Handle(reference.to_owned()))
+                        && !self.replayed_stores.contains(&output.path)
+                    {
+                        self.replayed_stores.push(output.path);
+                    }
                     // A granted `reveal.wait` reads its value again under its
                     // own lease, for the guest's view only; the row keeps its
                     // value-free answer (FIX 2360). A failed replay leaves
@@ -281,7 +398,8 @@ impl RecordingJsHost<'_, '_> {
                             .ok()
                             .flatten(),
                     };
-                    return Ok(self.respond(*outcome, view));
+                    // Its response is kept at the settled row's own position.
+                    return Ok(self.respond(&call, Some(seq), *outcome, view));
                 }
                 InjectedAnswer::Hold => {
                     if self.hard_failure.is_none() {
@@ -292,8 +410,10 @@ impl RecordingJsHost<'_, '_> {
                         effect: call.effect(),
                         error: PROGRAM_RESUME_HELD.to_owned(),
                         code: None,
+                        disk_floor: None,
                     });
-                    return Ok(self.respond(outcome, None));
+                    // No row answers it: the replay context is incomplete.
+                    return Ok(self.respond(&call, None, outcome, None));
                 }
             }
         }
@@ -325,7 +445,7 @@ impl RecordingJsHost<'_, '_> {
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome, None));
+            return Ok(self.respond(&call, Some(seq), outcome, None));
         }
         if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
             // Fail-closed after the first hard failure or unrecorded call:
@@ -343,12 +463,13 @@ impl RecordingJsHost<'_, '_> {
                 effect: call.effect(),
                 error: error.to_owned(),
                 code: None,
+                disk_floor: None,
             });
             let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome, None));
+            return Ok(self.respond(&call, Some(seq), outcome, None));
         }
         // OF-568: what this call reads, captured before it runs, for its
         // row's action digest. Only the vault's own storage is versioned: a
@@ -429,7 +550,7 @@ impl RecordingJsHost<'_, '_> {
                 .with_spawn_seats(seats);
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
-                return Ok(self.respond(error_outcome, None));
+                return Ok(self.respond(&call, Some(seq), error_outcome, None));
             }
         };
         let finished_at_ms = started_at_ms;
@@ -450,7 +571,7 @@ impl RecordingJsHost<'_, '_> {
             self.declined = Some(refusal.task_ref);
         }
         self.bridge_calls.insert(place, row);
-        Ok(self.respond(outcome, view))
+        Ok(self.respond(&call, Some(seq), outcome, view))
     }
 }
 
@@ -467,25 +588,29 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
                 .map(|reason| (*reason).to_owned())
                 .collect(),
         })),
-        // No provider answered a door's model call (FIX 3194): the guest sees
-        // the typed failure, and the step ends on the outage, which parks
-        // its run.
-        Error::ProviderUnavailable { .. } => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
-            effect: call.effect(),
-            error: err.to_string(),
-            code: None,
-        })),
+        // A door's outage or durable trap ends the native step even when
+        // the guest catches its typed failure.
+        Error::ProviderUnavailable { .. } | Error::DurableStepTrapped => {
+            Some(SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect(),
+                error: err.to_string(),
+                code: None,
+                disk_floor: None,
+            }))
+        }
         // A refusal names its bound: the guest reads what it can act on.
         Error::Refused(_) => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: call.effect(),
             error: err.to_string(),
             code: None,
+            disk_floor: None,
         })),
         _ if records_failed_effect(call.effect()) => {
             Some(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: err.to_string(),
                 code: None,
+                disk_floor: None,
             }))
         }
         _ => None,
@@ -504,6 +629,7 @@ pub(super) fn records_failed_effect(effect: SelfEffect) -> bool {
         effect,
         SelfEffect::MemoryPutClaim
             | SelfEffect::AgentsPut
+            | SelfEffect::AgentsSpawn
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::ReportBlocked

@@ -116,8 +116,8 @@ no generic `call(name, json)`.
 `vault.recall` takes `effort` (`light` … `max`, or `call`: light effort under
 a hard deadline) and `deadlineMs`. Embedded, `high`/`xhigh`/`max` return the
 engine's `LEASE_REQUIRED`: this client mints no lease. `MemoryPack` carries
-items with provenance, `reactions` and `citedMessages` (each with its typed
-`record` ref), scope honesty with
+items with provenance, `assetRef`, every raw per-space `embeddingMatches`
+element, `reactions` and `citedMessages` (each with its typed `record` ref), scope honesty with
 `censusCapped`, retrieval accounting, `packVersion` (always
 `HEAD_MEMORY_PACK_SCHEMA_VERSION`) and the read's `narrowing` receipt. The
 read verbs return `{value, narrowing}`. Blob content crosses as bytes; an

@@ -1,3 +1,6 @@
+//! Overlay snapshots: staged-row views merged over durable state for one read.
+//! Entry [`OverlaySnapshot`]; built from `journal` rows for `overlay_db::merge`.
+//! Owned by `session_overlay`; a snapshot never writes, it only stages.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -24,6 +27,9 @@ use oneiron_contracts::error::OffRecordError;
 pub struct OverlaySnapshot {
     pub(super) state: Arc<OverlayState>,
     pub(super) lease: Lease,
+    /// The write segment whose preview this view was captured from, by its
+    /// install nonce; `None` for a view of the published state (FIX 10004).
+    pub(super) segment: Option<u64>,
 }
 
 pub enum SnapshotLookup {
@@ -62,6 +68,7 @@ impl OverlaySnapshot {
         Ok(Self {
             state: Arc::clone(&self.state),
             lease: self.lease.retain()?,
+            segment: self.segment,
         })
     }
 

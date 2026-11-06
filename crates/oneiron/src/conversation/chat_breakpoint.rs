@@ -257,10 +257,11 @@ fn craft_entry_stands_in(
 /// does not resolve drops every breakpoint, since one may hold its words.
 /// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_chat_breakpoints_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let Some(record) = crate::ports::EntityStoreRead::port_entity_record(store, txn, id)? else {
         return Ok(());
     };
@@ -274,15 +275,27 @@ pub(crate) fn erase_chat_breakpoints_in_txn(
         }
         ENTITY_TYPE_SUMMARY => Ok(crate::compaction::conversation_receipt_in(store, txn, id)?
             .and_then(|receipt| receipt.evidence().map(|evidence| evidence.conversation))),
-        ENTITY_TYPE_CLAIM => return erase_craft_breakpoints_in_txn(store, txn, id),
+        ENTITY_TYPE_CLAIM => return erase_craft_breakpoints_in_txn(write, txn, id),
         _ => return Ok(()),
     };
     match conversation {
         Ok(Some(conversation)) => {
+            crate::secret_custody::revoke_side_row_prefix_custody_in_txn(
+                write,
+                txn,
+                &BREAKPOINTS,
+                conversation.as_bytes(),
+            )?;
             BREAKPOINTS.delete_from(store, txn, conversation.as_bytes())?;
         }
         Ok(None) => {}
         Err(_) => {
+            crate::secret_custody::revoke_side_row_prefix_custody_in_txn(
+                write,
+                txn,
+                &BREAKPOINTS,
+                &[],
+            )?;
             BREAKPOINTS.delete_from(store, txn, &[])?;
         }
     }
@@ -291,10 +304,11 @@ pub(crate) fn erase_chat_breakpoints_in_txn(
 
 /// Drops each breakpoint whose request shows claim `claim` as craft.
 fn erase_craft_breakpoints_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     claim: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let reference = claim.to_hex();
     let shown: Vec<_> = BREAKPOINTS
         .scan(store, &*txn)?
@@ -307,6 +321,10 @@ fn erase_craft_breakpoints_in_txn(
         .map(|(key, _)| key)
         .collect();
     for key in &shown {
+        let place = format!("side:{}", BREAKPOINTS.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &BREAKPOINTS.key_bytes(key))?;
+        crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
         BREAKPOINTS.delete(store, txn, key)?;
     }
     Ok(())

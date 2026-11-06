@@ -256,6 +256,30 @@ pub(super) fn broker_backend(
 }
 
 impl BrokerBackend {
+    pub(super) fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub(super) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub(super) fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    pub(super) fn client(&self) -> &BrokerClient {
+        &self.client
+    }
+
+    pub(super) fn keys(&self) -> &Arc<dyn KeyDoor> {
+        &self.keys
+    }
+
+    pub(super) fn secret(&self) -> &str {
+        &self.secret
+    }
+
     /// The call frame's header and the exact body bytes it carries, checked
     /// as the broker will check them. `call` is the broker's call id; the
     /// digest does not cover it.
@@ -271,7 +295,12 @@ impl BrokerBackend {
         let (shape, path, wire_headers, mut body) = match &self.wire {
             Wire::OpenAi(config) => {
                 let wire = build_openai_chat_request(config, request, false)?;
-                (Shape::OpenAiChat, wire.path, wire.headers, wire.body)
+                let shape = if wire.path == "/chat/completions" {
+                    Shape::OpenAiChatUnversioned
+                } else {
+                    Shape::OpenAiChat
+                };
+                (shape, wire.path, wire.headers, wire.body)
             }
             Wire::Anthropic(config) => {
                 let wire = build_anthropic_messages_request(config, request, false)?;
@@ -443,6 +472,75 @@ pub(super) async fn call_with_key_released(
         .map_err(broker_error)
 }
 
+/// Opens one streaming call with its key read at the door, leaving the reply
+/// stream to the caller. Nothing reads the key before the broker is reached.
+/// The caller's `release`, when given, runs after the key is read,
+/// immediately before the broker sends, as [`call_with_key_released`]'s.
+pub(super) async fn open_with_key(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    if let Some(release) = release {
+        release()?;
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
+    connection
+        .open(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens one Responses call with its whole turn for a same-socket full retry.
+pub(super) async fn open_with_whole(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    connection
+        .open_with_whole(header, body, whole, key)
+        .await
+        .map_err(broker_error)
+}
+
 /// The provider's status and headers when it answered, or the error a call
 /// with no answer is.
 pub(super) fn answered(outcome: Outcome) -> LlmResult<(u16, Vec<(String, String)>)> {
@@ -487,7 +585,7 @@ fn no_streaming(model: &ModelId) -> LlmError {
     .into()
 }
 
-fn broker_error(error: BrokerError) -> LlmError {
+pub(crate) fn broker_error(error: BrokerError) -> LlmError {
     match error {
         // Nothing was written: no key read, no send.
         BrokerError::Unreachable => RetryableLlmError::StreamCut.into(),

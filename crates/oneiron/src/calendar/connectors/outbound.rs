@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::door::CalendarConnectorOperation;
-use super::inbound::{admit_screened, reconcile_remote_object};
+use super::inbound::{admit_screened_in_txn, reconcile_remote_object};
 use super::literal::{self, LiteralCarrier, LiteralKind, LiteralValues};
 use super::remote::{
     CalendarRemoteTransport, RemoteWriteReceipt, RemoteWriteRequest, ics_content_hash, local_uid,
@@ -23,8 +23,8 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use crate::calendar::passport::{
-    admitted_passports_for_event_in_txn, carries_admitted_uid, encode_passport_value,
-    index_passport_uid, live_passport_for, supersede_calendar_passport,
+    admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
+    index_passport_uid_in_txn, live_passport_for_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::entity_id::EntityId;
@@ -490,7 +490,6 @@ fn finish_remote_applied_write(
     receipt: RemoteWriteReceipt,
     now: u64,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
-    let seat = &operation.registration().seat;
     // UID and SEQUENCE are provider-preserved invariants. The receipt's content
     // hash is the provider's claim about what it stored, not evidence of it:
     // the echo state below records what was staged, so a provider copy that
@@ -503,12 +502,58 @@ fn finish_remote_applied_write(
         });
     }
 
-    // The write kept every unowned field of the archived source, so that
-    // source stays the base the next write renders over.
-    let source_blob_ref = read_remote_object(vault, &row.system, &row.calendar_ref, &row.uid)?
-        .and_then(|prior| prior.source_blob_ref);
-    if !write_remote_object(
+    enum CompletionError {
+        Stale,
+        Failed(CalendarConnectorError),
+    }
+
+    impl From<crate::Error> for CompletionError {
+        fn from(error: crate::Error) -> Self {
+            Self::Failed(error.into())
+        }
+    }
+
+    // FIX 4797: the completion can turn an inbound passport two-way and
+    // supersede its head, so it runs in the vault's one calendar admission
+    // turn, taken before its writer.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
+    let carrier = match vault.try_with_write_txn_grouped(|txn| {
+        finish_remote_applied_write_in_txn(
+            vault, txn, operation, transport, event_ref, row, &receipt, now,
+        )
+        .map_err(CompletionError::Failed)?
+        // A stale final CAS discards this member's earlier staged rows too.
+        .ok_or(CompletionError::Stale)
+    }) {
+        Ok(carrier) => carrier,
+        Err(CompletionError::Stale) => return Ok(receipt),
+        Err(CompletionError::Failed(error)) => return Err(error),
+    };
+    row.state = CalendarWriteOutboxState::Committed;
+    row.updated_at = now;
+    row.carrier = Some(carrier);
+    vault.finish_connector_resume_retirements_after_commit();
+    Ok(receipt)
+}
+
+fn finish_remote_applied_write_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    event_ref: EntityId,
+    row: &CalendarWriteOutboxRow,
+    receipt: &RemoteWriteReceipt,
+    now: u64,
+) -> Result<Option<LiteralCarrier>, CalendarConnectorError> {
+    // The exact RemoteApplied carrier guards every publication below. Cursor,
+    // claims, index and final outbox CAS share this writer or all roll back.
+    let source_blob_ref =
+        read_remote_object_in_txn(vault, txn, &row.system, &row.calendar_ref, &row.uid)?
+            .and_then(|prior| prior.source_blob_ref);
+    if !write_remote_object_in_txn(
         vault,
+        txn,
         operation,
         &CalendarRemoteObjectRow {
             system: row.system.clone(),
@@ -524,12 +569,10 @@ fn finish_remote_applied_write(
         },
         Some(row),
     )? {
-        return Ok(receipt);
+        return Ok(None);
     }
 
-    // A receipt settles what was staged, not the EVENTs as they look after
-    // transport I/O. Re-rendering here can strand RemoteApplied forever or
-    // misattribute a newer local edit to the older provider snapshot.
+    // A receipt settles the staged members, not newer local EVENT contents.
     if row.component_hashes.first().map(|(member, _)| *member) != Some(event_ref) {
         return Err(CalendarConnectorError::Outbox {
             outbox_id: row.outbox_id,
@@ -537,13 +580,18 @@ fn finish_remote_applied_write(
         });
     }
     for (member, _) in &row.component_hashes {
-        crate::calendar::claims::require_event_subject(vault, member)?;
+        crate::calendar::claims::require_event_subject_in_txn(vault, txn, member)?;
     }
+    let source_record_id = write_source_record_id(
+        transport.provider_key(),
+        &operation.registration().seat,
+        &row.uid,
+    );
     for &(member, content_hash) in &row.component_hashes {
-        // Direction is a routing fact: a seat that also reads this UID is two-way,
-        // a seat that only writes it is outbound. Neither is an approval gate.
-        let own = live_passport_for(vault, &member, &row.system, &row.uid)?;
-        let direction = if own
+        // Direction remains approval-blind, while the UID-index gate below
+        // still requires an admitted passport for a non-local UID.
+        let current = live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)?;
+        let direction = if current
             .as_ref()
             .is_some_and(|(_, value)| value.direction.is_inbound_bearing())
         {
@@ -560,7 +608,6 @@ fn finish_remote_applied_write(
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
         };
-        let current = live_passport_for(vault, &member, &row.system, &row.uid)?;
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
                 && value.content_hash == next.content_hash
@@ -568,9 +615,9 @@ fn finish_remote_applied_write(
                 && value.presence == next.presence
         });
         if !already_applied {
-            let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
-            let new_id = admit_screened(
+            let new_id = admit_screened_in_txn(
                 vault,
+                txn,
                 member,
                 &CalendarInboundBody::default(),
                 &source_record_id,
@@ -578,25 +625,23 @@ fn finish_remote_applied_write(
                 encode_passport_value(&next),
                 now,
             )?;
-            if current.is_some() {
-                supersede_calendar_passport(vault, member, &row.system, &row.uid, &new_id, now)?;
+            if let Some((old_id, _)) = current {
+                vault.supersede_claim_in_txn(txn, &new_id, &old_id, now)?;
             }
         }
     }
-    // The index moves only for a UID this connector mints or an admitted
-    // passport carries. The first outbound invite falls back to it, so a UID
-    // taken from a pending passport never re-points it.
-    if row.uid == local_uid(&event_ref) || carries_admitted_uid(vault, &event_ref, &row.uid)? {
-        index_passport_uid(vault, &row.uid, &event_ref)?;
+    if row.uid == local_uid(&event_ref)
+        || carries_admitted_uid_in_txn(vault, txn, &event_ref, &row.uid)?
+    {
+        index_passport_uid_in_txn(vault, txn, &row.uid, &event_ref)?;
     }
 
-    // The outbox closes before the next poll can run, so the echo the poll sees
-    // is already known to be ours.
-    row.state = CalendarWriteOutboxState::Committed;
-    row.updated_at = now;
-    write_outbox_row(vault, operation, row, None)?;
-
-    Ok(receipt)
+    let mut committed = row.clone();
+    committed.state = CalendarWriteOutboxState::Committed;
+    committed.updated_at = now;
+    Ok(write_outbox_row_in_txn(
+        vault, txn, operation, &committed, None,
+    )?)
 }
 
 /// The stored form of a write-outbox row. `EntityId` and `[u8; 32]` travel as
@@ -774,55 +819,8 @@ fn write_outbox_row(
     row: &mut CalendarWriteOutboxRow,
     expected_prior: Option<[u8; 16]>,
 ) -> Result<bool, CalendarConnectorError> {
-    let digest = outbox_digest(row)?;
     let carrier = vault.try_with_write_txn_grouped(|txn| {
-        if row.carrier.is_none() {
-            operation.revalidate_in_txn(vault, txn)?;
-        }
-        let prior = OUTBOX.get(&vault.store, txn, &OutboxKey(row.outbox_id))?;
-        let actual_prior = prior.as_ref().map(|old| old.carrier.instance);
-        let expected = row
-            .carrier
-            .as_ref()
-            .map(|held| held.instance)
-            .or(expected_prior);
-        if let Some(held) = row.carrier.as_ref() {
-            if prior.as_ref().is_none_or(|old| old.carrier != *held) {
-                // The admitted effect is already truthful; never resurrect its
-                // retired reference over a deleted or newer stable-key row.
-                return Ok(None);
-            }
-        } else if actual_prior != expected {
-            return Err(literal::invalid());
-        }
-        let instance = match row.carrier.as_ref() {
-            Some(held) => held.instance,
-            None => vault.store.clock.ulid()?,
-        };
-        let carrier = LiteralCarrier::seal(
-            vault,
-            txn,
-            operation,
-            LiteralKind::Outbox,
-            instance,
-            row.outbox_id,
-            digest,
-            &row.uid,
-            LiteralValues {
-                href: row.href.clone(),
-                etag: row.expected_etag.clone(),
-                receipt: row.receipt.clone(),
-            },
-        )?;
-        let stored = StoredOutboxRow::from_row(row, carrier.clone())?;
-        crate::ports::persist_id_floor_in_txn(&vault.store, txn)?;
-        OUTBOX.put(vault, txn, &OutboxKey(row.outbox_id), &stored)?;
-        if let Some(prior) = prior
-            && prior.carrier.instance != instance
-        {
-            prior.carrier.retire(vault, txn, LiteralKind::Outbox)?;
-        }
-        Ok::<_, crate::Error>(Some(carrier))
+        write_outbox_row_in_txn(vault, txn, operation, row, expected_prior)
     })?;
     let Some(carrier) = carrier else {
         return Ok(false);
@@ -830,6 +828,63 @@ fn write_outbox_row(
     row.carrier = Some(carrier);
     vault.finish_connector_resume_retirements_after_commit();
     Ok(true)
+}
+
+fn write_outbox_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    operation: &CalendarConnectorOperation,
+    row: &CalendarWriteOutboxRow,
+    expected_prior: Option<[u8; 16]>,
+) -> crate::Result<Option<LiteralCarrier>> {
+    let digest = outbox_digest(row)?;
+    if row.carrier.is_none() {
+        operation.revalidate_in_txn(vault, txn)?;
+    }
+    let prior = OUTBOX.get(&vault.store, txn, &OutboxKey(row.outbox_id))?;
+    let actual_prior = prior.as_ref().map(|old| old.carrier.instance);
+    let expected = row
+        .carrier
+        .as_ref()
+        .map(|held| held.instance)
+        .or(expected_prior);
+    if let Some(held) = row.carrier.as_ref() {
+        if prior.as_ref().is_none_or(|old| old.carrier != *held) {
+            // The admitted effect is already truthful; never resurrect its
+            // retired reference over a deleted or newer stable-key row.
+            return Ok(None);
+        }
+    } else if actual_prior != expected {
+        return Err(literal::invalid());
+    }
+    let instance = match row.carrier.as_ref() {
+        Some(held) => held.instance,
+        None => vault.store.clock.ulid()?,
+    };
+    let carrier = LiteralCarrier::seal(
+        vault,
+        txn,
+        operation,
+        LiteralKind::Outbox,
+        instance,
+        row.outbox_id,
+        digest,
+        &row.uid,
+        LiteralValues {
+            href: row.href.clone(),
+            etag: row.expected_etag.clone(),
+            receipt: row.receipt.clone(),
+        },
+    )?;
+    let stored = StoredOutboxRow::from_row(row, carrier.clone())?;
+    crate::ports::persist_id_floor_in_txn(&vault.store, txn)?;
+    OUTBOX.put(vault, txn, &OutboxKey(row.outbox_id), &stored)?;
+    if let Some(prior) = prior
+        && prior.carrier.instance != instance
+    {
+        prior.carrier.retire(vault, txn, LiteralKind::Outbox)?;
+    }
+    Ok(Some(carrier))
 }
 
 fn remote_projection(stored: StoredRemoteObjectRow) -> CalendarRemoteObjectRow {
@@ -854,8 +909,18 @@ pub(super) fn read_remote_object(
     uid: &str,
 ) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    read_remote_object_in_txn(vault, &txn, system, calendar_ref, uid)
+}
+
+fn read_remote_object_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+    calendar_ref: &str,
+    uid: &str,
+) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
     let latest = REMOTE_OBJECT
-        .scan_from(&vault.store, &txn, REMOTE_OBJECT_TAG)?
+        .scan_from(&vault.store, txn, REMOTE_OBJECT_TAG)?
         .into_iter()
         .filter(|(key, row)| {
             key.0 == remote_object_digest(&row.carrier.seat, system, calendar_ref, uid)
@@ -942,6 +1007,20 @@ pub(super) fn write_remote_object(
     row: &CalendarRemoteObjectRow,
     settlement: Option<&CalendarWriteOutboxRow>,
 ) -> Result<bool, CalendarConnectorError> {
+    let written = vault.try_with_write_txn_grouped(|txn| {
+        write_remote_object_in_txn(vault, txn, operation, row, settlement)
+    })?;
+    vault.finish_connector_resume_retirements_after_commit();
+    Ok(written)
+}
+
+fn write_remote_object_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    operation: &CalendarConnectorOperation,
+    row: &CalendarRemoteObjectRow,
+    settlement: Option<&CalendarWriteOutboxRow>,
+) -> crate::Result<bool> {
     let key = remote_object_digest(
         &operation.literal_scope()?,
         &row.system,
@@ -949,54 +1028,50 @@ pub(super) fn write_remote_object(
         &row.uid,
     );
     let row_digest = cursor_digest(row)?;
-    let written = vault.try_with_write_txn_grouped(|txn| {
-        if let Some(outbox) = settlement {
-            let current = OUTBOX.get(&vault.store, txn, &OutboxKey(outbox.outbox_id))?;
-            let held = outbox.carrier.as_ref().ok_or_else(literal::invalid)?;
-            if current.as_ref().is_none_or(|current| {
-                current.state != CalendarWriteOutboxState::RemoteApplied || current.carrier != *held
-            }) {
-                return Ok(false);
-            }
+    if let Some(outbox) = settlement {
+        let current = OUTBOX.get(&vault.store, txn, &OutboxKey(outbox.outbox_id))?;
+        let held = outbox.carrier.as_ref().ok_or_else(literal::invalid)?;
+        if current.as_ref().is_none_or(|current| {
+            current.state != CalendarWriteOutboxState::RemoteApplied || current.carrier != *held
+        }) {
+            return Ok(false);
         }
-        let prior = REMOTE_OBJECT.get(&vault.store, txn, &RemoteObjectKey(key))?;
-        let instance = vault.store.clock.ulid()?;
-        let carrier = LiteralCarrier::seal(
-            vault,
-            txn,
-            operation,
-            LiteralKind::Cursor,
-            instance,
-            key,
-            row_digest,
-            &row.uid,
-            LiteralValues {
-                href: row.href.clone(),
-                etag: row.etag.clone(),
-                receipt: None,
-            },
-        )?;
-        let stored = StoredRemoteObjectRow {
-            system: row.system.clone(),
-            calendar_ref: row.calendar_ref.clone(),
-            uid: row.uid.clone(),
-            href: literal::projection(&row.href)?,
-            etag: literal::projection(&row.etag)?,
-            last_sequence: row.last_sequence,
-            content_hash: row.content_hash,
-            last_seen_at: row.last_seen_at,
-            source_blob_ref: row.source_blob_ref.clone(),
-            carrier,
-        };
-        crate::ports::persist_id_floor_in_txn(&vault.store, txn)?;
-        REMOTE_OBJECT.put(vault, txn, &RemoteObjectKey(key), &stored)?;
-        if let Some(prior) = prior {
-            prior.carrier.retire(vault, txn, LiteralKind::Cursor)?;
-        }
-        Ok::<_, crate::Error>(true)
-    })?;
-    vault.finish_connector_resume_retirements_after_commit();
-    Ok(written)
+    }
+    let prior = REMOTE_OBJECT.get(&vault.store, txn, &RemoteObjectKey(key))?;
+    let instance = vault.store.clock.ulid()?;
+    let carrier = LiteralCarrier::seal(
+        vault,
+        txn,
+        operation,
+        LiteralKind::Cursor,
+        instance,
+        key,
+        row_digest,
+        &row.uid,
+        LiteralValues {
+            href: row.href.clone(),
+            etag: row.etag.clone(),
+            receipt: None,
+        },
+    )?;
+    let stored = StoredRemoteObjectRow {
+        system: row.system.clone(),
+        calendar_ref: row.calendar_ref.clone(),
+        uid: row.uid.clone(),
+        href: literal::projection(&row.href)?,
+        etag: literal::projection(&row.etag)?,
+        last_sequence: row.last_sequence,
+        content_hash: row.content_hash,
+        last_seen_at: row.last_seen_at,
+        source_blob_ref: row.source_blob_ref.clone(),
+        carrier,
+    };
+    crate::ports::persist_id_floor_in_txn(&vault.store, txn)?;
+    REMOTE_OBJECT.put(vault, txn, &RemoteObjectKey(key), &stored)?;
+    if let Some(prior) = prior {
+        prior.carrier.retire(vault, txn, LiteralKind::Cursor)?;
+    }
+    Ok(true)
 }
 
 /// Matches a provider removal only within this authenticated installed seat.

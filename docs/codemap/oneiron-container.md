@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-browser-relay.rs` | src | s | — | — | Fenced stdio carrier for a browser that speaks CDP only over TCP |
 | `src/bin/oneiron-fence.rs` | src | s | — | — | Engine-mounted Linux fence launcher, not a development runner |
 | `src/cli_env.rs` | src | s | 2 fn · 1 crate-vis | — | The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the… |
-| `src/egress.rs` | src | s | 3 struct · 2 enum · 1 trait · 2 fn | EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason | Host-owned transport |
+| `src/egress.rs` | src | s | 4 struct · 3 enum · 1 trait · 3 fn | CredentialEgressRecord, CredentialEgressStatus, EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason | Host-owned transport |
 | `src/host_net_floor.rs` | src | s | 2 struct · 1 trait · 4 fn · 3 const | HostNetFloor, HostNetPermit, UnmeteredFloor | The host's floor for a guest's network work (FIX 5978, FIX 5979) |
 | `src/image_release.rs` | src | m | 2 struct · 4 enum · 8 fn · 18 const · 4 re-export | ImageReleaseFact, ImageReleaseObservation, ImageSignaturePolicy, ManifestObservation, ReleaseAdmission, ReleaseDocuments | Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier… |
 | `src/image_release/host_binding.rs` | src | m | 1 enum · 2 fn · 1 const · 1 crate-vis | SelectedImage | The host side of a launch's release observation (FIX 9135, 9137): the release documents the host bound to… |
@@ -23,13 +23,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/image_release/verify.rs` | src | m | 5 struct · 5 enum · 4 fn | ArtifactCheck, ArtifactRole, CheckOutcome, HostCapabilities, HostCheck, HostOutcome, HostRequirement, LaunchBackend +2 | `verify_release`: parse, bind to the observed bytes, check the host, read the signature |
 | `src/launcher.rs` | src | m | 1 fn | — | Unprivileged in-container launcher and syscall-argument broker |
 | `src/launcher/loopback.rs` | src | s | 2 crate-vis | — | The launcher's half of the guest's virtual loopback (FIX 6680) |
+| `src/launcher/options.rs` | src | s | 2 crate-vis | — | getsockopt and setsockopt on a brokered socket (FIX 6784, FIX 6787) |
 | `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 1 mod · 8 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
 | `src/linux.rs` | src | m | 3 fn · 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 1 enum · 2 fn | RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
 | `src/socket_lifetime.rs` | src | s | 3 crate-vis | — | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
 | `src/supervisor.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
+| `src/supervisor/control.rs` | src | s | 5 crate-vis | — | The supervisor's copy of a stream socket's guest end (FIX 6788) |
 | `src/supervisor/lifetime.rs` | src | s | 4 crate-vis | — | A guest socket's host entry lives as long as the guest holds the socket (FIX 5978) |
-| `src/supervisor/loopback.rs` | src | m | 8 crate-vis | — | The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own… |
+| `src/supervisor/loopback.rs` | src | m | 10 crate-vis | — | The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own… |
+| `src/supervisor/loopback/connect.rs` | src | s | 4 crate-vis | — | A connect to a full listener queue waits its turn (FIX 6785; the blocking half of FIX 8015) |
+| `src/supervisor/loopback/options.rs` | src | s | 2 crate-vis | — | The socket options the fence keeps itself, since a socket's Unix stand-in cannot answer them: SO_ACCEPTCONN… |
 | `src/supervisor/relay_workers.rs` | src | s | 3 crate-vis | — | Bounded relay workers for a guest's datagrams (FIX 5979) |
 | `src/supervisor/sockets.rs` | src | s | 1 crate-vis | — | A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD… |
 | `src/transport.rs` | src | s | 1 struct · 1 trait · 1 fn | SessionLease, SessionTransport | A selected backend's private duplex transport and lifetime custody |

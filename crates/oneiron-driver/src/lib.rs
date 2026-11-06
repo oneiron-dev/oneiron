@@ -57,12 +57,12 @@ pub use supervisor::{
     DeviceAdmission, DeviceGrant, DeviceLedger, DeviceRow, DeviceSnapshot, ExecutorRegistration,
     GrantId, InferenceWorker, LaunchFailure, LauncherFuture, LoadGrant, PRESSURE_ACTION_ORDER,
     PressureAction, PressureDecision, PressureState, QUEUE_ORDER, QueueOrder, RESIDENT_FRESHNESS,
-    ResidentFreshness, ResidentReport, ResidentSource, RunningWorker, TicketId, TryReserveOutcome,
-    UNKNOWN_MEMORY_POLICY, UNLOAD_EXTERNAL, UNMEDIATED_SHARED_DEVICE, UnknownMemoryPolicy,
-    UnloadOutcome, UnmediatedPolicy, WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS,
-    WORKER_LIVENESS_POLL, WORKER_STOP_GRACE, WorkEnvelope, WorkRequest, WorkTicket, WorkerActivity,
-    WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerProbe, WorkerProbeFuture,
-    WorkerQueueStatus, WorkerSpec, WorkerUnavailable,
+    ResidentFreshness, ResidentReport, ResidentSource, RunningWorker, SessionAllocation,
+    SessionAllocationOwner, TicketId, TryReserveOutcome, UNKNOWN_MEMORY_POLICY, UNLOAD_EXTERNAL,
+    UNMEDIATED_SHARED_DEVICE, UnknownMemoryPolicy, UnloadOutcome, UnmediatedPolicy,
+    WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL, WORKER_STOP_GRACE,
+    WorkEnvelope, WorkRequest, WorkTicket, WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease,
+    WorkerPolicy, WorkerProbe, WorkerProbeFuture, WorkerQueueStatus, WorkerSpec, WorkerUnavailable,
 };
 pub use supervisor::{
     AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, NowSeconds, PassAttachment,

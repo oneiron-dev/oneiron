@@ -35,10 +35,9 @@ use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
-    AuthorityCheckpointPin, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
-    decode_authority_log_entry_body, side_world,
+    AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
+    AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest, AuthorityHistorySelection,
+    AuthorityRepairOutcome, authority_entry_hash, decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -255,7 +254,7 @@ pub(super) async fn fetch_authority_checkpoint(
         let reply: AuthorityCheckpointReply =
             serde_json::from_value(reply).map_err(|_| refused())?;
         if *total.get_or_insert(reply.total) != reply.total
-            || reply.total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
+            || usize::try_from(reply.total).is_err()
             || (!image.is_empty() && !reply.attestations.is_empty())
         {
             return Err(refused());
@@ -263,10 +262,15 @@ pub(super) async fn fetch_authority_checkpoint(
         let part = base64::engine::general_purpose::STANDARD
             .decode(reply.part)
             .map_err(|_| refused())?;
-        if part.is_empty()
-            || part.len() > AUTHORITY_CHECKPOINT_PART_MAX
-            || (image.len() + part.len()) as u64 > reply.total
-        {
+        let Some(end) = image.len().checked_add(part.len()) else {
+            return Err(refused());
+        };
+        // `reply.total` fits in `usize` (checked above), so the joined length
+        // compares in `usize` with no truncation.
+        let Ok(total) = usize::try_from(reply.total) else {
+            return Err(refused());
+        };
+        if part.is_empty() || part.len() > AUTHORITY_CHECKPOINT_PART_MAX || end > total {
             return Err(refused());
         }
         if image.is_empty() {

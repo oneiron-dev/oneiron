@@ -133,7 +133,7 @@ impl EntityStore for Vault {
     fn port_entity_delete(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
         // The public delete facade still owns publish/receipt/sweep ordering.
         let (existed, vector, graph, neighbors) =
-            crate::batch::deindex_entity(&self.store, txn, id)?;
+            crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(self), txn, id)?;
         crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(
             &self.store,
             txn,

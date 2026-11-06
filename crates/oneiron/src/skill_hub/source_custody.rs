@@ -123,7 +123,7 @@ pub(super) fn validate_registered_source_target(
 /// Called after all put refusals and before commit. Source revisions retire
 /// only the prior hash, never a pending new version or another SKILL holder.
 pub(crate) fn stage_source_custody_put(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -131,6 +131,7 @@ pub(crate) fn stage_source_custody_put(
     previous: Option<&SkillRecord>,
     current: Option<&SkillRecord>,
 ) -> Result<()> {
+    let store = write.store;
     if entity_type == ENTITY_TYPE_ASSET
         && let Some((holder, package)) = decode_source_carrier(bytes)?
     {
@@ -144,7 +145,7 @@ pub(crate) fn stage_source_custody_put(
     if entity_type != ENTITY_TYPE_SKILL {
         for (hash, state) in source_rows(store, txn, id)? {
             if state == CustodyState::Live {
-                retire_revision(store, txn, id, &hash)?;
+                retire_revision(write, txn, id, &hash)?;
             }
         }
     }
@@ -153,18 +154,19 @@ pub(crate) fn stage_source_custody_put(
     {
         super::package_codec::remove_package_sidecar_in_txn(store, txn, id)?;
         if let Some(hash) = previous.content_hash {
-            retire_revision(store, txn, id, &hash)?;
+            retire_revision(write, txn, id, &hash)?;
         }
     }
     Ok(())
 }
 
 fn retire_revision(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     holder: &EntityId,
     hash: &SkillContentHash,
 ) -> Result<()> {
+    let store = write.store;
     let carrier = source_carrier_id(holder, hash)?;
     let seen = BINDING.contains(store, txn, &carrier)?;
     // Do not remove an unrelated row that merely occupies a derived ID.
@@ -186,7 +188,7 @@ fn retire_revision(
         {
             return Err(Error::CorruptedIndex("source custody carrier binding"));
         }
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &carrier)?;
+        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, &carrier)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &carrier, &neighbors)?;
         if graph {
             crate::ppr::increment_graph_version(store, txn)?;
@@ -211,15 +213,16 @@ fn retire_revision(
 /// Source-only denial fact, not a fabricated generic tombstone or delete grant.
 /// Replay calls this even when the holder has never had a local header.
 pub(crate) fn retire_source_holder_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     holder: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     RETIRED.put(store, txn, holder, &())?;
     super::package_codec::remove_package_sidecar_in_txn(store, txn, holder)?;
     for (hash, state) in source_rows(store, txn, holder)? {
         if state == CustodyState::Live {
-            retire_revision(store, txn, holder, &hash)?;
+            retire_revision(write, txn, holder, &hash)?;
         }
     }
     Ok(())
@@ -228,10 +231,11 @@ pub(crate) fn retire_source_holder_in_txn(
 /// Every active-store purge calls this before tearing down its entity row.
 /// Deleting a carrier also deletes the sidecar's duplicate bytes, not its SKILL.
 pub(crate) fn remove_source_custody_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     if let Some(raw) = &raw {
         let header = EntityMetadataHeader::parse(raw)
@@ -252,11 +256,11 @@ pub(crate) fn remove_source_custody_in_txn(
             return Ok(());
         }
         if header.entity_type == ENTITY_TYPE_SKILL {
-            return retire_source_holder_in_txn(store, txn, id);
+            return retire_source_holder_in_txn(write, txn, id);
         }
     }
     if source_custody_exists_in_txn(store, txn, id)? {
-        return retire_source_holder_in_txn(store, txn, id);
+        return retire_source_holder_in_txn(write, txn, id);
     }
     super::package_codec::remove_package_sidecar_in_txn(store, txn, id)
 }

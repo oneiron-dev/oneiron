@@ -16,6 +16,24 @@ oneiron serve --config ~/.config/oneiron/oneiron.toml
 `GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
+### Configure first-run models without stopping the server
+
+With both the embedder and tagger slots still unconfigured, an authenticated owner can call
+`POST /v1/owner/settings/models/setup`. It takes the first-run model answers from
+`ModelSetupAnswers`: embedder provider, endpoint, locality, model and dimensions, and the
+`oneironer` tagger options. `embedder_api_key_env` is an environment variable's name, never the
+key itself. The request and reply schemas are published at `GET /api/openapi.json`.
+
+The route uses the vault the server already opened. It writes the config file the server
+started from, attaches the first model slots and starts their workers, without a vault reopen
+or a terminal prompt. Its reply is `ModelSetupOutcome`: `config` (the file path), `embedder`
+and `tagger`. It does not replace configured slots, reembed existing vectors or rewrite a
+managed server's settings. The native setup checks still apply: changed vault or sizing
+settings return `changed_since_review`, and a server without first-run setup state, a config
+file or the live setup runtime refuses the request. Invalid answers use the normal owner
+error response. The existing `GET` and `POST /v1/owner/settings/models` Responses `store`
+switch is separate and unchanged.
+
 An embedded binding that uses `embedded_serve_config` retains its explicit
 vault path and optional dimensions for first-run model setup on the open
 vault. Setup replays those inputs over the file and environment; dimensions
@@ -123,7 +141,8 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`, and the speech-only `cartesia`,
 `elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+`max_output_tokens`, `output_limit_field`, `chat_path`, `prefill_wire` (both
+optional wire flags, below), `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `embed_shape`
 (`vllm_chat`, the default, `infinity`, `jina` or `cohere`: the shape the
 provider's embedding endpoint speaks; section 10), `capabilities` (`streaming`,
@@ -158,7 +177,71 @@ family neither judge has),
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
+`chat_path` and `prefill_wire` are optional provider fields. The server copies
+only these explicit settings into each configured model's catalog metadata,
+on the ordinary, brokered and managed-settings paths. For example, for an
+endpoint whose named model supports prefix continuation:
+
+```toml
+[models.providers.prefix]
+kind = "openai-compat"
+base_url = "https://api.example.com/beta"
+key_env = "PREFIX_API_KEY"
+chat_path = "unversioned"
+prefill_wire = "prefix"
+model_capabilities = { "prefix-model" = ["streaming", "json_response", "assistant_prefill"] }
+```
+
+When the selected catalog row has `chat_path = "unversioned"` and the adapter
+still uses its default `/v1/chat/completions` path, that row sends
+`POST /chat/completions` instead. With
+`base_url = "https://api.deepseek.com/beta"`, the call goes to
+`/beta/chat/completions`, not `/beta/v1/chat/completions`. An explicit
+non-default endpoint path wins; absent or unknown values leave the configured
+path unchanged.
+
+`prefill_wire = "prefix"` sends `prefix: true` on an open trailing assistant
+message only when that same selected row declares `assistant_prefill` in
+`model_capabilities` or the provider's fallback `capabilities`. An absent or
+unknown flag sends no prefix field. Continue still requires every rung to
+declare `assistant_prefill`. Neither option adds a catalog row, changes a
+model's capabilities, or binds a model by default. For a `key_secret` provider
+using the unversioned path, update the server and credential broker together
+so both recognize the new closed row. Direct calls need no broker.
+
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
+
+A provider row cannot say `on_device`: a server reached over HTTP is
+`own_server`, even on this machine, and that includes every endpoint you run
+and point a provider at yourself. On device is what the server derives for its
+own supervised runtime: a `managed` EXL3 worker this server launches, on Linux
+or macOS, reached over its native channel, which checks each connection
+against the child it supervises before any input goes. Such a worker's models
+get a second offer beside the provider's own: the on-device offer, which sends
+only over that channel and fails the call unsent when it cannot. A call takes
+it only when its route is on device (the vault's model manifest routes the
+role or model `on_device`); every other call keeps the provider's offer,
+native when the worker's socket is up and HTTP otherwise, as before, and stays
+`own_server`. An on-device call never falls back to HTTP, to another rung, or
+to an owner's fallback off the device, and an on-device extraction needs no
+`extraction_egress`.
+
+The on-device offer changes where a call runs, never who pays for it. It
+keeps the provider offer's payer, key custody and rates. A free provider
+(payer `local`, no key) stays free work on device. A paid provider (a
+`key_env` key, or a payer other than `local`) gets the on-device offer too,
+so a vault routed `on_device` can use it: each call is charged to that payer,
+reserves on its run's budget line (and on the vault's allocation for payer
+`host`), and is refused when they refuse it, exactly as its own-server call
+is. A declared run still refuses a `key_env` (T1) offer unless the owner
+allowed that offer. The native channel sends no key; a key the provider holds
+still makes its calls paid. The receipt names the place `on_device`
+(`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
+provider gets no on-device offer: payer `local`, no key, and locality
+`third_party` (the `openai-compat` default). Its calls are paid only because
+of that locality, and on device they would turn free. Set `locality = "own_server"`
+on it to make its calls free work and give it the on-device offer. The
+reranker and a raw `/v1/llm` call keep the provider's own offer.
 
 A `key_secret` names a vault secret instead of a variable: the key stays in
 the vault's custody (T0), and only the credential broker sends it. The broker is
@@ -239,6 +322,18 @@ model settings settle. With none, the existing same-user default stays in place.
 These are engine flags; the supervisor must supply paths reachable by the child.
 They do not add a vault VM broker transport. Plain serve keeps its file-based
 `[models.broker]` configuration.
+
+The supervisor can name the vault's explicit host allocation on managed argv
+with `--host-memory-bytes <bytes>` and `--host-cpu-millis <millis>`. Each flag
+is optional and managed-only; absent is unbounded for that field, and no
+capacity is inferred from the machine. The values are the operator's explicit
+per-vault allocation, carried as `HostLimits` and reported through the managed
+host; they are not an OS quota, they do not route through the embedded memory
+clamp, and they add no capacity refusal. A vault VM's constructor takes no
+allocation from this carrier: its guest limits come from its existing separate
+source, and these flags add no VM transport. An engine from before these flags
+refuses them, so a supervisor passes them only to engines at or after the merge
+that added them.
 
 Some leaves stop the vault at start, by their presence alone (an empty value,
 `false` or the supervisor's own value too), with a typed `SettingsRefused` that
@@ -590,7 +685,7 @@ call whose socket will not open, or that carries audio, goes out over
 `responses_socket = false` to keep a provider on HTTP. Any other origin, a CPA
 route say, holds a socket when its entry sets `responses_socket = true` (a
 59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
-`key_secret` provider stays on HTTP: the credential broker runs no socket yet.
+`key_secret` OpenAI or xAI provider uses the credential broker's per-call Responses socket: the broker upgrades `/v1/responses`, relays the checked create frame and strips every event, and holds no key between calls. The whole turn is bound at admission; a chained turn the provider no longer holds goes whole once on the same socket. Stored-chain resume works as above, with no broker-socket pool. Chat HTTP is the fallback when an upgrade or initial create is not accepted; a 4xx other than 408 or 429 latches that provider to chat until restart. Idle pooling above remains `key_env`-only. Broker Responses sockets use the same WebPKI, platform and configured `extra_roots` trust as HTTPS; private-CA providers can use the Responses socket without falling back to chat for a missing trust anchor.
 
 An `anthropic-compat` provider at `https://api.anthropic.com` sends a
 `/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
@@ -639,6 +734,41 @@ evidence in `usage`"); a call to any other provider keeps its standard
 cached-read count and lists none. A count a backend did not report stays
 absent and its pass is `unknown`, never a hit. The usage ledger records the
 standard cached-read count only; the records ride the receipt.
+
+On the house EXL3 server a chat conversation keeps a native session: the
+canonical history stays computed between turns. Once a reply's successor is
+published, the session also prepares the part of the next turn already known,
+as background work beside it (I1 = C): the answering agent's craft, when
+`prompt_layout` is `stable_history_then_turn_context`, then the state-only
+board, both rendered for that turn's reader. A queued Continue or Retry that
+publishes a successor prepares its requester's next turn the same way. When
+the next turn arrives, the worker compares its own tokens with
+the prepared ones and reuses only their identical beginning; everything after
+the first token that differs, the fresh recall included, is computed as
+before, and a preparation still running stops. `[models.sessions]` holds the
+policy:
+
+```toml
+[models.sessions]
+prepare_tail = true   # the fixed policy, on by default
+planner = "off"       # "learned": skip a conversation's preparation once its tails gave too little
+```
+
+`GET /v1/ai/status` lists `prepared_tails`: prepares started, ready and
+stopped, publishes skipped by reason, forks that attached to a tail or missed
+it, and the tokens computed, reused and wasted.
+
+### Managed native-worker accounting
+
+Device tickets and executor activity for a managed native worker use the actual
+worker instance, not its reusable configured id. Reconfiguring that id onto
+another device never redirects an old instance's ticket or activity to the
+replacement's device. An unknown or replaced binding keeps the existing
+unmediated ticket path; the actual worker's status still updates. A call
+carries its origin worker into its released-body reports, and device capacity
+fills only from the hosted instance's own stats: an old report never fills a
+replacement's capacity. An unknown capacity stays unknown until a valid query
+or the actual instance's report; it is not reported as zero.
 
 ## 3. Let the Dreamer work
 
@@ -826,6 +956,108 @@ manifest the `[models]` ladder is the role's binding.
 `early_system` (the default) or `stable_history_then_turn_context`. It wins
 over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
 
+A chat turn's context board rides in two parts (I1 = C): its state part
+(worlds, tasks, loaded skills, room, inbox and the changed line) right
+before the user's message, and its query part (the memories and the skills
+that message found) right after it. Both come from one read, under one
+board budget. A queued Continue or Retry reads its board the same way.
+`turn_opener` under `[models.chat]` closes every chat call and every queued
+Continue or Retry: `clock` (the default) adds `<turn now="…"/>`, the vault
+clock's instant in UTC, after the query part, or right after the user's
+message when the board is held or not read; `off` adds nothing. A Retry that
+reuses its reply's kept prefix sends today's opener in place of the captured
+one; a Continue keeps the opener its saved reply followed. `POST
+/v1/core/context-board` and `ai.reply` still render the one frame.
+
+A session that an event started ends with the wake variant instead:
+`<turn now="…" wake="…" response="optional"/>`, where `wake` is `inbox`,
+`review`, `task`, `room` or `channel`. The cause comes from the dispatch,
+never from a briefing or a sender's words.
+
+- A resident's inbox, diary-review, room and TASK wakes, and an agent run
+  that realizes a TASK, put it after the executor's turn instruction, on the
+  run's opening request only. A later step, a resumed wait, a continued run
+  and a spawn without a TASK carry none. The task text never holds the time.
+- A Slack or LINE reply puts `wake="channel"` after the event's briefing.
+  An empty answer still sends nothing.
+- A saved-workflow leaf whose attempt realizes a TASK ends its request with
+  `wake="task"`, after its confession ask, and states the protocol beside
+  its instructions. A leaf with no TASK and the planner's calls carry none.
+- A STREAM wake batch carries it as `opener`, beside `wakes` and `frames`.
+  It is rendered when the batch is handed over (`oneiron/wakes`, the helper
+  or boot batch, `wake inbox`, `self.focus.wakes`) and never stored with a
+  notice. A batch that names a TASK is `task`; else one that names a room
+  turn is `room`; one of reviews only is `review`. A tmux pane is still
+  typed ids only.
+
+The executor's system prompt and the MCP setup instructions state the
+protocol once: read the live state first; to answer in a room, take the
+eligible claim first (`rooms.claim`, or the turn an accepted offer binds);
+`HeldBy` or `NotAddressed` means no ordinary room reply; no room output is
+a valid completion. `turn_opener` sets chat turns only; the wake variant
+has no switch.
+
+A room turn wakes the agents it calls on (`wake="room"`). When a turn in a
+project room commits, each agent it addresses and each agent holding an
+open TASK on its thread gets one wake. The speaker never wakes itself, and
+an agent with no live standing in the room, or off a private thread's
+audience, gets none. The witness stages each wake in its own write, as a
+`rooms.wake.v1` queue row that names the room, the turn and the agent; no
+model runs and no agent is dispatched in that write. After the commit, the
+agent's runner takes the wake and reads it live again: the agent still
+stands there, and nobody holds the turn's claim yet.
+
+- A settled resident is dispatched under its wake mode: `all_addressed` on
+  every such turn, `human_messages` only on one a PERSON spoke, `manual`
+  never. Its briefing names the room and the turn by ref and copies none of
+  the turn. The resident reads the room with its own reads, so an agent
+  admitted from now on reads no earlier history.
+- Any other agent gets a STREAM wake on each of its connections that
+  subscribes to `room_turns` (in the default lane, and in a narrowed
+  credential's ceiling). The envelope carries `room_ref` and `turn_ref`,
+  its id is `room-wake:<turn>:<agent>`, and delivery reads it live again.
+  A wake whose agent has no connection waits until one attaches. A tmux
+  pane is typed `room:<room>:<turn>`.
+
+A wake is the frame, never the claim: ROOM shows who holds the turn, and
+the agent claims before it speaks. Turns in an off-record stretch land in
+its overlay and wake no one.
+
+### What the status route says about the vault's sessions
+
+`GET /v1/ai/status` lists, under `models.session_allocations` (FIX10370),
+one row per device worker that holds this vault's sessions: the device, the
+worker, how many sessions stand, how many the worker has reported, and the
+summed reported bytes. A row's bytes stay null until every session on it is
+both reported and measured; an unreported session is counted, never zeroed
+in. The rows name no handle, binding, epoch or conversation, cover only the
+vault the server has mounted, and are non-additive facts: they neither
+alter the worker's own row nor any quota or admission, and a row's bytes
+mix device pages with host snapshots.
+
+### Failure healers for agent runs
+
+Served resident, TASK-backed and tree agent runs keep their human-only failure
+policy unless the operator selects a healer in the config file or settings file:
+
+```toml
+[self_heal]
+agent_failure_healer = "Coach"
+```
+
+This routes eligible failure cases to the existing Coach heal queue. Configure
+its models and wording separately. The native `AgentDef` slot is also accepted:
+`agent_failure_healer = { AgentDef = { agent_def_ref = "<hex EntityId>" } }`.
+The referenced live definition still passes the existing dispatchability and
+propose-only ceiling checks. `"Reserved"` explicitly restores human-only routing,
+including over a lower config layer that selected a healer. With no setting,
+the previous Human/Reserved policy remains unchanged.
+
+The choice does not change retry limits, evidence, checkpoint or Q&A references,
+provider-outage and payer parks, read authority, or proposal approval. It creates
+no Q&A messages and applies no repair. Saved workflow steps keep their existing
+human-only failure policy; this setting does not route those steps to a healer.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -848,12 +1080,18 @@ off.
 
 ## 6. Code mode (MCP `execute_code`)
 
-`execute_code` runs a task as generated JavaScript: each step's program comes
-from the `generative_reasoner` seat and runs in the checked-in QuickJS
-component, calling the vault through each verb at its SDK path
-(`vault.recall(...)`, `self.focus.refresh(...)`) under the
-connector's own grants. It is listed on `tools/list` only when the seat has a
-rung and a prompt package for the executor is named:
+`execute_code` runs a task as generated TypeScript or JavaScript: each step's
+program comes from the `generative_reasoner` seat and runs in the checked-in
+QuickJS component, calling the vault through each verb at its SDK path
+(`vault.recall(...)`, `self.focus.refresh(...)`) under the connector's own grants.
+JavaScript that parses in the guest's async body runs byte for byte. TypeScript
+is lowered by Oxc; declarations that need script-level grammar can be prepared
+before the guest envelope, with their original source positions retained.
+This adds no module loader. An unsuccessful preparation still leaves the
+original program for QuickJS to report, with its preparation note.
+
+It is listed on `tools/list` only when the seat has a rung and a prompt package
+for the executor is named:
 
 ```toml
 [models.code_mode]
@@ -1142,6 +1380,28 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+A fold can also take one kind of content over a span:
+`self.fold({kind: "repl_output", before: "t40", note?})` (or `from` and
+`through`; with no bound it reaches the current step). Each step in the span
+keeps its program, and with it its speech calls; its console shows one stub
+in place of the output: `⟨f3 · repl_output folded⟩`, the output's read
+handle, a read handle to each stored result the output names, and the ids it
+names. The engine writes these stubs from the steps' outputs, with no model
+call. A kind mark lands in the same batch as every other mark, and a batch of
+kind marks alone lands at once. A folded output is never read into the
+request, so it no longer counts against the window. `self.unfold({fold})`
+appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
+fold may lie over a whole-step fold; that fold still hides its steps.
+
+`self.fold({kind: "program", ...})` folds the other half: each step keeps its
+console, and its exec frame shows comment lines in place of the program:
+`// ⟨f4 · program folded⟩ self.unfold({fold: "f4"}) brings it back`, then one
+line per speech call the step made (`// self.speak: "..."`, `self.think`,
+`self.express`, with the text it dispatched) and the ids the program names.
+Each step checkpoint keeps the range of bridge calls its step made
+(`bridge_calls`), which is how the stub finds them. Unfold appends the raw
+programs, labelled `unfolded program from tA–tB`.
+
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
 where it was found and whether a reveal would deliver at once, ask the owner
@@ -1163,6 +1423,27 @@ only grant is the secret's binding for the operation's effector (such as
 secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
+
+A served host also supplies `native_mail.jmap` against its installed native
+mail server and `broker.models` against a configured broker-backed
+OpenAI-compatible, Anthropic-compatible or Gemini provider. The latter takes
+`arguments: {"provider": "<configured provider name>"}` and returns one actual
+provider JSON response: `/v1/models` for OpenAI-compatible and Anthropic-compatible
+providers or `/v1beta/models` for Gemini. Any provider pagination token is returned
+as-is; this operation does not fetch later pages or claim a complete catalog.
+Anthropic requests carry the same native `anthropic-version` as brokered chat,
+which takes precedence over configured extra headers. It presents the requested
+handle, not the provider's configured secret, under the existing `broker:model`
+binding.
+The host uses one actual model rung only as the broker's bodyless-request
+binding; it does not filter the listing or claim that model is serving.
+The broker is connected before custody releases the value. Both result and
+failure text are cleared inside the same credential door. The handle's
+record, a run-bound record and an operation grant use their existing doors,
+and the receipt names the generation actually presented. A refused broker
+request or a lost channel does not claim a confirmed presentation. No paid
+inference or media request is made by this operation. The host and broker
+must be rebuilt together; no new configuration setting is required.
 
 On a server, `self.use` also takes `connector.call`: one connector call with
 the secret as the call's credential, in place of the connector's own. Its
@@ -1695,8 +1976,12 @@ and the broker checks it against the exchange's own shape before the key is
 read at the custody door. That covers an image (JSON, or a form with
 references), an edit, speech, a transcription, an embedding, a video's start,
 poll, clip and removal, and the Gemini API's generate, job start, operation
-poll and file. An embedding among them goes in the provider's `embed_shape`,
+poll and file. A `key_secret` `cartesia` or `elevenlabs` provider's speech
+rung sends the same exchange its direct rung sends: the same headers, voice,
+24 kHz PCM16 ask and characters charge, through the broker's speech shape for
+that wire. An embedding among them goes in the provider's `embed_shape`,
 whichever of the four shapes it names. The broker adds the key: Bearer on the OpenAI-compatible paths,
+`x-api-key` on Cartesia's speech path, `xi-api-key` on ElevenLabs', and
 `x-goog-api-key` on the Gemini API's. A JSON or form request is at most
 16 MiB. Speech, a video clip and a Gemini file stream back in 1 MiB frames,
 up to 512 MiB, and are checked for the key, never rewritten: a reply that
@@ -1840,7 +2125,11 @@ OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
 with its key in `x-api-key` and a `Cartesia-Version` header (`2026-08-14`
 unless `headers` names one). An `elevenlabs` provider speaks ElevenLabs'
 `POST /v1/text-to-speech/{voice}` with its key in `xi-api-key`. Either one
-serves the speech seat only, never a role or another media seat. Each call
+serves the speech seat only, never a role or another media seat. Either one
+may name its key with `key_secret` instead of `key_env`: its speech rung
+then sends the same exchange through the credential broker (§2), the key
+read at the custody door. Clone, verification and delete calls stay on the
+direct wire and need `key_env`. Each call
 names a voice, typed or as the `voice` param (these wires have no default
 voice), is asked for raw 24 kHz PCM16, comes back as a WAV, and is charged
 its characters. Name the providers `cartesia` and `elevenlabs_flash` to
@@ -2729,9 +3018,15 @@ and nothing waits on the answer. Without the row, no topic is asked and every
 import stays private.
 
 The System One seat takes noul and choice questions. Each is one call,
-admitted and settled on its meter. It never runs on a relay vault. The
-escalation read is metered on `models.raw_budget_units`. A model rung blocks
-on the server's runtime, so a caller runs a ladder call on a blocking thread.
+admitted and settled through its paid connector. A call with a caller's run
+uses that run. Otherwise the seat opens a run with the server's model account
+and receipt sink, on its own meter outside a verdict or the caller's line
+and bound room payer inside one. The connector still uses the configured
+customer key and its existing token units; the run's receipts retain the
+payer and evidence. Failed or cancelled calls keep their reservation as
+spend. It never runs on a relay vault. The escalation read is metered on
+`models.raw_budget_units`. A model rung blocks on the server's runtime, so a
+caller runs a ladder call on a blocking thread.
 
 An omitted `models.decisions.system_one.budget_units` takes `models.raw_budget_units`. An omitted `models.decisions.big.budget_units` takes `models.raw_budget_units` too. Each is uncapped when the raw meter is. The Local-vision seat spends on `models.raw_budget_units` too, so it is uncapped when the raw meter is.
 
@@ -3352,3 +3647,360 @@ one, or one that names another run, request or model fails the run
 (`connector_failed`). `Returned` is where a question run stops for now: no
 evaluator scores it and no loader serves its head, so it holds with
 `training.no_evaluator`, and a question head never binds a role.
+
+## 16. The vault's own drafter (`coach.drafter_retrain`)
+
+Each vault retrains its own small draft model at night on its own
+conversations, rooms with other people included. The drafter never leaves the
+vault. Retraining is on by default and the owner can switch it off. Today the
+engine holds the records, the doors, the erase path, the corpus export, the
+nightly job, the trainer and its job interface, the serving binding, and the
+evaluator with automatic activation and rollback. No recipe ships, so nothing
+trains until the owner sets one.
+
+What exists now:
+
+- **Records.** `DrafterVersion` is one attempted or trained head and its run:
+  its target, its parent (stock or the last kept version), its recipe, the
+  pinned policy revision and cutoff, its dependency set, its job, its state,
+  its generation, its corpus manifest and a reference to its sealed artifact.
+  `DrafterBinding` is
+  one target's pointer: stock or a retained version, with a generation and
+  the head it replaced. A target with no binding serves stock. `DrafterEvent`
+  is the content-free history: retrain, qualify, activate, rollback, revert,
+  erase and policy events. `DrafterPolicy` holds the switch, the excluded
+  worlds and the recipe as data: its trainer family (`id`), its revision, its
+  settings, the GPU seconds a night may take (`gpu_seconds`) and the GPU memory
+  it declares (`device_memory_mib`). The engine supplies no learning rate,
+  epoch count or other training number, and ships no recipe.
+- **Doors.** The owner calls `vault.drafters.list`, `vault.drafters.status`,
+  `vault.drafters.policy.set` (at the revision the owner read) and
+  `vault.drafters.revert` (a version and the binding generation the owner
+  read). An agent calls `vault.drafters.list_as` and `vault.drafters.revert_as`
+  under its own live Grant that lists `drafter_read` or `drafter_revert`. A
+  revert needs a qualified version whose artifact key is still live, the
+  policy on, no excluded world in the version's ancestry, the same target
+  pins and an unchanged binding generation. An erased version is never
+  reverted to.
+- **Policy.** Off stops new nightly work and returns every binding to stock.
+  The versions stay retained. A newly excluded world returns to stock every
+  binding whose version trained on that world. While the world stays
+  excluded, such a version is not reverted to.
+- **Erase.** An erase of a record, a world or an actor reaches every version
+  whose training ancestry names it, at both delete doors and at an actor's
+  erase, in the erase's own transaction. Each reached version becomes
+  `erased`, its generation bumps (this fences its pending job), every binding
+  that served it returns to stock, and the retirement of its artifact keys and
+  its corpus keys is staged. The custody finisher retires those keys at
+  housekeeping. The corpus sweep removes the sealed corpus files. A late
+  trainer completion rechecks the version's generation when it publishes, and
+  is refused. The same erase drops every training example whose dependency
+  set names the record, and stages the retirement of each example's key.
+- **Sealed artifacts.** Each version's load set is sealed under an erasable
+  key of its own (purpose `DrafterArtifact`). The version record names the key
+  by its random ref, never by its bytes. `Vault::begin_drafter_artifact` mints
+  the key while the version is training. `DrafterSealing::seal_chunk` seals
+  each piece of a file. `Vault::publish_drafter_artifact` publishes the
+  reference after it checks the version again. Retained versions are never
+  evicted.
+- **Traffic.** The drafter trains on the vault's whole chat traffic. Every
+  answered reply is one training example: a live chat turn's and a queued
+  Continue's or Retry's, of any agent, whether or not the context board rode.
+  The host hands the reply over once it is saved whole and its outcome is
+  handed on (`Vault::keep_drafter_example`). The example is a record apart
+  from the self agent's chat breakpoint, which stays the reuse seed and keeps
+  its own rules. It holds the request exactly as the answering rung sent it
+  (the rung's prompt first, the board included when it rode) and the span the
+  reply generated: its reasoning, tool calls and text, in the parts the
+  request uses. The request and the span are one body. The side-row wall
+  masks it first, as it masks an authored row: a secret the call carried is
+  kept as its custody handle, never its value, and dropping the example
+  revokes the custody it minted. The body is then sealed under an erasable
+  key of the example's own (purpose `DrafterArtifact`). A reused prefix that
+  fell back keeps today's call, read from today's rows. No example
+  is kept for a reply that failed or is not saved whole, a turn that keeps no
+  model-call record (it keeps
+  no durable record or runs off the record), a call whose rows are not known
+  whole, or a rung that is not this host's drafter target. The engine keeps
+  none while the policy is off, in a room with an open off-record stretch, or
+  when a record is erased, a Tier-A withhold, of no known world or author, or
+  in an excluded world (`drafter.example.*` and `drafter.corpus.*` reasons,
+  logged). The newest `DRAFTER_EXAMPLES_KEPT` (2048) examples are kept; the
+  corpus sweep drops older ones and retires their keys.
+- **Corpus.** The export reads the training examples. Each corpus line
+  (`oneiron.drafter.chat_traffic.v1`) is the request as the rung sent it,
+  the generated span (`generated`), its finish reason and the rung's wire
+  model. The export never re-renders a prompt. Rooms with other people are
+  included, with no per-run consent tick.
+- **Exclusions.** The export leaves an example out, and counts it under its
+  reason code (`drafter.corpus.*`), when: its rung's wire model is not the
+  target's `model`; its body no longer opens; the request holds a part that
+  is not text, or ends after the user's message (a Continue whose rung
+  prefills); the reply generated no text, reasoning or tool call; its room
+  has an open off-record stretch; or a record that the example read is
+  erased, a Tier-A withhold (a live session overlay row is one), has no known
+  world or author, or is in an excluded world. Quoted records, each
+  message's TURN and summary folds count as records that the example read.
+- **Dependency set.** Each example names every record it read (the turn's
+  sources: the agent's definition, its craft, its log, the board's rows when
+  the board rode, the requester's message), its reply MESSAGE, TURN and
+  conversation, with the world and author of each, the quoted and folded
+  records, its agent and its requester. An index row per named id lets an
+  erase of any of them drop the example. The export walks every record again
+  and adds the set the example kept. The version's set is the union of all
+  examples on both sides and the full ancestry of its parent, so the same
+  erase reaches the version. The night writes the version only after it
+  checks again, in its own write, that every record is still live.
+- **Split.** Each request digest is one source family, so a Retry of the same
+  request stays on one side. The export holds out a family together with
+  every family whose examples contain one of its replies, so no training
+  example holds bytes of a held-out reply. Families that the fewest other
+  examples contain go first, so each conversation's latest replies are held
+  out first, until one example in `HELD_OUT_DIVISOR` (10) is held out. A
+  training example whose generated span is byte-identical to a held-out span
+  is left out. The trainer gets the training side only.
+- **Custody.** Plaintext stays in the night's process memory. The two sides
+  are sealed in 1 MiB chunks, each side under its own erasable key, minted
+  under the version. The sealed files are in `drafter-corpora/<version>/`
+  under the vault root. `Vault::drafter_training_corpus` opens the training
+  side for the trainer host. `Vault::drafter_held_out_corpus` opens the
+  held-out side for the evaluator. `Vault::sweep_drafter_corpora` drops the
+  training examples past the bound, then removes every directory that no
+  prepared, training or returned version names.
+- **Nightly job.** `coach.drafter_retrain` is on the Coach's nightly host
+  roster, with one pending job per vault. Each night pins the policy revision
+  and the cutoff and records one retrain event. With the policy off, the
+  night is `skipped` (`policy_off`). With the policy on, a recipe that a
+  drafter trainer connector of this host lists, a target that the host names
+  and no version of that target training, the night exports the corpus. In one
+  write it then checks the policy again, marks the target's earlier `prepared`
+  version `rejected` (its corpus keys retire), and writes a new version in
+  state `prepared` with the corpus manifest (counts, digests, split pin,
+  left-out counts by reason) and the dependency set. The host then trains it
+  (below) and parks the night, so the night's root stays open while the GPU
+  works. Once the job ends, the night records `trained` (naming the version)
+  or `failed` (with the job's reason: `refused`, `trainer_failed`,
+  `receipt_unverified`, `seal_failed`, `over_budget`, `lost`, `cancelled` or
+  `erased`). A night that trains nothing is `held` with its reason:
+  `no_trainer_recipe` (no recipe, or no connector here lists its family),
+  `no_drafter_target`, `training_in_progress`, `policy_moved`,
+  `empty_corpus`, `corpus_missing` or `no_admission`. A night never reports a
+  successful empty retrain. The same attempt again returns the outcome it
+  recorded.
+- **Trainer connectors.** `[models.training.drafters.<name>]` names a
+  drafter trainer on this host. There is none by default.
+
+  ```toml
+  [models.training.drafters.house-gpu]
+  python = "/opt/oneiron/drafter-venv/bin/python"     # the pinned interpreter
+  worker = "/opt/oneiron/checkout/scripts/drafter/worker.py"
+  jobs_root = "/var/lib/oneiron/drafter-jobs"         # private job directories
+  revision = "<commit of that checkout>"              # immutable, never a branch
+  unit_cost = 1                                       # per GPU wall second, in cost_unit
+  cost_unit = "gpu_wall_second"
+  service_unit = "gpu_wall_second"                    # the only unit the worker reports
+  recipes = ["drafter.dflash.exl3.v1"]                # the families its worker trains
+  stock_drafter = "/var/lib/oneiron-house/models/<trainable stock drafter, HF layout>"
+  tap_model = "/var/lib/oneiron-house/models/<target checkpoint, HF layout>"
+  served_target = "/var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw"
+  converter = "/opt/exllamav3/convert.py"             # the serving-format converter
+  ```
+
+  Every path is absolute. The connector is keyless, local to this host and
+  paid by no one per call (route `drafter-trainer-worker` at `host`). Its name
+  must differ from every `[models.training.connectors]` name. The worker
+  needs: a CUDA GPU on this host, the interpreter of
+  `scripts/drafter/requirements.txt` with exllamav3 in it (the converter runs
+  with it), the trainable stock drafter (its HF `config.json` and
+  safetensors), a target checkpoint for the taps, and the served target's
+  directory, whose tokenizer digest must be the drafter target's tokenizer
+  pin. `scripts/drafter/README.md` is the job and receipt contract.
+- **Recipe.** The recipe is the owner's data, set with
+  `vault.drafters.policy.set`. The one trainer family is
+  `drafter.dflash.exl3.v1`: the DFlash drafter for an EXL3 target, from its
+  parent (stock, or the last kept version), with the target's embedding table
+  and lm_head frozen and anchors only inside generated spans. Every setting
+  is required (`seed`, `learning_rate`, `epochs`, `anchors_per_step`,
+  `anchors_per_window`, `slot_weight_decay`, `warmup_fraction`, `adam_betas`,
+  `weight_decay`, `grad_clip`, `context_window`, `tap_max_gpu_mib`,
+  `export_args`); none has a default.
+- **Training.** The host builds the run admission from the recipe's quote
+  (`gpu_seconds` at the connector's unit cost) and admits that many units; a
+  refusal holds the night (`no_admission`). It moves the version to
+  `training` before anything is sent, then runs the job on its own thread:
+  the job queues on the device work line of the target's managed EXL3 worker
+  as background work of `device_memory_mib`, so serving calls go first and an
+  idle worker may be unloaded to make room. It stages
+  `jobs_root/<version hex>-<spec hex>/` (mode 0700) with the training side of
+  the corpus (never a held-out example), a continued version's trainable
+  files and `request.json`, and runs
+  `<python> -I <worker> --request <job>/request.json --output <job>/output`
+  with no shell, in a process group of its own. The host stops the group on
+  an erase, on the off switch, on a new recipe, and once it has run
+  `gpu_seconds`. On a receipt that verifies (its echoes, the request it
+  echoes, every load-set file rehashed) it seals each file under the
+  version's own key and publishes the load set: the version is `returned`.
+  An erase during training refuses the publication and retires its key.
+  Otherwise the version is `rejected` with the job's reason and every key it
+  holds retires. The units used are settled once, and the job directory, the
+  only place the training side is plaintext, is removed.
+- **Recovery.** Each Coach round first reads every version a restart left
+  `training`. Its receipt completes it; a worker still holding its lock runs
+  on (and is stopped when its version may no longer train); a job with
+  neither is `lost`. No job is sent twice. A night parked on a job that
+  ended is resumed, so its next run records how it ended. Job directories
+  whose version no longer trains are removed.
+- **What the trainer never does.** It never reads held-out data, picks no
+  held-out sample, sets no active pointer, leaves this host, downloads a
+  model or runs remote code.
+- **Sealed files.** A version's sealed files sit under the vault's
+  `drafter-artifacts/<artifact id>/`, one per load-set file, each a run of
+  frames (`u32` length, then one sealed chunk of 64 KiB, the last chunk
+  shorter). `DrafterSealing::seal_file` writes one. A file name is one plain
+  name: letters, digits, `.`, `_` and `-`.
+- **Serving.** The server serves each target's binding (stock, or a retained
+  version at a binding generation) on its own managed EXL3 worker. It does
+  this by a supervised restart; there is no hot swap. For a version, the
+  server opens the sealed load set through the version's own key into a fresh
+  private directory, `drafter-serving/<load set digest>-<random>/` under the
+  vault (mode 0700). It checks every file's length and BLAKE3. Then the
+  worker's row gets a new supervisor that loads that directory as its draft
+  (`--draft-dir`). That launch checks every file again, refuses any extra
+  file, and checks that the version's target model and tokenizer are the
+  worker's. The old worker drains and stops first. The server records the
+  change (a `served` event) only when the new worker answers with the
+  expected draft identity. The same write checks the binding generation, the
+  policy and the erase state again, so a revert or an erase that lands
+  meanwhile wins. A load set that does not verify, or a worker that does not
+  qualify with it, puts stock back until the binding moves again. The global
+  house config, the shared model install, its cache and the stock weights are
+  never changed.
+- **Where it applies.** Only a server process that launches the managed
+  worker for its own one vault (plain or embedded `serve`) applies a binding.
+  A managed per-vault process calls a worker that another process launched
+  for every vault, so there the status says `unsupported_shared_worker`. An
+  external worker is the operator's: `unsupported_external_worker`. A
+  llama.cpp worker: `unsupported_runtime`. When a second vault is served in
+  the same process, every private draft goes back to stock.
+- **Draft identity.** Every EXL3 launch manifest names its draft
+  (`draft_weights_digest`): `load-set-blake3:<hex>` for a vault's own
+  version, `manifest-sha256:<install record>` for the stock draft. Every
+  answer's identity echoes it, so each call's `CacheIdentity` names the draft
+  that ran. The worker probe fails a worker that answers with another draft.
+  A new worker is a new epoch, so its sessions start fresh. Kept snapshots
+  hold no draft state, so they stay usable.
+- **Triggers.** A revert, a policy set and an erase tell the server after
+  their commit; so does an unlock. A vault lock puts stock back and removes
+  the plaintext directories before the vault key drops. A pass also removes
+  every directory whose version may no longer serve. Start-up removes every
+  leftover directory, and the first pass runs once each managed EXL3 worker
+  has launched. A missed notice is caught at the next one or at the next
+  start-up.
+- **Status.** `vault.drafters.status` has `served`: one row per bound
+  target, with what serves now (stock or a version), the binding generation,
+  the draft identity, the worker and its epoch, whether a restart is under
+  way, and the reason when the binding is not applied. A drafter target names
+  the worker's backend model digest, its tokenizer digest and `exl3`. The
+  nightly retrain exports its corpus for the first managed EXL3 worker this
+  process launches with a draft, by that target.
+- **Morning report.** A regular proactivity digest carries a drafter line
+  (group `coach.drafter`, view `vault.drafters.status`) with every drafter
+  event no digest carried yet, read from the event history, not from the
+  bindings that stand now. A version activated and rolled back overnight is
+  still reported. Qualifications, activations, rollbacks, reverts and erases
+  are items of their own, and each one makes a digest due. Nights that
+  trained nothing are counted by outcome and reason (`held:no_trainer_recipe`,
+  `skipped:policy_off`) and ride a digest that is due anyway. The owner's own
+  policy changes are not reported back.
+- **Evaluation rule.** The recipe names the rule under
+  `settings.qualification`. The engine supplies none of its numbers. The
+  rule has four parts, and each one is required:
+  - `logit_epsilon`: the largest gap between the target's top two raw logits
+    at which a divergence is an allowed tie (finite, 0 or more);
+  - `sample`: `min_cases` (1 or more) and `min_output_tokens`, the fewest
+    cases every arm answered and the fewest tokens the target alone made
+    over them;
+  - `schedule`: `warmup_cases` (answered unmeasured on each incarnation),
+    `blocks` (the drafted arms in order, `incumbent` and `candidate`, each at
+    least once; for example `["incumbent", "candidate", "candidate",
+    "incumbent"]`) and `observation_cases` (1 or more, replayed after an
+    activation);
+  - `slowdown`: `metrics` (`native_decode_rate`, `time_to_first_token`,
+    `end_to_end`; the first one must improve, each one at most once) and
+    `statistic` (`pooled`, or `median_paired_ratio` over the cases).
+  With no rule, or a rule that does not read or hold together, the
+  evaluation is `unknown` and nothing activates.
+- **Evaluation.** A version that a trainer returned (state `returned`) is
+  evaluated when the nightly retrain next runs. The held-out side is read
+  before that night's corpus work. The server rebuilds each held-out case as
+  the request its rung sent (the provider's body, output cap and response
+  format), asks it solo, and pins a seed where the request names none. It
+  replays the cases on evaluator incarnations of the vault's own serving
+  row. Each incarnation is a managed launch of the same row with one arm's
+  draft: the incumbent (stock or the version that serves), the candidate, or
+  no draft (the target alone). Each runs on the same target, quant, runtime,
+  template, settings and draft depth. An evaluator incarnation is never a
+  hosted row, so no route and no other vault reaches it. It has its own row
+  id (`<row>-drafter-eval`), its own loopback port and its own socket, and
+  device admission treats it as any managed worker. Each block of the
+  schedule is one incarnation; the target alone runs last. Each incarnation
+  answers its warm-up cases, then every case once, by the worker's
+  evaluator op `eval.generate` (`deploy/house-model/exl3_evaluator.py`). The
+  op returns the exact token ids of every pass (reasoning, tool calls,
+  answer and terminators) and the call's receipt. On the target alone it
+  also returns each position's top two raw logits. No serving path calls
+  the op.
+- **Token identity.** Each case's candidate output is compared, token by
+  token, with the target alone's. At a divergence, the two tokens must be
+  the target alone's top two on the shared prefix, within `logit_epsilon`.
+  The evaluator records that tie (case, pass, position and the two logits,
+  never the tokens). Then the target alone runs again, forced to the
+  candidate's prefix through that token, and the continuation is compared
+  under that actual prefix. The evaluator follows at most 8 ties per case.
+  Any other divergence fails the version (`rejected`, `output_mismatch`).
+  Every candidate block must give the same ids. A divergence with no logit
+  evidence, more ties than are followed, a case that one arm answered and
+  another did not, a mismatched target, tokenizer, runtime or template, or a
+  draft that is not the one given leaves the evaluation `unknown`.
+- **Evaluation record.** `DrafterEvaluation` keeps the incumbent,
+  candidate and target-only identities (draft digest, model, tokenizer,
+  runtime, template, epoch and launch manifest), the corpus pin and the
+  cases opened, each run's raw token counts, native prefill and generate
+  time, queue waits, first-token time, end-to-end time and drafts proposed
+  and accepted, the exact, tied and mismatched case counts with the tie
+  evidence, each metric's comparison, the error counts, the policy and
+  recipe revision, and the decision. It holds a BLAKE3 of each run's token
+  ids, never the ids. The engine decides from this evidence, never from the
+  trainer. A qualified version is `qualified`; an unknown one stays
+  `returned` and is evaluated again on a later night. A `qualify` event
+  records the outcome. An erase of a version drops every evaluation that
+  names it.
+- **Activation.** A version that qualified and beat the incumbent under the
+  rule, with no metric worse, goes into service on its own. In one write the
+  engine checks again that the version is qualified and keeps its key, that
+  no ancestor is erased, that the policy is on at the same revision with no
+  excluded world in the ancestry, and that the binding is at the generation
+  the evaluation read. Then it moves the binding by compare-and-swap (an
+  `activate` event), and the serving host restarts the worker with the
+  version. A revert, an erase or a policy set that landed meanwhile wins.
+- **Rollback.** Once the serving worker proves the version's draft
+  identity, the server replays the first `observation_cases` cases on it as
+  background work. Each answer must be the qualified output, and their speed
+  is compared with the incumbent's evaluation runs under the same rule. Any
+  slowdown, any other output, any error, an unmeasured metric, or a worker
+  that does not serve the version within 30 minutes rolls the binding back
+  to its previous clean head (stock where there is none), with a `rollback`
+  event and its reason. There is no tolerated regression. Traffic is never
+  read as a speed comparison. The observation stays on the evaluation, and
+  the morning report shows the rollback. After a rollback no candidate
+  activates for that target until the owner sets the policy or someone
+  reverts the target.
+- **Plaintext.** Each head an evaluator incarnation loads is opened into
+  `drafter-evaluation/<random>/` under the vault (mode 0700). The server
+  removes that directory when an evaluation starts and ends. A vault lock
+  retires the evaluator incarnations and removes it before the key drops.
+
+What does not exist yet: a shipped recipe qualified on the house target (the
+recipe carries every training and qualification number, and none has a
+default), a binding for managed workers that one hosted process serves to
+several vaults (FIX 15258), and the corpus sweep at housekeeping (FIX 15259).

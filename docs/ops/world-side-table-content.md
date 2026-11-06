@@ -53,16 +53,50 @@ Base reality has no world key. A consumer's explicit native base case stays
 separate; this API does not mint a base key or require base content to take a
 private-world path. This is not a legacy reader or a migration.
 
-## Integration still required
+## Voice recognition integration
 
-FIX10786 is the supplier slice of FIX10215. Voice centroid/sample encoding,
-actual enrolment and matching integration remain in the voice lane. Their
-associated data must bind the actual row family/key, world, subject, complete
-space/dimension, fresh enrolment generation, enrolled purpose set and consent
-event; sample rows must also bind the actual sample id. Base behavior and all
-existing consent-withdrawal, expiry, prune and subject/relationship deletion
-paths must survive that integration. Publishing these helpers alone does not
-seal any existing consumer or complete FIX10215.
+Voice enrolment seals a private world's centroid and each complete sample
+payload under the current counted world key selected in the same writer as
+its source-world resolution and consent admission. Base reality is an explicit
+unsealed variant. A non-base world with `EffectiveRead::Everywhere` uses a separate
+unsealed variant that retains its actual world id. Neither needs a working machine
+key or counted world key. The material writer rechecks the native Everywhere
+predicate in that same transaction before accepting an unsealed world payload.
+Private worlds still require their actual current counted key for enrollment.
+The device secret is read before the transaction, never loaded inside the writer.
 
-No new external surface, configuration, storage table, recovery power, policy
-limit, migration or deploy action is introduced by the supplier alone.
+Stored print rows separate vector-free metadata from their material. Matching
+checks the existing space, expiry, purpose, consent, subject and machine-world
+admission before opening a centroid. A world's native key-destruction fact excludes
+its prints in that same snapshot and again in the roster writer; a surviving
+metadata row cannot abort matching other worlds' valid prints. Missing WORLD rows
+or unexpected key/open/storage errors are not treated as destruction. Each open uses its stored exact retained
+world key id in that snapshot, not a current-key retry. Key requirements follow
+the stored material, not the presence of a world id: public unsealed rows need no
+key, while a sealed row widened later still opens its exact retained key.
+Privacy edits do not rewrite old rows. An already-public row remains decodable
+when the world narrows; existing current machine-world admission still runs before
+its material is read. No new migration, refusal or current-key gate is added. The actual native row
+key is checked against its subject and active space before it supplies a
+binding. The public admitted print record still carries its vector; the
+node-local stored row has a new required layout with no old-format reader.
+
+Associated data binds the native row family and key, world, subject, complete
+embedding space and dimension, fresh print generation, enrolled purposes,
+consent event, contact and relationship, legal evidence, sample membership and
+languages, calibration and creation time. A sample also binds its actual
+sample id. Only `updated_at` and `delete_after` remain native lifecycle fields
+outside that immutable-material binding: ending a relationship must not need
+to decrypt or reseal recognition bytes, including after world-key destruction.
+
+Withdrawal, expiry pruning and subject/contact erasure read vector-free
+metadata and remove the same exact print/sample rows and active pointer without
+opening a vector or needing a surviving key. The existing retention wake,
+consent replay and render-reference lifetimes are unchanged. Sealed payloads
+are never substituted for base data, and neither path falls back to another
+world or generation when an open fails.
+
+No external surface, configuration, storage table, recovery power, policy limit
+or migration is added. Normal engine rollout is sufficient; no deploy is
+performed by this source change. Publishing the supplier alone did not seal a
+consumer; the voice producer and readers are a separate integration.

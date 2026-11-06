@@ -1,3 +1,6 @@
+//! Engine-settled TASK terminal states and the durable terminal record.
+//! Entry [`TaskTerminalRecord`]; written only by engine lapse, never any party.
+//! Owned by `task_verb`; consulted by `follow_up` and the board fold for closure.
 use crate::consult_ladder::{LadderTerminalDisposition, LadderTerminalState};
 use crate::context_board::TaskBoardStatus;
 use crate::entity_id::EntityId;

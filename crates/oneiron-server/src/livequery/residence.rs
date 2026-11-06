@@ -9,10 +9,12 @@ mod bundle_access;
 mod bundle_commit;
 mod bundles;
 mod checkpoint_roots;
+mod claim_vectors;
 mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod media_vectors;
 mod pad_custody;
 mod pad_objects;
 mod pad_refill;
@@ -58,7 +60,9 @@ use crate::server::SyncServer;
 
 /// The residence calls a socket may make with only its machine proof.
 pub(super) fn machine_method(method: &str) -> bool {
-    method == "residence.pad.fetch" || home_handoff::machine_method(method)
+    method == "residence.claim.vector"
+        || method == "residence.pad.fetch"
+        || home_handoff::machine_method(method)
 }
 
 pub(super) fn run_machine(
@@ -67,7 +71,9 @@ pub(super) fn run_machine(
     method: &str,
     params: Value,
 ) -> Result<Answer, AppError> {
-    if method == "residence.pad.fetch" {
+    if method == "residence.claim.vector" {
+        claim_vectors::read(server, peer, params)
+    } else if method == "residence.pad.fetch" {
         pad_custody::pad_fetch_keys(server, peer, params)
     } else {
         home_handoff::run_machine(server, peer, method, params)
@@ -176,6 +182,9 @@ struct SearchRequest {
     /// selector and caller check below stands.
     #[serde(default)]
     scope: Option<oneiron::sync::residence::ResolvedRecallSelection>,
+    /// A recall clock pin, not a historical grant or storage snapshot.
+    #[serde(default)]
+    as_of: Option<u64>,
     /// A later page of a search served in pages (FIX 8865).
     #[serde(default)]
     page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
@@ -213,6 +222,7 @@ impl SearchRequest {
             self.limit,
             &selector_wire,
             self.scope.as_ref(),
+            self.as_of,
             locality,
             self.page.as_ref(),
             |request| {
@@ -452,6 +462,9 @@ pub(super) fn run(
                 budgets,
                 &mut attribution,
             ),
+            "residence.media_vectors" => {
+                media_vectors::media_vectors(server, auth, peer, request.params)
+            }
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => {

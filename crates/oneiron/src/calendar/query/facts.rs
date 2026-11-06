@@ -597,6 +597,7 @@ fn event_rows_in(read: &CalendarRead<'_>, id: EntityId, hold: Hold) -> Result<Op
             occurred_start: event.occurred.start,
             occurred_end: event.occurred.end,
             learned_at: event.learned_at,
+            row_version: 0,
         };
         let projected = claim_ids
             .iter()

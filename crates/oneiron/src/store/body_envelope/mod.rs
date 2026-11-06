@@ -59,6 +59,10 @@ pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };
 pub(crate) use self::reader::BodyFile;
+pub(crate) use self::response::owners::{
+    bind_missing_response_owners_in_txn, bind_retained_response_owner_in_txn,
+    response_owners_bound_in_txn,
+};
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
@@ -66,13 +70,14 @@ pub(crate) use self::response::{
     settle_shared_response_in_txn,
 };
 pub(crate) use self::retention::{
-    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, note_settled_inline_in_txn,
-    release_body_in_txn, settle_inline_asset_in_txn,
+    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn,
+    governed_body_instances_in_txn, note_settled_inline_in_txn, release_body_in_txn,
+    settle_inline_asset_in_txn,
 };
 pub(crate) use self::rows::{
     BODY_INSTANCES, BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
-    remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
-    remembered_body_instances_in_txn, retire_body_key_in_txn,
+    journal_restored_body_key_in_txn, remember_body_instances_in_txn,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,

@@ -62,8 +62,10 @@ enum OwnerWord<'a> {
 impl Vault {
     /// The owner states an intent in his own words (FIX 8949): `text`, as he
     /// wrote it, lands as an Approved, Active, UserStated `profile.intent`
-    /// about him, citing `message` (a MESSAGE) when he names one. His proof
-    /// is checked again in the write. Returns the claim.
+    /// about him, citing `message` (a MESSAGE) when he names one, with
+    /// `needed_before` (Unix seconds) kept as factual evidence the urgent
+    /// question reads when he states one, never an expiry. His proof is
+    /// checked again in the write. Returns the claim.
     ///
     /// # Errors
     ///
@@ -73,23 +75,35 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         text: &str,
+        needed_before: Option<u64>,
         message: Option<EntityId>,
     ) -> Result<EntityId> {
         let id = self.store.clock.entity_id()?;
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
-            write_owner_intent_in_txn(self, txn, OwnerWord::Intake(owner), id, text, message, now)
+            write_owner_intent_in_txn(
+                self,
+                txn,
+                OwnerWord::Intake(owner),
+                id,
+                text,
+                needed_before,
+                message,
+                now,
+            )
         })
     }
 }
 
-/// The one intent writer: `text` as `word`'s owner stated it, at `id`.
+/// The one intent writer: `text` as `word`'s owner stated it, at `id`, with
+/// `needed_before` kept alongside the words when he states one.
 fn write_owner_intent_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     word: OwnerWord<'_>,
     id: EntityId,
     text: &str,
+    needed_before: Option<u64>,
     message: Option<EntityId>,
     now: u64,
 ) -> Result<EntityId> {
@@ -104,10 +118,17 @@ fn write_owner_intent_in_txn(
             (actor, "ask")
         }
     };
+    let stored = match needed_before {
+        None => Value::from(text),
+        Some(due) => Value::Map(vec![
+            (Value::from("text"), Value::from(text)),
+            (Value::from("needed_before"), Value::from(due)),
+        ]),
+    };
     let mut candidate = ClaimCandidate::new(
         PROFILE_INTENT_PREDICATE,
         ClaimSubject::Entity(owner),
-        Value::from(text),
+        stored,
         1.0,
     );
     if let Some(message) = message {
@@ -353,7 +374,16 @@ fn land_answer(vault: &Vault, ask: &DecisionAsk) -> Result<()> {
         // The words still stand in this write, at its own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         record.check_live_in(&read, txn, &turn)?;
-        write_owner_intent_in_txn(vault, txn, OwnerWord::Answered(by), id, words, message, now)?;
+        write_owner_intent_in_txn(
+            vault,
+            txn,
+            OwnerWord::Answered(by),
+            id,
+            words,
+            None,
+            message,
+            now,
+        )?;
         Ok(())
     })
 }

@@ -1,8 +1,10 @@
 //! Sync-gated foreign-import staging operations and test hooks.
+use std::collections::BTreeSet;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::window_protocol::FederationAdmissionRole;
 use crate::store::window_protocol::MAX_DECODED_PAYLOAD_BYTES;
@@ -10,12 +12,13 @@ use crate::sync::selector::admit_staged_window_update;
 use crate::window_key::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
+use super::content::{StagedWindowPart, decode_staged_import_parts, encode_staged_import_parts};
 use super::export_foreign_receipt::{
     CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT, STAMPS,
     StagedVaultImport, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus,
     content_key, encode_vault_import_receipt, receipt_id, source_bytes, vault_import_stage_receipt,
 };
-use super::payload::{decode_staged_window_parts, encode_staged_window_parts};
+use super::payload::encode_staged_window_parts;
 use crate::error::{RecordError, RegistryError, SyncError};
 
 /// One-shot hook fired inside the staged-content read window, i.e. AFTER a
@@ -139,7 +142,7 @@ pub(crate) fn rewrite_staged_stamps_for_test(
 fn put_stage_if_absent(
     vault: &Vault,
     receipt: &VaultImportStageReceipt,
-    admitted: Option<(&[u8], &[u8])>,
+    admitted: Option<(&[u8], &[u8], &BTreeSet<EntityId>)>,
 ) -> Result<bool> {
     let key = Hex64(receipt.receipt_id);
     let encoded = encode_vault_import_receipt(receipt)?;
@@ -147,7 +150,15 @@ fn put_stage_if_absent(
         if RECEIPT.contains(&vault.store, w, &key)? {
             return Ok(false);
         }
-        if let Some((content, stamps)) = admitted {
+        if let Some((content, stamps, discarded)) = admitted {
+            // The content was projected for these marks; a discard since
+            // owes it a projection of its own (FIX 14534 part E, E4 = A).
+            if crate::sync::residence::discarded_rows_in(&vault.store, w)? != *discarded {
+                return Err(Error::InvalidConfig(
+                    "the owner's discard marked rows while this import staged; stage it again"
+                        .into(),
+                ));
+            }
             CONTENT.put(&vault.store, w, &key, &content.to_vec())?;
             if !stamps.is_empty() {
                 STAMPS.put(&vault.store, w, &key, &stamps.to_vec())?;
@@ -156,6 +167,49 @@ fn put_stage_if_absent(
         RECEIPT.put(&vault.store, w, &key, &encoded)?;
         Ok(true)
     })
+}
+
+/// Deletes, in the owner's discard's write, every Pending staged import
+/// whose admitted parts hold a row in `discarded`, with its content and its
+/// record of stamps (FIX 14534 part E, E4 = A); its held stamps retire with
+/// the receipt. The artifact can be staged again, and that staging projects
+/// it for the marks. Content exists only while its receipt is Pending.
+/// Returns how many went.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn cancel_staged_imports_holding_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    discarded: &BTreeSet<EntityId>,
+) -> Result<usize> {
+    if discarded.is_empty() {
+        return Ok(0);
+    }
+    let mut cancelled = 0;
+    for (key, content) in CONTENT.scan(store, txn)? {
+        // A carrier that does not decode stays: its confirmation fails closed.
+        let holds = decode_staged_import_parts(&content).is_ok_and(|parts| {
+            parts.iter().any(|part| {
+                part.born_with
+                    .iter()
+                    .any(|(id, _, _)| discarded.contains(id))
+                    || crate::sync::window::update_holds_discarded(
+                        &part.key,
+                        &part.update,
+                        discarded,
+                    )
+            })
+        });
+        if holds {
+            CONTENT.delete(store, txn, &key)?;
+            STAMPS.delete(store, txn, &key)?;
+            RECEIPT.delete(store, txn, &key)?;
+            cancelled += 1;
+        }
+    }
+    Ok(cancelled)
 }
 
 fn staged_from_pending(
@@ -181,10 +235,10 @@ fn staged_from_pending(
     let observed = vault_import_staged_content(vault, &receipt.receipt_id)?;
     let matches_receipt = |admitted: &[u8]| {
         receipt.admitted_update_digest == Some(*blake3::hash(admitted).as_bytes())
-            && decode_staged_window_parts(admitted).is_ok_and(|parts| {
+            && decode_staged_import_parts(admitted).is_ok_and(|parts| {
                 parts
                     .iter()
-                    .all(|(_, bytes)| bytes.len() <= MAX_DECODED_PAYLOAD_BYTES)
+                    .all(|part| part.update.len() <= MAX_DECODED_PAYLOAD_BYTES)
             })
     };
     let admitted = match observed {
@@ -282,14 +336,29 @@ pub fn stage_foreign_vault_import(
             }
         };
     }
-    let (admitted, stamps) = match admit_staged_window_update(
+    // What the owner's discard of a world copy marks never persists here: the
+    // admitted parts are projected for the marks before any content does,
+    // and the write checks the marks again (FIX 14534 part E, E4 = A).
+    let discarded = {
+        let txn = vault.store.env.read_txn()?;
+        crate::sync::residence::discarded_rows_in(&vault.store, &txn)?
+    };
+    let admission = admit_staged_window_update(
         vault,
         key,
         remote,
         FederationAdmissionRole::Guest,
         &id,
         classification.exported_vault_id.as_ref(),
-    ) {
+    )
+    .and_then(|mut admitted| {
+        // A projection that fails is no defect of the artifact: retryable.
+        admitted
+            .project_for_discard(&discarded)
+            .map_err(|error| Error::InvalidConfig(format!("discard projection: {error}")))?;
+        Ok(admitted)
+    });
+    let (admitted, stamps) = match admission {
         Ok(a)
             if a.parts()
                 .all(|part| part.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES) =>
@@ -298,11 +367,15 @@ pub fn stage_foreign_vault_import(
             let mut records = Vec::new();
             for part in a.parts() {
                 part.hold_staged(vault, part.key())?;
-                parts.push((part.key().clone(), part.bytes().to_vec()));
+                parts.push(StagedWindowPart {
+                    key: part.key().clone(),
+                    update: part.bytes().to_vec(),
+                    born_with: part.born_with().to_vec(),
+                });
                 records.push((part.key().clone(), part.staged_stamps()));
             }
             (
-                encode_staged_window_parts(&parts)?,
+                encode_staged_import_parts(&parts)?,
                 encode_staged_window_parts(&records)?,
             )
         }
@@ -423,7 +496,7 @@ pub fn stage_foreign_vault_import(
         failure: None,
         staged_stamps_digest: Some(*blake3::hash(&stamps).as_bytes()),
     };
-    if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps)))? {
+    if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps, &discarded)))? {
         return Ok(StagedVaultImport {
             receipt: pending,
             admitted_update: admitted,
