@@ -88,6 +88,15 @@ pub enum RemoteTaskInputPhase {
     /// Whether the connector took the answer is unknown; it is never sent
     /// again.
     Uncertain,
+    /// The poller came to send the owner's accept and found the send's
+    /// authority no longer admits it: the grant that admitted the send is
+    /// gone, no longer live or names another principal, the connector key
+    /// is no longer active, or its setting for the tool or for elicitation
+    /// is now never allow. Nothing went to the connector and nothing is
+    /// withdrawn: the row stays, so the owner reads this phase on the
+    /// question, the Ask keeps the owner's Answer, and the task waits on its
+    /// question until its provider drops it or asks another. Never sent.
+    Refused,
 }
 
 impl RemoteTaskInputPhase {
@@ -188,6 +197,14 @@ impl RemoteTaskInputChoice {
         match self {
             Self::Decline => RemoteTaskInputPhase::Declined,
             Self::Cancel => RemoteTaskInputPhase::Cancelled,
+        }
+    }
+
+    /// The Ask option the press answers.
+    pub(super) const fn option(self) -> &'static str {
+        match self {
+            Self::Decline => DECLINE,
+            Self::Cancel => CANCEL,
         }
     }
 }
