@@ -583,9 +583,9 @@ where
                 conn_id = self.conn_id,
                 "credential revoked — closing live session instead of sending"
             );
-            // Nothing is queued at this point, so the graceful close flushes
-            // no application bytes; the peer gets a close frame and no data.
-            self.close().await;
+            // No application bytes are queued; try the close frame without
+            // letting control-frame backpressure delay dropping the socket.
+            self.close_revoked().await;
             return false;
         }
         // Drain owed CONTROL frames to COMPLETION before handing over
@@ -624,9 +624,9 @@ where
                 "credential revoked while control frames drained — closing live session \
                  instead of sending"
             );
-            // The drain left the out-buffer empty, so the graceful close
-            // flushes no application bytes.
-            self.close().await;
+            // The drain left no application bytes queued; close without
+            // letting peer backpressure delay dropping the socket.
+            self.close_revoked().await;
             return false;
         }
         let Some(socket) = self.socket.as_mut() else {
