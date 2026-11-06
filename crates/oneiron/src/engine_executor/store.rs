@@ -2,7 +2,7 @@
 
 mod reply_evidence;
 mod script_context;
-pub(super) use script_context::load_script_context;
+pub(super) use script_context::{load_script_context, mask_known_text};
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
