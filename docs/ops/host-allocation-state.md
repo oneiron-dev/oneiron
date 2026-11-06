@@ -146,8 +146,12 @@ work from a false dispatch bit and never releases old pending work by timeout,
 process close, mode change or grant replacement.
 
 `settle` uses the original terminal clock, receipt digest and actual charged
-units. It commits the hold terminal, resident charge and caller's staging
-callback in one writer. The callback must stage the original frozen event
+units. The existing hold terminal retains `receipt_json`: the exact content-free
+`RunReceipt` bytes used to compute that digest, serialized once before the
+terminal write. Its settled event keeps the original run-line units separately
+from the terminal's allocation units; neither quantity substitutes for the
+other. It commits that payload, the hold terminal, resident charge and caller's
+staging callback in one writer. The callback must stage the original frozen event
 through the existing `UsageLedger::stage_settlement_in_write_txn`; it must not
 create another usage or money outbox. Replaying the same terminal does not
 charge or stage again. A different terminal cannot replace it. Actual overrun
@@ -188,11 +192,13 @@ separate quantities, not interchangeable booking amounts.
 
 `VaultAllocationLedger::settle_original_with` prepares a pending original
 terminal inside the existing writer and uses the same accounting body as
-`settle`. The caller stages its original line booking, retained terminal receipt
-and canonical producer under that supplied transaction. The API does not create
-that caller ownership or activate kept-job recovery. An already selected
-terminal returns `AllocationTerminalSelection::Existing` with its exact original
-identity, without invoking either callback or reading a consumed producer.
+`settle`. The caller stages its original line booking and canonical producer
+under that supplied transaction and supplies the actual original receipt bytes
+in its terminal. The API does not create that caller ownership or activate
+kept-job recovery. An already selected terminal returns
+`AllocationTerminalSelection::Existing` with its exact original identity and
+retained receipt bytes, without invoking either callback, reserializing or
+re-clocking a receipt, or reading a consumed producer.
 Both cases retain the existing `AllocationCommit` semantics: an error after the
 durable commit does not undo the selected value or justify another terminal.
 Post-commit producer cleanup and notification remain the actual caller's duty.
@@ -216,8 +222,10 @@ Retries do not settle the run's line again or call a second money producer.
 They clear the original ownership marker and publish the original observer
 receipt only after the native write commits. Failed entries remain queued;
 other calls can still make progress. No queue, run, meter or resident lock spans
-the vault writer. This is memory custody, not durable terminal crash recovery.
-The opt-in server binding retains the selected backend for its lifetime and
+the vault writer. Before commitment this remains memory custody, not durable
+terminal crash recovery. A committed terminal retains its original receipt
+bytes in the hold; an interrupted pending terminal still needs a genuine
+recovery producer. The opt-in server binding retains the selected backend for its lifetime and
 invokes this drain before the existing usage flush, including the shutdown
 pass. It reuses the existing meter worker; it adds no timer, retry cap or wait
 loop. Failed writes still retain memory-only terminals, not crash recovery.
