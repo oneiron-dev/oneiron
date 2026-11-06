@@ -253,6 +253,16 @@ fn birth_peer(id: EntityId) -> u64 {
 /// the version of its birth's operations, the only ones under its birth peer.
 /// `None` when `doc` no longer holds that version: its history before a
 /// later version was dropped (a purge, or a masked write's stored state).
+/// Whether NOTE `id`'s document `doc` holds nothing but its birth (FIX
+/// 7783): no operation was made on it after its birth's.
+pub(super) fn holds_only_birth(id: EntityId, doc: &LoroDoc) -> bool {
+    let peer = birth_peer(id);
+    doc.oplog_vv()
+        .get(&peer)
+        .and_then(|count| count.checked_sub(1))
+        .is_some_and(|last| doc.oplog_frontiers() == Frontiers::from_id(loro::ID::new(peer, last)))
+}
+
 pub(super) fn birth_text(id: EntityId, doc: &LoroDoc) -> Option<String> {
     let peer = birth_peer(id);
     let last = doc.oplog_vv().get(&peer)?.checked_sub(1)?;

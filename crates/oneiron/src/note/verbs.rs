@@ -394,8 +394,13 @@ impl Vault {
     ) -> MemoryResult<NoteProgramEditOutcome> {
         // A sealed NOTE's edit opens a fork and leaves the seal intact.
         let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
-        let existed = load_doc(self, txn, note)?.is_some();
-        if existed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
+        // A NOTE whose document still holds only its birth reads as the
+        // text it was born with, as one born before its document existed
+        // did, so a whole-text edit of it needs no read version (FIX 7783).
+        let named_version_needed = load_doc(self, txn, note)?.is_some_and(|doc| {
+            doc.head != note || !super::document::holds_only_birth(note, &doc.doc)
+        });
+        if named_version_needed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
             return Err(invalid("whole-text edit requires its read version").into());
         }
         let doc = super::documents::live_doc(self, txn, note)?;
