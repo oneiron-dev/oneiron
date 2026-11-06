@@ -97,15 +97,20 @@ impl CanonicalComparison {
     }
 
     pub(super) fn advance(&mut self, wanted: &CanonicalSnapshot, max_rows: usize) -> Result<bool> {
-        for _ in 0..max_rows.max(1) {
-            if self.advance_row(wanted)? {
+        let mut remaining = max_rows.max(1);
+        while remaining > 0 {
+            let before = remaining;
+            if self.advance_row(wanted, &mut remaining)? {
                 return Ok(true);
+            }
+            if remaining == before {
+                remaining -= 1;
             }
         }
         Ok(false)
     }
 
-    fn advance_row(&mut self, wanted: &CanonicalSnapshot) -> Result<bool> {
+    fn advance_row(&mut self, wanted: &CanonicalSnapshot, remaining: &mut usize) -> Result<bool> {
         // Exhaustive: a new snapshot field must join this comparison too.
         let CanonicalSnapshot {
             window,
@@ -202,6 +207,7 @@ impl CanonicalComparison {
                     &mut self.record_field,
                     &mut self.metadata,
                     &mut self.history,
+                    remaining,
                 )?,
                 Group::DocumentHeads,
             ),
@@ -430,6 +436,7 @@ fn compare_entity_documents(
     record_field: &mut usize,
     metadata_state: &mut MetadataComparison,
     history_state: &mut HistoryComparison,
+    remaining: &mut usize,
 ) -> Result<bool> {
     compare_value(&actual.len(), &wanted.len())?;
     let Some(CanonicalEntityDocument {
@@ -478,13 +485,13 @@ fn compare_entity_documents(
         return Ok(false);
     }
     if *payload == PayloadPart::Third {
-        if metadata_state.advance(metadata, expected_metadata)? {
+        if metadata_state.advance(metadata, expected_metadata, remaining)? {
             *payload = PayloadPart::Fourth;
         }
         return Ok(false);
     }
     if *payload == PayloadPart::Fourth {
-        if metadata_state.advance(summary_meta, expected_summary_meta)? {
+        if metadata_state.advance(summary_meta, expected_summary_meta, remaining)? {
             *payload = PayloadPart::Fifth;
         }
         return Ok(false);
@@ -503,7 +510,7 @@ fn compare_entity_documents(
     }
     compare_value(birth_actor, expected_birth_actor)?;
     compare_value(birth_at, expected_birth_at)?;
-    if history_state.advance(history, expected_history)? {
+    if history_state.advance(history, expected_history, remaining)? {
         *next += 1;
         *byte = 0;
         *payload = PayloadPart::First;

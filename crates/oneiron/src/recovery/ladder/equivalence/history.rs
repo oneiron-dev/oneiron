@@ -46,6 +46,7 @@ impl HistoryComparison {
         &mut self,
         actual: &mut Option<CanonicalEntityDocumentHistory>,
         wanted: &Option<CanonicalEntityDocumentHistory>,
+        remaining: &mut usize,
     ) -> Result<bool> {
         let (Some(actual), Some(wanted)) = (actual.as_mut(), wanted.as_ref()) else {
             compare_value(&actual.is_some(), &wanted.is_some())?;
@@ -60,14 +61,17 @@ impl HistoryComparison {
             purges,
         } = actual;
         let (done, next_group) = match self.group {
-            Group::Versions => (self.versions(versions, &wanted.versions)?, Group::Shallow),
+            Group::Versions => (
+                self.versions(versions, &wanted.versions, remaining)?,
+                Group::Shallow,
+            ),
             Group::Shallow => {
                 compare_value(shallow, &wanted.shallow)?;
                 (true, Group::Pins)
             }
             Group::Pins => (self.pins(pins, &wanted.pins)?, Group::Receipts),
             Group::Receipts => (self.receipts(receipts, &wanted.receipts)?, Group::Forks),
-            Group::Forks => (self.forks(forks, &wanted.forks)?, Group::Purges),
+            Group::Forks => (self.forks(forks, &wanted.forks, remaining)?, Group::Purges),
             Group::Purges => (
                 compare_rows(purges, &wanted.purges, &mut self.next)?,
                 Group::Complete,
@@ -95,6 +99,7 @@ impl HistoryComparison {
         &mut self,
         actual: &mut [CanonicalDocumentVersion],
         wanted: &[CanonicalDocumentVersion],
+        remaining: &mut usize,
     ) -> Result<bool> {
         compare_value(&actual.len(), &wanted.len())?;
         let Some(CanonicalDocumentVersion {
@@ -130,14 +135,17 @@ impl HistoryComparison {
             return Ok(false);
         }
         if self.part == Part::Third {
-            if self.metadata.advance(metadata, &expected.metadata)? {
+            if self
+                .metadata
+                .advance(metadata, &expected.metadata, remaining)?
+            {
                 self.part = Part::Fourth;
             }
             return Ok(false);
         }
         if self
             .metadata
-            .advance(summary_meta, &expected.summary_meta)?
+            .advance(summary_meta, &expected.summary_meta, remaining)?
         {
             self.finish_row();
         }
@@ -220,6 +228,7 @@ impl HistoryComparison {
         &mut self,
         actual: &mut [CanonicalDocumentFork],
         wanted: &[CanonicalDocumentFork],
+        remaining: &mut usize,
     ) -> Result<bool> {
         compare_value(&actual.len(), &wanted.len())?;
         let Some(CanonicalDocumentFork {
@@ -262,10 +271,11 @@ impl HistoryComparison {
                 }
             }
             Part::Second => {
-                if self
-                    .metadata
-                    .advance_optional(output_metadata, &expected.output_metadata)?
-                {
+                if self.metadata.advance_optional(
+                    output_metadata,
+                    &expected.output_metadata,
+                    remaining,
+                )? {
                     self.part = Part::Third;
                 }
             }
