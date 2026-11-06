@@ -57,3 +57,23 @@ keeps sources unknown: its key alone does not certify the caller's Grant reads.
 The cached decision, key and continuation stay unchanged. No Grant overlay
 upgrades an already-unknown base inventory. Withdrawal markers and missing-row
 metadata are not negative-proof entity rows.
+
+## Peer authority byte sources
+
+`federation::admitted_peer_consent_roots_with_sources_for_store_in_txn` returns
+`SourcedPeerConsentRoots`: the existing peer consent roots and the exact
+`SyncState` peer authority key/value rows consumed in the same caller snapshot or
+writer. Keys are the suffix after the `peerauth:` table prefix; values are the
+stored canonical signed entry bodies, not reconstructed serializations. The
+inventory includes every successfully decoded row in the scan, including groups
+that do not contribute roots. A scan, key or decode fault still returns the
+original error, not a partial inventory. The old roots-only APIs use the same
+scan and fold without retaining the rows.
+
+This byte-source supplier is separate from the entity-row source inventory.
+Signatures and peer-origin binding do not prove local caller readability or
+private byte visibility. The current team receipt and capture consumer does not
+yet accept peer byte sources. No existing unknown entity inventory becomes known
+because these bytes are available; cache, adopted and other unsupported source
+cohorts stay unknown. Whole source capture and readability still require the
+consumer integration.

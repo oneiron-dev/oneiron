@@ -155,9 +155,43 @@ pub(crate) fn admitted_peer_consent_roots_in_txn(
 ) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
     admitted_peer_consent_roots_for_store_in_txn(&vault.store, txn)
 }
+
+/// Consent roots and the exact SyncState rows read to compute them.
+///
+/// Row keys exclude the `peerauth:` table prefix. The rows include groups that
+/// do not contribute roots. Canonical signed bytes are source evidence, not
+/// entity IDs, read authority, or a complete local authority source inventory.
+pub(crate) struct SourcedPeerConsentRoots {
+    pub(crate) roots: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    pub(crate) peer_authority_rows: Vec<(String, Vec<u8>)>,
+}
+
+pub(crate) fn admitted_peer_consent_roots_with_sources_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<SourcedPeerConsentRoots> {
+    let mut peer_authority_rows = Vec::new();
+    let roots =
+        admitted_peer_consent_roots_observing_rows_for_store_in_txn(store, txn, |key, raw| {
+            peer_authority_rows.push((key, raw))
+        })?;
+    Ok(SourcedPeerConsentRoots {
+        roots,
+        peer_authority_rows,
+    })
+}
+
 pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
+    admitted_peer_consent_roots_observing_rows_for_store_in_txn(store, txn, |_, _| {})
+}
+
+fn admitted_peer_consent_roots_observing_rows_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    mut observe_row: impl FnMut(String, Vec<u8>),
 ) -> Result<BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>> {
     let mut by_peer: BTreeMap<String, Vec<AuthorityLogEntry>> = BTreeMap::new();
     for (key, raw) in PEER_AUTHORITY.scan(store, txn)? {
@@ -165,6 +199,7 @@ pub(crate) fn admitted_peer_consent_roots_for_store_in_txn(
             .entry(peer_authority_row_key_group(&key)?)
             .or_default()
             .push(decode_peer_authority_row(&raw)?);
+        observe_row(key, raw);
     }
     let mut roots = BTreeMap::new();
     for (prefix, entries) in by_peer {

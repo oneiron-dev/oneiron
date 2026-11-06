@@ -166,7 +166,8 @@ pub(crate) use self::pact_scope::{
     decode_federation_direction_scope_value, federation_direction_scope_value,
 };
 pub(crate) use self::peer_authority::{
-    admitted_peer_consent_roots_for_store_in_txn, admitted_peer_consent_roots_in_txn,
+    SourcedPeerConsentRoots, admitted_peer_consent_roots_for_store_in_txn,
+    admitted_peer_consent_roots_in_txn, admitted_peer_consent_roots_with_sources_for_store_in_txn,
 };
 pub(crate) use self::stale::stale_stamped_worlds;
 
