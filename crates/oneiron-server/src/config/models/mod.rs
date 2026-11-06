@@ -30,6 +30,7 @@ mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
+mod drafter_trainers;
 mod drafting;
 mod dreamer_wording;
 mod levels;
@@ -54,6 +55,7 @@ pub use decisions::{
     BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings,
     ImagePickSettings, ImportAudienceSettings, SeatPickSettings, SystemOneSettings,
 };
+pub use drafter_trainers::DrafterTrainerSettings;
 pub use dreamer_wording::DreamerWording;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
