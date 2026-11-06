@@ -1,5 +1,5 @@
 //! Traversal backing on the caller's memory, with a separate work deadline.
-use super::{ContentTemplateError, Result, render};
+use super::{render, ContentTemplateError, Result};
 use std::io::{self, Write};
 use std::mem::size_of;
 use std::ops::{Deref, DerefMut};
@@ -68,6 +68,36 @@ impl Backing {
         Ok(())
     }
 
+    pub(super) fn reserve_vec<T>(&mut self, values: &mut Vec<T>, additional: usize) -> Result<()> {
+        let required = values
+            .len()
+            .checked_add(additional)
+            .ok_or(ContentTemplateError::Overflow)?;
+        if required <= values.capacity() {
+            return Ok(());
+        }
+        let capacity = required.max(values.capacity().saturating_mul(2));
+        let bytes = capacity
+            .checked_mul(size_of::<T>())
+            .ok_or(ContentTemplateError::Overflow)?;
+        let mut replacement = ScratchVec::new(&self.budget);
+        replacement.backing.resize(bytes)?;
+        replacement
+            .values
+            .try_reserve_exact(capacity)
+            .map_err(|_| ContentTemplateError::Overflow)?;
+        let actual = replacement
+            .values
+            .capacity()
+            .checked_mul(size_of::<T>())
+            .ok_or(ContentTemplateError::Overflow)?;
+        replacement.backing.resize(actual)?;
+        replacement.values.append(values);
+        std::mem::swap(values, &mut replacement.values);
+        std::mem::swap(self, &mut replacement.backing);
+        Ok(())
+    }
+
     // Both guards belong to flows created with the same caller budget.
     pub(super) fn absorb(&mut self, source: &mut Self) -> Result<()> {
         let bytes = self
@@ -112,33 +142,7 @@ impl<T> ScratchVec<T> {
     }
 
     fn grow(&mut self) -> Result<()> {
-        let required = self
-            .values
-            .len()
-            .checked_add(1)
-            .ok_or(ContentTemplateError::Overflow)?;
-        let capacity = required.max(self.values.capacity().saturating_mul(2));
-        let bytes = capacity
-            .checked_mul(size_of::<T>())
-            .ok_or(ContentTemplateError::Overflow)?;
-        // A realloc may keep the whole old block live until the new one exists.
-        // Keep both guards and free the old block before its guard drops.
-        let mut replacement = Self::new(&self.backing.budget);
-        replacement.backing.resize(bytes)?;
-        replacement
-            .values
-            .try_reserve_exact(capacity)
-            .map_err(|_| ContentTemplateError::Overflow)?;
-        let actual = replacement
-            .values
-            .capacity()
-            .checked_mul(size_of::<T>())
-            .ok_or(ContentTemplateError::Overflow)?;
-        // std permits allocator surplus; settle reported capacity, not a guessed size.
-        replacement.backing.resize(actual)?;
-        replacement.values.append(&mut self.values);
-        std::mem::swap(self, &mut replacement);
-        Ok(())
+        self.backing.reserve_vec(&mut self.values, 1)
     }
 
     pub(super) fn extend(&mut self, values: impl IntoIterator<Item = T>) -> Result<()> {

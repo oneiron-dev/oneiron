@@ -485,8 +485,7 @@ where
                         self.check_body_end();
                         self.mode.set(InsertionMode::AfterBody);
                     } else {
-                        self.sink
-                            .parse_error(Borrowed("</body> with no <body> in scope"));
+                        self.report_parse_error(Borrowed("</body> with no <body> in scope"));
                     }
                     ProcessResult::Done
                 },
@@ -496,8 +495,7 @@ where
                         self.check_body_end();
                         ProcessResult::Reprocess(InsertionMode::AfterBody, token)
                     } else {
-                        self.sink
-                            .parse_error(Borrowed("</html> with no <body> in scope"));
+                        self.report_parse_error(Borrowed("</html> with no <body> in scope"));
                         ProcessResult::Done
                     }
                 },
@@ -522,7 +520,7 @@ where
                 Token::Tag(tag @ tag!(<h1> | <h2> | <h3> | <h4> | <h5> | <h6>)) => {
                     self.close_p_element_in_button_scope();
                     if self.current_node_in(heading_tag) {
-                        self.sink.parse_error(Borrowed("nested heading tags"));
+                        self.report_parse_error(Borrowed("nested heading tags"));
                         self.pop();
                     }
                     stop_on_none!(self.insert_element_for(tag));
@@ -541,7 +539,7 @@ where
                     if self.form_elem.borrow().is_some()
                         && !self.in_html_elem_named(local_name!("template"))
                     {
-                        self.sink.parse_error(Borrowed("nested forms"));
+                        self.report_parse_error(Borrowed("nested forms"));
                     } else {
                         self.close_p_element_in_button_scope();
                         let elem = stop_on_none!(self.insert_element_for(tag));
@@ -600,7 +598,7 @@ where
 
                 Token::Tag(tag @ tag!(<button>)) => {
                     if self.in_scope_named(default_scope, local_name!("button")) {
-                        self.sink.parse_error(Borrowed("nested buttons"));
+                        self.report_parse_error(Borrowed("nested buttons"));
                         self.generate_implied_end_tags(cursory_implied_end);
                         self.pop_until_named(local_name!("button"));
                     }
@@ -629,32 +627,27 @@ where
                 Token::Tag(tag!(</form>)) => {
                     if !self.in_html_elem_named(local_name!("template")) {
                         let Some(node) = self.form_elem.take() else {
-                            self.sink
-                                .parse_error(Borrowed("Null form element pointer on </form>"));
+                            self.report_parse_error(Borrowed("Null form element pointer on </form>"));
                             return ProcessResult::Done;
                         };
                         if !self.in_scope(default_scope, |n| self.sink.same_node(&node, &n)) {
-                            self.sink
-                                .parse_error(Borrowed("Form element not in scope on </form>"));
+                            self.report_parse_error(Borrowed("Form element not in scope on </form>"));
                             return ProcessResult::Done;
                         }
                         self.generate_implied_end_tags(cursory_implied_end);
                         let current = self.current_node().clone();
                         self.remove_from_stack(&node);
                         if !self.sink.same_node(&current, &node) {
-                            self.sink
-                                .parse_error(Borrowed("Bad open element on </form>"));
+                            self.report_parse_error(Borrowed("Bad open element on </form>"));
                         }
                     } else {
                         if !self.in_scope_named(default_scope, local_name!("form")) {
-                            self.sink
-                                .parse_error(Borrowed("Form element not in scope on </form>"));
+                            self.report_parse_error(Borrowed("Form element not in scope on </form>"));
                             return ProcessResult::Done;
                         }
                         self.generate_implied_end_tags(cursory_implied_end);
                         if !self.current_node_named(local_name!("form")) {
-                            self.sink
-                                .parse_error(Borrowed("Bad open element on </form>"));
+                            self.report_parse_error(Borrowed("Bad open element on </form>"));
                         }
                         self.pop_until_named(local_name!("form"));
                     }
@@ -689,7 +682,7 @@ where
 
                 Token::Tag(tag!(</p>)) => {
                     if !self.in_scope_named(button_scope, local_name!("p")) {
-                        self.sink.parse_error(Borrowed("No <p> tag to close"));
+                        self.report_parse_error(Borrowed("No <p> tag to close"));
                         stop_on_none!(self.insert_phantom(local_name!("p")));
                     }
                     self.close_p_element();
@@ -706,7 +699,7 @@ where
                         self.generate_implied_end_except(tag.name.clone());
                         self.expect_to_close(tag.name);
                     } else {
-                        self.sink.parse_error(Borrowed("No matching tag to close"));
+                        self.report_parse_error(Borrowed("No matching tag to close"));
                     }
                     ProcessResult::Done
                 },
@@ -715,11 +708,11 @@ where
                     if self.in_scope(default_scope, |n| self.elem_in(&n, heading_tag)) {
                         self.generate_implied_end_tags(cursory_implied_end);
                         if !self.current_node_named(tag.name) {
-                            self.sink.parse_error(Borrowed("Closing wrong heading tag"));
+                            self.report_parse_error(Borrowed("Closing wrong heading tag"));
                         }
                         self.pop_until(heading_tag);
                     } else {
-                        self.sink.parse_error(Borrowed("No heading tag to close"));
+                        self.report_parse_error(Borrowed("No heading tag to close"));
                     }
                     ProcessResult::Done
                 },
@@ -743,7 +736,7 @@ where
                 Token::Tag(tag @ tag!(<nobr>)) => {
                     stop_on_none!(self.reconstruct_active_formatting_elements());
                     if self.in_scope_named(default_scope, local_name!("nobr")) {
-                        self.sink.parse_error(Borrowed("Nested <nobr>"));
+                        self.report_parse_error(Borrowed("Nested <nobr>"));
                         stop_on_none!(self.adoption_agency(local_name!("nobr")));
                         stop_on_none!(self.reconstruct_active_formatting_elements());
                     }
@@ -848,7 +841,7 @@ where
                         if self.in_scope_named(default_scope, local_name!("option"))
                             || self.in_scope_named(default_scope, local_name!("optgroup"))
                         {
-                            self.sink.parse_error(Borrowed("hr in option"));
+                            self.report_parse_error(Borrowed("hr in option"));
                         }
                     }
 
@@ -913,7 +906,7 @@ where
                     if self.in_scope_named(default_scope, local_name!("select")) {
                         self.generate_implied_end_except(local_name!("optgroup"));
                         if self.in_scope_named(default_scope, local_name!("option")) {
-                            self.sink.parse_error(Borrowed("nested options"));
+                            self.report_parse_error(Borrowed("nested options"));
                         }
                     } else if self.current_node_named(local_name!("option")) {
                         self.pop();
@@ -930,7 +923,7 @@ where
                         if self.in_scope_named(default_scope, local_name!("option"))
                             || self.in_scope_named(default_scope, local_name!("optgroup"))
                         {
-                            self.sink.parse_error(Borrowed("nested options"));
+                            self.report_parse_error(Borrowed("nested options"));
                         }
                     } else if self.current_node_named(local_name!("option")) {
                         self.pop();
@@ -1148,7 +1141,7 @@ where
                     });
 
                     if contains_nonspace {
-                        self.sink.parse_error(Borrowed("Non-space table text"));
+                        self.report_parse_error(Borrowed("Non-space table text"));
                         for (split, text) in pending.into_iter() {
                             match self.foster_parent_in_body(Token::Characters(split, text)) {
                                 ProcessResult::Done => (),

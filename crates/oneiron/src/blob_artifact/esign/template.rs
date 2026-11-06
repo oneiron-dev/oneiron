@@ -114,12 +114,12 @@ pub fn render_html_template(
     render_html_template_in(template, values, budget::Budget::UNADMITTED)
 }
 
-/// Native HTML rendering with traversal/layout and operation-owned backing
-/// admitted on `memory`, plus cooperative checks of `work_deadline`, including
-/// native tokenizer steps and token/EOF delivery. Single native calls remain opaque.
+/// Native HTML rendering with node-arena, parse-error-vector, traversal/layout
+/// and operation-owned backing admitted on `memory`, plus cooperative checks of
+/// `work_deadline`, including native tokenizer steps and token/EOF delivery.
 ///
-/// DOM/parser and matcher internals, sorting scratch, font
-/// dictionaries, document/codec objects and output bytes remain unadmitted.
+/// Transitive DOM heap, private parser and matcher internals, sorting scratch,
+/// font dictionaries, document/codec objects and output bytes remain unadmitted.
 /// Individual parser/codec calls are not preempted.
 /// Admission refusals retain their native PDF error; an elapsed work deadline
 /// is [`ContentTemplateError::WorkDeadline`], not a fabricated memory refusal.

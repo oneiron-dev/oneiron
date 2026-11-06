@@ -18,6 +18,8 @@ pub enum TreeSinkOperation<'a, Handle> {
     BasedOnParent(&'a Handle, &'a Handle, &'a NodeOrText<Handle>),
     /// Append a document type node.
     Doctype,
+    /// Record a parse error in the sink's error collection.
+    ParseError,
 }
 
 pub(super) type SinkCheckpoint<Handle, Sink> =
@@ -35,5 +37,17 @@ impl<Handle, Sink> TreeBuilder<Handle, Sink> {
         self.tree_sink_checkpoint
             .as_ref()
             .is_none_or(|checkpoint| checkpoint(&self.sink, operation))
+    }
+}
+
+impl<Handle, Sink> TreeBuilder<Handle, Sink>
+where
+    Handle: Clone,
+    Sink: super::TreeSink<Handle = Handle>,
+{
+    pub(crate) fn report_parse_error(&self, error: std::borrow::Cow<'static, str>) {
+        if self.before_tree_sink_operation(TreeSinkOperation::ParseError) {
+            self.sink.parse_error(error);
+        }
     }
 }
