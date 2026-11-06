@@ -158,6 +158,7 @@
 //! - `self.browser.library.run`
 //! - `self.browser.handover`
 //! - `self.browser.switch_engine`
+//! - `vault.claims.put`
 //! - `vault.claims.supersede`
 //! - `self.fold`
 //! - `self.compact`

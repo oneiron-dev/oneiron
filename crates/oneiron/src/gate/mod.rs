@@ -38,6 +38,18 @@ mod value_encoding;
 pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
     default_manifest::with_default_owner_policy_notifications(data)
 }
+/// Whether `error` is a Gate write rejection whose outcome is Pending: the
+/// one rejection after which an Auto request is resubmitted as Proposed, so
+/// the write lands parked for review. A Deny, and any error that is not a
+/// Gate rejection, is not.
+pub(crate) fn gate_rejection_pends(error: &crate::error::Error) -> bool {
+    matches!(
+        error,
+        crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
+            if crate::error::GateDenialOutcome::parse(outcome)
+                == Some(crate::error::GateDenialOutcome::Pending)
+    )
+}
 mod definition_ceiling;
 mod delegation_chain;
 mod docedit_resource;

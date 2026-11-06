@@ -1397,6 +1397,9 @@ class Oneiron:
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
+        def put(self, spec):
+            """Puts one claim through this credential's attached generated-writing run and its existing gates: Auto when the gates allow it, Proposed with its pending review for a declared-critical class or a pending gate; spec is {id,predicate,subject,value,confidence,occurred,learnedAt}, never an actor, source or approval override."""
+            return json.loads(_translate(lambda: self._client.vault_claims_put(json.dumps(spec))))
         def supersede(self, spec):
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
             return json.loads(_translate(lambda: self._client.vault_claims_supersede(json.dumps(spec))))

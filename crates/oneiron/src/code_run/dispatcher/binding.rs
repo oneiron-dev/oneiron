@@ -220,10 +220,18 @@ impl<'a> HostSelfDispatcher<'a> {
     /// The same history names the calls a verb hook's ask parked, so the
     /// same call made again resumes its ask.
     pub(crate) fn observe_bridge_history(&self, bridge_calls: &[CodeRunBridgeCall]) {
+        self.observe_bridge_lineage(bridge_calls);
+        self.observe_parked_hooks(bridge_calls);
+    }
+
+    /// The lineage half of [`Self::observe_bridge_history`]: an external
+    /// effect anywhere in `bridge_calls` stays in every later write's
+    /// lineage. A live run's host doors take this half alone (FIX 3983): they
+    /// write as the run, and resume none of its parked asks.
+    pub(super) fn observe_bridge_lineage(&self, bridge_calls: &[CodeRunBridgeCall]) {
         if lineage_for_run(bridge_calls).contains(ClaimSource::ToolOutput) {
             self.external_effect_seen.set(true);
         }
-        self.observe_parked_hooks(bridge_calls);
     }
 
     /// Restores lineage only from a canonical wait's committed reply

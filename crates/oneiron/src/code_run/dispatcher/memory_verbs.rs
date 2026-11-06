@@ -314,6 +314,16 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryPutClaimCall,
     ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_memory_put_claim_requesting(call, crate::claim::ClaimApprovalStatus::Proposed)
+    }
+
+    /// The claim put asking `approval` of the gates: code mode asks
+    /// Proposed; a caller's live run asks Auto first (FIX 3983).
+    pub(super) fn dispatch_memory_put_claim_requesting(
+        &self,
+        call: SelfMemoryPutClaimCall,
+        approval: crate::claim::ClaimApprovalStatus,
+    ) -> Result<SelfDispatchOutcome> {
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -322,7 +332,9 @@ impl HostSelfDispatcher<'_> {
             Some(evidence) => (*call.candidate).clone().with_evidence(evidence),
             None => *call.candidate,
         };
-        let envelope = self.write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?;
+        let envelope = self
+            .write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?
+            .with_approval(approval);
         // The write gate reads no facet; the stored body takes the vault
         // default when the write applies.
         let gate_body = candidate.clone().into_claim_body(
