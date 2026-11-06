@@ -6,7 +6,7 @@ use oneiron::llm::run_admission::{
     AllocationStoreError, Payer, PersistentAllocation, RunAdmission, RunEvent, RunReceipt,
     RunReceiptSink, VaultAllocationLedger,
 };
-use oneiron::{BudgetGuard, EntityId, Vault};
+use oneiron::{BudgetGuard, EntityId};
 
 use crate::models::ServerReceipts;
 use crate::runtime::{NativeUsageProducer, VaultUsage};
@@ -24,11 +24,11 @@ impl NativeUsage {
     }
 
     pub(in crate::server::core) fn new(
-        vault: Arc<Vault>,
         usage: Arc<VaultUsage>,
         sink: Arc<ServerReceipts>,
     ) -> Result<Arc<Self>, AllocationStoreError> {
-        let commit = VaultAllocationLedger::new(vault)?;
+        let producer = usage.allocation_producer();
+        let commit = VaultAllocationLedger::new(producer.vault())?;
         if commit.postcommit_error.is_some() {
             tracing::error!(
                 revision = commit.revision,
@@ -36,7 +36,6 @@ impl NativeUsage {
             );
         }
         let ledger = commit.value;
-        let producer = usage.allocation_producer();
         let backend = PersistentAllocation::new(Arc::clone(&ledger), producer.clone());
         Ok(Arc::new(Self {
             ledger,

@@ -21,11 +21,7 @@ impl SyncServer {
         let usage = server
             .vault_usage()
             .expect("the original usage meter was bound");
-        server.native_usage = Some(NativeUsage::new(
-            Arc::clone(&server.vault),
-            usage,
-            Arc::clone(&server.run_receipts),
-        )?);
+        server.native_usage = Some(NativeUsage::new(usage, Arc::clone(&server.run_receipts))?);
         if let Some(raw) = server.llm.take() {
             server.llm = Some(raw.with_native_allocation(server.native_runs()));
         }
