@@ -286,8 +286,22 @@ impl<'a> AgentDispatcher<'a> {
         } else {
             None
         };
-        let mut dispatch_input =
-            self.prepare_dispatch_with_type_source_in_txn(wtxn, input.clone(), spawn, type_output)?;
+        let mut depth_parent_reads = Vec::new();
+        let mut observe_parent = |attempt, value: Option<&[u8]>| {
+            depth_parent_reads.push(crate::team::run::TeamDepthParentRead::observed(
+                attempt, value,
+            ));
+        };
+        let parent_output = self
+            .team_attempt_capture
+            .map(|_| &mut observe_parent as &mut dyn FnMut(AttemptId, Option<&[u8]>));
+        let mut dispatch_input = self.prepare_dispatch_with_type_source_in_txn(
+            wtxn,
+            input.clone(),
+            spawn,
+            type_output,
+            parent_output,
+        )?;
         let budget = if budget.is_none() && !planned {
             crate::learning_setting_choice::owner_spawn_budget_in_txn(
                 self.vault,
@@ -398,6 +412,7 @@ impl<'a> AgentDispatcher<'a> {
                         wtxn,
                         &status,
                         type_source.as_ref(),
+                        &depth_parent_reads,
                         input.now,
                     )
                 {
@@ -440,7 +455,7 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchInput> {
-        self.prepare_dispatch_with_type_source_in_txn(wtxn, input, spawn, None)
+        self.prepare_dispatch_with_type_source_in_txn(wtxn, input, spawn, None, None)
     }
 
     fn prepare_dispatch_with_type_source_in_txn(
@@ -449,6 +464,7 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
         type_source: Option<&mut Option<crate::team::run::SelectedTeamType>>,
+        parent_source: Option<&mut dyn FnMut(AttemptId, Option<&[u8]>)>,
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
         let spawn_intent = spawn_intent_digest(&input, &spawn)?;
@@ -461,8 +477,12 @@ impl<'a> AgentDispatcher<'a> {
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
         //    lineage cannot leave a fork row behind as a side effect.
-        let (project_ref, project_limit) =
-            self.project_depth_limit_in_txn(wtxn, requested_parent, spawn.project_ref)?;
+        let (project_ref, project_limit) = self.project_depth_limit_with_sources_in_txn(
+            wtxn,
+            requested_parent,
+            spawn.project_ref,
+            parent_source,
+        )?;
         // Only an explicit slice is stored (FIX 9560): the spawn's own ask,
         // the explicit live limit, or both met.
         let depth_remaining = stored_depth(spawn.depth_remaining, project_limit);

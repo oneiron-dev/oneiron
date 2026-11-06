@@ -17,7 +17,20 @@ pub(crate) fn get_in_txn(
     txn: &heed::RoTxn<'_>,
     id: AttemptId,
 ) -> Result<Option<AttemptRecord>> {
-    let Some(raw) = store.attempt_records.get(txn, id.as_bytes())? else {
+    get_with_source_in_txn(store, txn, id, |_, _| {})
+}
+
+/// The same point read with its physical key and full stored value lent to
+/// an observer before decoding. These bytes are provenance, not read authority.
+pub(crate) fn get_with_source_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: AttemptId,
+    source: impl FnOnce(AttemptId, Option<&[u8]>),
+) -> Result<Option<AttemptRecord>> {
+    let raw = store.attempt_records.get(txn, id.as_bytes())?;
+    source(id, raw.as_deref());
+    let Some(raw) = raw else {
         return Ok(None);
     };
     decode_record(&raw, id).map(Some)

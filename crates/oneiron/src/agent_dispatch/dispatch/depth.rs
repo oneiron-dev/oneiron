@@ -44,6 +44,18 @@ impl AgentDispatcher<'_> {
         parent_attempt: Option<AttemptId>,
         requested_project: Option<EntityId>,
     ) -> Result<(EntityId, u64)> {
+        self.project_depth_limit_with_sources_in_txn(txn, parent_attempt, requested_project, None)
+    }
+
+    /// The original authority fold with optional same-read native provenance.
+    /// Only the parent's physical attempt reads are observed, not project policy.
+    pub(in crate::agent_dispatch) fn project_depth_limit_with_sources_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent_attempt: Option<AttemptId>,
+        requested_project: Option<EntityId>,
+        parent_source: Option<&mut dyn FnMut(AttemptId, Option<&[u8]>)>,
+    ) -> Result<(EntityId, u64)> {
         let root = self.vault.project_for_spawn_in_txn(txn, None)?.0;
         let (parent_project, has_parent_input, mut parent_limit) = match parent_attempt {
             Some(parent) => {
@@ -54,7 +66,7 @@ impl AgentDispatcher<'_> {
                     parent.as_bytes(),
                 )?;
                 let mut seen = HashSet::new();
-                let slice = self.parent_slice_in_txn(txn, parent, root, &mut seen);
+                let slice = self.parent_slice_in_txn(txn, parent, root, &mut seen, parent_source);
                 walk.rows(seen.len());
                 walk.defer(&self.vault.store);
                 // A lineage with no explicit slice once stopped at the
@@ -110,6 +122,7 @@ impl AgentDispatcher<'_> {
         parent_attempt: AttemptId,
         root: EntityId,
         seen: &mut HashSet<AttemptId>,
+        mut parent_source: Option<&mut dyn FnMut(AttemptId, Option<&[u8]>)>,
     ) -> Result<(EntityId, bool, u64)> {
         let mut parent_project = root;
         let mut has_parent_input = false;
@@ -122,7 +135,11 @@ impl AgentDispatcher<'_> {
                     "project depth ancestor cycle",
                 )));
             }
-            let row = AttemptQueue::new(self.vault).get_in_txn(txn, attempt)?;
+            let queue = AttemptQueue::new(self.vault);
+            let row = match parent_source.as_deref_mut() {
+                Some(source) => queue.get_with_source_in_txn(txn, attempt, source)?,
+                None => queue.get_in_txn(txn, attempt)?,
+            };
             if let Some(row) = &row
                 && super::super::workflow_record::is_wrapper(row)
             {

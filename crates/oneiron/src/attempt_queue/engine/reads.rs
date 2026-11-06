@@ -42,6 +42,17 @@ impl AttemptQueue<'_> {
         attempt_record_read::get_in_txn(self.store, txn, id)
     }
 
+    /// Lends this point read's exact native value to its original producer.
+    /// Observation changes neither the read result nor its authority.
+    pub(crate) fn get_with_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+        source: impl FnOnce(AttemptId, Option<&[u8]>),
+    ) -> Result<Option<AttemptRecord>> {
+        attempt_record_read::get_with_source_in_txn(self.store, txn, id, source)
+    }
+
     /// Whether `lease_owner` still holds `id`'s lease at `attempt_count`: the
     /// row is leased, to that owner, at that lease generation, and no
     /// cleanup or redirect took it since. A caller that writes on a claimed
