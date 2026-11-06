@@ -37,7 +37,9 @@ pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
 pub(super) use self::json::{
     Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
 };
-pub(super) use self::memory::{decode_memory_refused, reader_memory_refused};
+pub(super) use self::memory::{
+    decode_memory_refused, reader_memory_refused, sealed_decode_memory_refused,
+};
 pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
@@ -74,12 +76,12 @@ impl BodySpool {
 
     /// The spool as one JSON object `T`, with each bulk member's string
     /// streamed to its sink as it is read (`json::decode_object`).
-    pub(super) fn object<T: serde::de::DeserializeOwned>(
+    pub(super) fn object_admitted<T: serde::de::DeserializeOwned>(
         &mut self,
         bulk: &mut [BulkMember<'_>],
-    ) -> Result<Result<T, JsonInvalid>, MemoryRefusal> {
-        let mut memory = self.admit_reader()?;
-        Ok(self.with_reader_admitted(&mut memory, |reader| json::decode_object(reader, bulk)))
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Result<T, JsonInvalid> {
+        self.with_reader_admitted(memory, |reader| json::decode_object(reader, bulk))
     }
 
     /// The declared string members, using reader room admitted with the text sink.
@@ -108,6 +110,18 @@ impl BodySpool {
     /// The room the spool holds on the disk floor, kept past the spool.
     pub(super) fn into_room(self) -> Option<Arc<DiskClaim>> {
         self.room
+    }
+}
+
+impl BodySpool {
+    /// The complete spool length, without allocating a reader buffer.
+    pub(in crate::api) fn byte_len(&self) -> io::Result<u64> {
+        self.file.metadata().map(|metadata| metadata.len())
+    }
+
+    /// Reads into caller-owned storage without allocating a reader buffer.
+    pub(in crate::api) fn read_exact_into(&mut self, bytes: &mut [u8]) -> io::Result<()> {
+        self.file.read_exact(bytes)
     }
 }
 
