@@ -109,6 +109,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::ClaimInputJsonBytes),
         Self::Engine(EngineLimit::CoreBatchEntities),
         Self::Engine(EngineLimit::LegacyBatchEntities),
+        Self::Engine(EngineLimit::BlobContentBytes),
         Self::Engine(EngineLimit::CodeResultInlineBytes),
         Self::Engine(EngineLimit::CodeResultDiskFloorBytes),
         Self::Engine(EngineLimit::CodeResultScanBytes),

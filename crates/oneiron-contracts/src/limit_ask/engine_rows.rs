@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 157] = [
+    pub const ALL: [Self; 158] = [
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -17,6 +17,7 @@ impl EngineLimit {
         Self::ClaimInputJsonBytes,
         Self::CoreBatchEntities,
         Self::LegacyBatchEntities,
+        Self::BlobContentBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -179,6 +180,7 @@ impl EngineLimit {
             Self::ClaimInputJsonBytes => "limits.claim_input_json_bytes",
             Self::CoreBatchEntities => "limits.core_batch_entities",
             Self::LegacyBatchEntities => "limits.legacy_batch_entities",
+            Self::BlobContentBytes => "limits.blob_content_bytes",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -342,6 +344,7 @@ impl EngineLimit {
             Self::ClaimInputJsonBytes => 67_108_864,
             Self::CoreBatchEntities => 1_048_576,
             Self::LegacyBatchEntities => 1_048_576,
+            Self::BlobContentBytes => memory_share(16),
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,

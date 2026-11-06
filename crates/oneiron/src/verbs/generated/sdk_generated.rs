@@ -23353,12 +23353,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::DeckPreviewRequest = decode(value.clone())?;
         }
         "vault.artifacts.append" => {
-            let input: AppendBlobVersionRequest = decode(value.clone())?;
-            if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-                return Err(MemoryError::bad_request(
-                    "blob base64 exceeds the content ceiling",
-                ));
-            }
+            let _input: AppendBlobVersionRequest = decode(value.clone())?;
         }
         "vault.artifacts.read" => {
             let _input: ReadBlobVersionRequest = decode(value.clone())?;
@@ -35933,11 +35928,6 @@ pub fn vault_artifacts_append(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
     memory_requests::append_blob(memory, input)
 }
 pub fn vault_artifacts_read(

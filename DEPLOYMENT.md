@@ -291,6 +291,7 @@ booking_local_time_windows = 65536 # distinct local time windows one booking con
 claim_input_json_bytes = 67108864 # serialized JSON bytes of one claim input at the vault's claim door; past it the claim is written whole and the row asks
 core_batch_entities = 1048576     # entities one core batch write carries; past it every entity lands in the same one atomic batch and the row asks
 legacy_batch_entities = 1048576   # entities one legacy batch_put_entities call (N-API or C FFI) carries; past it every entity lands in one atomic transaction and the row asks
+blob_content_bytes = 4294967296  # raw bytes of one blob artifact version or asset an engine door stores (default: memory / 16, the least of RAM and the container limit); past it the content is stored whole and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
 code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
 code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor

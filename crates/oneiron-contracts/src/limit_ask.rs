@@ -62,6 +62,10 @@ pub enum EngineLimit {
     /// element is read. Past it every entity is written in the same one
     /// atomic transaction.
     LegacyBatchEntities,
+    /// Raw bytes of one blob artifact version or asset an engine door
+    /// stores (`vault.artifacts.append`, asset ingest), decoded. Past it the
+    /// content is stored whole, as one version.
+    BlobContentBytes,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.
