@@ -76,6 +76,8 @@ pub enum PolicySetting {
     /// One agent's free-time policy (FIX 4453, FIX 5660): the act's target
     /// is that agent.
     FreeTimePolicy,
+    /// The owner's board cap and board layout layers (BOARD-LAYOUT).
+    BoardLayout,
 }
 
 impl PolicySetting {
@@ -88,6 +90,7 @@ impl PolicySetting {
             Self::InferenceDefaults => "settings.inference_defaults",
             Self::RoomThreadAdmin => "settings.room_thread_admin",
             Self::FreeTimePolicy => "settings.free_time_policy",
+            Self::BoardLayout => "settings.board_layout",
         }
     }
 
@@ -99,6 +102,7 @@ impl PolicySetting {
             Self::InferenceDefaults => "inference_defaults",
             Self::RoomThreadAdmin => "room_thread_admin",
             Self::FreeTimePolicy => "free_time_policy",
+            Self::BoardLayout => "board_layout",
         }
     }
 
@@ -110,6 +114,7 @@ impl PolicySetting {
             "inference_defaults" => Self::InferenceDefaults,
             "room_thread_admin" => Self::RoomThreadAdmin,
             "free_time_policy" => Self::FreeTimePolicy,
+            "board_layout" => Self::BoardLayout,
             _ => return None,
         })
     }
@@ -118,9 +123,10 @@ impl PolicySetting {
     #[must_use]
     pub fn act_kind(self) -> OwnerActKind {
         match self {
-            Self::DreamerWakePolicy | Self::InferenceDefaults | Self::RoomThreadAdmin => {
-                OwnerActKind::PolicySetting
-            }
+            Self::DreamerWakePolicy
+            | Self::InferenceDefaults
+            | Self::RoomThreadAdmin
+            | Self::BoardLayout => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

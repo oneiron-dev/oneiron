@@ -137,6 +137,7 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
 mod slip;
@@ -195,13 +196,14 @@ pub use oneiron_authority::authority::{
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
-    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
-    TrustedContactSlipBinding, WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord,
-    WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
-    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
-    effective_slip_comm, encode_authority_log_entry_body, federation_pact_transcript,
-    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES,
+    SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
+    SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
+    WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
+    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
+    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };

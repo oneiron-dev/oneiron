@@ -387,6 +387,78 @@
       "section": false
     },
     {
+      "name": "self.board.layout",
+      "description": "The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_layout_reply(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.fold",
+      "description": "Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardFoldRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_fold_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.unfold",
+      "description": "Unfolds one section of the bound actor's context board; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardSectionRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_unfold_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.size",
+      "description": "Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardSizeRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_size_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.filter",
+      "description": "Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn.",
+      "input": "crate::task_verb::sdk::BoardFilterRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_filter_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.board.replace",
+      "description": "Replaces the whole layout the bound actor's next turn applies to its context board.",
+      "input": "crate::task_verb::sdk::BoardReplaceRequest",
+      "output": "crate::task_verb::sdk::BoardLayoutState",
+      "call": "crate::task_verb::sdk::board_replace_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
       "input": "DiaryEntryRequest",
@@ -7387,6 +7459,98 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.list",
+      "description": "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible.",
+      "input": "crate::drafter::DrafterListRequest",
+      "output": "Vec<crate::drafter::DrafterVersionView>",
+      "call": "crate::drafter::list_drafters_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.list\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.list_as",
+      "description": "An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read.",
+      "input": "crate::drafter::DrafterListRequest",
+      "output": "Vec<crate::drafter::DrafterVersionView>",
+      "call": "crate::drafter::list_drafters_as_agent(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.status",
+      "description": "The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor.",
+      "input": "crate::drafter::DrafterStatusRequest",
+      "output": "crate::drafter::DrafterStatus",
+      "call": "crate::drafter::drafter_status_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.status\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.policy.set",
+      "description": "The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock.",
+      "input": "crate::drafter::DrafterPolicySetRequest",
+      "output": "crate::drafter::DrafterPolicy",
+      "call": "crate::drafter::set_drafter_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.revert",
+      "description": "The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back.",
+      "input": "crate::drafter::DrafterRevertRequest",
+      "output": "crate::drafter::DrafterRevertReceipt",
+      "call": "crate::drafter::revert_drafter_as_owner(memory.vault(), &memory.embedded_owner(\"vault.drafters.revert\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.drafters.revert_as",
+      "description": "An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert.",
+      "input": "crate::drafter::DrafterRevertRequest",
+      "output": "crate::drafter::DrafterRevertReceipt",
+      "call": "crate::drafter::revert_drafter_as_agent(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },

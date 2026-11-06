@@ -226,7 +226,7 @@ impl WorldsSection {
         )];
         let mut detail = counts.clone();
         detail.extend(self.rows.iter().cloned());
-        BoardSection::new(
+        Ok(BoardSection::new(
             "WORLDS",
             Vec::new(),
             detail,
@@ -235,6 +235,11 @@ impl WorldsSection {
                 pinned: false,
                 shed_rank: Some(ShedRank::WorldsToCounts),
             },
-        )
+        )?
+        .with_fold_summary(
+            super::layout::FoldSummary::total(self.active_count + self.off_count)
+                .count("active", self.active_count)
+                .count("off", self.off_count),
+        ))
     }
 }
