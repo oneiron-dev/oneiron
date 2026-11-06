@@ -5,7 +5,7 @@
 //! what a carried row does here.
 //!
 //! - Each registration has one intent order: the writer's recorded time,
-//!   then a disarm before an arming made in the same second, then the row's
+//!   then a disarm after an arming made in the same second, then the row's
 //!   content digest. An arming rides the base window of the month it was
 //!   armed in, as `Armed`; a disarm rides the base window of its own month,
 //!   as `Disarmed`, and each machine that learns it keeps it (`DISARMED`).
