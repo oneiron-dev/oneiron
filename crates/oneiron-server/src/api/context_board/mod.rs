@@ -17,7 +17,7 @@ mod prefix;
 mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
-pub(crate) use run_self::describe_self_for_run;
+pub(crate) use run_self::{BriefHostFacts, describe_self_for_run};
 mod layout;
 mod scratchpad;
 mod session;
@@ -978,17 +978,27 @@ pub(crate) async fn describe_self_for_auth(
         // FIX 11461: no host installed a snapshot for this session, so the
         // brief is resolved as a pumped run's is: the agent (an agent, as
         // checked above), the person its subject anchor names, the owner's
-        // agent Grants that stand for it, the clock and the skills this
-        // session loaded, with every field no host resolves (and the
-        // budget, as no run line binds a credential's call) named on one
-        // unavailable line, never stated as a value.
+        // agent Grants that stand for it, the credential ceiling of the slip
+        // it presented beside the read key it was admitted on, the clock and
+        // the skills this session loaded, with every field no host resolves
+        // named on one unavailable line, never stated as a value. A session
+        // label binds no dispatch attempt, so the run and parent ceilings
+        // are among them, as is the budget, as no run line binds a
+        // credential's call.
         None => {
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
-            let state =
-                run_self::resolved_state(server, agent, None, &read_set).map_err(|error| {
+            let host = BriefHostFacts {
+                run_ceiling: None,
+                credential_ceiling: auth.verified_slip().map(|proof| {
+                    oneiron::context_board::brief_credential_ceiling(proof, read.actor_key())
+                }),
+            };
+            let state = run_self::resolved_state(server, agent, None, &read_set, &host).map_err(
+                |error| {
                     tracing::warn!(code = %error.code, "a credential's self brief did not resolve");
                     crate::error::ApiError::internal_server_error("self brief failed")
-                })?;
+                },
+            )?;
             let brief = state
                 .describe(&server.vault, &read_set, Some(&people))
                 .map_err(|error| super::core_engine_error("self brief failed", error))?;
