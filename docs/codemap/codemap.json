@@ -6880,7 +6880,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -7246,6 +7246,16 @@
       "crate-vis": 11,
       "fn": 4,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/evidence_import.rs",
+     "purpose": "FIX 7777: the whole-vault import's MESSAGE orchestration",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -11332,6 +11342,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/calendar/generic_put.rs",
+     "purpose": "Reconcile compatible raw passport heads after a public claim write",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "GoogleInternalConnector",
       "GoogleInternalWire"
@@ -11743,7 +11763,7 @@
      "path": "src/calendar/mod.rs",
      "purpose": "Calendar module home (CAL-00)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "mod": 19,
       "re-export": 17
@@ -21009,7 +21029,7 @@
      "path": "src/connector_key/events/paced.rs",
      "purpose": "Connector event wakes a full count-bound budget window paces (FIX 8686)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -22579,7 +22599,7 @@
       "const": 7,
       "crate-vis": 4,
       "enum": 5,
-      "fn": 24,
+      "fn": 25,
       "struct": 13
      }
     },
@@ -22778,6 +22798,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/memory_writers.rs",
+     "purpose": "Who wrote each MEMORIES row (BOARD-LAYOUT add-on 2): the actor a board layout's `who` filter matches a…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -35369,7 +35399,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint.rs",
@@ -48775,7 +48805,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 40,
       "re-export": 69
      }
@@ -50940,6 +50970,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/archive.rs",
+     "purpose": "Archive restore of witnessed MESSAGE rows (FIX 7777)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -50987,7 +51027,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 5
      }
     },
@@ -52069,7 +52109,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/checkpoint.rs",
@@ -56681,7 +56721,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 13
      }
@@ -62120,6 +62160,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/recovery/validation/window_rows.rs",
+     "purpose": "Window row validation with owned indexes and a cursor between admitted turns",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/recovery/work.rs",
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
@@ -66816,14 +66866,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentBoardLayoutOverride",
       "BoardLayoutSettings"
      ],
      "path": "src/settings/board_layout.rs",
      "purpose": "The owner's board layout settings (BOARD-LAYOUT = A, owner 2026-11-03 20:25: \"better to just set the cap and…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -75687,7 +75739,7 @@
      "path": "src/sync/bridge/edges.rs",
      "purpose": "Edge-delta materialization and per-op quarantine bookkeeping",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -75697,7 +75749,7 @@
      "path": "src/sync/bridge/entities.rs",
      "purpose": "Observer B's entity driver: one batch transaction per delta, each entity through the shared ingest entry…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -75822,7 +75874,7 @@
      "path": "src/sync/bridge/tombstones.rs",
      "purpose": "Observer B's tombstone driver: classification through the shared ingest entry, then one batch transaction…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -76819,7 +76871,7 @@
      "path": "src/sync/custody.rs",
      "purpose": "OF-422: custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`), each enacting an…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -78584,7 +78636,7 @@
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -78644,7 +78696,7 @@
      "path": "src/sync/room_turns.rs",
      "purpose": "OF-522: a room's turn rows on the window plane",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -78664,7 +78716,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 19
      }
     },
     {
@@ -90688,7 +90740,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 181,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90744,7 +90796,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90989,7 +91041,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91486,7 +91538,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 366,
+     "files": 367,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91703,7 +91755,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92202,7 +92254,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6485,
+   "source_files": 6490,
    "test_files": 895
   },
   "oneiron-android": {
@@ -112390,7 +112442,7 @@
      "path": "src/api/context_board/layout.rs",
      "purpose": "The actor's own board layout on the HTTP, chat and MCP boards (BOARD-LAYOUT = A, owner 2026-11-03 20:25)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -137710,7 +137762,7 @@
      "path": "src/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
-      "const": 3,
+      "const": 5,
       "enum": 2,
       "fn": 4,
       "struct": 1
