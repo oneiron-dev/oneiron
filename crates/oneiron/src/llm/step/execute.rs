@@ -410,7 +410,7 @@ pub(super) async fn durable_step_with_generation(
         return Err(DurableStepError::FinalizeRefused);
     }
 
-    let source = StepSource::of(ctx);
+    let mut source = StepSource::of(ctx);
 
     // An owner already gone keeps the row's erased skeleton (FIX 6226):
     // the step is over before it is admitted, asked or paid for.
@@ -429,6 +429,7 @@ pub(super) async fn durable_step_with_generation(
     }
 
     let calls = StepCalls::new(ctx.vault, ctx.deadline, ctx.attempt_id, step_hash)?;
+    source.native_invocation = calls.original_invocation();
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {

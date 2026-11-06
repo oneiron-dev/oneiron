@@ -30,8 +30,8 @@ mod wake_park;
 mod tests;
 
 pub(crate) use self::admission::{
-    AdmittedBudgetLine, AdmittedCallId, NativeCallPayment, invoice_native_call_in_txn,
-    retain_native_call_in_txn,
+    AdmittedBudgetLine, AdmittedCallId, NativeCallPayment, bind_native_call_terminal_in_txn,
+    invoice_native_call_in_txn, retain_native_call_in_txn,
 };
 
 // The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
