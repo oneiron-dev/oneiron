@@ -33,6 +33,8 @@ use crate::skills_pack::{self, OutputMode};
 /// added here.
 pub(crate) mod api;
 pub(crate) mod credential_file;
+mod credential_helper;
+pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
