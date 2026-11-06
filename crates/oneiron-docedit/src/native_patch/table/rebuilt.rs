@@ -31,11 +31,11 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// field-removal receipts stay truthful.
 /// Zero-text whole direct children with zero actual DrawingML `fld` (own or
 /// descendant) strictly inside a retained head/tail interval carry their original
-/// span bytes as-is under the same rebuilt paragraph tag and body ancestors.
-/// Field-free paragraph edge slices also carry contiguous original zero-text
-/// children beside retained first/last text, bounded by the original paragraph
-/// edge or first pPr/last endParaRPr. Other edited, interval-boundary or
-/// field-holding empties keep the existing drop; skipped properties block bridges.
+/// span bytes as-is under the same rebuilt paragraph tag and body ancestors;
+/// edited, boundary, leading, trailing or field-holding empties keep the existing drop.
+/// Field-free paragraph edge gaps carry only beside actually emitted original
+/// neighbors: positive retained text at the first/last nonempty direct child,
+/// and an original first pPr or last endParaRPr. Skipped children block bridges.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
 /// attributes only when it contributes to exactly one retained head/tail piece;
@@ -288,8 +288,8 @@ pub(super) fn rebuilt(
             }
             Some(runs)
         };
-        // Original edge text anchors zero-text children and gaps at that same edge.
-        // Child ordinals exclude separately placed paragraph properties.
+        // Boundary gaps require the first/last original segment to be emitted.
+        // An un-emitted zero-text child must not be bridged over.
         let raw_gap = |from: usize, to: usize| std::str::from_utf8(&bytes[from..to]).ok();
         let opening = match p_pr_node {
             Some((at, node)) if field_free && para_node.children.first() == Some(&at) => {
@@ -303,43 +303,31 @@ pub(super) fn rebuilt(
             }
             _ => "",
         };
-        let leading = match segments
-            .iter()
-            .enumerate()
-            .find(|(_, (_, _, _, text))| !text.is_empty())
-        {
-            Some((zeros, (ordinal, _, node, _))) if field_free && prefix > 0 => {
+        let leading = match segments.first() {
+            Some((ordinal, _, node, text)) if field_free && prefix > 0 && !text.is_empty() => {
                 let start = match p_pr_node {
                     Some((at, property))
-                        if para_node.children.first() == Some(&at) && *ordinal == zeros + 1 =>
+                        if para_node.children.first() == Some(&at) && *ordinal == 1 =>
                     {
                         Some(property.span.end)
                     }
-                    None if *ordinal == zeros => Some(para_node.content.start),
+                    None if *ordinal == 0 => Some(para_node.content.start),
                     _ => None,
                 };
                 start.map_or(Some(""), |start| raw_gap(start, node.span.start))?
             }
             _ => "",
         };
-        let trailing = match segments
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, (_, _, _, text))| !text.is_empty())
-        {
-            Some((index, (ordinal, _, node, _))) if field_free && suffix > 0 => {
-                let through_tail = segments.len() - index;
+        let trailing = match segments.last() {
+            Some((ordinal, _, node, text)) if field_free && suffix > 0 && !text.is_empty() => {
                 let end = match end_node {
                     Some((at, property))
                         if para_node.children.last() == Some(&at)
-                            && *ordinal + through_tail + 1 == para_node.children.len() =>
+                            && *ordinal + 2 == para_node.children.len() =>
                     {
                         Some(property.span.start)
                     }
-                    None if *ordinal + through_tail == para_node.children.len() => {
-                        Some(para_node.content.end)
-                    }
+                    None if *ordinal + 1 == para_node.children.len() => Some(para_node.content.end),
                     _ => None,
                 };
                 end.map_or(Some(""), |end| raw_gap(node.span.end, end))?
