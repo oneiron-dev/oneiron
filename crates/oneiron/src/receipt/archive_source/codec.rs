@@ -10,7 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 /// The domain an archived source's id hashes its canonical bytes under.
-const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
+pub(super) const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReceiptArchive {
@@ -96,42 +96,14 @@ impl ReceiptArchive {
 }
 pub(crate) use crate::store::receipt_identity::is_receipt_archive_source;
 pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
-    let Some(payload) = bytes.strip_prefix(MAGIC) else {
+    if !is_receipt_archive_source(bytes) {
         return Ok(None);
-    };
-    let row: ReceiptArchive = rmp_serde::from_slice(payload).map_err(|_| invalid())?;
-    // Canonical: the row encodes back to exactly these bytes, compared as it
-    // is encoded rather than through a second whole copy.
-    let mut same = SameBytes { rest: bytes };
-    row.write_canonical(&mut same)?;
-    if !same.rest.is_empty() {
-        return Err(invalid());
     }
-    Ok(Some(row))
+    super::reader::decode_reader(std::io::Cursor::new(bytes))
 }
-/// The id of the archived source whose canonical stored bytes are `bytes`
-/// ([`ReceiptArchive::bytes`]), hashed once from the bytes already held.
+/// The id of the archived source whose canonical stored bytes are `bytes`.
 pub(super) fn id_of_bytes(bytes: &[u8]) -> Result<EntityId> {
-    crate::store::code_snapshot::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
-}
-/// A writer that accepts only the next bytes of `rest`, so an encoding is
-/// compared with stored bytes as it is written.
-struct SameBytes<'a> {
-    rest: &'a [u8],
-}
-impl std::io::Write for SameBytes<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        match self.rest.strip_prefix(bytes) {
-            Some(rest) => {
-                self.rest = rest;
-                Ok(bytes.len())
-            }
-            None => Err(std::io::ErrorKind::InvalidData.into()),
-        }
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+    super::reader::id_of_reader(std::io::Cursor::new(bytes))
 }
 pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))

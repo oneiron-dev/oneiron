@@ -1,7 +1,10 @@
 //! Archive receipt I/O through ordinary ASSET admission, not terminal ledgers.
 use super::{
-    codec::{ReceiptArchive, decode, id_of_bytes, invalid, is_inert_holder},
+    body::decode_stored,
+    codec::{ReceiptArchive, invalid, is_inert_holder},
     custody::{read_source, receipt_archives_for_holder},
+    prepared::ReceiptArchivePreparation,
+    reader::{decode_reader, id_of_reader},
 };
 use crate::{
     Vault,
@@ -76,6 +79,9 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         holder: &EntityId,
         sources: &[ExportReceiptSource],
+        mint: Option<&crate::store::BodyMint>,
+        known: Option<std::sync::Arc<crate::store::known_value_index::KnownValues>>,
+        holds: &mut Vec<crate::store::StagedHold>,
     ) -> Result<usize> {
         if sources.is_empty() {
             return Ok(0);
@@ -95,6 +101,7 @@ impl Vault {
         }
         let mut existing = archived_receipt_sources_in_txn(&self.store, txn, holder)?;
         let mut prepared = Vec::new();
+        let mut preparation = None;
         for source in sources {
             let source = source.as_imported_archive();
             source.validate()?;
@@ -105,37 +112,69 @@ impl Vault {
                 continue;
             }
             let archive = ReceiptArchive::new(holder, body, source.clone())?;
-            let bytes = archive.bytes()?;
-            let id = id_of_bytes(&bytes)?;
+            if preparation.is_none() {
+                preparation = Some(ReceiptArchivePreparation::new(self.store.body_dir()?)?);
+            }
+            let encoded = preparation
+                .as_mut()
+                .expect("receipt preparation opened")
+                .push(&archive)?;
+            prepared.push((None, encoded));
+            existing.insert(source.receipt_id().to_owned(), source);
+        }
+        let Some(preparation) = preparation else {
+            return Ok(0);
+        };
+        let bytes = preparation.finish()?;
+        let mut count = 0;
+        // Resolve every identity and existing row against the frozen bytes
+        // before admitting the first put. No encoder is replayed for an id.
+        for (id, encoded) in &mut prepared {
+            let actual = id_of_reader(bytes.reader(encoded))?;
             if let Some(raw) =
-                crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &actual)?
             {
                 let head = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("receipt source existing header"))?;
-                if head.entity_type != ENTITY_TYPE_ASSET
-                    || decode(&raw[ENTITY_METADATA_HEADER_LEN..])? != Some(archive)
-                {
+                if head.entity_type != ENTITY_TYPE_ASSET {
+                    return Err(invalid());
+                }
+                let expected = decode_reader(bytes.reader(encoded))?.ok_or_else(invalid)?;
+                let existing = decode_stored(
+                    &self.store,
+                    txn,
+                    &actual,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
+                .ok_or_else(invalid)?;
+                if existing.id != actual || existing.row != expected {
                     return Err(invalid());
                 }
             } else {
-                prepared.push((id, bytes));
+                *id = Some(actual);
+                count += 1;
             }
-            existing.insert(source.receipt_id().to_owned(), source);
         }
-        for (id, bytes) in &prepared {
-            self.batch_in()
-                .put(
-                    id,
-                    ENTITY_TYPE_ASSET,
-                    TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                    bytes,
-                )
-                .apply(txn)?;
+        for (id, encoded) in prepared {
+            let Some(id) = id else {
+                continue;
+            };
+            let staged =
+                self.stage_asset_body(bytes.reader(&encoded), None, known.clone(), mint)?;
+            encoded.check_facts(staged.facts())?;
+            let put = self.put_asset_body_in_txn(
+                txn,
+                &id,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &staged,
+            );
+            holds.push(staged.into_hold());
+            put?;
         }
-        Ok(prepared.len())
+        Ok(count)
     }
 }

@@ -209,6 +209,7 @@ pub(super) fn admit_put<'a>(
         store,
         wtxn,
         (id, entity_type, data, occurred, learned_at),
+        options.storage.asset_file,
     )?;
     let portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
