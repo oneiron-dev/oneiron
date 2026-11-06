@@ -231,22 +231,22 @@ pub(super) fn answers(message: &Value, id: u64) -> bool {
 
 /// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
 /// error it answered with; `None` when it carries neither.
-pub(super) fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
-    if let Some(error) = message.get("error") {
+pub(super) fn tool_result(message: &mut Value) -> Option<UntrustedToolResult> {
+    if let Some(error) = message.get_mut("error") {
         return Some(UntrustedToolResult {
             content: Value::Array(Vec::new()),
             structured_content: None,
             is_error: true,
-            rpc_error: Some(error.clone()),
+            rpc_error: Some(error.take()),
         });
     }
-    let result = message.get("result")?;
+    let result = message.get_mut("result")?;
     Some(UntrustedToolResult {
         content: result
-            .get("content")
-            .cloned()
+            .get_mut("content")
+            .map(Value::take)
             .unwrap_or_else(|| Value::Array(Vec::new())),
-        structured_content: result.get("structuredContent").cloned(),
+        structured_content: result.get_mut("structuredContent").map(Value::take),
         is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
         rpc_error: None,
     })
@@ -254,8 +254,10 @@ pub(super) fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
 
 /// The tool's terminal reply in `message`, or the failure an unreadable one
 /// is.
-pub(super) fn terminal(message: &Value) -> WorkerEvent {
-    match tool_result(message) {
+pub(super) fn terminal(mut message: Value) -> WorkerEvent {
+    let reply = tool_result(&mut message);
+    zeroize_json(message);
+    match reply {
         Some(result) => WorkerEvent::Result(result),
         None => WorkerEvent::Failed {
             sent: true,
