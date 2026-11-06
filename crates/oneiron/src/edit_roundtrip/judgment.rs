@@ -438,7 +438,7 @@ impl Vault {
             }
             row = self.advance_decided_sheet_answers(artifact, &expected, row, ask.deadline)?;
         }
-        self.stage_decided_sheet_answers(artifact, &row, ask.deadline)
+        self.stage_decided_sheet_answers(artifact, row, ask.deadline)
     }
 
     /// Stage decided answers through the in-process cell writer on the exact

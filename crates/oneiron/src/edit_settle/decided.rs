@@ -251,7 +251,7 @@ impl Vault {
     pub(crate) fn stage_decided_sheet_answers(
         &self,
         artifact: &EntityId,
-        row: &DecidedSheetAnswers,
+        row: DecidedSheetAnswers,
         deadline: Instant,
     ) -> Result<ArtifactAskRun> {
         if row.progress.is_some() {
@@ -262,15 +262,15 @@ impl Vault {
         Ok(ArtifactAskRun {
             proposal: self.stage_sheet_answers(
                 artifact,
-                row.bundle.clone(),
+                row.bundle,
                 &row.request.run_ref,
                 row.version,
                 row.frontier,
                 Some(deadline),
             )?,
-            abstained: row.abstained.clone(),
-            refused: row.refused.clone(),
-            read_rows: row.read_rows.clone(),
+            abstained: row.abstained,
+            refused: row.refused,
+            read_rows: row.read_rows,
         })
     }
 
