@@ -299,7 +299,7 @@ pub(super) fn join_graph_path_with_reader(
     }
 }
 
-fn checkpoint(reader: &ContainerReader) -> Result<()> {
+pub(super) fn checkpoint(reader: &ContainerReader) -> Result<()> {
     reader
         .pacing
         .checkpoint(ReadProgress::Member)
