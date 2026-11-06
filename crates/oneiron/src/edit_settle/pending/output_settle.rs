@@ -46,5 +46,6 @@ pub(super) fn output_record(
             _ => None,
         },
         deck: None,
+        discarded_words: None,
     }
 }
