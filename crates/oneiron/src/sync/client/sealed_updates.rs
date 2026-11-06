@@ -251,9 +251,9 @@ impl SyncClient {
                     return Ok(Vec::new());
                 };
                 if held == epoch && Some(seq) == last.checked_add(1) {
-                    self.take_sealed_update(epoch, seq, sealed)?;
+                    let answers = self.take_sealed_update(epoch, seq, sealed)?;
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
-                    return Ok(Vec::new());
+                    return Ok(answers);
                 }
                 // A live update past a gap, or under another epoch: ask for
                 // what lies between, once per catch-up.
@@ -275,11 +275,12 @@ impl SyncClient {
                     Some((held, last)) if held == epoch => last,
                     _ => 0,
                 };
+                let mut answers = Vec::new();
                 if seq > last {
-                    self.take_sealed_update(epoch, seq, sealed)?;
+                    answers = self.take_sealed_update(epoch, seq, sealed)?;
                     put_sealed_update_cursor(&self.vault, &epoch, seq).map_err(storage)?;
                 }
-                Ok(Vec::new())
+                Ok(answers)
             }
             SealedUpdateFrame::CaughtUp {
                 epoch,
@@ -333,13 +334,16 @@ impl SyncClient {
     /// its message once whole; a part of a world it does not read is passed
     /// over. An opening resource fault leaves the cursor before this entry;
     /// other faults keep their logged pass-over and daily-bundle fallback.
+    /// Returns answers the import let in for the home on this connection
+    /// (FIX 10474).
     fn take_sealed_update(
         &mut self,
         epoch: SealedUpdateEpoch,
         seq: u64,
         sealed: &[u8],
-    ) -> Result<(), TransportError> {
-        match self.import_sealed_update(sealed) {
+    ) -> Result<Vec<Vec<u8>>, TransportError> {
+        let mut answers = Vec::new();
+        match self.import_sealed_update(sealed, &mut answers) {
             Err(SealedUpdateImportError::Resource(error)) => {
                 self.sealed_updates.retry_at = Some((epoch, seq));
                 return Err(TransportError::Storage(error.to_string()));
@@ -352,10 +356,14 @@ impl SyncClient {
         if self.sealed_updates.retry_at == Some((epoch, seq)) {
             self.sealed_updates.retry_at = None;
         }
-        Ok(())
+        Ok(answers)
     }
 
-    fn import_sealed_update(&mut self, sealed: &[u8]) -> Result<(), SealedUpdateImportError> {
+    fn import_sealed_update(
+        &mut self,
+        sealed: &[u8],
+        answers: &mut Vec<Vec<u8>>,
+    ) -> Result<(), SealedUpdateImportError> {
         let vault_id = self.vault.sealed_update_vault_id()?;
         let mut opened = open_world_update(&vault_id, self.sealed_update_keys(KEY_CACHE)?, sealed)?;
         if opened.is_none() {
@@ -399,7 +407,7 @@ impl SyncClient {
                     self.want_sealed_snapshot(world, window_key);
                     return Ok(());
                 }
-                self.import_sealed_window(window_key, &bytes)
+                self.import_sealed_window(window_key, &bytes, answers)
                     .inspect_err(|_| self.want_sealed_snapshot(world, window_key))
             }
         }
@@ -487,10 +495,20 @@ impl SyncClient {
     /// held the world's key, not which machine it was: the bytes take the
     /// import a tier with no connection takes. Bytes the import refused stay
     /// nowhere, so no later world import on this connection waits behind
-    /// them.
-    fn import_sealed_window(&mut self, window_key: &str, bytes: &[u8]) -> Result<(), String> {
-        let imported =
-            self.import_own_device_window_update(window_key, bytes, PeerMachine::Unknown);
+    /// them. What answers a deferred sealed update the import let in goes
+    /// into `answers` (FIX 10474).
+    fn import_sealed_window(
+        &mut self,
+        window_key: &str,
+        bytes: &[u8],
+        answers: &mut Vec<Vec<u8>>,
+    ) -> Result<(), String> {
+        let imported = self.import_own_device_window_update(
+            window_key,
+            bytes,
+            PeerMachine::Unknown,
+            Some(answers),
+        );
         if imported.is_err() {
             self.staged_world_updates.retain(|(key, staged, _)| {
                 key.as_str() != window_key || staged.as_slice() != bytes

@@ -30,7 +30,7 @@ pub(crate) struct AdmittedUpdate {
     pub(super) rows: u64,
     pub(super) early: EarlyStamps,
     pub(super) births: Vec<(EntityId, Vec<u8>)>,
-    pub(super) peer_rows: Vec<(EntityId, [u8; 32])>,
+    pub(super) peer_rows: Vec<(EntityId, Vec<u8>)>,
     pub(super) delivered: BTreeMap<EntityId, [u8; 32]>,
     pub(super) born_with: Vec<super::super::born_with::CarriedText>,
     pub(super) lane: Option<String>,
@@ -115,8 +115,8 @@ impl AdmittedUpdate {
     }
 
     /// The rows whose door judges a peer's row apart from this vault's own,
-    /// each with the digest of the bytes the update brings.
-    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+    /// each with its wire digest and any ASSET logical-body identity.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, Vec<u8>)] {
         &self.peer_rows
     }
 
@@ -203,13 +203,13 @@ pub(in crate::sync) fn release_landed_stamps(
 pub(crate) struct StagedBirths {
     lane: String,
     births: Vec<(EntityId, Vec<u8>)>,
-    peer_rows: Vec<(EntityId, [u8; 32])>,
+    peer_rows: Vec<(EntityId, Vec<u8>)>,
 }
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
-    /// The peer-origin rows recomputed from the receipt-bound admitted bytes.
-    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+    /// The peer-origin records recomputed from receipt-bound admitted bytes.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, Vec<u8>)] {
         &self.peer_rows
     }
 
