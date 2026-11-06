@@ -50,6 +50,7 @@ pub(super) fn hand_over(
     body: RawOutboundBody,
     kept: Option<KeptSentValue>,
 ) -> Sent {
+    let body = body.into_spooled(declared.vault);
     let KeptRound {
         registered,
         questions,
