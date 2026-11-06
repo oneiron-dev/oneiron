@@ -7,8 +7,9 @@
 //! second confirmation or a reimport: each is checked against the
 //! digest-pinned admitted part, today's claim and facet policy for that part,
 //! the live carrier and the body's measured facts, lands at the receipt's
-//! federated tier through the usual body landing door, and releases the
-//! stamps its birth frees. A body that does not land stays owed; the
+//! federated tier through the usual body landing door, keeps the born-with
+//! text the part carried for the row, and releases the stamps its birth
+//! frees. A body that does not land stays owed; the
 //! confirmation stands either way.
 
 use std::collections::HashMap;
@@ -25,8 +26,8 @@ use crate::sync::asset_body::references::bound_refs;
 use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_manager_peer};
 use crate::sync::ingest::watch_births;
 use crate::sync::selector::{
-    release_staged_landed_stamps, revalidate_admitted_facet_stamps,
-    revalidate_admitted_federated_claims,
+    CarriedText, carried_born_with, keep_carried_born_with, release_staged_landed_stamps,
+    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
 };
 use crate::sync::transport::TransportError;
 
@@ -171,10 +172,22 @@ impl SyncClient {
             let refs = bound_refs(&admitted);
             let entities = admitted.get_map("entities");
             self.ensure_window(key.as_str())?;
+            // Rows of this part that are live now and still need the text
+            // the part carried for them: the confirmation kept text only for
+            // rows live then.
+            let mut keep = Vec::new();
             for body in mine {
                 let id = EntityId::from_bytes(body.entity)
                     .map_err(|_| TransportError::InvalidPayload("owed body row"))?;
                 if self.row_present(body.entity)? {
+                    // Born through another lane while owed here: the part's
+                    // text is kept unless the row already holds one.
+                    if carried_born_with(&self.vault, &id)
+                        .map_err(map_federated_admission_err)?
+                        .is_empty()
+                    {
+                        keep.push(id);
+                    }
                     continue;
                 }
                 let found = refs.iter().find(|bound| bound.id == id);
@@ -206,10 +219,20 @@ impl SyncClient {
                 }
                 if self.row_present(body.entity)? {
                     landed.push(id);
+                    keep.push(id);
                 } else {
                     owed.push(body.clone());
                 }
             }
+            // Before the work settles: the last owed body landed drops the
+            // content, the only retained copy of this text.
+            let carried: Vec<CarriedText> = part
+                .born_with
+                .iter()
+                .filter(|(id, _, _)| keep.contains(id))
+                .cloned()
+                .collect();
+            keep_carried_born_with(&self.vault, &carried).map_err(map_federated_admission_err)?;
         }
         settle_staged_import_body_work(&self.vault, &receipt_id, owed.clone())
             .map_err(map_federated_admission_err)?;
