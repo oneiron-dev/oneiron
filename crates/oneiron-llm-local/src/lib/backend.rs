@@ -114,7 +114,6 @@ impl<R> oneiron::llm::SingleRouteBackend for LocalLlmBackend<R>
 where
     R: LocalLlmRuntime + oneiron::llm::SingleSend,
 {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,

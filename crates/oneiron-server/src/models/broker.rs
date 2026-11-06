@@ -654,7 +654,6 @@ impl BrokerBackend {
             )
         })
     }
-
 }
 
 impl LlmBackend for BrokerBackend {

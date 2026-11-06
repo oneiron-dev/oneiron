@@ -66,6 +66,8 @@ pub struct ConsolidationDecisions {
     /// Whether two claims different children of one night proposed state the
     /// same thing (OF-498d): same_as, no_link or unresolved.
     pub nightly_link_wording: String,
+    /// Whether an Arc's cited TURN should be opened beside the current claims.
+    pub arc_open_wording: String,
     /// The host's write-gate auto check, when it runs one. `None` promotes
     /// without a check, as before.
     pub checker: Option<BoundedAutoChecker>,
@@ -93,6 +95,7 @@ impl ConsolidationDecisions {
             sieve_entity_wording: wording.sieve_entity,
             sieve_confidence_wording: wording.sieve_confidence,
             nightly_link_wording: wording.nightly_link,
+            arc_open_wording: wording.arc_open,
             checker: None,
         })
     }
@@ -118,6 +121,7 @@ struct Wording {
     sieve_entity: String,
     sieve_confidence: String,
     nightly_link: String,
+    arc_open: String,
 }
 
 /// `ids` as a choice's option groups, each of at most [`IDS_PER_QUESTION`] ids, with

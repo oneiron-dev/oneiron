@@ -31,7 +31,6 @@ impl LlmBackend for NoChat {
 }
 
 impl SingleRouteBackend for NoChat {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         _request: &'a LlmRequest,

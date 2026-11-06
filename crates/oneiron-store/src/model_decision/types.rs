@@ -319,7 +319,7 @@ pub struct StateCut {
     pub text_cut_at_bytes: Option<u64>,
 }
 
-/// What the decision deadline left on a receipt.
+/// The time a decision spent and what stopped it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionTime {
@@ -337,6 +337,10 @@ pub enum StopCause {
     Done,
     /// The deadline cut work the call still wanted, or the caller took the answer early.
     Deadline,
+    /// The caller allowed no further generation to start.
+    GenerationAllowance,
+    /// No remaining provider supports the requested captured read.
+    CaptureUnsupported,
     ProviderFailure,
 }
 
@@ -351,7 +355,7 @@ pub enum Reasoning {
     /// It did not start: no time was left, no rung up to the ceiling could take it, or
     /// its admission was refused.
     Skipped(ReasoningCause),
-    /// It started, and the deadline came before its answer.
+    /// It started, but the read could not finish. The receipt names what stopped it.
     Cut(ReasoningCause),
 }
 
@@ -476,6 +480,10 @@ pub enum HumanAskReason {
     NeedsPerson,
     /// The deadline cut the call, and its step cannot take an unfinished answer.
     Deadline,
+    /// The caller allowed no further generation, and the step cannot take its prior.
+    GenerationAllowance,
+    /// No captured read can complete the step, and it cannot take its prior.
+    CaptureUnsupported,
     /// A run would pass its project goal's exploration slice.
     ExplorationBudget,
 }

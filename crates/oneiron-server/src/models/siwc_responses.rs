@@ -248,7 +248,6 @@ impl LlmBackend for SiwcResponses {
 }
 
 impl SingleRouteBackend for SiwcResponses {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,
@@ -257,7 +256,8 @@ impl SingleRouteBackend for SiwcResponses {
     ) -> LlmGenerateFuture<'a> {
         let prepared = self.bound(request, false, digest);
         Box::pin(async move {
-            self.generate_prepared(prepared?, request.model.clone(), lease).await
+            self.generate_prepared(prepared?, request.model.clone(), lease)
+                .await
         })
     }
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {

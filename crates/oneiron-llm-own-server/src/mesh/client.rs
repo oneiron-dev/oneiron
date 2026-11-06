@@ -188,9 +188,9 @@ impl OwnServerTransport for MeshLlmTransport {
         let body = serde_json::to_vec(request).map_err(|_| FatalLlmError::InvalidRequest);
         let model = request.model.to_string();
         let leg = Arc::clone(&self.leg);
-        let task = self.runtime.spawn(async move {
-            leg.generate_bytes(body?, model).await
-        });
+        let task = self
+            .runtime
+            .spawn(async move { leg.generate_bytes(body?, model).await });
         let guard = AbortOnDrop(task.abort_handle());
         Box::pin(async move {
             let _guard = guard;
@@ -587,7 +587,9 @@ impl OwnServerTransport for MeshPeerTransport {
         let (leg, machine) = (Arc::clone(&self.leg), self.machine);
         let task = self.runtime.spawn(async move {
             match body {
-                Ok(body) => leg.generate_on(machine, &body).await
+                Ok(body) => leg
+                    .generate_on(machine, &body)
+                    .await
                     .unwrap_or_else(|_| Err(RetryableLlmError::ServerError.into())),
                 Err(_) => Err(FatalLlmError::InvalidRequest.into()),
             }

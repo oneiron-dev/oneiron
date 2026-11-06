@@ -18,11 +18,12 @@
 //! (`restore.rs`), and otherwise creates one. A turn that finds its session
 //! parking takes it back; one that finds it restoring runs plain.
 use oneiron::llm::{
-    CanonicalCheckpointRef, ManifestDigest, MessageStamp, SegmentManifest, SessionBinding,
-    SessionCreate, SessionCreated, SessionFork, SessionForked, SessionGenerate,
+    CanonicalCheckpointRef, DispatchRelease, ManifestDigest, MessageStamp, SegmentManifest,
+    SessionBinding, SessionCreate, SessionCreated, SessionFork, SessionForked, SessionGenerate,
     SessionInvalidation, SessionKey, SessionOp, SessionOpStamp, SessionResidency, SessionRestore,
     SessionRestored, SessionTarget, WorkerDescriptor,
 };
+use oneiron::{BudgetLease, LlmError};
 use serde_json::Value as JsonValue;
 
 use super::lifecycle::{self, Admitted, Counted};
@@ -55,18 +56,58 @@ pub(in crate::models) async fn open_turn(
     conversation: &JsonValue,
     params: &JsonValue,
 ) -> Option<JsonValue> {
-    let messages = conversation.get("messages")?.as_array()?;
-    let anchor = manifest.anchor()?;
-    let admitted = lifecycle::admission(&anchor.vault)?;
-    let cut = policy::canonical_cut(manifest)?;
-    let newest = policy::newest_user(manifest).filter(|index| *index >= cut)?;
+    // No release callback exists on this ordinary session path.
+    open_turn_with_release(
+        route,
+        launch,
+        epoch,
+        observed,
+        manifest,
+        conversation,
+        params,
+        None,
+    )
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Session fallback stays optional; a call-owned release failure does not.
+pub(in crate::models) async fn open_turn_with_release(
+    route: &NativeRoute,
+    launch: &NativeLaunch,
+    epoch: &str,
+    observed: Option<&WorkerDescriptor>,
+    manifest: &SegmentManifest,
+    conversation: &JsonValue,
+    params: &JsonValue,
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+) -> Result<Option<JsonValue>, LlmError> {
+    let Some(messages) = conversation.get("messages").and_then(JsonValue::as_array) else {
+        return Ok(None);
+    };
+    let Some(anchor) = manifest.anchor() else {
+        return Ok(None);
+    };
+    let Some(admitted) = lifecycle::admission(&anchor.vault) else {
+        return Ok(None);
+    };
+    let Some(cut) = policy::canonical_cut(manifest) else {
+        return Ok(None);
+    };
+    let Some(newest) = policy::newest_user(manifest).filter(|index| *index >= cut) else {
+        return Ok(None);
+    };
     if !policy::describes(manifest, messages) {
-        return None;
+        return Ok(None);
     }
     let tools = conversation.get("tools").cloned();
     let key = SessionKey {
         anchor: anchor.clone(),
-        identity: observed?.identity.clone(),
+        identity: match observed {
+            Some(observed) => observed.identity.clone(),
+            None => return Ok(None),
+        },
         conditioning: policy::conditioning(params, tools.as_ref()),
     };
     let worker_id = route.worker.spec().worker_id.clone();
@@ -76,17 +117,23 @@ pub(in crate::models) async fn open_turn(
         worker: route.worker.clone(),
         ledger: super::super::session_device_ledger(&route.worker),
     };
-    let ops = serves(&worker_id, &place).await?;
-    let path = manifest.messages().get(..cut)?;
+    let Some(ops) = serves(&worker_id, &place).await else {
+        return Ok(None);
+    };
+    let Some(path) = manifest.messages().get(..cut) else {
+        return Ok(None);
+    };
     if !attaches(&worker_id, &place, &key, path) {
-        return None;
+        return Ok(None);
     }
     let turn = Turn {
         manifest: manifest.digest(),
         path,
         admitted,
     };
-    let opened = session(&worker_id, &place, &key, ops, &turn).await?;
+    let Some(opened) = session(&worker_id, &place, &key, ops, &turn).await else {
+        return Ok(None);
+    };
     let binding = key.binding();
     let fork = SessionFork {
         target: opened.target.clone(),
@@ -95,14 +142,34 @@ pub(in crate::models) async fn open_turn(
             generation: opened.generation,
         },
         expected: opened.published.clone(),
-        canonical_messages: u64::try_from(cut).ok()?,
+        canonical_messages: match u64::try_from(cut) {
+            Ok(cut) => cut,
+            Err(_) => return Ok(None),
+        },
     };
-    let forked: SessionForked = match send(&place, SessionOp::Fork, &fork, Some(conversation)).await
-    {
+    let sent = match release {
+        Some(release) => {
+            match registry::send_with_release(
+                &place,
+                SessionOp::Fork,
+                &fork,
+                Some(conversation),
+                release,
+            )
+            .await
+            {
+                Ok(forked) => Ok(forked),
+                Err(registry::SendFailure::Invalid(reason)) => Err(reason),
+                Err(registry::SendFailure::Release(error)) => return Err(error),
+            }
+        }
+        None => send(&place, SessionOp::Fork, &fork, Some(conversation)).await,
+    };
+    let forked: SessionForked = match sent {
         Ok(forked) => forked,
         Err(reason) => {
             registry::drop_session(&worker_id, epoch, &binding, reason);
-            return None;
+            return Ok(None);
         }
     };
     // What the session's prepared tail gave this turn (I1 = C).
@@ -113,12 +180,14 @@ pub(in crate::models) async fn open_turn(
         // A lock since the admission keeps the fork unregistered: the lock
         // retires the session, or already has.
         if lifecycle::admission(&anchor.vault) != Some(admitted) {
-            return None;
+            return Ok(None);
         }
-        let session = registry::current(&mut workers, &worker_id, &place)?
-            .sessions
-            .get_mut(&binding)
-            .filter(|session| session.handle == opened.target.handle)?;
+        let Some(session) = registry::current(&mut workers, &worker_id, &place)
+            .and_then(|worker| worker.sessions.get_mut(&binding))
+            .filter(|session| session.handle == opened.target.handle)
+        else {
+            return Ok(None);
+        };
         session.observe(forked.residency);
         session.stale = stale;
         session.phase = Phase::Ready;
@@ -133,17 +202,20 @@ pub(in crate::models) async fn open_turn(
         session.pending = Some(PendingTurn {
             manifest: *manifest.digest(),
             canonical: messages[..cut].to_vec(),
-            newest: messages.get(newest)?.clone(),
+            newest: match messages.get(newest) {
+                Some(message) => message.clone(),
+                None => return Ok(None),
+            },
             tools,
             base: opened.published,
         });
     }
-    serde_json::to_value(SessionGenerate {
+    Ok(serde_json::to_value(SessionGenerate {
         target: opened.target,
         branch: forked.branch,
         op_id: policy::next_op_id(),
     })
-    .ok()
+    .ok())
 }
 
 /// Whether a turn on `key` whose canonical path is `path` may run on a

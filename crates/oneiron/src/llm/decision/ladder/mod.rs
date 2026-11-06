@@ -6,24 +6,28 @@ use super::policy::{
 use super::types::invalid;
 use super::{
     DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung,
-    HostRuleRef, ImagePin, PairedReading, ProviderPin, ReasoningCause,
+    HostRuleRef, ImagePin, PairedReading, ProviderPin, ReasoningCause, StopCause,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
 
 mod ask_consent;
+mod capture;
 mod providers;
 mod roles;
+mod routing;
 mod runner;
 mod slots;
 mod tournament;
 
 pub use ask_consent::{AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue};
 pub use providers::{
-    DecisionCall, DecisionModel, DecisionPack, DecisionProvider, MAX_DECISION_STATE_BYTES,
-    MAX_SCORE_LEVEL_BYTES, ModelDecisionProvider, PairedAnswer, ProviderCapability,
-    ProviderDecision, RuleDecisionProvider, SCORE_LEVELS_FIELD, level_score, score_levels_in,
+    CapturedDecision, CapturedDecisionPack, DecisionCall, DecisionCallContext,
+    DecisionGenerationAdmission, DecisionModel, DecisionPack, DecisionProvider,
+    DecisionReadOutcome, MAX_DECISION_STATE_BYTES, MAX_SCORE_LEVEL_BYTES, ModelDecisionProvider,
+    PairedAnswer, ProviderCapability, ProviderDecision, RuleDecisionProvider, SCORE_LEVELS_FIELD,
+    level_score, score_levels_in,
 };
 pub use roles::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
@@ -92,13 +96,13 @@ pub(super) fn take(
         Ok(answers) => answers,
         Err(_) if !pack.deadline.decision_may_start() => {
             record_attempted_provider(pin, &[], readings);
-            return Ok((0..count).map(|_| Read::Cut).collect());
+            return Ok((0..count).map(|_| Read::Cut(StopCause::Deadline)).collect());
         }
         Err(error) => return Err(error),
     };
     if pack.deadline.answer_due() {
         record_attempted_provider(pin, &answers, readings);
-        return Ok((0..count).map(|_| Read::Cut).collect());
+        return Ok((0..count).map(|_| Read::Cut(StopCause::Deadline)).collect());
     }
     let mut reads = Vec::with_capacity(answers.len());
     for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
@@ -140,6 +144,25 @@ fn record_attempted_provider(
             .get(index)
             .and_then(|answer| answer.answered_pin(pin).ok());
         readings.pins.push(served.unwrap_or_else(|| pin.clone()));
+    }
+}
+
+/// A generated allowance cut keeps a pin only when a native attempt already ran.
+pub(super) fn generation_cut(
+    attempted: Option<&ProviderPin>,
+    readings: &mut [Readings],
+) -> Vec<Read> {
+    if let Some(pin) = attempted {
+        record_attempted_provider(pin, &[], readings);
+        readings
+            .iter()
+            .map(|_| Read::Cut(StopCause::GenerationAllowance))
+            .collect()
+    } else {
+        readings
+            .iter()
+            .map(|_| Read::NotStarted(StopCause::GenerationAllowance))
+            .collect()
     }
 }
 
@@ -263,11 +286,10 @@ fn validate_state(state: &Value) -> Result<()> {
 /// What one provider read gave the call.
 pub(super) enum Read {
     Answer(ProviderDecision),
-    /// No work time was left to start it.
-    NotStarted,
-    /// Its client gave up once the work time was spent, or its reply came after the
-    /// answer's time: an unfinished reply is not an answer.
-    Cut,
+    /// The clock or the caller's allowance left it unstarted.
+    NotStarted(StopCause),
+    /// A started read could not finish; its cause is kept apart from its prior answer.
+    Cut(StopCause),
 }
 
 fn abstained() -> ProviderDecision {

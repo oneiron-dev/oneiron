@@ -134,7 +134,6 @@ impl RerankBackend {
 impl oneiron::llm::SingleSend for RerankBackend {}
 
 impl SingleRouteBackend for RerankBackend {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,
@@ -236,7 +235,6 @@ impl RerankBackend {
             })
         })
     }
-
 }
 
 impl LlmBackend for RerankBackend {

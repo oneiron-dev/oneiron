@@ -308,7 +308,7 @@ pub(crate) fn record_raw_response(
         schema: MODEL_CALL_SCHEMA,
         attempt: run.instance(),
         lease_generation: u64::from(run.revision()),
-        call_index: 1,
+        call_index: run.next_model_call_index(),
         kind: ModelCallKind::Generate {
             digests,
             usage: response.usage.clone(),

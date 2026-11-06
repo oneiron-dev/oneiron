@@ -47,7 +47,6 @@ impl<T: GeminiTransport> GeminiBackend<T> {
 impl<T: GeminiTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
     for GeminiBackend<T>
 {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,

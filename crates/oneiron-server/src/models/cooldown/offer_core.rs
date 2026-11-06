@@ -138,6 +138,14 @@ impl OfferCooldowns {
 
     /// The limit rest kept at `key`, while it runs.
     pub(super) fn limit_rest(&self, vault: &Vault, key: &str) -> Option<Rest> {
+        if let Some(local) = &self.local_rests {
+            return local
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(key)
+                .copied()
+                .filter(|rest| rest.until > vault.now_recorded_at());
+        }
         let rest = match vault.sync_state_get(key) {
             Ok(Some(bytes)) => rmp_serde::from_slice::<Rest>(&bytes).ok(),
             Ok(None) => None,
@@ -168,6 +176,9 @@ impl OfferCooldowns {
         refusal: Refusal<'_>,
     ) -> Option<Rest> {
         let vault = self.vault.as_ref()?;
+        if let Some(local) = &self.local_rests {
+            return Some(self.local_rest(local, vault, offer, wire_model, refusal));
+        }
         let policy = vault.provider_cooldown_policy().unwrap_or_default();
         let now = vault.now_recorded_at();
         let key = key(offer, wire_model);
@@ -247,11 +258,13 @@ impl OfferCooldowns {
             first_success_at: None,
             probing: held.probing,
         };
-        tracing::warn!(
-            strikes,
-            until,
-            "a provider is down; its offer rests for its health"
-        );
+        if !self.is_unrecorded() {
+            tracing::warn!(
+                strikes,
+                until,
+                "a provider is down; its offer rests for its health"
+            );
+        }
         Some(Rest {
             until,
             source: ResetSource::Unhealthy,
@@ -284,10 +297,12 @@ impl OfferCooldowns {
         let strikes = held.strikes;
         health.remove(key);
         drop(health);
-        tracing::info!(
-            strikes,
-            "a provider recovered stably; the work its outage stopped resumes"
-        );
+        if !self.is_unrecorded() {
+            tracing::info!(
+                strikes,
+                "a provider recovered stably; the work its outage stopped resumes"
+            );
+        }
         self.recovered
             .send_modify(|count| *count = count.wrapping_add(1));
     }
@@ -328,6 +343,9 @@ impl OfferCooldowns {
         fits: &dyn Fn(&OfferLadder) -> bool,
         principal: Option<oneiron::EntityId>,
     ) {
+        if self.is_unrecorded() {
+            return;
+        }
         let (Some(vault), Some(spent)) = (self.vault.as_ref(), rest.spent) else {
             return;
         };

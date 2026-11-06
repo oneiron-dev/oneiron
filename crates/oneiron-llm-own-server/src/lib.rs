@@ -83,7 +83,6 @@ impl OwnServerBackend<MeshLlmTransport> {
 impl<T: OwnServerTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
     for OwnServerBackend<T>
 {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::llm::RunAdmission;
 use crate::llm::decision::{
     GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss, GeneratedRung,
     GeneratedStep, HeldLadder, TypedDecision,
@@ -76,6 +77,7 @@ pub struct PolicyDecisions {
     revision: String,
     wording: String,
     budget: Duration,
+    run: Option<RunAdmission>,
 }
 
 impl std::fmt::Debug for PolicyDecisions {
@@ -117,7 +119,19 @@ impl PolicyDecisions {
             revision,
             wording,
             budget,
+            run: None,
         })
+    }
+
+    /// This question snapshot on the caller's existing run.
+    /// Provider admission and settlement stay on that run; the ladder's
+    /// retention and capture behavior are unchanged.
+    #[must_use]
+    pub fn for_run(&self, run: RunAdmission) -> Self {
+        Self {
+            run: Some(run),
+            ..self.clone()
+        }
     }
 
     /// A cached verdict cannot survive a change to this plane's ladder.
@@ -204,16 +218,31 @@ impl PolicyDecisions {
         });
         let deadline = clock.deadline(self.budget);
         let ladder = self.ladder.ladder();
-        let decisions = ladder.run_pack(
-            &questions.iter().collect::<Vec<_>>(),
-            self.principal,
-            &[],
-            &state,
-            self.dial,
-            &self.bands,
-            Reversibility::OutboundEffect,
-            &deadline,
-        );
+        let decisions = match self.run.as_ref() {
+            Some(run) => ladder.run_pack_media_with_run(
+                &questions.iter().collect::<Vec<_>>(),
+                self.principal,
+                &[],
+                &[],
+                &[],
+                &state,
+                self.dial,
+                &self.bands,
+                Reversibility::OutboundEffect,
+                &deadline,
+                run,
+            ),
+            None => ladder.run_pack(
+                &questions.iter().collect::<Vec<_>>(),
+                self.principal,
+                &[],
+                &state,
+                self.dial,
+                &self.bands,
+                Reversibility::OutboundEffect,
+                &deadline,
+            ),
+        };
         let decisions = match decisions {
             Ok(decisions) => decisions,
             Err(_) => {

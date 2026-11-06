@@ -101,7 +101,6 @@ impl<T> oneiron::llm::SingleRouteBackend for AnthropicMessagesBackend<T>
 where
     T: AnthropicMessagesTransport + oneiron::llm::SingleSend,
 {
-
     fn generate_borrowed_bound<'a>(
         &'a self,
         request: &'a LlmRequest,
@@ -135,7 +134,6 @@ impl<T: AnthropicMessagesTransport> AnthropicMessagesBackend<T> {
             parse_anthropic_messages_response(&response.body)
         })
     }
-
 }
 
 impl<T> LlmBackend for AnthropicMessagesBackend<T>
