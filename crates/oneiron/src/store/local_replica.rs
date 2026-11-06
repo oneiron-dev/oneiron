@@ -122,7 +122,8 @@ pub(crate) struct KeepControls {
     /// only pending local work is their promotion pickup, document frames or
     /// NOTE requests, with that work and every edge they touch: the owner's
     /// discard of a world copy (FIX 14534, Engine 11-06 08:34). A pending
-    /// tombstone still keeps its member, and every other keep rule holds.
+    /// tombstone, or a delete this vault's markers record, still keeps its
+    /// member, and every other keep rule holds.
     pub(crate) release_local_members: bool,
     /// Most entity rows one call removes.
     pub(crate) max_removals: usize,
@@ -150,7 +151,8 @@ pub(crate) enum KeepReason {
     Kind(u8),
     /// A bound actor, the embedded owner or a base agent.
     BoundActor,
-    /// The window document holds a tombstone for it: deletion state.
+    /// The window document holds a tombstone for it, or, for a caller that
+    /// releases members, this vault's own markers delete it: deletion state.
     Tombstoned,
     /// The window document does not carry it (a local-only or unmirrored
     /// row), so no server copy could give it back.
@@ -517,7 +519,13 @@ impl<'a> Census<'a> {
             KeepReason::Guarded
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
-        } else if self.tombstones.contains(id) {
+        } else if self.tombstones.contains(id)
+            || (self.keep.release_local_members
+                && crate::deletion::row_deletion_marked(self.store, txn, id, Some(raw))?)
+        {
+            // A discard that releases members reads this vault's own delete
+            // markers too: they outlive the window rows whose tombstone kept
+            // the member, so a later call keeps it the same (FIX 14534).
             KeepReason::Tombstoned
         } else if crate::store::ASSET_FILE_PLANE
             && crate::store::asset_file_of_raw_in_txn(self.store, txn, id, raw)?.is_some()
