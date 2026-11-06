@@ -16,7 +16,7 @@ use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{ClaimError, Error};
 use crate::serialize::msgpack_value_to_json;
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
@@ -277,9 +277,17 @@ impl Memory<'_> {
             // authenticated history no longer projects it current all read
             // as absent here, before any conflict, count, page or write
             // prior. No older revision stands in for a withheld head: a
-            // superseded body is closed, and only Active heads are kept.
-            let Some(body) = self.vault.get_claim_in_txn(txn, &id)? else {
-                continue;
+            // superseded body is closed, and only Active heads are kept. A
+            // MACHINE claim whose history is not yet complete or proven is
+            // withheld the same way, never an error for the whole subject.
+            let body = match self.vault.get_claim_in_txn(txn, &id) {
+                Ok(Some(body)) => body,
+                Ok(None)
+                | Err(Error::Claim(
+                    ClaimError::MachineClaimHistoryIncomplete
+                    | ClaimError::InvalidMachineClaimProof,
+                )) => continue,
+                Err(error) => return Err(error.into()),
             };
             if body.lifecycle != ClaimLifecycleStatus::Active
                 || body.stale
