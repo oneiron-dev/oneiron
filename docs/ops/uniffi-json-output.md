@@ -350,3 +350,20 @@ all finite variants stay on the original whole-event-record codec, and done
 events gain no token-score field. These conversions do not change native
 execution, public records, inputs, typed clients, hooks or authority and are
 not end-to-end depth, heap or runtime proof.
+
+
+`vault.entities.look_before_mint` consumes every candidate's optional mention
+evidence JSON before converting the lookup record. Missing and null evidence
+still read as absent. Candidate and evidence order, hints, recorded refs,
+waterfall fields, confidence widths and finite conversion diagnostics retain
+the original record codec.
+
+`vault.retrieval.hyde.pending` reuses the owned claim-view conversion for each
+present evidence-stage candidate claim across the whole pending-work list.
+Every claim is consumed before a conversion error can return. Required claim
+null values remain present; optional scope null stays absent. Expansion
+requests, work and candidate order, missing claims, scores, clocks and all
+other finite fields keep the original whole-record codec. Neither conversion
+changes native reads, claim redaction, inputs, typed records, client calls,
+hooks or authority. These selected output conversions are not end-to-end
+depth, heap or runtime proof.
