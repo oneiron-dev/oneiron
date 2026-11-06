@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::EntityId;
+use crate::config::bm25::NoteTextField;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
@@ -24,6 +25,8 @@ const ID: &str = "id";
 const PINS: &str = "pins";
 /// meta's title field, one value in the common encoding.
 pub(super) const TITLE: &str = "title";
+/// The editable field the tags sit under, an array of strings.
+const TAGS: &str = "tags";
 /// The root map of operation provenance, never editable metadata.
 const AUTHORSHIP: &str = "authorship";
 /// The part size a Dreamer-written text splits into (`note_parts`). No NOTE
@@ -404,6 +407,43 @@ impl NoteDocument {
             }
             _ => Err(invalid("invalid NOTE title")),
         }
+    }
+
+    /// The tags at this version, as `meta.tags` holds them in the common
+    /// encoding: its strings, in order; none when it holds none.
+    pub(super) fn tags(&self) -> Result<Vec<String>> {
+        match self.doc.get_map(META).get(TAGS) {
+            None => Ok(Vec::new()),
+            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+                let value = decode_metadata_value(bytes.as_slice())
+                    .map_err(|_| invalid("invalid NOTE tags"))?;
+                let tags = value
+                    .as_array()
+                    .ok_or_else(|| invalid("invalid NOTE tags"))?;
+                Ok(tags
+                    .iter()
+                    .filter_map(|tag| tag.as_str().map(str::to_owned))
+                    .collect())
+            }
+            _ => Err(invalid("invalid NOTE tags")),
+        }
+    }
+
+    /// The text fields a NOTE's text index publishes at this version
+    /// (ARCH-0032 #bm25f, FIX 7789): its title, its tags and its live body,
+    /// each under the NOTE field it ranks as. Target names are not
+    /// published yet: no rule names which targets' names they are.
+    pub(super) fn index_fields(&self, body: &str) -> Result<Vec<(&'static str, String)>> {
+        let mut fields = Vec::with_capacity(3);
+        if let Some(title) = self.title()?.filter(|title| !title.is_empty()) {
+            fields.push((NoteTextField::Title.source_name(), title));
+        }
+        let tags = self.tags()?;
+        if !tags.is_empty() {
+            fields.push((NoteTextField::Tags.source_name(), tags.join(" ")));
+        }
+        fields.push((NoteTextField::Body.source_name(), body.to_owned()));
+        Ok(fields)
     }
 
     /// Every editable field at this version, each one value in the common
