@@ -136,6 +136,16 @@ authorize deletion or substitute the original as a key owner. Sync-only copies,
 whole archived-vault images and bare post-cut restores are not proved by this
 raw-Entities source path.
 
+The thin-cache residence blob (`ri:b:`) is another positive supplier. Its
+existing sync projection places the captured full entity header and body under
+an entity-tree owner, including its native copy-to-source mapping. Capture
+checks that actual owner's id against the same scoped-touch body before
+recording the original. The key prefix, owner label or kind alone supplies no
+binding. The existing residence codec, placement, framing and restore paths
+are unchanged; no live Entities row or original CLAIM is needed to record this
+captured fact. Document frames, pending note requests, window histories and
+other opaque sync carriers are not covered by this blob supplier.
+
 The existing permanent marker remains presence-only for admission. Its
 informational value records a real privacy request's canonical reason, time
 and request id, without letting a later ordinary request forget that setting.
