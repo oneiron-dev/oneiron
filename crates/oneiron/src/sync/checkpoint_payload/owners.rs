@@ -40,12 +40,13 @@ use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
+use crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP;
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 23] = [
+pub(super) const WINDOW_ROOTS: [&str; 24] = [
     "entities",
     "edges",
     "tombstones",
@@ -67,6 +68,7 @@ pub(super) const WINDOW_ROOTS: [&str; 23] = [
     DOCUMENT_PINS_MAP,
     MESSAGE_DOCS_MAP,
     OFFICE_PROPOSALS_MAP,
+    TYPED_BODY_ROWS_MAP,
     REPO_MANIFESTS_MAP,
     ASSET_BODY_REFS_MAP,
 ];
@@ -160,6 +162,7 @@ pub(crate) fn root_entry(
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
         OFFICE_PROPOSALS_MAP => crate::sync::office_proposals::checkpoint::entry(key, value),
+        TYPED_BODY_ROWS_MAP => crate::sync::typed_body_rows::checkpoint::entry(key, value),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
@@ -252,6 +255,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
         OFFICE_PROPOSALS_MAP => crate::sync::office_proposals::checkpoint::key_class(key),
+        TYPED_BODY_ROWS_MAP => crate::sync::typed_body_rows::checkpoint::key_class(key),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,

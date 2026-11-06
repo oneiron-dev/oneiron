@@ -232,6 +232,13 @@ impl WindowManager {
                 &key,
                 rows,
             );
+            // FIX 12470: and a typed body receipt that waited for its body.
+            crate::sync::typed_body_rows::merge_committed_typed_body_rows(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
             // FIX 6870: a CODE row that lands after its manifest's head
             // finds the head here.
             crate::sync::repo_manifests::merge_committed_repo_manifests(

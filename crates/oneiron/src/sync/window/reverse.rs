@@ -521,6 +521,13 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 12470: a typed body's commit receipts ride beside it.
+            if window_key.world().is_none()
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::typed_body_rows::mirror_typed_body_rows(vault, doc, window_key, id)?
+            {
+                wrote_any = true;
+            }
             // FIX 853: a MESSAGE's document and its quote pins ride beside
             // it, mirrored after this pass commits.
             if window_key.world().is_none()

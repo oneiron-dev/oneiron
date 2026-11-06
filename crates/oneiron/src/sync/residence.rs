@@ -551,6 +551,7 @@ pub fn promotion_covers_full_window_for(
             super::document_pins::DOCUMENT_PINS_MAP,
             super::message_docs::MESSAGE_DOCS_MAP,
             super::office_proposals::OFFICE_PROPOSALS_MAP,
+            super::typed_body_rows::TYPED_BODY_ROWS_MAP,
             super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,

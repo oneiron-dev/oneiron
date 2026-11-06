@@ -7436,7 +7436,7 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
-QuarantineContainer = Literal["entities", "edges", "tombstones", "leases", "office_proposals"]
+QuarantineContainer = Literal["entities", "edges", "tombstones", "leases", "office_proposals", "typed_body_rows"]
 class SyncHeldEditEvidence(TypedDict):
     window_key: str
     container: QuarantineContainer

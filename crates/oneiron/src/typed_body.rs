@@ -43,6 +43,10 @@ pub(crate) use self::discard::{
 pub(crate) use self::lift::{
     LiftedSources, TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::receipts::carried::{
+    CarriedReceipt, carried_receipts_in_txn, merge_carried_receipt_in_txn,
+};
 pub(crate) use self::receipts::{erase_receipt_actor_in_txn, receipt_actor_in_txn};
 
 const HEADS: SideTable<EntityId, TypedBodyHead, Named> =

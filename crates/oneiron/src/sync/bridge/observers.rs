@@ -591,6 +591,26 @@ pub(crate) fn register_office_proposals_observer(
     )
 }
 
+/// Observer B for the base window's typed body row map (FIX 12470): each
+/// receipt an import brings is merged into this vault's.
+pub(crate) fn register_typed_body_rows_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let typed_body_rows_map = doc.get_map(crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP);
+    subscribe_map_observer(
+        doc,
+        &typed_body_rows_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::typed_body_rows::materialize_typed_body_rows_from_delta,
+        ("typed_body_rows", None),
+    )
+}
+
 /// Observer B for the base window's repo manifest map (FIX 6870): each
 /// manifest an import brings is merged here.
 pub(crate) fn register_repo_manifests_observer(
