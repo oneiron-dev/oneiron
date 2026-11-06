@@ -269,6 +269,9 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
         OP_KIND_ORIGIN_CUT => super::origin_cut::decode_origin_cut(entries),
         OP_KIND_DEVICE_SUCCESSION => super::device_succession::decode_device_succession(entries),
+        OP_KIND_MEMBERSHIP_EXECUTION => {
+            super::membership_execution::decode_membership_execution(entries)
+        }
         _ => Err(invalid_authority()),
     }
 }
