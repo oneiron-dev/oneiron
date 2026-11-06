@@ -82,18 +82,22 @@ impl Vault {
 impl RunKnownSource {
     /// Substitutes typed Text PERSON spans and custody spans on the same
     /// original reply. Custody wins overlaps; no surviving PERSON hit keeps
-    /// the caller's ordinary custody-sweeping path.
-    pub(crate) fn replace_reply_person_texts(
+    /// the caller's ordinary custody-sweeping path. Encodes only when the same
+    /// snapshot contains PERSON prints for this run.
+    pub(crate) fn replace_reply_person_texts<'text>(
         &self,
-        texts: &[(&str, std::ops::Range<usize>)],
-        reply: &[u8],
+        encode: impl FnOnce() -> Result<(
+            Zeroizing<Vec<u8>>,
+            Vec<(&'text str, std::ops::Range<usize>)>,
+        )>,
     ) -> Result<Option<Zeroizing<Vec<u8>>>> {
         self.pass(|custody, person| {
             let Some(person) = person else {
                 return Ok(None);
             };
+            let (reply, texts) = encode()?;
             let mut persons = Vec::new();
-            for (text, encoded_text) in texts {
+            for (text, encoded_text) in &texts {
                 let view = super::forms::json_view(&reply[encoded_text.clone()]);
                 for hit in person.matched_spans_except(text.as_bytes(), |_| false) {
                     // The decoded scalar includes its enclosing quotes.
@@ -115,7 +119,7 @@ impl RunKnownSource {
                 return Ok(None);
             }
             let mut spans = custody
-                .map(|known| known.matched_spans_except(reply, |_| false))
+                .map(|known| known.matched_spans_except(&reply, |_| false))
                 .unwrap_or_default();
             persons.retain(|hit| {
                 !spans
@@ -127,7 +131,7 @@ impl RunKnownSource {
             }
             spans.extend(persons);
             spans.sort_by_key(|hit| hit.span.start);
-            let (bytes, _) = replace_spans(reply, reply.len(), spans);
+            let (bytes, _) = replace_spans(&reply, reply.len(), spans);
             Ok(Some(Zeroizing::new(bytes)))
         })?
     }
