@@ -168,6 +168,7 @@ pub use self::storage::{
     CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
     CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+pub(crate) use self::storage::{InheritedCompaction, StartCompaction};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
