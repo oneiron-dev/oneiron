@@ -220,8 +220,10 @@ impl McpCallContext {
         ceiling: &[u8; 32],
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        oneiron::runtime_hooks::verb::VerbAskResumed,
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         // Only a generated tool-first row is a door a connector's call
         // comes back by.
@@ -289,8 +291,10 @@ impl McpCallContext {
         connection: &str,
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        oneiron::runtime_hooks::verb::VerbAskResumed,
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         if !matches!(
             try_registered_surface(McpSurfaceMode::ToolFirst)
@@ -324,14 +328,19 @@ impl McpCallContext {
 /// The saved `call` run again in `context`, its door rebuilt: the saved args
 /// meet the admission the caller's own call of the tool meets, then run
 /// through the same dispatch. A native read runs again through its own
-/// verb-hook boundary, on the saved request (FIX 1435).
+/// verb-hook boundary, on the saved request, and its answer goes beside the
+/// rows it was derived from, for the caller's retry to be released by
+/// (FIX 1435).
 #[cfg(feature = "code-sandbox-wasmtime")]
 async fn rerun_saved_call(
     server: &Arc<SyncServer>,
     context: &McpCallContext,
     call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
-) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal> {
-    use oneiron::runtime_hooks::verb::VerbAskRefusal;
+) -> Result<
+    oneiron::runtime_hooks::verb::VerbAskResumed,
+    oneiron::runtime_hooks::verb::VerbAskRefusal,
+> {
+    use oneiron::runtime_hooks::verb::{VerbAskRefusal, VerbAskResumed};
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
@@ -352,7 +361,13 @@ async fn rerun_saved_call(
             ),
         )
         .await;
-        return Ok(ran.map(|(output, _)| output).map_err(mcp_saved_error));
+        return Ok(match (ran, served.into_rows()) {
+            (Ok((output, _)), Some(producers)) => VerbAskResumed::RanWithProducers {
+                result: Ok(output),
+                producers,
+            },
+            (ran, _) => VerbAskResumed::Ran(ran.map(|(output, _)| output).map_err(mcp_saved_error)),
+        });
     }
     let mut board_hooks = None;
     // The verb table's fan-out, on the heap (FIX 12072).
@@ -367,18 +382,18 @@ async fn rerun_saved_call(
     ))
     .await;
     match ran {
-        Err(error) => Ok(Err(mcp_saved_error(error))),
+        Err(error) => Ok(VerbAskResumed::Ran(Err(mcp_saved_error(error)))),
         Ok((output, ..)) => {
             // A board read answers the settlement here: the receipt its hook
             // rows owe is recorded and their blocks spent as the answer
             // returns (OF-579).
             if let Some(mut hooks) = board_hooks {
                 if let Err(error) = hooks.record_receipt(server).await {
-                    return Ok(Err(mcp_saved_error(error)));
+                    return Ok(VerbAskResumed::Ran(Err(mcp_saved_error(error))));
                 }
                 hooks.spend(server);
             }
-            Ok(Ok(output))
+            Ok(VerbAskResumed::Ran(Ok(output)))
         }
     }
 }
