@@ -568,8 +568,18 @@ pub(super) fn pending_waits_in_txn(
     txn: &heed::RoTxn<'_>,
     pending: &HeldOutVerdict,
 ) -> Result<bool> {
+    Ok(pending_waits_sourced_in_txn(vault, txn, pending)?.0)
+}
+
+/// The same pending goal check and bound ask, with the native ask's sources.
+pub(super) fn pending_waits_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pending: &HeldOutVerdict,
+) -> Result<(bool, Option<Vec<EntityId>>)> {
     pending.goal_id.ok_or(Error::CorruptedIndex(
         "pending skill tradeoff without a goal",
     ))?;
-    Ok(bound_ask_in_txn(vault, txn, pending)?.is_some())
+    let (ask, sources) = bound_ask_sourced_in_txn(vault, txn, pending)?;
+    Ok((ask.is_some(), sources))
 }
