@@ -225,7 +225,10 @@ impl FacadeRowDoor {
             Err(RowRefusal { words, hook: None }) => {
                 let code = words.code.clone();
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(words);
-                Ok(Err(AgentVerbRefusal { code }))
+                Ok(Err(AgentVerbRefusal {
+                    hook_notice: None,
+                    code,
+                }))
             }
         }
     }
@@ -243,6 +246,7 @@ impl FacadeRowDoor {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> RowAnswer {
         let refused = || AgentVerbRefusal {
+            hook_notice: None,
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
         let run_writes = run_write_token_of_origin(origin);

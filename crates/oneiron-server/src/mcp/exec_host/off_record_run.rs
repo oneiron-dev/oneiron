@@ -90,7 +90,10 @@ impl OffRecordRunDoor {
         )
         .at(self.caller.locality())
         .read_key()
-        .map_err(|refused| AgentVerbRefusal { code: refused.code })
+        .map_err(|refused| AgentVerbRefusal {
+            hook_notice: None,
+            code: refused.code,
+        })
     }
 }
 
@@ -116,6 +119,7 @@ impl SessionWriteCeiling for LiveCaller {
 /// An API refusal as the run's guest reads it: its stable code.
 fn api_refusal(refused: &ApiError) -> AgentVerbRefusal {
     AgentVerbRefusal {
+        hook_notice: None,
         code: refused.code().as_str().to_owned(),
     }
 }
@@ -128,6 +132,7 @@ impl AgentVerbDoor for OffRecordRunDoor {
         _: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         }))
     }
