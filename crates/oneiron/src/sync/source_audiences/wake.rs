@@ -8,7 +8,11 @@
 //! vault stores (a snapshot, or pending updates) is opened as a flush opens
 //! one and persisted again: the persist refreshes its map to this vault's
 //! current word ([`super::refresh_and_scrub`]), and the change commits as a
-//! bridge write that Observer A persists and routes to the window's peers. A
+//! bridge write that Observer A persists and routes to the window's peers.
+//! Each window persisted again is then ready for every live connection, which
+//! asks its peer to exchange it ([`crate::sync::manager::ReadyProgress`]), so
+//! a redaction the window held already reaches them without a commit of its
+//! own (fix list row 19634); a bump that fails keeps the wake where it was. A
 //! window opened for the wake unloads again after. A window this vault no
 //! longer stores, or whose map no longer carries the policy, leaves the
 //! policy's list. The wake goes on from the last window taken and is retired
@@ -166,6 +170,15 @@ impl WindowManager {
             tracing::debug!(window = %key, %error, "a window opened for a policy wake stays loaded");
         }
         persisted?;
-        Ok(if carries { Woken::Took } else { Woken::Gone })
+        // Ready for every live connection before the wake goes past it,
+        // whether or not the persist made a commit (FIX 19634): a redaction
+        // already in the stored window routes nothing of its own. A bump that
+        // fails keeps the wake where it was.
+        let stored = self.mark_window_ready(key)?;
+        Ok(if stored && carries {
+            Woken::Took
+        } else {
+            Woken::Gone
+        })
     }
 }

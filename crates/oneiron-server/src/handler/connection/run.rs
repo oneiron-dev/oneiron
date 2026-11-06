@@ -16,7 +16,8 @@ use super::super::leaf_keys::{LEAF_KEY_TICK, LeafKeySocket, relay_tick};
 use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
-use super::super::window_pads::send_released;
+use super::super::window_pads::{Released, send_released, send_released_outcome};
+use super::super::window_ready::send_ready_window_requests;
 use super::{
     ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
     session_gone, should_forward_broadcast, window_delivery, window_update_withheld,
@@ -123,6 +124,9 @@ pub(super) async fn handle_connection(
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
     conn_state.bound_auth.clone_from(&owner);
+    // Where this socket stands in the windows a policy wake readied here
+    // (FIX 19634): a new socket asks again for every one.
+    let mut ready_windows = oneiron::sync::manager::ReadyProgress::default();
     tracing::debug!(
         conn_id,
         machine = ?conn_state.peer_machine(server.vault()),
@@ -219,6 +223,19 @@ pub(super) async fn handle_connection(
             }
             ConnEvent::LeafKeys => {
                 relay_tick(&server, conn_id, &conn_state);
+                // The same one-second tick, its first at once, asks for the
+                // windows a policy wake readied here since this socket last
+                // asked (FIX 19634).
+                if !send_ready_window_requests(
+                    &server,
+                    &conn_state,
+                    &mut ready_windows,
+                    &mut transport,
+                )
+                .await
+                {
+                    break;
+                }
                 continue;
             }
             ConnEvent::AppDelivery => {
@@ -489,10 +506,16 @@ pub(super) async fn handle_connection(
                     transport.app_jti = None;
                     continue;
                 }
-                let sent = send_released(&server, &conn_state, &mut transport, data).await;
+                let released =
+                    send_released_outcome(&server, &conn_state, &mut transport, data).await;
                 transport.app_jti = None;
-                if !sent {
-                    break;
+                match released {
+                    Released::Failed => break,
+                    // A window answer whose copy or envelope could not be made
+                    // now: the window's ready request goes again on the next
+                    // tick (FIX 19634).
+                    Released::Retry(key) => ready_windows.retry(&key),
+                    Released::Sent | Released::Withheld => {}
                 }
                 continue;
             }
