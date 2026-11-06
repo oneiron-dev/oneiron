@@ -39,7 +39,7 @@ The requested allocation is admitted before `try_reserve_exact`; any capacity
 surplus reported by the standard allocator is settled after allocation. This is
 not a bound on transient allocator surplus or allocator metadata. Container
 backing by itself does not count the heap payload owned by its elements.
-DOM/parser and selector internals, merge/CSS strings, sorting scratch, font
+DOM/parser and selector internals, merge strings, sorting scratch, font
 dictionaries, PDF document/codec objects and output bytes remain outside this
 admission slice.
 A drained line keeps its backing admission. Page-operation containers remain
@@ -104,3 +104,11 @@ capacity through the original wrapping and run-building loop, including unused
 spare capacity and error returns. Unmappable characters and controls still return
 `Font` before any run for that word is emitted. The native encoding call is not
 preempted. This does not admit native PDF string-escaping scratch or output bytes.
+
+CSS rule declarations and the per-element cascade buffer own admitted UTF-8
+capacity. A rule keeps its declaration backing until the rule is dropped; the
+cascade buffer keeps its backing through declaration parsing, including errors.
+Selectors keep the same ID/class specificity and source-order precedence. Their
+counts are stored instead of a second owned selector string. Declaration bytes,
+separator order and inline-style order remain unchanged. Native style selection,
+attribute/tendril copies, matcher internals and sorting scratch are not covered.
