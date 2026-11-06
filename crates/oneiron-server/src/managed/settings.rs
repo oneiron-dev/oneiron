@@ -193,6 +193,26 @@ pub(super) fn prepare(
         }
         _ => Ok(()),
     })?;
+    // `[[shared_env]]` paths are supervisor-selected inputs too, but the
+    // contract's older OWNER_PATHS list does not name them yet. Check both
+    // path leaves against the same vault/config roots here (FIX 2051).
+    if let Some(entries) = table.get("shared_env").and_then(toml::Value::as_array) {
+        for entry in entries {
+            let Some(entry) = entry.as_table() else {
+                continue;
+            };
+            for key in ["path", "credential_file"] {
+                if let Some(path) = entry.get(key).and_then(toml::Value::as_str) {
+                    admit_owner_path(
+                        &table,
+                        &["shared_env".to_owned(), key.to_owned()],
+                        Path::new(path),
+                        &roots,
+                    )?;
+                }
+            }
+        }
+    }
 
     for (key, given) in [
         ("dimensions", args.dimensions.is_some()),
