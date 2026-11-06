@@ -387,7 +387,8 @@ pub(super) fn identity_amendment_delta(
     };
 
     let rtxn = vault.store.env.read_txn()?;
-    let Some(record) = vault.identity_topology_event_in_txn(&rtxn, &proposal_id)? else {
+    // The proposal read whole (FIX 10188).
+    let Some(record) = vault.identity_topology_decision_in_txn(&rtxn, &proposal_id)? else {
         return Ok(None);
     };
     // A revision state that does not read counts as none: it leaves this
