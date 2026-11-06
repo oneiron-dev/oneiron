@@ -185,6 +185,10 @@ side_tables! {
     /// Digest of which install keys counted as mine-machine signers when an authority write last
     /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
     IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// One proposing actor's opaque ramp-scope handle on this vault (FIX 9870): 32 random bytes.
+    /// Local and erasable; never replicates, never restored from an image. Key: hex32 (actor
+    /// entity id).
+    IDENTITY_TOPOLOGY_PROPOSER_SCOPE: SyncState b"it:proposer-scope:" Raw;
     /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
     /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
     IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;

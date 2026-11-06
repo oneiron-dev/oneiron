@@ -209,6 +209,19 @@ pub trait StoreRecordHooks: Send + Sync {
         now: u64,
     ) -> Result<Vec<EntityId>>;
 
+    /// The engine's `campaign::enrollment::drive_enrollment_outbound_leg`.
+    fn drive_enrollment_outbound_leg(
+        &self,
+        vault: &crate::Vault,
+        local_node_id: u64,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        sender: &mut (dyn crate::outbound_consent::OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<
+        crate::campaign::enrollment::EnrollmentLegDrive,
+        crate::outbound_intent_ledger::IntentLedgerError,
+    >;
+
     /// The engine's `comm::record_comm_send_receipt`.
     fn record_comm_send_receipt(
         &self,
@@ -244,6 +257,37 @@ pub trait StoreRecordHooks: Send + Sync {
 
     /// The engine's `identity_topology::validate_identity_topology_event_body_bytes`.
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()>;
+
+    /// The engine's `comm::record_comm_thread_event_in_txn`.
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_inbound_reply_in_txn`.
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
+
+    /// The engine's `comm::record_comm_inbound_stop_in_txn`.
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
 
     /// The engine's `identity_topology::forget_claim_reassignments_in_txn`.
     fn forget_claim_reassignments_in_txn(
@@ -407,6 +451,15 @@ pub trait StoreRecordHooks: Send + Sync {
     /// The engine's `federation::note_authority_row`.
     fn note_authority_row(&self);
 
+    /// The engine's `federation::witness_grant_rulings_in_txn`.
+    fn witness_grant_rulings_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        grant: &EntityId,
+        row: &[u8],
+    ) -> Result<()>;
+
     /// The engine's `skill_attribution::note_direct_derivation_in_txn`.
     fn note_direct_derivation_in_txn(
         &self,
@@ -524,6 +577,33 @@ pub trait StoreRecordHooks: Send + Sync {
         wtxn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()>;
+
+    /// The engine's `campaign::claims::do_not_contact_subjects_in_txn`.
+    fn do_not_contact_subjects_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        counterparty: &str,
+    ) -> Result<Vec<EntityId>>;
+
+    /// The engine's `campaign::claims::subjects_do_not_contact_in_txn`.
+    fn subjects_do_not_contact_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        subjects: &[EntityId],
+        channel: Option<&str>,
+        scope: &str,
+    ) -> Result<bool>;
+
+    /// The engine's `campaign::send_hygiene::apply_suppression_in_txn`.
+    fn apply_suppression_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        cause: crate::write_envelope::cohort_claims::suppression::SuppressionCause,
+        input: &crate::write_envelope::cohort_claims::suppression::SuppressionInput,
+    ) -> Result<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>;
 
     /// The engine's `comm::is_restrictive_comm_predicate`.
     fn is_restrictive_comm_predicate(

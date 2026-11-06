@@ -200,7 +200,7 @@ pub(in crate::commands::owner) fn open_with_unlock(
     need: KeyNeed,
     instead: &str,
 ) -> anyhow::Result<oneiron::Vault> {
-    open_with_unlock_inner(config, request, need, instead, |_| Ok(()))
+    open_with_unlock_inner(config, request, need, instead, |_, _| Ok(()))
 }
 
 /// Opens with the unlock before reading the command's own secret. A kit's
@@ -214,7 +214,7 @@ pub(in crate::commands::owner) fn open_with_unlock_for_secret(
     what: &str,
     file_flag: &str,
 ) -> anyhow::Result<oneiron::Vault> {
-    open_with_unlock_inner(config, request, need, instead, |unlock_reads_stdin| {
+    open_with_unlock_inner(config, request, need, instead, |_, unlock_reads_stdin| {
         refuse_stdin_conflict(
             request,
             unlock_reads_stdin,
@@ -225,12 +225,40 @@ pub(in crate::commands::owner) fn open_with_unlock_for_secret(
     })
 }
 
+/// Opens before the command's own secret, whose stdin need may depend on
+/// this same plain vault's kept pieces, or on the sealed install's keystore.
+pub(in crate::commands::owner) fn open_with_unlock_for_secret_checked(
+    config: &ServeConfig,
+    request: &UnlockRequest<'_>,
+    need: KeyNeed,
+    instead: &str,
+    own_reads_stdin: impl FnOnce(Option<&oneiron::Vault>) -> anyhow::Result<bool>,
+    what: &str,
+    file_flag: &str,
+) -> anyhow::Result<oneiron::Vault> {
+    open_with_unlock_inner(
+        config,
+        request,
+        need,
+        instead,
+        |vault, unlock_reads_stdin| {
+            refuse_stdin_conflict(
+                request,
+                unlock_reads_stdin,
+                own_reads_stdin(vault)?,
+                what,
+                file_flag,
+            )
+        },
+    )
+}
+
 fn open_with_unlock_inner(
     config: &ServeConfig,
     request: &UnlockRequest<'_>,
     need: KeyNeed,
     instead: &str,
-    before_secret: impl FnOnce(bool) -> anyhow::Result<()>,
+    before_secret: impl FnOnce(Option<&oneiron::Vault>, bool) -> anyhow::Result<()>,
 ) -> anyhow::Result<oneiron::Vault> {
     request.refuse_unused()?;
     if request.is_device() {
@@ -259,7 +287,7 @@ fn open_with_unlock_inner(
             },
             None,
             config,
-            before_secret,
+            |reads_stdin| before_secret(None, reads_stdin),
         )?;
         let opened = open_sealed(config, &unlock, instead);
         name_released(&unlock);
@@ -274,7 +302,7 @@ fn open_with_unlock_inner(
         || Ok(vault.vault_key_vault_id()),
         Some(&vault),
         config,
-        before_secret,
+        |reads_stdin| before_secret(Some(&vault), reads_stdin),
     )?;
     let unlocked = unlock.unlock_live(&vault).map_err(|error| {
         anyhow::anyhow!(

@@ -24,7 +24,9 @@ use crate::llm::{
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 
+#[path = "generated_read/score.rs"]
 mod score;
+#[path = "generated_read/wire.rs"]
 mod wire;
 pub use wire::DecisionWireLabels;
 
