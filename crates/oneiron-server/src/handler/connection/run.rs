@@ -17,10 +17,10 @@ use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
 use super::super::window_pads::{Released, send_released, send_released_outcome};
-use super::super::window_ready::{send_ready_window_requests, uninspectable_window};
+use super::super::window_ready::{send_ready_window_requests, window_update_verdict};
 use super::{
     ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
-    session_gone, should_forward_broadcast, window_delivery, window_update_withheld,
+    session_gone, should_forward_broadcast, window_delivery,
 };
 
 use crate::auth::{CoreAuth, RevokedTokenJtis};
@@ -505,25 +505,31 @@ pub(super) async fn handle_connection(
                     }
                 }
                 let peer = conn_state.peer_machine(server.vault());
+                // The window an answer the last door could not read now came
+                // from: its ready request is owed again (FIX 19634). Judged
+                // from the one reading that withholds the answer.
+                let mut uninspectable = None;
                 let ledger_withheld = if conn_state.window_sync_mode
                     == super::super::conn_state::WindowSyncMode::Selector
                 {
                     super::super::federation::selector_update_withheld(&server, &data, peer)
                 } else {
-                    window_update_withheld(&server, peer, &data)
+                    match window_update_verdict(&server, peer, &data) {
+                        Some((key, verdict)) => {
+                            if verdict == oneiron::sync::window::UpdateVerdict::Uninspectable {
+                                uninspectable = key;
+                            }
+                            verdict != oneiron::sync::window::UpdateVerdict::Portable
+                        }
+                        None => false,
+                    }
                 };
                 if ledger_withheld
                     || document_frame_withheld_for(server.vault(), peer, &data)
                     || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
                         && super::super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
                 {
-                    // An answer the last door could not read now leaves its
-                    // window's ready request owed again (FIX 19634).
-                    if ledger_withheld
-                        && conn_state.window_sync_mode
-                            != super::super::conn_state::WindowSyncMode::Selector
-                        && let Some(key) = uninspectable_window(&server, peer, &data)
-                    {
+                    if let Some(key) = uninspectable {
                         ready_windows.retry(&key);
                     }
                     transport.app_jti = None;
