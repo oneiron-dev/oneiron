@@ -296,19 +296,7 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
 /// The staging [`apply_withdrawn_cutoffs`] runs, with the store's fault as it
 /// is: forward rematerialization runs it outside any admission.
 fn stage_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<()> {
-    let mut newest: BTreeMap<EntityId, WithdrawnCutoff> = BTreeMap::new();
-    let mut floors = BTreeMap::new();
-    for row in carried {
-        match *row {
-            CarriedCutoff::Withdrawn(id, cutoff) => {
-                newest.entry(id).or_insert(cutoff).raise(cutoff);
-            }
-            CarriedCutoff::EpochFloor(session, epoch, turn_end) => {
-                let held = floors.entry(session).or_insert((epoch, turn_end));
-                *held = (*held).max((epoch, turn_end));
-            }
-        }
-    }
+    let (newest, floors) = fold_cutoff_rows(carried);
     raise_epoch_floors(vault, &floors)?;
     let (pending, resident) = {
         let rtxn = vault.store.env.read_txn()?;
@@ -326,37 +314,7 @@ fn stage_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<(
         return Ok(());
     }
     vault.with_write_txn_grouped(|wtxn| {
-        let at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
-        for (id, cutoff) in &pending {
-            // Another door may have staged it since the read.
-            if !unseen(vault, wtxn, id, cutoff.generation)? {
-                continue;
-            }
-            crate::deletion::enqueue_withdrawn_generation_in_txn(
-                &vault.store,
-                wtxn,
-                id,
-                cutoff.generation,
-                cutoff.replacement,
-                at,
-            )?;
-            tracing::info!(
-                entity = %id.to_hex(),
-                "withdrawn generation cutoff from another machine; its sweep is staged"
-            );
-        }
-        // A row of a withdrawn generation already materialized here loses its
-        // words whichever carrier won its key, on every delivery of the
-        // cutoff: a repeat finds the keyframe or the Shell and writes nothing.
-        for (id, cutoff) in &newest {
-            if withdraw_resident_words_in_txn(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, id, *cutoff)? {
-                tracing::info!(
-                    entity = %id.to_hex(),
-                    "withdrawn generation cutoff from another machine; its resident words are scrubbed"
-                );
-            }
-        }
-        Ok(())
+        stage_prepared_withdrawn_in_txn(vault, wtxn, &pending, &newest)
     })
 }
 
@@ -465,6 +423,36 @@ pub(crate) fn apply_withdrawn_cutoff_map(vault: &Vault, doc: &LoroDoc, window: &
     if !holds_withdrawn_cutoff_map(doc) {
         return Ok(());
     }
+    let carried = carried_cutoff_rows(doc, window);
+    stage_withdrawn_cutoffs(vault, &carried)
+}
+
+fn fold_cutoff_rows(
+    carried: &[CarriedCutoff],
+) -> (
+    BTreeMap<EntityId, WithdrawnCutoff>,
+    BTreeMap<EntityId, (u64, u64)>,
+) {
+    let mut newest: BTreeMap<EntityId, WithdrawnCutoff> = BTreeMap::new();
+    let mut floors = BTreeMap::new();
+    for row in carried {
+        match *row {
+            CarriedCutoff::Withdrawn(id, cutoff) => {
+                newest.entry(id).or_insert(cutoff).raise(cutoff);
+            }
+            CarriedCutoff::EpochFloor(session, epoch, turn_end) => {
+                let held = floors.entry(session).or_insert((epoch, turn_end));
+                *held = (*held).max((epoch, turn_end));
+            }
+        }
+    }
+    (newest, floors)
+}
+
+fn carried_cutoff_rows(doc: &LoroDoc, window: &str) -> Vec<CarriedCutoff> {
+    if !holds_withdrawn_cutoff_map(doc) {
+        return Vec::new();
+    }
     let mut rows = Vec::new();
     doc.get_map(WITHDRAWN_CUTOFFS_MAP)
         .for_each(|map_key, value| rows.push((map_key.to_owned(), value)));
@@ -481,7 +469,83 @@ pub(crate) fn apply_withdrawn_cutoff_map(vault: &Vault, doc: &LoroDoc, window: &
             }
         }
     }
-    stage_withdrawn_cutoffs(vault, &carried)
+    carried
+}
+
+fn stage_prepared_withdrawn_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    pending: &[(EntityId, WithdrawnCutoff)],
+    newest: &BTreeMap<EntityId, WithdrawnCutoff>,
+) -> Result<()> {
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
+    for (id, cutoff) in pending {
+        // Another door may have staged it since the read.
+        if !unseen(vault, wtxn, id, cutoff.generation)? {
+            continue;
+        }
+        crate::deletion::enqueue_withdrawn_generation_in_txn(
+            &vault.store,
+            wtxn,
+            id,
+            cutoff.generation,
+            cutoff.replacement,
+            at,
+        )?;
+        tracing::info!(
+            entity = %id.to_hex(),
+            "withdrawn generation cutoff from another machine; its sweep is staged"
+        );
+    }
+    // A row of a withdrawn generation already materialized here loses its
+    // words whichever carrier won its key, on every delivery of the
+    // cutoff: a repeat finds the keyframe or the Shell and writes nothing.
+    for (id, cutoff) in newest {
+        if withdraw_resident_words_in_txn(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            id,
+            *cutoff,
+        )? {
+            tracing::info!(
+                entity = %id.to_hex(),
+                "withdrawn generation cutoff from another machine; its resident words are scrubbed"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Applies a bare candidate's cutoffs before its content in the same root writer.
+pub(super) fn stage_withdrawn_cutoff_map_in_txn(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window: &str,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let carried = carried_cutoff_rows(doc, window);
+    let (newest, floors) = fold_cutoff_rows(&carried);
+    for (session, (epoch, turn_end)) in &floors {
+        crate::compaction::raise_session_epoch_floor_in_txn(
+            &vault.store,
+            wtxn,
+            session,
+            *epoch,
+            *turn_end,
+        )?;
+    }
+    let mut pending = Vec::new();
+    let mut resident = false;
+    for (id, cutoff) in &newest {
+        if unseen(vault, wtxn, id, cutoff.generation)? {
+            pending.push((*id, *cutoff));
+        }
+        resident |= holds_withdrawn_words_in(&vault.store, wtxn, id, *cutoff)?;
+    }
+    if pending.is_empty() && !resident {
+        return Ok(());
+    }
+    stage_prepared_withdrawn_in_txn(vault, wtxn, &pending, &newest)
 }
 
 /// Whether `doc` holds a cutoff map. Looking a root up by name creates it:
