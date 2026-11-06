@@ -272,6 +272,7 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
+        let floor = self.vault.host_net_floor();
         let mut streamed =
             crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
         // A failed program's own error is masked with this vault's custody
@@ -282,6 +283,7 @@ impl Memory<'_> {
             artifact,
             budget,
             spool,
+            floor,
             &mut streamed,
             self.vault,
         )?;
