@@ -17,6 +17,7 @@
 //! goal's axis.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use oneiron::code_run::{
     ContributionForkScorer, ContributionReplayUnavailable, ReplayAnchor, ScoredFork,
@@ -116,11 +117,12 @@ impl AuditScorer<'_> {
     /// `messages` admitted to the audit's judge on the rung that answered
     /// the audit (FIX 3611): its model where it ran, through the frozen
     /// role's live route, which still clamps it, as the shadow and
-    /// contribution forks admit a captured rung. The admitted ladder must be
+    /// contribution forks admit a captured rung. The ladder sent on must be
     /// that rung alone, as it is configured now
-    /// (`OfferLadder::for_replay_binding`), on the route it answered on and
-    /// under the route prompt it answered under, by digest. No other rung
-    /// or role stands in. A judge not served there now is
+    /// (`OfferLadder::for_replay_binding`): the role's rung, else the
+    /// model's raw rung (FIX 18546). It must be on the route it answered on
+    /// and under the route prompt it answered under, by digest. No other
+    /// rung or role stands in. A judge not served there now is
     /// `ModelUnavailable`. An audit that froze no rung, no exact rung, and
     /// a moved route or prompt are `AnchorUnresolved`.
     fn admit_judge(
@@ -157,17 +159,26 @@ impl AuditScorer<'_> {
             host_segments: None,
         };
         let runtime = self.server.ai.model_runtime();
-        let Ok(call) = runtime.admit_seat_bound(vault, contract.protocol.role, request) else {
+        let Ok(admission) = runtime.admit_replay(vault, contract.protocol.role, request) else {
             return Err(ContributionReplayUnavailable::ModelUnavailable);
         };
-        let prompted = call
-            .ladder
-            .for_replay_binding(&model, *locality)
-            .is_some_and(|replay| replay.exact_prompt_digest() == route.route_prompt_digest);
-        if !prompted || call.ladder.exact_replay_route_pin().as_ref() != Some(route) {
+        let (request, routes) = (admission.request, admission.routes);
+        // The frozen rung on the role's route, else on the model's raw
+        // route (FIX 18546).
+        let Some((ladder, replay)) =
+            routes.exact_rung(&model, *locality, route.route_prompt_digest)
+        else {
+            return Err(ContributionReplayUnavailable::AnchorUnresolved);
+        };
+        if replay.exact_prompt_digest() != route.route_prompt_digest
+            || ladder.exact_replay_route_pin().as_ref() != Some(route)
+        {
             return Err(ContributionReplayUnavailable::AnchorUnresolved);
         }
-        Ok(call)
+        Ok(RoleCall {
+            request,
+            ladder: Arc::clone(ladder),
+        })
     }
 
     /// `messages` to the audit's judge alone, on its frozen rung
