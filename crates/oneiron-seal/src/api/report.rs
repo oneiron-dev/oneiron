@@ -54,6 +54,8 @@ pub enum VerifyFindingCode {
     TrustRootUnavailable,
     TrustCheckNotRun,
     ValidationMaterialInvalid,
+    ValidationMaterialUnavailable,
+    RevocationStatusUnknown,
     DocumentTimestampInvalid,
     ModificationNotAllowed,
     NoSignature,
