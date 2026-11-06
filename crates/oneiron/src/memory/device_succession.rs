@@ -35,8 +35,10 @@ impl DevicePredecessor {
         let client = u64::from_str_radix(&self.client, 16)
             .map_err(|_| MemoryError::bad_request("invalid predecessor client"))?;
         let mut device_key = [0; 32];
-        hex::decode_to_slice(&self.device_key, &mut device_key)
-            .map_err(|_| MemoryError::bad_request("invalid predecessor device key"))?;
+        for (index, byte) in device_key.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&self.device_key[index * 2..index * 2 + 2], 16)
+                .map_err(|_| MemoryError::bad_request("invalid predecessor device key"))?;
+        }
         Ok((client, device_key))
     }
 }
