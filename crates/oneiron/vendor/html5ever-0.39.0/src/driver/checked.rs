@@ -95,7 +95,7 @@ where
 
     fn error(&mut self, description: Cow<'static, str>) {
         if self.tokenizer.checkpoint() {
-            self.tokenizer.sink.sink.sink.parse_error(description);
+            self.tokenizer.sink.sink.report_parse_error(description);
         }
     }
 

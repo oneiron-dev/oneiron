@@ -359,7 +359,7 @@ where
         // Handle `ParseError` and `DoctypeToken`; convert everything else to the local `Token` type.
         let token = match token {
             tokenizer::ParseError(e) => {
-                self.sink.parse_error(e);
+                self.report_parse_error(e);
                 return tokenizer::TokenSinkResult::Continue;
             },
 
@@ -367,7 +367,7 @@ where
                 if self.mode.get() == InsertionMode::Initial {
                     let (err, quirk) = data::doctype_error_and_quirks(&dt, self.opts.iframe_srcdoc);
                     if err {
-                        self.sink.parse_error(if self.opts.exact_errors {
+                        self.report_parse_error(if self.opts.exact_errors {
                             Cow::from(format!("Bad DOCTYPE: {dt:?}"))
                         } else {
                             Cow::from("Bad DOCTYPE")
@@ -394,7 +394,7 @@ where
                     self.mode.set(InsertionMode::BeforeHtml);
                     return tokenizer::TokenSinkResult::Continue;
                 } else {
-                    self.sink.parse_error(if self.opts.exact_errors {
+                    self.report_parse_error(if self.opts.exact_errors {
                         Cow::from(format!("DOCTYPE in insertion mode {:?}", self.mode.get()))
                     } else {
                         Cow::from("DOCTYPE in body")
@@ -453,8 +453,7 @@ where
                 ProcessResult::Stopped => return tokenizer::TokenSinkResult::Continue,
                 ProcessResult::Done => {
                     if should_have_acknowledged_self_closing_flag {
-                        self.sink
-                            .parse_error(Borrowed("Unacknowledged self-closing tag"));
+                        self.report_parse_error(Borrowed("Unacknowledged self-closing tag"));
                     }
                     let Some(new_token) = more_tokens.pop_front() else {
                         return tokenizer::TokenSinkResult::Continue;
@@ -674,7 +673,7 @@ where
     Sink: TreeSink<Handle = Handle>,
 {
     fn unexpected<T: fmt::Debug>(&self, _thing: &T) -> ProcessResult<Handle> {
-        self.sink.parse_error(if self.opts.exact_errors {
+        self.report_parse_error(if self.opts.exact_errors {
             Cow::from(format!(
                 "Unexpected token {} in insertion mode {:?}",
                 to_escaped_string(_thing),
@@ -804,23 +803,20 @@ where
                 .iter()
                 .rposition(|n| self.sink.same_node(n, &fmt_elem))
             else {
-                self.sink
-                    .parse_error(Borrowed("Formatting element not open"));
+                self.report_parse_error(Borrowed("Formatting element not open"));
                 self.active_formatting.borrow_mut().remove(fmt_elem_index);
                 return Some(());
             };
 
             // 7.
             if !self.in_scope(default_scope, |n| self.sink.same_node(&n, &fmt_elem)) {
-                self.sink
-                    .parse_error(Borrowed("Formatting element not in scope"));
+                self.report_parse_error(Borrowed("Formatting element not in scope"));
                 return Some(());
             }
 
             // 8.
             if !self.sink.same_node(&self.current_node(), &fmt_elem) {
-                self.sink
-                    .parse_error(Borrowed("Formatting element not current node"));
+                self.report_parse_error(Borrowed("Formatting element not current node"));
             }
 
             // 9.
@@ -1129,7 +1125,7 @@ where
                     Cow::from("Unexpected open tag at end of body")
                 }
             };
-            self.sink.parse_error(error);
+            self.report_parse_error(error);
             // FIXME: Do we keep checking after finding one bad tag?
             // The spec suggests not.
             return;
@@ -1256,7 +1252,7 @@ where
     /// Signal an error if it was not the first one.
     fn expect_to_close(&self, name: LocalName) {
         if self.pop_until_named(name.clone()) != 1 {
-            self.sink.parse_error(if self.opts.exact_errors {
+            self.report_parse_error(if self.opts.exact_errors {
                 Cow::from(format!("Unexpected open element while closing {name:?}"))
             } else {
                 Cow::from("Unexpected open element")
@@ -1304,7 +1300,7 @@ where
             self.orig_mode.set(Some(self.mode.get()));
             ProcessResult::Reprocess(InsertionMode::InTableText, token)
         } else {
-            self.sink.parse_error(if self.opts.exact_errors {
+            self.report_parse_error(if self.opts.exact_errors {
                 Cow::from(format!(
                     "Unexpected characters {} in table",
                     to_escaped_string(&token)
@@ -1368,8 +1364,7 @@ where
     fn close_the_cell(&self) {
         self.generate_implied_end_tags(cursory_implied_end);
         if self.pop_until(td_th) != 1 {
-            self.sink
-                .parse_error(Borrowed("expected to close <td> or <th> with cell"));
+            self.report_parse_error(Borrowed("expected to close <td> or <th> with cell"));
         }
         self.clear_active_formatting_to_marker();
     }
@@ -1640,8 +1635,7 @@ where
             }
 
             if self.elem_in(elem, special_tag) {
-                self.sink
-                    .parse_error(Borrowed("Found special tag while closing generic tag"));
+                self.report_parse_error(Borrowed("Found special tag while closing generic tag"));
                 return;
             }
         }

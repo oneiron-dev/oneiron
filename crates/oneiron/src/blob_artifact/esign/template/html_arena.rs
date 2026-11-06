@@ -15,7 +15,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// The arena is freed before its remaining reservation is returned.
 pub(super) struct HtmlDocument {
     document: Document,
-    _arena: Arc<Mutex<Backing>>,
+    _backing: Arc<Mutex<DomBacking>>,
+}
+
+struct DomBacking {
+    nodes: Backing,
+    errors: Backing,
 }
 
 impl Deref for HtmlDocument {
@@ -44,7 +49,10 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
     } else {
         (Document::default(), Backing::new(budget.clone()))
     };
-    let backing = Arc::new(Mutex::new(backing));
+    let backing = Arc::new(Mutex::new(DomBacking {
+        nodes: backing,
+        errors: Backing::new(budget.clone()),
+    }));
     let parser = html5ever::parse_document_with_checkpoint(
         document,
         html5ever::ParseOpts {
@@ -62,6 +70,13 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         parser
             .with_tree_sink_checkpoint(move |document, operation| {
                 budget.checkpoint()?;
+                if matches!(operation, TreeSinkOperation::ParseError) {
+                    let mut backing = current.lock().unwrap_or_else(PoisonError::into_inner);
+                    backing
+                        .errors
+                        .reserve_vec(&mut document.errors.borrow_mut(), 1)?;
+                    return Ok(());
+                }
                 let additional = arena_slots(document, operation);
                 if additional != 0 {
                     if let Some(replacement) = document
@@ -74,7 +89,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                         .map_err(arena_error)?
                     {
                         // Native replacement freed the old block before returning.
-                        *current.lock().unwrap_or_else(PoisonError::into_inner) = replacement;
+                        current.lock().unwrap_or_else(PoisonError::into_inner).nodes = replacement;
                     }
                 }
                 Ok(())
@@ -85,7 +100,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
     };
     Ok(HtmlDocument {
         document,
-        _arena: backing,
+        _backing: backing,
     })
 }
 
@@ -112,6 +127,7 @@ fn arena_slots(document: &Document, operation: TreeSinkOperation<'_, NodeId>) ->
             )
         }
         TreeSinkOperation::CreateComment | TreeSinkOperation::Doctype => 1,
+        TreeSinkOperation::ParseError => 0,
         TreeSinkOperation::Append(parent, child) => append_slots(document, parent, child),
         TreeSinkOperation::BeforeSibling(sibling, child) => sibling_slots(document, sibling, child),
         TreeSinkOperation::BasedOnParent(element, previous, child) => {

@@ -50,9 +50,16 @@ whole replacement Vec<TreeNode> before allocation, settles reported capacity,
 and frees the old storage before returning the replacement reservation. The
 parser caller keeps that reservation with its returned Document through rendering.
 Text that coalesces with an existing node does not reserve a new arena slot.
+The sink-operation callback also covers native diagnostic recording. The actual
+Document.errors Vec<Cow<str>> uses the existing caller-backed replacement
+algorithm before its push, with a separate guard kept after the Document. All
+successful messages and their order remain unchanged. Owned diagnostic strings
+are separate, unadmitted allocations. On refusal the failed push is skipped and
+the first typed error is retained; the current parser step, including private
+unadmitted work, may continue until the next checkpoint or guarded node operation.
 
 Callbacks use the caller's memory and work deadline, not a node-count/content
-limit or a new timer. Attribute, atom/tendril, parser-stack, input and error
-allocations remain unadmitted. One tokenizer step, character-reference work,
+limit or a new timer. Attribute, atom/tendril, parser-stack, input and owned
+diagnostic payload allocations remain unadmitted. One tokenizer step, character-reference work,
 allocator surplus before settlement and opaque codec calls still prevent a
 global heap or hard wall-time bound. This snapshot does not complete FIX 9615.

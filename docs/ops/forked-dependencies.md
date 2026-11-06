@@ -129,6 +129,10 @@ and every local source change.
   are in `crates/oneiron/vendor/README.md`. An optional native sink-operation
   checkpoint propagates arena refusals before a failed node handle can be used,
   through reconstruction, adoption, foreign insertion and table-text draining.
+  Native diagnostic recording uses that same typed error channel and reserves the
+  actual error-vector backing before its original push. Successful messages/order
+  are retained; owned diagnostic payloads remain unadmitted. A failed diagnostic
+  push can leave private work in the current parser step until its next checkpoint.
 
 - `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):
   a fallible native node-arena reservation API admits whole replacement storage
@@ -136,8 +140,8 @@ and every local source change.
   it for root, element/template, comment, doctype and newly created text nodes;
   existing adjacent text still coalesces without another arena slot. A caller's
   reservation stays with the Document through rendering and drop. Transitive
-  node heap, parser/input buffers, attributes and errors are not admitted by this
-  API. No node-count or content-size cap is added. The separately locked 0.27.0
+  node heap, parser/input buffers, attributes and diagnostic payloads are not
+  admitted by this API. No node-count or content-size cap is added. The separately locked 0.27.0
   package stays on the registry. See the snapshot's `PROVENANCE.md`.
 
 ## Licences and attribution
