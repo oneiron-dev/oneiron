@@ -204,7 +204,10 @@ impl EngineNativeExecutor<'_> {
                 .saturating_add(completed_steps),
         )?
         .ending_at(end.bridge_end);
-        record.step_checkpoints.push(checkpoint);
+        let bridge_end = record.bridge_calls.len();
+        record
+            .step_checkpoints
+            .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
         // A wait seen on a failed step is sealed with it too (DOOR-079 1b).
         let parked = parked_wait(record, terminal_status.as_ref(), bridge_start);
         // A flaky commit converts to success on one identical retry (FIX
