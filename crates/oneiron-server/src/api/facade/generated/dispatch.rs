@@ -27946,6 +27946,86 @@ async fn vault_skills_outcomes_get(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_settings_models_responses_store_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.models.responses_store.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.models.responses_store.read", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.settings.models.responses_store.read",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_models_responses_store_read(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_settings_models_responses_store_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.models.responses_store.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.models.responses_store.set", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.settings.models.responses_store.set",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_models_responses_store_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_models_manifest_read(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41789,6 +41869,18 @@ async fn call_verb_row(
         }
         "vault.skills.outcomes.get" => {
             Box::pin(vault_skills_outcomes_get(server, call, input)).await
+        }
+        "vault.settings.models.responses_store.read" => {
+            Box::pin(vault_settings_models_responses_store_read(
+                server, call, input,
+            ))
+            .await
+        }
+        "vault.settings.models.responses_store.set" => {
+            Box::pin(vault_settings_models_responses_store_set(
+                server, call, input,
+            ))
+            .await
         }
         "vault.models.manifest.read" => {
             Box::pin(vault_models_manifest_read(server, call, input)).await

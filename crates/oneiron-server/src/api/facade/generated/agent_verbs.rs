@@ -982,6 +982,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))
+        .route(
+            "/vault.settings.models.responses_store.read",
+            post(facade_route),
+        )
+        .route(
+            "/vault.settings.models.responses_store.set",
+            post(facade_route),
+        )
         .route("/vault.models.manifest.read", post(facade_route))
         .route("/vault.models.manifest.replace", post(facade_route))
         .route("/vault.settings.web_connector", post(facade_route))

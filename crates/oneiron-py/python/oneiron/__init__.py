@@ -3614,6 +3614,9 @@ class Oneiron:
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs":
             return Oneiron._VaultSettingsInferenceDefaultsVerbs(self._client)
         @property
+        def models(self) -> "Oneiron._VaultSettingsModelsVerbs":
+            return Oneiron._VaultSettingsModelsVerbs(self._client)
+        @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
             return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
     class _VaultSettingsLearningVerbs:
@@ -3643,6 +3646,21 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSettingsModelsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def responses_store(self) -> "Oneiron._VaultSettingsModelsResponsesStoreVerbs":
+            return Oneiron._VaultSettingsModelsResponsesStoreVerbs(self._client)
+    class _VaultSettingsModelsResponsesStoreVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads the owner's Responses store switch from the serving vault."""
+            return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_read(json.dumps(spec))))
+        def set(self, spec):
+            """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
+            return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_set(json.dumps(spec))))
     class _VaultSettingsWebConnectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

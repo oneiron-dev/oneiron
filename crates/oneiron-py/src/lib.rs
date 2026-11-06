@@ -8272,6 +8272,36 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_settings_models_responses_store_read(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.settings.models.responses_store.read")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.models.responses_store.read", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_models_responses_store_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.settings.models.responses_store.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.models.responses_store.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_models_manifest_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.models.manifest.read")?;
         let output = py

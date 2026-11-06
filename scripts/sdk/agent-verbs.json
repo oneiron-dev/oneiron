@@ -14044,6 +14044,38 @@
       "section": false
     },
     {
+      "name": "vault.settings.models.responses_store.read",
+      "description": "Reads the owner's Responses store switch from the serving vault.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.read\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.models.responses_store.set",
+      "description": "Sets the owner's Responses store switch, persisting it before updating this server's live providers.",
+      "input": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.set\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.models.manifest.read",
       "description": "Reads the owner-pinned v2 model manifest, or none when no manifest is configured.",
       "input": "crate::task_verb::sdk::EmptyRequest",
