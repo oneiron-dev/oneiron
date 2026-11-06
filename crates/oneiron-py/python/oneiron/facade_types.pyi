@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4582 declarations.
+Census: 1262 facade rows, 4584 declarations.
 Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -13223,12 +13223,19 @@ class OriginMirrorReadinessNotReady(TypedDict):
     objects: list[OriginMirrorLfsObject]
     omitted_objects: int
 OriginMirrorReadiness = OriginMirrorReadinessReady | OriginMirrorReadinessNotReady
+OriginMirrorLfsRoute = Literal["broker", "daemon"]
+BrokerIsolation = Literal["separate_user", "same_user"]
+class OriginMirrorLfsTransfer(TypedDict):
+    route: OriginMirrorLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
 class OriginMirrorRun(TypedDict):
     at: int
     refs: int
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
+    lfs_transfer: NotRequired[OriginMirrorLfsTransfer | None]
 OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
 OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
 class OriginMirrorHold(TypedDict):
@@ -13320,7 +13327,6 @@ class MirrorBatchClaimSent(TypedDict):
 class MirrorBatchClaimPaused(TypedDict):
     state: Literal["paused"]
 MirrorBatchClaim = MirrorBatchClaimPending | MirrorBatchClaimClaimed | MirrorBatchClaimSent | MirrorBatchClaimPaused
-BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginMirrorPlanBatchView(TypedDict):
     claim: MirrorBatchClaim
     refs: list[int]

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4639 declarations.
+// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4641 declarations.
 // Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -2668,7 +2668,10 @@ declare namespace Sdk {
   type OriginMirrorNotReadyReason = "lfs_objects_not_verified" | "lfs_inventory_incomplete";
   type OriginMirrorLfsObject = { oid: string; size: number };
   type OriginMirrorReadiness = { state: "ready" } | { state: "not_ready"; reason: OriginMirrorNotReadyReason; objects: OriginMirrorLfsObject[]; omitted_objects: number };
-  type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null; readiness?: OriginMirrorReadiness | null };
+  type OriginMirrorLfsRoute = "broker" | "daemon";
+  type BrokerIsolation = "separate_user" | "same_user";
+  type OriginMirrorLfsTransfer = { route: OriginMirrorLfsRoute; broker_isolation?: BrokerIsolation | null; credential_rewrites?: number };
+  type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null; readiness?: OriginMirrorReadiness | null; lfs_transfer?: OriginMirrorLfsTransfer | null };
   type OriginMirrorSyncStrategy = "ask_me" | "schedule" | "full_auto";
   type OriginMirrorHoldCause = "storage" | "decode" | "review" | "remote_read";
   type OriginMirrorHold = { cause: OriginMirrorHoldCause; error_kind: string; last_seen: number; times: number };
@@ -2687,7 +2690,6 @@ declare namespace Sdk {
   type MirrorRefOutcome = "pending" | "dispatched" | "applied" | "observed_applied" | "rejected" | "unknown" | "refused" | "remote_moved" | "paused" | "covered" | "held";
   type OriginMirrorPlanRefView = { ref_name: string; new?: string | null; observed: MirrorObservedTip; review?: OriginPublishReview | null; first_page: number; batch?: number | null; outcome: MirrorRefOutcome };
   type MirrorBatchClaim = { state: "pending" } | { state: "claimed"; at: number } | { state: "sent"; at: number } | { state: "paused" };
-  type BrokerIsolation = "separate_user" | "same_user";
   type OriginMirrorPlanBatchView = { claim: MirrorBatchClaim; refs: number[]; detail?: string | null; broker_isolation?: BrokerIsolation | null };
   type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string } | { kind: "object"; object_type: string; object: string; target?: string | null; name?: string | null; size?: number | null };
   type OriginMirrorPlanRecord = { plan_id: EntityId; destination: OriginPublishDestination; strategy: OriginMirrorSyncStrategy; strategy_revision: number; requested_by?: EntityId | null; digest: string; vector: string; created_at: number; settled: boolean; refs: OriginMirrorPlanRefView[]; batches: OriginMirrorPlanBatchView[]; pending_checks: OriginMirrorPendingCheck[]; page: number; pages: number; items: OriginPublishReviewItem[] };
