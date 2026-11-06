@@ -4216,7 +4216,7 @@ declare namespace Sdk {
   type WakeCadenceView = { policy: DreamerWakePolicy; receipt?: WakeCadenceReceipt | null; pending: WakeRecipeInputView[] };
   type WakeSettlementsRequest = { after?: EntityId | null; limit: number };
   type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; retry_of?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
-  type WakeOutcomeState = "running" | "succeeded" | "partial" | "failed";
+  type WakeOutcomeState = "running" | "awaiting_host" | "succeeded" | "partial" | "failed";
   type WakeParkedJob = { attempt: EntityId; cause?: DreamerParkCauseView | null };
   type WakeDeferredJob = { attempt: EntityId; due?: number | null };
   type WakeOutcomeView = { state: WakeOutcomeState; waiting_on: EntityId[]; parked: WakeParkedJob[]; failed: EntityId[]; stopped: EntityId[]; deferred: WakeDeferredJob[]; result_refs: string[]; conclusions: EntityId[] };

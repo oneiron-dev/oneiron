@@ -8212,7 +8212,7 @@ export type WakeSettlementsRequest = { after?: EntityId | null; limit: number }
 /** `oneiron::dreamer_runner::observation::WakeRecipeJobView` */
 export type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; retry_of?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] }
 /** `oneiron::dreamer_runner::observation::WakeOutcomeState` */
-export type WakeOutcomeState = "running" | "succeeded" | "partial" | "failed"
+export type WakeOutcomeState = "running" | "awaiting_host" | "succeeded" | "partial" | "failed"
 /** `oneiron::dreamer_runner::observation::WakeParkedJob` */
 export type WakeParkedJob = { attempt: EntityId; cause?: DreamerParkCauseView | null }
 /** `oneiron::dreamer_runner::observation::WakeDeferredJob` */
