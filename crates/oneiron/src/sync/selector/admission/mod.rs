@@ -220,7 +220,10 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
 /// `guest` is the source namespace a guest's pact or a staged artifact's
 /// claimed manifest names, never authentication. With one, the update's
 /// CLAIMs land in their foreign WORLD copies ([`Routes`], FIX 3497), and the
-/// admitted update holds one part per window it lands in.
+/// admitted update holds one part per window it lands in. The birth placement
+/// it carries for a TASK or SUMMARY is validated and remapped there too, and
+/// each part holds its rows' placements beside its bytes (FIX 3656). Without
+/// one, no placement is read: a member's rows land as they always did.
 #[cfg(feature = "sync")]
 fn admit_window_update(
     vault: &Vault,
@@ -341,6 +344,9 @@ fn admit_window_update(
         };
         let peer_rows = crate::sync::ingest::carry_peer_rows(&admitted)?;
         let delivered = crate::sync::ingest::delivered_rows(&admitted.get_map("entities"));
+        // The birth placements a guest carried never enter the admitted
+        // bytes: the part's import lands each beside its row (FIX 3656).
+        let placements = routes.admitted_placements(&admitted);
         admitted.commit_with(CommitOptions::new().origin(role.origin()));
         let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
         let bytes = admitted
@@ -355,6 +361,7 @@ fn admit_window_update(
             peer_rows,
             delivered,
             born_with,
+            placements,
             lane: lane.clone(),
             routed: Vec::new(),
         });

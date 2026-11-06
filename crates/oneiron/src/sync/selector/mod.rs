@@ -11,6 +11,9 @@ pub(crate) use admission::admit_federated_entity_blob;
 #[cfg(feature = "sync")]
 pub(in crate::sync) mod authority_beside;
 mod authorize;
+// FIX 3656: a TASK's or SUMMARY's birth placement beside it on a copy to
+// another vault.
+mod birth_placements;
 mod born_with;
 mod codec;
 mod document_admission;

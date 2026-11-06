@@ -60,6 +60,9 @@ pub(super) struct Routes<'a> {
     entity_subjects: BTreeSet<EntityId>,
     /// The key each edge naming one of those WORLDs lands under, by its own.
     rekeyed: BTreeMap<String, String>,
+    /// The birth placement the guest carried for each TASK or SUMMARY row,
+    /// at the foreign WORLD copy its world lands in here (FIX 3656).
+    placements: BTreeMap<EntityId, crate::federation::record_scope::GuestPlacement>,
 }
 
 /// A guest's update as its rows are copied: the source vault its pact names
@@ -85,6 +88,7 @@ impl<'a> Routes<'a> {
             worlds: BTreeMap::new(),
             entity_subjects: BTreeSet::new(),
             rekeyed: BTreeMap::new(),
+            placements: BTreeMap::new(),
         }
     }
 
@@ -217,6 +221,22 @@ impl<'a> Routes<'a> {
             }
             edges.push((raw.to_owned(), (src, kind, tgt)));
         });
+        // A guest's TASK or SUMMARY carries its birth placement (FIX 3656).
+        // Its world is a typed WORLD reference: a WORLD row the update
+        // carries, or the foreign copy this vault stores, proves it, as for
+        // an AGENT_DEF's scope (FIX 3892). A row of another kind proves
+        // nothing; base reality is no WORLD row.
+        let placements = super::super::birth_placements::carried_placements(remote)?;
+        for placement in placements.values() {
+            if placement.world != crate::claim::base_world_id()
+                && matches!(
+                    carried.get(&placement.world),
+                    None | Some(Some(ENTITY_TYPE_WORLD))
+                )
+            {
+                named.insert(placement.world);
+            }
+        }
         routes.rename_worlds(
             vault,
             guest,
@@ -225,6 +245,7 @@ impl<'a> Routes<'a> {
             named,
             entity_candidates,
         )?;
+        routes.placements = routes.guest_placements(guest, placements)?;
         for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
                 routes.edges.insert(raw, None);
@@ -395,6 +416,49 @@ impl<'a> Routes<'a> {
             }
         });
         result.map(|()| Some(routed))
+    }
+
+    /// Each birth placement the guest `guest` carried, `carried`, at the
+    /// world it lands in here (FIX 3656): the sender's base reality at the
+    /// guest's base copy, as a guest CLAIM's is, and any other world at the
+    /// foreign copy [`Self::worlds`] holds for it. A world the map does not
+    /// hold stays the sender's id, as an unproven WORLD does (#5009), and a
+    /// guest's row is never placed at a sender's id: that placement is
+    /// refused, and so is its row (`BirthPlacement::for_guest`).
+    fn guest_placements(
+        &self,
+        guest: &[u8; 32],
+        carried: BTreeMap<EntityId, crate::federation::record_scope::BirthPlacement>,
+    ) -> Result<BTreeMap<EntityId, crate::federation::record_scope::GuestPlacement>> {
+        let mut placed = BTreeMap::new();
+        for (id, placement) in carried {
+            let copy = if placement.world == crate::claim::base_world_id() {
+                Some(crate::federation::guest_claim_world(guest, None)?.entity_id())
+            } else {
+                self.worlds.get(&placement.world).copied()
+            };
+            placed.insert(id, placement.for_guest(copy)?);
+        }
+        Ok(placed)
+    }
+
+    /// The placement each row `admitted` holds lands beside, with the digest
+    /// of the bytes that row lands with: what the part's import lands in the
+    /// transaction of the row's first put here (FIX 3656).
+    pub(super) fn admitted_placements(
+        &self,
+        admitted: &LoroDoc,
+    ) -> crate::sync::ingest::AdmittedPlacements {
+        let entities = admitted.get_map("entities");
+        self.placements
+            .iter()
+            .filter_map(|(id, placement)| {
+                let blob = map_get_bytes(&entities, &id.to_hex())?;
+                let header = EntityMetadataHeader::parse(&blob)?;
+                (header.entity_type == placement.kind())
+                    .then(|| (*id, (*blake3::hash(&blob).as_bytes(), *placement)))
+            })
+            .collect()
     }
 }
 
