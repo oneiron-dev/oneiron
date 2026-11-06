@@ -289,8 +289,8 @@ pub(super) async fn mcp_endpoint(
                     let waiter = match waiter {
                         Ok(waiter) => waiter,
                         Err(error) => {
-                            // An OAuth token that no longer resolves is told
-                            // to sign in again (FIX 4902 slice C).
+                            // A waiter no cohort admits is told to sign in
+                            // (FIX 4902 slice C).
                             let challenge = super::super::oauth_call::auth_challenge(
                                 &server,
                                 &headers,
@@ -421,8 +421,9 @@ pub(super) async fn mcp_endpoint(
     let stamp =
         (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
     let failed = result.is_err();
-    // An anonymous request no cohort admitted, or an OAuth token that does
-    // not resolve, answers 401 with its challenge (FIX 4902 slice C).
+    // An anonymous request no cohort admitted answers 401 with its challenge
+    // (FIX 4902 slice C). An OAuth token that does not resolve never gets
+    // here: the binding door refuses it (`oauth_call::swap_oauth_access_token`).
     let challenge = result.as_ref().err().and_then(|error| {
         super::super::oauth_call::auth_challenge(&server, &headers, &connection, error)
     });

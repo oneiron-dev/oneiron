@@ -251,7 +251,6 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
-            oauth_access: None,
         })
     }
     /// An invitee's slip (FIX 1925) on the facade route of one of
@@ -382,11 +381,6 @@ impl CoreAuth {
         vault: &oneiron::Vault,
         txn: &heed::RwTxn<'_>,
     ) -> bool {
-        // A stock client's OAuth access token (FIX 4902 slice C) stands while
-        // its family still resolves it, read in this writer.
-        if let Some(oauth) = &self.oauth_access {
-            return oauth.is_live_in_txn(vault, txn);
-        }
         if let Some(holder) = self.managed_owner {
             // No verified slip and no token id, so without the re-check this
             // credential always read live below. A fault keeps that answer.
@@ -413,11 +407,6 @@ impl CoreAuth {
     /// booking door's stale owner sign-in (FIX 5327) is built for its one
     /// call alone and stands for it: he holds no owner standing to lose.
     pub(crate) fn credential_is_live(&self, vault: &oneiron::Vault) -> bool {
-        // A stock client's OAuth access token (FIX 4902 slice C) stands while
-        // its family still resolves it.
-        if let Some(oauth) = &self.oauth_access {
-            return oauth.is_live(vault);
-        }
         if let Some(holder) = self.managed_owner {
             return self.is_attested_booking_holder() || managed_owner_is_live(vault, holder);
         }

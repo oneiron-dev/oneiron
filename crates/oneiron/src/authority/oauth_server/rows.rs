@@ -95,8 +95,8 @@ pub(super) enum TokenKind {
     Refresh,
 }
 
-/// One access or refresh token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One access or refresh token. Not `Debug`: an access token's row holds its slip.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct IssuedToken {
     pub(super) kind: TokenKind,
@@ -104,6 +104,11 @@ pub(super) struct IssuedToken {
     pub(super) expires_at: u64,
     /// A refresh token already traded for the next one.
     pub(super) spent: bool,
+    /// For an access token, the native capability slip the server holds for it and the `/mcp`
+    /// ingress swaps in for it (FIX 4902 slice C, `access_slips`), as its token; `None` on a
+    /// refresh token, and until the slip lands. It proves nothing alone: its holder key is
+    /// derived from the host issuer's secret and never stored.
+    pub(super) slip: Option<String>,
 }
 
 /// One token family.
@@ -117,6 +122,10 @@ pub(super) struct TokenFamily {
     pub(super) expires_at: u64,
     /// Revoked: no token of the family stands, whatever its own expiry.
     pub(super) revoked: bool,
+    /// The [`TOKENS`] key of the family's one live access token whose slip landed (FIX 4902 slice
+    /// C): the next refresh retires that token and its slip, and a revocation revokes the slip.
+    /// `None` before the first slip lands, and once the family is revoked.
+    pub(super) live_access: Option<String>,
 }
 
 /// The [`CLIENTS`] key of a client ID.
