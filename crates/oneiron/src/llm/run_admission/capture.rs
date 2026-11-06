@@ -139,6 +139,9 @@ impl SettlementCapture {
 
     pub(super) fn record(&self, receipt: &RunReceipt) {
         if matches!(receipt.event, RunEvent::Settled { .. }) {
+            if let Some(admission) = &self.native_admission {
+                admission.record_native_meter();
+            }
             for kept in &self.kept {
                 let mut captured = receipt.clone();
                 captured.native_admission = self.native_admission.clone();
