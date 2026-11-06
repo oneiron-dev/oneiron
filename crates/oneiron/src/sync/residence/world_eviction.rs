@@ -44,6 +44,7 @@ use std::collections::BTreeSet;
 
 use loro::VersionVector;
 
+use super::{ContentWorld, WindowIndexEntry};
 use crate::EntityId;
 use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
@@ -326,8 +327,9 @@ fn local_world_windows(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<Vec
 
 /// Removes the thin read caches of `worlds`' items: each item an opened
 /// marker (`ro:e:`) maps to one of their windows, or a thin index row
-/// (`ri:w:{window}:{item}`) of one lists, with every index row of those
-/// windows' index rows. A cache a legal hold names stays. Returns the caches
+/// (`ri:w:{window}:{item}`) of one lists, or whose fetched copy or index row
+/// the home witnessed as of one of them alone (FIX 14534), with every index
+/// row that lists it. A cache a legal hold names stays. Returns the caches
 /// removed and the ones held.
 fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
@@ -342,17 +344,37 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
                 items.insert(item);
             }
         }
+        // A copy a home witnessed as of one of `worlds` alone goes too, in
+        // whichever window it was fetched or listed, a base one included
+        // (FIX 14534, Engine 11-06 08:34 call 5 = A). One with no witness,
+        // or a shared or base one, stays.
+        let witnessed = |witness: ContentWorld| {
+            witness
+                .exclusive()
+                .is_some_and(|world| worlds.contains(&world))
+        };
+        for row in vault.store.sync_state.prefix_iter(txn, "ri:c:")? {
+            let (key, witness) = row?;
+            if witnessed(ContentWorld::decode(&witness))
+                && let Some(item) = key
+                    .strip_prefix("ri:c:")
+                    .and_then(|id| EntityId::from_hex(id).ok())
+            {
+                items.insert(item);
+            }
+        }
         for row in vault.store.sync_state.prefix_iter(txn, "ri:w:")? {
-            let (key, _) = row?;
+            let (key, entry) = row?;
             let Some((window, item)) = key
                 .strip_prefix("ri:w:")
                 .and_then(|rest| rest.rsplit_once(':'))
             else {
                 continue;
             };
-            if of_worlds(window, worlds)
-                && let Ok(item) = EntityId::from_hex(item)
-            {
+            let listed = of_worlds(window, worlds)
+                || rmp_serde::from_slice::<WindowIndexEntry>(&entry)
+                    .is_ok_and(|entry| witnessed(entry.content_world));
+            if listed && let Ok(item) = EntityId::from_hex(item) {
                 items.insert(item);
             }
         }

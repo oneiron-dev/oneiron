@@ -59,7 +59,7 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
 
 /// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
 /// STORE = A, FIX 10799): an erased item's cached body, text document,
-/// opened marker, touch row and thin index rows go in the erase's own
+/// content-world witness, opened marker, touch row and thin index rows go in the erase's own
 /// transaction, under its id and its masked copy's alike. Absent-ok key
 /// deletes only: nothing is decoded, no mark is read, and an item with no
 /// cache erases as before.
@@ -73,7 +73,7 @@ pub(crate) fn erase_item_caches_in_txn(
     }
     let hexes: Vec<String> = items.iter().map(EntityId::to_hex).collect();
     for hex in &hexes {
-        for family in ["ri:b:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
+        for family in ["ri:b:", "ri:c:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
             store.sync_state.delete(txn, &format!("{family}{hex}"))?;
         }
     }
@@ -160,7 +160,7 @@ pub(crate) fn prune_thin_items_in_txn(
         {
             continue;
         }
-        for family in ["ri:b:", "ri:d:", TOUCH_PREFIX] {
+        for family in ["ri:b:", "ri:c:", "ri:d:", TOUCH_PREFIX] {
             vault
                 .store
                 .sync_state
