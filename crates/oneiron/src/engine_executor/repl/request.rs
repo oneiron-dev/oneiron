@@ -42,11 +42,12 @@ impl EngineNativeExecutor<'_> {
 
     /// Sync every durably completed observation before either a model request
     /// or a compaction mint. No uncommitted runtime output enters context.
-    /// Returns the step that holds each source, for the views that expand it.
+    /// Each entry's turn is its step: equal outputs share one source, so a
+    /// view finds its own observation by that step (FIX 9735).
     pub(in crate::engine_executor) fn sync_output_context(
         &mut self,
         record: &CodeRunReplayRecord,
-    ) -> EngineExecutorResult<HashMap<OutputRef, u64>> {
+    ) -> EngineExecutorResult<()> {
         // Reconstruct references from the routed durable replay record. No
         // observation is copied into the base vault for off-record sessions.
         // Working flags are projections of committed typed coverage. Rebuild
@@ -54,16 +55,14 @@ impl EngineNativeExecutor<'_> {
         self.output_context = OutputWorkingContext::default();
         self.output_run = Some(record.run_id);
         let coverage = self.storage.code_run_compaction_coverage(record.run_id)?;
-        let mut steps = HashMap::new();
         for (seq, _, observation) in self.observation_refs(record)? {
             self.output_context
                 .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
                 self.output_context.compact_span(seq, seq);
             }
-            steps.insert(observation.source, seq);
         }
-        Ok(steps)
+        Ok(())
     }
 
     /// Every completed step's observation reference, from its manifest: no
@@ -107,7 +106,7 @@ impl EngineNativeExecutor<'_> {
             }],
         });
 
-        let steps = self.sync_output_context(record)?;
+        self.sync_output_context(record)?;
         // Only a Full view expands its body; older steps cost their reference.
         // A Full body is held against the run's share of the result-memory
         // pool first: one that does not fit stays in its file, and its view
@@ -140,23 +139,20 @@ impl EngineNativeExecutor<'_> {
             self.output_context.assemble_with(
                 completed_steps,
                 self.output_decay,
-                |source| {
-                    let seq = steps
-                        .get(&source)
-                        .ok_or(Error::CorruptedIndex("missing executor observation"))?;
-                    if folded_outputs.contains(seq) {
+                |source, seq| {
+                    if folded_outputs.contains(&seq) {
                         return Ok(None);
                     }
                     let Some(hold) = share.hold(source.byte_len, watch) else {
-                        left.push((*seq, source));
+                        left.push((seq, source));
                         return Ok(None);
                     };
                     let text =
-                        load_context_output(&self.storage, record, &observation_output_path(*seq))?;
+                        load_context_output(&self.storage, record, &observation_output_path(seq))?;
                     if let Some(window) = window {
                         let tokens = crate::tokenizer::count_context_pack_tokens(&text) as u64;
                         if expanded_tokens.saturating_add(tokens) > window {
-                            past_window.push((*seq, source));
+                            past_window.push((seq, source));
                             return Ok(None);
                         }
                         expanded_tokens = expanded_tokens.saturating_add(tokens);
@@ -164,14 +160,11 @@ impl EngineNativeExecutor<'_> {
                     holds.push((source, hold));
                     Ok(Some(text.into_bytes()))
                 },
-                |source| {
+                |_, seq| {
                     // An aged observation's overview is its body's own
-                    // preview: it enters context only while the body may
-                    // (FIX 9735).
-                    let seq = steps
-                        .get(&source)
-                        .ok_or(Error::CorruptedIndex("missing executor observation"))?;
-                    let path = observation_output_path(*seq);
+                    // preview: it enters context only while that step's body
+                    // may (FIX 9735).
+                    let path = observation_output_path(seq);
                     let output = record
                         .outputs
                         .iter()

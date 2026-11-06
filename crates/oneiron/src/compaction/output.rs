@@ -207,8 +207,8 @@ impl OutputWorkingContext {
         self.assemble_with(
             turn,
             policy,
-            |source| restore_output(vault, source).map(Some),
-            |source| output_clean(vault, source),
+            |source, _| restore_output(vault, source).map(Some),
+            |source, _| output_clean(vault, source),
         )
     }
 
@@ -221,12 +221,14 @@ impl OutputWorkingContext {
     /// `clean` judges an Overview's source as the Full read judges its body:
     /// an overview is made from the output, so one whose output may not enter
     /// model context as it stands shows the withheld mark (FIX 9735).
+    /// Both callbacks get the entry's own turn beside its source, so a caller
+    /// judges that exact observation: equal outputs share one source.
     pub fn assemble_with(
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
-        mut restore: impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
-        mut clean: impl FnMut(OutputRef) -> Result<bool>,
+        mut restore: impl FnMut(OutputRef, u64) -> Result<Option<Vec<u8>>>,
+        mut clean: impl FnMut(OutputRef, u64) -> Result<bool>,
     ) -> Result<Vec<OutputContextView>> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -310,8 +312,8 @@ impl OutputContextEntry {
         self.view_with(
             turn,
             policy,
-            &mut |source| restore_output(vault, source).map(Some),
-            &mut |source| output_clean(vault, source),
+            &mut |source, _| restore_output(vault, source).map(Some),
+            &mut |source, _| output_clean(vault, source),
         )
     }
 
@@ -319,8 +321,8 @@ impl OutputContextEntry {
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
-        restore: &mut impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
-        clean: &mut impl FnMut(OutputRef) -> Result<bool>,
+        restore: &mut impl FnMut(OutputRef, u64) -> Result<Option<Vec<u8>>>,
+        clean: &mut impl FnMut(OutputRef, u64) -> Result<bool>,
     ) -> Result<OutputContextView> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -331,7 +333,7 @@ impl OutputContextEntry {
         let (tier, bytes) = if age >= policy.stub_after_turns {
             (OutputTier::Stub, Vec::new())
         } else if age >= policy.overview_after_turns {
-            let overview = if clean(self.source)? {
+            let overview = if clean(self.source, self.created_turn)? {
                 self.overview.as_bytes().to_vec()
             } else {
                 crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
@@ -340,7 +342,7 @@ impl OutputContextEntry {
             };
             (OutputTier::Overview, overview)
         } else {
-            let Some(bytes) = restore(self.source)? else {
+            let Some(bytes) = restore(self.source, self.created_turn)? else {
                 return Ok(self.stub_view());
             };
             self.source.verify(&bytes)?;
