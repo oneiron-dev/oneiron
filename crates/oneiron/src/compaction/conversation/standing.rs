@@ -4,12 +4,16 @@
 //! its evidence reads, as the reader in one snapshot, to the fingerprint its
 //! landing pinned, and its own words pass the reader's read and its sources'
 //! disclosure fence. One that misses any of that stands for nothing: its
-//! turns stay raw in a log, and their boards stay refused in history.
+//! turns stay raw in a log, and their boards stay refused in history. The
+//! same read fences the home its writer wore (FIX 4817): a diary entry,
+//! lesson, persona part or self-model edited since the call keeps the
+//! summary out, as an edited turn does.
 
 use super::ConversationTurnSpan;
 use super::storage::{ConversationLandingReceipt, conversation_receipts_in};
 use crate::claim::ScopedRead;
 use crate::compaction::decode_epoch_summary_body;
+use crate::compaction::home_pins::home_pins_stand_in;
 use crate::compaction::self_writer::hex32;
 use crate::dreamer_consolidation::conversation_span_text_in;
 use crate::store::conversation_span::ConversationSpanRead;
@@ -61,7 +65,8 @@ fn summary_words(
 }
 
 /// The words `receipt`'s summary stands with for `read` in `txn`: `None`
-/// when it names no evidence, its evidence does not read to its pins, or
+/// when it names no evidence, its evidence does not read to its pins, a
+/// home part its writer wore reads at another revision now (FIX 4817), or
 /// its words do not stand.
 pub(super) fn standing_words_in(
     read: &ScopedRead<'_>,
@@ -72,6 +77,9 @@ pub(super) fn standing_words_in(
         return Ok(None);
     };
     if evidence.turns.is_empty() || !evidence_reads_as_pinned(read, txn, &evidence.turns)? {
+        return Ok(None);
+    }
+    if !home_pins_stand_in(&read.vault().store, txn, &receipt.execution)? {
         return Ok(None);
     }
     summary_words(read, txn, &receipt.summary)
