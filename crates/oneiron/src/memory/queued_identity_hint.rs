@@ -22,10 +22,14 @@ pub(crate) struct OnDeviceIdentityHintReader {
 enum QueuedIdentityHintAuthority {
     Credential(StoredReadProof),
     Uncredentialed,
+    UncredentialedOwner,
 }
 
 impl Memory<'_> {
-    pub(crate) fn queued_identity_hint_reader(&self) -> Option<OnDeviceIdentityHintReader> {
+    pub(crate) fn queued_identity_hint_reader(
+        &self,
+        original_read: Option<&ScopedRead<'_>>,
+    ) -> Option<OnDeviceIdentityHintReader> {
         if self.host_action.is_some()
             || self.room_turn.is_some()
             || self.locality != crate::claim::CallerLocality::OnDevice
@@ -35,6 +39,9 @@ impl Memory<'_> {
         }
         let authority = match &self.read_proof {
             Some(proof) => QueuedIdentityHintAuthority::Credential(StoredReadProof::of(proof)),
+            None if original_read.is_some_and(|read| read.actor_key().reads_as_vault_owner()) => {
+                QueuedIdentityHintAuthority::UncredentialedOwner
+            }
             None => QueuedIdentityHintAuthority::Uncredentialed,
         };
         Some(OnDeviceIdentityHintReader {
@@ -58,17 +65,23 @@ impl OnDeviceIdentityHintReader {
             QueuedIdentityHintAuthority::Credential(proof) => vault
                 .memory(self.actor, class)
                 .with_read_proof(&proof.restore()),
-            QueuedIdentityHintAuthority::Uncredentialed => vault.memory(self.actor, class),
+            QueuedIdentityHintAuthority::Uncredentialed
+            | QueuedIdentityHintAuthority::UncredentialedOwner => vault.memory(self.actor, class),
         };
         let read = memory.read_lane_if_granted(ClaimReadStatus::Recorded)?;
-        // An uncredentialed caller's later promotion must not replace its
-        // original grant-bound position with the Owner's whole-vault key.
-        if matches!(&self.authority, QueuedIdentityHintAuthority::Uncredentialed)
-            && read
+        // A native read already held by this write may establish its Owner
+        // position. A later promotion cannot widen a grant-bound position.
+        if !matches!(&self.authority, QueuedIdentityHintAuthority::Credential(_)) {
+            let was_owner = matches!(
+                &self.authority,
+                QueuedIdentityHintAuthority::UncredentialedOwner
+            );
+            let is_owner = read
                 .as_ref()
-                .is_some_and(|read| read.actor_key().reads_as_vault_owner())
-        {
-            return Ok(None);
+                .is_some_and(|read| read.actor_key().reads_as_vault_owner());
+            if was_owner != is_owner {
+                return Ok(None);
+            }
         }
         // This fresh plain lane has no audience, peer, session or owner
         // composition. Keep its actual native key, including its live guard.
