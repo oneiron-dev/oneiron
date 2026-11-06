@@ -25,15 +25,51 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeProposalSubmitRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
+        self.code_proposal_submit(owner, input, None)
+    }
+
+    /// Submits a fresh review of an approved ordinary file's proved redacted
+    /// resolution. The existing input supplies fresh attribution, message and
+    /// review policy; its content is replaced by the engine's projection.
+    pub fn code_proposal_rereview_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        original: EntityId,
+        input: CodeProposalSubmitRequest,
+    ) -> MemoryResult<CodeProposalSubmitted> {
+        self.code_proposal_submit(owner, input, Some(original))
+    }
+
+    fn code_proposal_submit(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeProposalSubmitRequest,
+        original: Option<EntityId>,
+    ) -> MemoryResult<CodeProposalSubmitted> {
         let actor = self.code_owner(owner)?;
         let repo_ref = self.code_repo(input.repo)?;
         self.code_submission_sources(&input)?;
+        if let Some(original) = original {
+            self.code_readable(original, None)?;
+        }
         let repo = input.repo;
         let repair_of = input.repair_of;
         let (request, catalog) = owner_submission(repo_ref, actor, input);
-        let proposal = self
-            .vault
-            .propose_repo_mutation_as_owner(owner, repo, request, catalog, repair_of)?;
+        // A re-review keeps its original's lineage: it repairs nothing
+        // (FIX 4364).
+        if original.is_some() && repair_of.is_some() {
+            return Err(MemoryError::bad_request(
+                "a re-review cannot also repair a failed proposal",
+            ));
+        }
+        let proposal = match original {
+            Some(original) => self
+                .vault
+                .propose_repo_rereview_as_owner(owner, repo, original, request, catalog)?,
+            None => self
+                .vault
+                .propose_repo_mutation_as_owner(owner, repo, request, catalog, repair_of)?,
+        };
         self.code_submitted(repo, actor, &proposal)
     }
 
