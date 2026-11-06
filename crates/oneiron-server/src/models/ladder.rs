@@ -523,6 +523,12 @@ impl OfferLadder {
         self.rungs.len()
     }
 
+    /// Each rung's host-bound offer, in ladder order: the access a vault's
+    /// model pack resolves against reads their payers (FIX 5366).
+    pub(crate) fn offer_bindings(&self) -> impl Iterator<Item = &OfferBinding> {
+        self.rungs.iter().map(|rung| &rung.offer.binding)
+    }
+
     /// Whether every rung a call on this ladder may reach is free keyless
     /// own-server work (FIX 10592): each rung's bound offer is `Payer::Local`
     /// on `OwnServer` with `KeyCustody::Keyless`. Any keyed, third-party or
