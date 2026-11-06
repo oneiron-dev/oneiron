@@ -489,7 +489,13 @@ impl VerdictOnly<'_> {
         let text = verdict_of(&response).map_or_else(String::new, |verdict| {
             serde_json::json!({ "verdict": verdict.as_str() }).to_string()
         });
-        response.message.content = vec![ContentPart::Text { text }];
+        // Built through the part's wire form, so it holds the text alone
+        // whatever optional fields a text part carries; a part that does not
+        // build leaves no content, which the reply schema refuses.
+        response.message.content = serde_json::from_value::<ContentPart>(
+            serde_json::json!({ "kind": "text", "text": text }),
+        )
+        .map_or_else(|_| Vec::new(), |part| vec![part]);
         response.token_scores = None;
         response.reply_assertions = ReplyAssertions::default();
         response
