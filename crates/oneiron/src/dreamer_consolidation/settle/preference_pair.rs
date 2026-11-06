@@ -16,6 +16,9 @@ use super::marker_ids;
 /// and a restated answer supersedes the stated one. Either way the marker's
 /// question is moot and it is no open conflict. A marker of any other shape,
 /// or one whose claims do not read, answers false and is read as before.
+/// Callers ask only of a marker no reverted settlement reopened: a revert
+/// may restore a member under a new id the marker's history links, which
+/// its refs do not name (REVIEW-6431).
 pub(super) fn preference_pair_moot_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

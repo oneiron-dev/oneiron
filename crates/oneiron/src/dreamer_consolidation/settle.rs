@@ -387,13 +387,14 @@ pub(crate) fn open_conflicts_in_txn(
     markers.sort_by_key(|(id, _)| *id);
     let mut open = Vec::new();
     for (id, body) in markers {
-        // A preference marker whose pair no longer stands asks nothing (FIX 3079).
+        let was_reverted = reverted.contains(&id);
+        // A preference marker whose pair no longer stands asks nothing (FIX
+        // 3079); one a reverted settlement reopened is read as before.
         if answered.contains(&id)
-            || preference_pair::preference_pair_moot_in_txn(vault, txn, &body)?
+            || (!was_reverted && preference_pair::preference_pair_moot_in_txn(vault, txn, &body)?)
         {
             continue;
         }
-        let was_reverted = reverted.contains(&id);
         if let Some(conflict) = open_conflict_from(vault, txn, id, body, was_reverted)? {
             open.push(conflict);
         }
@@ -414,11 +415,6 @@ pub(crate) fn open_conflict_in_txn(
     if !open_marker_body(&body) {
         return Err(invalid_consolidation("not an open conflict marker"));
     }
-    if preference_pair::preference_pair_moot_in_txn(vault, txn, &body)? {
-        return Err(invalid_consolidation(
-            "the conflict's pair no longer stands: a later claim replaced one side",
-        ));
-    }
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation("conflict subject"));
     };
@@ -436,6 +432,11 @@ pub(crate) fn open_conflict_in_txn(
             return Err(invalid_consolidation("the conflict is already settled"));
         }
         reverted |= reverted_answer(&answer);
+    }
+    if !reverted && preference_pair::preference_pair_moot_in_txn(vault, txn, &body)? {
+        return Err(invalid_consolidation(
+            "the conflict's pair no longer stands: a later claim replaced one side",
+        ));
     }
     open_conflict_from(vault, txn, marker, body, reverted)?
         .ok_or(invalid_consolidation("conflict subject"))
