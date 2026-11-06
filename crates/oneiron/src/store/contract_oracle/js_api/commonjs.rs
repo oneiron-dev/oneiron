@@ -300,7 +300,10 @@ fn whole_sequence_values<'ast, 'src>(
         }
         values.push(value);
     }
-    if !whole_value(last, semantic, &mut sequence_accounted) {
+    let last = last.get_inner_expression();
+    if fresh_value(last) {
+        values.push(last);
+    } else if !whole_value(last, semantic, &mut sequence_accounted) {
         return None;
     }
     accounted.extend(sequence_accounted);
