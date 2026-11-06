@@ -122,7 +122,9 @@ pub(super) fn input_ask(
     Ok((request, state))
 }
 
-/// Whether `ask` is the Ask `row` of `intent` queued.
+/// Whether `ask` is the Ask `row` of `intent` queued, by its typed identity:
+/// its number, this queue, and the question id, correlation and options of
+/// that intent, question and round.
 pub(super) fn ask_matches(
     intent: &[u8; 32],
     row: &RemoteTaskInputRow,
@@ -130,7 +132,67 @@ pub(super) fn ask_matches(
 ) -> crate::Result<bool> {
     let correlation = ask_correlation(intent, &row.question_digest, row.generation)?;
     Ok(row.ask == ask.seq
+        && ask.queue_pin.model == ASK_QUEUE
         && ask.question.id == correlation
         && ask.correlation == Some(correlation)
         && ask.question.contract == ask_contract())
+}
+
+/// The intent, question and round an Ask of this queue was queued for.
+pub(super) struct AskRound {
+    pub(super) intent: [u8; 32],
+    pub(super) question_digest: [u8; 32],
+    pub(super) generation: u32,
+}
+
+/// The round `ask` was queued for, read from its metadata state and proved
+/// by its typed identity: this queue, and the question id, correlation and
+/// options that intent, question and round derive. `None` for an ask this
+/// queue's identity does not prove its own; such an ask is left alone.
+pub(super) fn ask_round(ask: &DecisionAsk) -> crate::Result<Option<AskRound>> {
+    if ask.queue_pin.model != ASK_QUEUE {
+        return Ok(None);
+    }
+    let Some(state) = ask.pack_state.as_ref() else {
+        return Ok(None);
+    };
+    let intent = state
+        .get("intent_id")
+        .and_then(Value::as_str)
+        .and_then(hex32);
+    let question_digest = state
+        .get("question_digest")
+        .and_then(Value::as_str)
+        .and_then(hex32);
+    let generation = state
+        .get("generation")
+        .and_then(Value::as_u64)
+        .and_then(|generation| u32::try_from(generation).ok());
+    let (Some(intent), Some(question_digest), Some(generation)) =
+        (intent, question_digest, generation)
+    else {
+        return Ok(None);
+    };
+    let correlation = ask_correlation(&intent, &question_digest, generation)?;
+    let proved = ask.question.id == correlation
+        && ask.correlation == Some(correlation)
+        && ask.question.contract == ask_contract();
+    Ok(proved.then_some(AskRound {
+        intent,
+        question_digest,
+        generation,
+    }))
+}
+
+/// The 32 bytes `text` spells as 64 lowercase hex digits, as the Ask's
+/// state writes them.
+fn hex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0_u8; 32];
+    for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    (crate::entity_id::bytes_to_hex_lower(&bytes) == text).then_some(bytes)
 }
