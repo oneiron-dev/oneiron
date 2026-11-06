@@ -224,8 +224,23 @@ role or model `on_device`); every other call keeps the provider's offer,
 native when the worker's socket is up and HTTP otherwise, as before, and stays
 `own_server`. An on-device call never falls back to HTTP, to another rung, or
 to an owner's fallback off the device, and an on-device extraction needs no
-`extraction_egress`. Only free work gets the on-device offer: a provider with
-a key or a payer other than `local` keeps its calls `own_server` and paid. The
+`extraction_egress`.
+
+The on-device offer changes where a call runs, never who pays for it. It
+keeps the provider offer's payer, key custody and rates. A free provider
+(payer `local`, no key) stays free work on device. A paid provider (a
+`key_env` key, or a payer other than `local`) gets the on-device offer too,
+so a vault routed `on_device` can use it: each call is charged to that payer,
+reserves on its run's budget line (and on the vault's allocation for payer
+`host`), and is refused when they refuse it, exactly as its own-server call
+is. A declared run still refuses a `key_env` (T1) offer unless the owner
+allowed that offer. The native channel sends no key; a key the provider holds
+still makes its calls paid. The receipt names the place `on_device`
+(`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
+provider gets no on-device offer: payer `local`, no key, and locality
+`third_party` (the `openai-compat` default). Its calls are paid only because
+of that locality, and on device they would turn free. Set `locality = "own_server"`
+on it to make its calls free work and give it the on-device offer. The
 reranker and a raw `/v1/llm` call keep the provider's own offer.
 
 A `key_secret` names a vault secret instead of a variable: the key stays in
@@ -1028,6 +1043,29 @@ vault the server has mounted, and are non-additive facts: they neither
 alter the worker's own row nor any quota or admission, and a row's bytes
 mix device pages with host snapshots.
 
+### Failure healers for agent runs
+
+Served resident, TASK-backed and tree agent runs keep their human-only failure
+policy unless the operator selects a healer in the config file or settings file:
+
+```toml
+[self_heal]
+agent_failure_healer = "Coach"
+```
+
+This routes eligible failure cases to the existing Coach heal queue. Configure
+its models and wording separately. The native `AgentDef` slot is also accepted:
+`agent_failure_healer = { AgentDef = { agent_def_ref = "<hex EntityId>" } }`.
+The referenced live definition still passes the existing dispatchability and
+propose-only ceiling checks. `"Reserved"` explicitly restores human-only routing,
+including over a lower config layer that selected a healer. With no setting,
+the previous Human/Reserved policy remains unchanged.
+
+The choice does not change retry limits, evidence, checkpoint or Q&A references,
+provider-outage and payer parks, read authority, or proposal approval. It creates
+no Q&A messages and applies no repair. Saved workflow steps keep their existing
+human-only failure policy; this setting does not route those steps to a healer.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -1362,6 +1400,15 @@ kind marks alone lands at once. A folded output is never read into the
 request, so it no longer counts against the window. `self.unfold({fold})`
 appends the raw outputs, labelled `unfolded repl_output from t0–t39`. A kind
 fold may lie over a whole-step fold; that fold still hides its steps.
+
+`self.fold({kind: "program", ...})` folds the other half: each step keeps its
+console, and its exec frame shows comment lines in place of the program:
+`// ⟨f4 · program folded⟩ self.unfold({fold: "f4"}) brings it back`, then one
+line per speech call the step made (`// self.speak: "..."`, `self.think`,
+`self.express`, with the text it dispatched) and the ids the program names.
+Each step checkpoint keeps the range of bridge calls its step made
+(`bridge_calls`), which is how the stub finds them. Unfold appends the raw
+programs, labelled `unfolded program from tA–tB`.
 
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
@@ -3673,10 +3720,14 @@ What exists now:
   its own rules. It holds the request exactly as the answering rung sent it
   (the rung's prompt first, the board included when it rode) and the span the
   reply generated: its reasoning, tool calls and text, in the parts the
-  request uses. The request and the span are one body, sealed under an
-  erasable key of the example's own (purpose `DrafterArtifact`). No example
-  is kept for a reply that failed or is not saved whole, a reused prefix that
-  fell back to today's call, a turn that keeps no model-call record (it keeps
+  request uses. The request and the span are one body. The side-row wall
+  masks it first, as it masks an authored row: a secret the call carried is
+  kept as its custody handle, never its value, and dropping the example
+  revokes the custody it minted. The body is then sealed under an erasable
+  key of the example's own (purpose `DrafterArtifact`). A reused prefix that
+  fell back keeps today's call, read from today's rows. No example
+  is kept for a reply that failed or is not saved whole, a turn that keeps no
+  model-call record (it keeps
   no durable record or runs off the record), a call whose rows are not known
   whole, or a rung that is not this host's drafter target. The engine keeps
   none while the policy is off, in a room with an open off-record stretch, or
