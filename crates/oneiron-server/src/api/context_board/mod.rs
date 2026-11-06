@@ -22,7 +22,10 @@ pub(crate) use run_self::{
 };
 mod layout;
 mod mcp_self;
-pub(crate) use mcp_self::describe_self_for_mcp;
+pub(crate) use mcp_self::{
+    ConnectionBriefReads, connection_brief_key, connection_brief_reads, connection_brief_state,
+    connection_has_brief, describe_self_for_mcp,
+};
 mod scratchpad;
 mod session;
 mod split;

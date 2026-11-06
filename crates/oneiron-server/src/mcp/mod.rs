@@ -76,7 +76,7 @@ pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot};
 pub use self::registry::McpConnectorActorRegistry;
 pub(crate) use self::results::mcp_stamp_call_receipt;
 pub use self::results::{
-    McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError,
+    McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief,
     mcp_effective_scope_label, mcp_effective_scope_value, mcp_recovery_suggestions,
     mcp_setup_payload, mcp_verb_board_section,
 };

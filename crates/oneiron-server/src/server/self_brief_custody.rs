@@ -8,8 +8,11 @@
 //! HTTP hydration prepares and acknowledges through it, and so does a
 //! pumped run's native port (FIX 17594 D3), which installs afresh for its
 //! live run, installs again at the held epoch for each later entry and
-//! advances the epoch at each fold batch; the MCP and code-mode hosts of
-//! later slices use the same operations. Nothing here renders on its own.
+//! advances the epoch at each fold batch. An MCP connection's setup (FIX
+//! 17594 D4) installs afresh at each page one, keeps its keyframe to the
+//! staged candidate's roster and acknowledges it once that page was
+//! released; the code-mode host of a later slice uses the same operations.
+//! Nothing here renders on its own.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -97,10 +100,6 @@ impl BriefCandidate {
     }
 
     /// The persons the candidate prefix's `people` roster holds.
-    #[expect(
-        dead_code,
-        reason = "the MCP and code-mode hosts of later FIX 17594 slices read a candidate's roster"
-    )]
     pub(crate) fn resident_people(&self) -> &BTreeSet<EntityId> {
         self.render.resident_people()
     }

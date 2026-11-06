@@ -440,7 +440,8 @@ impl SyncServer {
     }
 
     /// Drops MCP credential records that were revoked or have expired, with
-    /// their stream state. A live slip the registry no longer holds is learned
+    /// their stream state, and closes the self brief of each connection the
+    /// registry detached. A live slip the registry no longer holds is learned
     /// again on its next use, so this takes nothing a caller still has.
     async fn prune_mcp_credentials(&self) {
         // Records expire with their slips, which run on the authority clock.
@@ -461,6 +462,15 @@ impl SyncServer {
                 cursors.close_mcp_connection(&id.0);
             }
             let evicted = before.saturating_sub(cursors.entries.len() + cursors.read_sets.len());
+            // FIX 17594 D4: each detached connection's self brief closes with
+            // it, while the installation its setup made still holds the key.
+            let detached = registry.take_detached_self_briefs();
+            if !detached.is_empty() {
+                let mut briefs = self.self_brief_sessions.lock().await;
+                for (key, owner) in detached {
+                    briefs.close(&key, owner);
+                }
+            }
             (pruned, evicted)
         };
         if pruned > 0 {
