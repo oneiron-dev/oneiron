@@ -57,6 +57,16 @@ pub(super) fn check_source_custody(
     holder: &EntityId,
     hash: &SkillContentHash,
 ) -> Result<()> {
+    check_source_custody_sourced(store, txn, holder, hash).map(|_| ())
+}
+
+/// The native writer check and its source result.
+pub(super) fn check_source_custody_sourced(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+    hash: &SkillContentHash,
+) -> Result<Option<Vec<EntityId>>> {
     if store.off_record_sessions.contains_entity(holder)? {
         return Err(Error::OffRecord(
             OffRecordError::OffRecordTaintedBaseWrite {
@@ -74,6 +84,16 @@ pub(super) fn check_source_custody_in_read(
     holder: &EntityId,
     hash: &SkillContentHash,
 ) -> Result<()> {
+    check_source_custody_sourced_in_read(read, txn, holder, hash).map(|_| ())
+}
+
+/// The same own-room content check beside its actual source result.
+pub(super) fn check_source_custody_sourced_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+    hash: &SkillContentHash,
+) -> Result<Option<Vec<EntityId>>> {
     if read.base().off_record_sessions.contains_entity(holder)? && !read.room_holds(holder)? {
         return Err(Error::OffRecord(
             OffRecordError::OffRecordTaintedBaseWrite {
@@ -89,15 +109,20 @@ fn check_source_custody_rows(
     txn: &heed::RoTxn<'_>,
     holder: &EntityId,
     hash: &SkillContentHash,
-) -> Result<()> {
+) -> Result<Option<Vec<EntityId>>> {
     check_source_target(store, txn, holder)?;
-    if INDEX
-        .get(store, txn, &(*holder, *hash.as_bytes()))?
-        .is_some_and(|state| state != CustodyState::Live)
-    {
+    let mut sources = Some(Vec::new());
+    let custody = INDEX.get(store, txn, &(*holder, *hash.as_bytes()))?;
+    if custody.is_some() {
+        sources = None;
+    }
+    if custody.is_some_and(|state| state != CustodyState::Live) {
         return Err(invalid("source custody has been retired"));
     }
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, holder)? {
+        if let Some(rows) = &mut sources {
+            rows.push(*holder);
+        }
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("source holder header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL || raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -106,7 +131,7 @@ fn check_source_custody_rows(
             ));
         }
     }
-    Ok(())
+    Ok(sources)
 }
 
 pub(super) fn check_source_target(
