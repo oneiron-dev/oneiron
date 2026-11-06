@@ -44,9 +44,10 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
     /// The owners whose compartments the payload holds that did not open:
     /// every part they hold up drops.
     unopened: BTreeSet<OwnerRef>,
-    /// The image's unavailable-call rows (FIX 6260), which land through the
-    /// ledger's own sink.
-    unavailable_calls: Vec<(RowLocator, Vec<u8>)>,
+    /// The image's unavailable-call rows (FIX 6260) and call accounting rows
+    /// (KS7-5, FIX 12117), which land through the ledger's own sinks once
+    /// the bundles are in.
+    call_rows: Vec<(RowLocator, Vec<u8>)>,
     /// Each split window's rows, joined from its carrier and the copies that
     /// opened, with the markers its join asks (FIX 10277).
     window_rows: Vec<(RowLocator, Vec<u8>)>,
@@ -143,7 +144,7 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     Ok(Some(OpenedPayload {
         bundles,
         unopened,
-        unavailable_calls: take_unavailable_calls(image),
+        call_rows: take_call_rows(image),
         window_rows,
     }))
 }
@@ -179,16 +180,19 @@ fn join_windows(
     }
 }
 
-/// Takes the image's unavailable-call rows (FIX 6260) out of its rows, to
-/// land through the ledger's own sink.
-fn take_unavailable_calls(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u8>)> {
-    let prefix = side_table::OUTBOUND_INTENT_UNAVAILABLE.prefix;
+/// Takes the image's unavailable-call rows (FIX 6260) and call accounting
+/// rows (FIX 12117) out of its rows, to land through the ledger's own sinks.
+fn take_call_rows(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u8>)> {
+    let prefixes = [
+        side_table::OUTBOUND_INTENT_UNAVAILABLE.prefix,
+        side_table::OUTBOUND_INTENT_ACCOUNTING.prefix,
+    ];
     let Some(rows) = image.databases.get_mut("vault_meta") else {
         return Vec::new();
     };
     let mut taken = Vec::new();
     rows.retain(|(key, value)| {
-        if !key.starts_with(prefix) {
+        if !prefixes.iter().any(|prefix| key.starts_with(prefix)) {
             return true;
         }
         taken.push((
@@ -301,7 +305,7 @@ impl OpenedPayload {
             }
         }
         rows.extend(
-            self.unavailable_calls
+            self.call_rows
                 .iter()
                 .chain(&self.window_rows)
                 .map(|(at, value)| (len(&at.key), len(value))),
@@ -321,7 +325,8 @@ fn held_up(opened: &OpenedOwnerRows, at: &RowLocator) -> bool {
 /// Lands every bundle once the image's rows are in. Only blob versions
 /// missing their actor part wait for the authenticated landing continuation:
 /// its native claim reads need all history/custody rows and the type index.
-/// Unavailable calls still land through the ledger's own sink (FIX 6260).
+/// Unavailable calls (FIX 6260) and the accounting of calls that did not
+/// open (FIX 12117) still land through the ledger's own sinks, last.
 ///
 /// # Errors
 ///
@@ -384,10 +389,16 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     for (at, value) in &opened.window_rows {
         restore_row_in_txn(store, txn, at, value)?;
     }
-    for (at, value) in &opened.unavailable_calls {
-        crate::outbound_intent_ledger::checkpoint::restore_unavailable_in_txn(
+    // After every bundle, so a call whose record came back keeps no
+    // accounting row (FIX 12117).
+    for (at, value) in &opened.call_rows {
+        if !crate::outbound_intent_ledger::checkpoint::restore_unavailable_in_txn(
             store, txn, at, value,
-        )?;
+        )? {
+            crate::outbound_intent_ledger::checkpoint::restore_accounting_in_txn(
+                store, txn, at, value,
+            )?;
+        }
     }
     Ok(blob_artifacts)
 }

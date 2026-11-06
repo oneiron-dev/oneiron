@@ -550,6 +550,7 @@ pub(crate) fn topology_seal_revision_for_store_in_txn(
         StoredIdentityOpAction::AdmissionDisposition(_)
             | StoredIdentityOpAction::AuthorAttribution { .. }
             | StoredIdentityOpAction::AuthorRedaction { .. }
+            | StoredIdentityOpAction::OperationPart { .. }
     ) {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "a topology seal revision names a decision event, never a sidecar",

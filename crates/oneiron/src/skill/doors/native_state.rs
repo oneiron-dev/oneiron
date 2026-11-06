@@ -106,9 +106,10 @@ impl SkillSupersessionRead {
         &self,
         store: &Store,
         txn: &RoTxn<'_>,
+        old_id: &EntityId,
         prior: &SkillRecord,
     ) -> Result<()> {
-        super::validate_skill_successor(prior, &self.recheck(store, txn)?)
+        super::validate_skill_successor(old_id, prior, &self.recheck(store, txn)?)
     }
 
     pub(crate) fn replay_source_matches_in_txn(
@@ -205,6 +206,7 @@ impl SkillStateWrite {
         };
         let successor = SkillSupersessionRead::capture(store, txn, successor)?;
         super::validate_skill_successor(
+            &entity,
             &decode_skill_record(snapshot.logical_prior_body())?,
             &decode_skill_record(&successor.body)?,
         )?;
@@ -248,6 +250,7 @@ impl SkillStateWrite {
             SkillStateDoor::Supersede(successor) => {
                 let new = successor.recheck(store, txn)?;
                 super::validate_skill_successor(
+                    entity,
                     &decode_skill_record(self.snapshot.logical_prior_body())?,
                     &new,
                 )?;
