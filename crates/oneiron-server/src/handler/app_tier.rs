@@ -313,7 +313,7 @@ impl VerbCall {
             Self::Residence(call) => return call.answer(server, direct_tx).await,
         };
         let reply = crate::livequery::rpc_reply(&server, &auth, request, context).await?;
-        for frame in reply.queued(conn) {
+        for frame in reply.queued_frames(conn) {
             direct_tx
                 .send(frame)
                 .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
