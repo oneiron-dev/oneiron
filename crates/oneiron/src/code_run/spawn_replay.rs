@@ -420,6 +420,48 @@ pub(crate) fn swap_spawn_ask(call: &mut CodeRunBridgeCall, ask: Value) -> Option
         .map(|(_, value)| std::mem::replace(value, ask))
 }
 
+/// FIX 6534: whether the guest's original ask of `erased`, a spawn call in
+/// its target-erased form, took the erased marker: the dispatched ask did,
+/// and the original with it when a hook's rewrite asked the same. A
+/// checkpoint keeps this bit beside a carried ask, never the request's
+/// words.
+pub(crate) fn original_ask_erased(erased: &CodeRunBridgeCall) -> bool {
+    matches!(&erased.request, Value::Map(fields) if ask_of(fields).is_some_and(is_erased_ask))
+}
+
+/// FIX 6534: the erased marker in the place of the ask a checkpoint carried
+/// apart from `call`, once that ask's instance retired: in the dispatched
+/// ask's slot, nil while it is carried apart, and in the guest's original
+/// ask's too when `original` says it took the marker
+/// ([`original_ask_erased`]). A call whose request an erase took keeps no
+/// ask to mark and is left as it is.
+///
+/// # Errors
+///
+/// A call with no ask in the slot a checkpoint carries apart.
+pub(crate) fn retire_carried_ask(call: &mut CodeRunBridgeCall, original: bool) -> Result<()> {
+    if call.request_erased() {
+        return Ok(());
+    }
+    let carried = swap_spawn_ask(call, erased_ask());
+    if !carried.is_some_and(|ask| ask.is_nil() || ask.is_str() || is_erased_ask(&ask)) {
+        return Err(invalid_code_run_replay(
+            "a retired spawn ask does not fit its call",
+        ));
+    }
+    if original
+        && matches!(&call.rewritten_request, Some(Value::Map(_)))
+        && let Value::Map(fields) = &mut call.request
+    {
+        for (key, value) in fields {
+            if key.as_str() == Some(ASK_KEY) && value.is_str() {
+                *value = erased_ask();
+            }
+        }
+    }
+    Ok(())
+}
+
 /// How a spawn row's outcome stands for its coherence.
 #[derive(PartialEq, Eq)]
 enum SpawnAnswer {

@@ -1,15 +1,18 @@
 //! A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part
 //! B1).
 //!
-//! A replay record's bridge outcomes and output previews are one body
-//! instance, bound the first time a checkpoint carries the record. The image
-//! row holds the record with each outcome failed and each preview withheld:
-//! under a retired instance a restore keeps that terminal evidence (each
-//! call's seq, effect, request, times and action digest; each output's
-//! handle, digest, counts and completeness; the run's checkpoints, and so
-//! its generation), so a resumed run that reaches an erased call traps on
-//! it, never takes an empty success and never runs a fresh effect. Under a
-//! live instance the exact record lands, and replay checks it as before.
+//! A replay record's bridge outcomes, request words and output previews are
+//! one body instance, bound the first time a checkpoint carries the record.
+//! The image row holds the record with each outcome failed, each request in
+//! its erased form and each preview withheld: under a retired instance a
+//! restore keeps that terminal evidence (each call's seq, effect, request
+//! identity, times and action digest; each output's handle, digest, counts
+//! and completeness; the run's checkpoints, and so its generation), so a
+//! resumed run that reaches an erased call traps on it, never takes an
+//! empty success and never runs a fresh effect. A request the run built
+//! from an earlier reply holds its words, so the image keeps none (FIX
+//! 6534). Under a live instance the exact record lands, and replay checks
+//! it as before.
 //! Its owners are the run, the actor its live run binding names, the actor
 //! a turn program's run runs as, the source rows its verb calls served, the
 //! input rows its output occurrences keep, and for each fold answer it
@@ -42,12 +45,13 @@ pub(crate) use crate::store::result_body_erasure::response_erased_error;
 pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
     "[preview erased: its owner's erase retired this result]";
 
-/// What a checkpoint carries of the replay record `value`: its outcomes and
-/// previews, the record with each outcome failed and each preview withheld
-/// as the stub its erased disposition keeps whole, a verb's answer keeping
-/// the rows it was served from as the live erased form does (FIX 6535).
-/// No response for a record with no call and no output; a record that does
-/// not decode, or whose stub does not encode, is carried whole as an opaque
+/// What a checkpoint carries of the replay record `value`: its outcomes,
+/// request words and previews, the record with each outcome failed, each
+/// request erased to its identity (FIX 6534) and each preview withheld as
+/// the stub its erased disposition keeps whole, a verb's answer keeping the
+/// rows it was served from as the live erased form does (FIX 6535). No
+/// response for a record with no call and no output; a record that does not
+/// decode, or whose stub does not encode, is carried whole as an opaque
 /// response (FIX 6227).
 pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
     let Ok(mut record) = REPLAY_RECORDS.decode_value(value) else {
@@ -57,6 +61,9 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
         return ResponseScan::NotResponse;
     }
     for call in &mut record.bridge_calls {
+        if call.erase_request().is_err() {
+            return ResponseScan::opaque_row();
+        }
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
             Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.released_rows()),
             Ok(_) => None,
