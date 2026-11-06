@@ -73019,7 +73019,7 @@
      "path": "src/store/key_custody/erasable.rs",
      "purpose": "Erasable keys (FIX 8875): one independent custody key per parent and incarnation, for a client whose content…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -73428,7 +73428,7 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
