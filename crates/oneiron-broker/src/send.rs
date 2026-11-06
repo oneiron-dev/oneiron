@@ -16,7 +16,7 @@ use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue, LOCATION, TRANSFER_ENCODING,
 };
 use reqwest::{Certificate, Client, Method, Url};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
 use crate::frame::dispatch::{DispatchPoint, request_dispatch};
 use zeroize::Zeroizing;
@@ -126,11 +126,20 @@ impl Sender {
                 body,
                 secret,
                 released.then_some(&mut *writer),
+                released,
                 deadline,
             )
             .await
         {
-            Ok(response) => response,
+            Ok(Some(response)) => response,
+            Ok(None) => {
+                return (
+                    Outcome::Failed {
+                        reason: Failure::Send,
+                    },
+                    empty,
+                );
+            }
             Err(outcome) => return (outcome, empty),
         };
         let mut raw = Zeroizing::new(Vec::new());
@@ -223,66 +232,31 @@ impl Sender {
                     url,
                     body,
                     secret,
-                    released.then_some(&mut *writer),
+                    Some(&mut *writer),
+                    released,
                     deadline,
                 )
                 .await
             }
             Err(reason) => Err(Outcome::Refused { reason }),
         };
-        let mut response = match reached {
-            Ok(response) => response,
+        let response = match reached {
+            Ok(Some(response)) => response,
+            Ok(None) => return Ok(()),
             Err(outcome) => return answer(writer, call, outcome, deadline).await,
         };
-        let answered = Outcome::Answered {
-            status: response.status().as_u16(),
-            headers: reply_headers(response.headers(), secret),
-        };
-        let header = reply(call, answered);
-        within(deadline, write_stream_header(writer, &header)).await?;
-        let mut watch = KeyWatch::new(secret);
-        let mut cleared = Zeroizing::new(Vec::new());
-        let mut read = 0_usize;
-        // Relayed events go on as soon as the watch clears them, a frame at
-        // most at a time; other streamed bodies go in whole frames (FIX
-        // 15702). The watch still holds back any bytes that could begin a
-        // form of the key.
-        let eager = call.shape.relays_events();
-        let cut = loop {
-            let (passed, last) = match response.chunk().await {
-                Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
-                    break Some(Failure::ReplyTooLarge);
-                }
-                Ok(Some(chunk)) => {
-                    read += chunk.len();
-                    (watch.push(&chunk), false)
-                }
-                Ok(None) => (watch.finish(), true),
-                Err(error) => break Some(failure(&error)),
-            };
-            if push_wiped(&mut cleared, &passed).is_err() {
-                break Some(Failure::Send);
-            }
-            // Whole chunks as they fill; at the end, the rest too.
-            let mut sent = 0;
-            while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len())
-            {
-                let end = cleared.len().min(sent + STREAM_CHUNK);
-                within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
-                sent = end;
-            }
-            if last {
-                break None;
-            }
-            if sent > 0 {
-                let mut remainder = Zeroizing::new(Vec::new());
-                if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
-                    break Some(Failure::Send);
-                }
-                cleared = remainder;
-            }
-        };
-        within(deadline, write_stream_end(writer, cut)).await
+        if call.shape.relays_events() {
+            // HTTP release checks finish before this header/body phase.
+            let (mut reading, mut writing) = tokio::io::split(writer);
+            while_daemon_waits(
+                Some(&mut reading),
+                stream_reply_to(&mut writing, call, response, secret, deadline),
+            )
+            .await
+            .unwrap_or(Ok(()))
+        } else {
+            stream_reply_to(writer, call, response, secret, deadline).await
+        }
     }
 
     /// Sends the request once with the key, and for a shape that follows one
@@ -302,8 +276,9 @@ impl Sender {
         body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         mut release: Option<&mut W>,
+        released: bool,
         deadline: CallDeadline,
-    ) -> Result<reqwest::Response, Outcome> {
+    ) -> Result<Option<reqwest::Response>, Outcome> {
         let timed_out = || Outcome::Failed {
             reason: Failure::Timeout,
         };
@@ -311,11 +286,23 @@ impl Sender {
         let (mut request, plain) = self
             .request(call, url.clone(), body, secret, left)
             .map_err(|reason| Outcome::Refused { reason })?;
-        if let Some(stream) = release.as_deref_mut() {
+        if released && let Some(stream) = release.as_deref_mut() {
             release_http_send(stream, call, DispatchPoint::Initial, deadline).await?;
             *request.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
         }
-        let mut response = match self.client.execute(request).await {
+        let Some(executed) = while_daemon_waits(
+            if call.shape.relays_events() {
+                release.as_deref_mut()
+            } else {
+                None
+            },
+            self.client.execute(request),
+        )
+        .await
+        else {
+            return Ok(None);
+        };
+        let mut response = match executed {
             Ok(response) => response,
             // A connect error comes before any request byte is written.
             Err(error) if error.is_connect() => {
@@ -339,17 +326,25 @@ impl Sender {
                 .map_err(|_| Outcome::Failed {
                     reason: Failure::Send,
                 })?;
-            if let Some(stream) = release.as_deref_mut() {
+            if released && let Some(stream) = release.as_deref_mut() {
                 release_http_send(stream, call, DispatchPoint::PlainRetry, deadline).await?;
                 *resend.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
             }
             // The first 400 or 415 proves bytes reached the provider, so a
             // resend that fails is `Failed`, never `Refused{Connect}`.
-            response = self
-                .client
-                .execute(resend)
-                .await
-                .map_err(|error| failed(&error))?;
+            let Some(executed) = while_daemon_waits(
+                if call.shape.relays_events() {
+                    release.as_deref_mut()
+                } else {
+                    None
+                },
+                self.client.execute(resend),
+            )
+            .await
+            else {
+                return Ok(None);
+            };
+            response = executed.map_err(|error| failed(&error))?;
             if response.status() != refused {
                 self.gzip.store(false, Ordering::Relaxed);
                 eprintln!(
@@ -385,15 +380,23 @@ impl Sender {
                 .timeout(left)
                 .build()
                 .map_err(|_| redirected.clone())?;
-            if let Some(stream) = release.as_deref_mut() {
+            if released && let Some(stream) = release.as_deref_mut() {
                 release_http_send(stream, call, DispatchPoint::Redirect, deadline).await?;
                 *follow.timeout_mut() = Some(deadline.send_left().ok_or_else(timed_out)?);
             }
-            response = self
-                .client
-                .execute(follow)
-                .await
-                .map_err(|error| failed(&error))?;
+            let Some(executed) = while_daemon_waits(
+                if call.shape.relays_events() {
+                    release.as_deref_mut()
+                } else {
+                    None
+                },
+                self.client.execute(follow),
+            )
+            .await
+            else {
+                return Ok(None);
+            };
+            response = executed.map_err(|error| failed(&error))?;
             if response.status().is_redirection() {
                 return Err(redirected);
             }
@@ -403,7 +406,7 @@ impl Sender {
                 reason: Failure::ReplyEncoded,
             });
         }
-        Ok(response)
+        Ok(Some(response))
     }
 
     /// Builds the request, and the checked plain body when it goes gzip-sent:
@@ -508,6 +511,80 @@ impl Sender {
         io::Write::write_all(&mut encoder, body).ok()?;
         let encoded = encoder.finish().ok()?.into_bytes();
         (encoded.len() < body.len()).then_some(encoded)
+    }
+}
+
+async fn stream_reply_to<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    call: &CallHeader,
+    mut response: reqwest::Response,
+    secret: &[u8],
+    deadline: CallDeadline,
+) -> io::Result<()> {
+    let answered = Outcome::Answered {
+        status: response.status().as_u16(),
+        headers: reply_headers(response.headers(), secret),
+    };
+    let header = reply(call, answered);
+    within(deadline, write_stream_header(writer, &header)).await?;
+    let mut watch = KeyWatch::new(secret);
+    let mut cleared = Zeroizing::new(Vec::new());
+    let mut read = 0_usize;
+    // Relayed events go on as soon as the watch clears them, a frame at
+    // most at a time; other streamed bodies go in whole frames (FIX
+    // 15702). The watch still holds back any bytes that could begin a
+    // form of the key.
+    let eager = call.shape.relays_events();
+    let cut = loop {
+        let (passed, last) = match response.chunk().await {
+            Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
+                break Some(Failure::ReplyTooLarge);
+            }
+            Ok(Some(chunk)) => {
+                read += chunk.len();
+                (watch.push(&chunk), false)
+            }
+            Ok(None) => (watch.finish(), true),
+            Err(error) => break Some(failure(&error)),
+        };
+        if push_wiped(&mut cleared, &passed).is_err() {
+            break Some(Failure::Send);
+        }
+        // Whole chunks as they fill; at the end, the rest too.
+        let mut sent = 0;
+        while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len()) {
+            let end = cleared.len().min(sent + STREAM_CHUNK);
+            within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
+            sent = end;
+        }
+        if last {
+            break None;
+        }
+        if sent > 0 {
+            let mut remainder = Zeroizing::new(Vec::new());
+            if push_wiped(&mut remainder, &cleared[sent..]).is_err() {
+                break Some(Failure::Send);
+            }
+            cleared = remainder;
+        }
+    };
+    within(deadline, write_stream_end(writer, cut)).await
+}
+
+/// Watches the existing close/input signal only between release handshakes.
+async fn while_daemon_waits<R, F>(reading: Option<&mut R>, work: F) -> Option<F::Output>
+where
+    R: AsyncRead + Unpin,
+    F: std::future::Future,
+{
+    let Some(reading) = reading else {
+        return Some(work.await);
+    };
+    let mut byte = [0_u8; 1];
+    tokio::select! {
+        biased;
+        result = work => Some(result),
+        _ = reading.read(&mut byte) => None,
     }
 }
 
