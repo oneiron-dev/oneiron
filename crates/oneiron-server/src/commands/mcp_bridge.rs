@@ -58,6 +58,7 @@ use crate::cli::{McpArgs, McpSurface};
 mod bridge_auth;
 mod call_meta;
 mod link;
+mod reply_body;
 
 use call_meta::{ClientSession, with_invocation};
 
@@ -778,7 +779,7 @@ impl Bridge {
 struct Reply {
     /// The HTTP status, when there was one.
     status: Option<u16>,
-    body: Vec<u8>,
+    body: reply_body::ReplyBody,
 }
 
 impl Reply {
@@ -786,8 +787,7 @@ impl Reply {
     /// it came with; anything else is the bridge's error for that request, so
     /// the client is never handed a line that answers nothing it sent.
     fn answer_to(self, id: &Value) -> Result<Value, Refusal> {
-        let body = serde_json::from_slice::<Value>(&self.body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
+        let body = self.body.into_json();
         let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
             && body.get("id") == Some(id)
             && match (body.get("result"), body.get("error")) {
