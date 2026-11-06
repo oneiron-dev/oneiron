@@ -198,6 +198,20 @@ pub(crate) fn admit_custody_carrier(
     map_key: &str,
     value: &LoroValue,
 ) -> Result<()> {
+    admit_custody_carrier_with_txn(vault, key, map_key, value, None)
+}
+
+/// [`admit_custody_carrier`] over an optional caller-supplied reader: `Some`
+/// reuses it at the transition-genesis reader point below, `None` opens the
+/// original independent reader at the original point with the original error
+/// mapping. Input and witness decode branches never read and are unchanged.
+pub(in crate::sync) fn admit_custody_carrier_with_txn(
+    vault: Option<&Vault>,
+    key: Option<&WindowKey>,
+    map_key: &str,
+    value: &LoroValue,
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<()> {
     let Some(vault) = vault else {
         return Err(refused("no vault to judge the signer by"));
     };
@@ -223,7 +237,7 @@ pub(crate) fn admit_custody_carrier(
         return witness::admit_witness_part(key, row_key, bytes);
     }
     if let Some(row_key) = map_key.strip_prefix(export_output::EXPORT_OUTPUT_ROW_PREFIX) {
-        return export_output::admit_export_output(vault, key, row_key, bytes);
+        return export_output::admit_export_output_with_txn(vault, key, row_key, bytes, txn);
     }
     let transition = CustodyTransition::decode(bytes)?;
     if transition.row_key() != map_key {
@@ -234,9 +248,16 @@ pub(crate) fn admit_custody_carrier(
     }
     // Reading this vault's own authority is the store's work: its fault is
     // this machine's, never the peer's refused update (FIX 5925).
-    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let owned;
+    let rtxn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(admission_read_fault)?;
+            &owned
+        }
+    };
     let vault_id = vault
-        .authority_view_readonly_in_txn(&rtxn)
+        .authority_view_readonly_in_txn(rtxn)
         .map_err(admission_read_fault)?
         .vault_id
         .ok_or_else(|| refused("the vault has no authority genesis"))?;
@@ -256,6 +277,17 @@ pub(crate) fn admit_custody_map(
     key: Option<&WindowKey>,
     map: &LoroMap,
 ) -> Result<()> {
+    admit_custody_map_with_txn(vault, key, map, None)
+}
+
+/// [`admit_custody_map`] over an optional caller-supplied reader, threaded
+/// to every row's carrier admission.
+pub(in crate::sync) fn admit_custody_map_with_txn(
+    vault: Option<&Vault>,
+    key: Option<&WindowKey>,
+    map: &LoroMap,
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<()> {
     let mut rows = Vec::new();
     let mut nested = false;
     map.for_each(|map_key, value| match value {
@@ -266,7 +298,7 @@ pub(crate) fn admit_custody_map(
         return Err(refused("nested container"));
     }
     for (map_key, value) in &rows {
-        admit_custody_carrier(vault, key, map_key, value)?;
+        admit_custody_carrier_with_txn(vault, key, map_key, value, txn)?;
     }
     Ok(())
 }

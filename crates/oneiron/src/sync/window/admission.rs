@@ -15,6 +15,13 @@ use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_ge
 use crate::sync::selector::validate_sync_identity_body;
 use crate::{Error, Result};
 
+mod snapshot;
+
+pub(super) use self::snapshot::encoded_root_state;
+use self::snapshot::{
+    EMPTY_STATE, root_as_latest_state, snapshot_sections, state_section_is_canonical,
+};
+
 /// Refuses diagnostic and secret-custody carriers, identity-shaped FACET
 /// bodies and a write under a strict cut's barrier key (FIX 6520) before a
 /// full-window update can mutate the live document, materialize rows,
@@ -99,6 +106,29 @@ pub(in crate::sync) fn check_window_update_residence_with_vault(
     check_window_update(doc, update, Some(key), Some(vault), &HashMap::new()).map(drop)
 }
 
+/// [`check_window_update_residence_with_vault`] over the caller's staged
+/// history: `txn` is the reader every residence, late-pad, shell and custody
+/// admission below uses, so a final-root import that staged the original
+/// signed history judges against it instead of opening independent readers
+/// that cannot see it. Returns the carried cutoffs for the caller to stage;
+/// nothing here writes.
+pub(in crate::sync) fn check_window_update_residence_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
+    check_window_update_with_txn(
+        doc,
+        update,
+        Some(key),
+        Some(vault),
+        &HashMap::new(),
+        Some(txn),
+    )
+}
+
 /// [`validate_promotion_snapshot`] without its write, as
 /// [`check_window_update_with_staged_worlds`] is (FIX 10474).
 pub(in crate::sync) fn check_promotion_snapshot(
@@ -136,6 +166,22 @@ fn check_window_update(
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
+    check_window_update_with_txn(doc, update, key, vault, staged, None)
+}
+
+/// [`check_window_update`] over an optional caller-supplied reader: `Some`
+/// reuses it at every native reader point below, `None` opens the original
+/// independent reader at the original point with the original error mapping.
+/// Ordinary entrypoints pass `None`; only the staged-history door passes
+/// `Some`. No cutoff is written here.
+fn check_window_update_with_txn(
+    doc: &LoroDoc,
+    update: &[u8],
+    key: Option<&crate::sync::WindowKey>,
+    vault: Option<&crate::Vault>,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+    txn: Option<&heed::RoTxn<'_>>,
+) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
     let decode_error = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "window locality admission",
@@ -168,7 +214,7 @@ fn check_window_update(
             ENTITY_TYPE_SECRET_CUSTODY => Some(crate::secret_custody::reject_secret_custody_byte()),
             // A destroyed world's pad arriving late never rejoins a window;
             // a live world's pad replicates with its world's rows.
-            ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, blob)),
+            ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, txn, blob)),
             _ => None,
         };
         if refused.is_some() {
@@ -220,6 +266,7 @@ fn check_window_update(
                     &id,
                     &blob,
                     key,
+                    txn,
                 )? {
                     return Err(Error::InvalidConfig("unproven world shell".into()));
                 }
@@ -250,10 +297,11 @@ fn check_window_update(
         // FIX 6520: and no value under a key the strict cut's barrier removes.
         super::shallow::refuse_held_barrier_keys(&candidate)?;
         // OF-422: every custody transition the snapshot holds is the owner's.
-        crate::sync::custody::admit_custody_map(
+        crate::sync::custody::admit_custody_map_with_txn(
             vault,
             key,
             &candidate.get_map(crate::sync::custody::CUSTODY_MAP),
+            txn,
         )?;
         // OF-522: every room turn row the snapshot holds is whole.
         crate::sync::room_turns::admit_room_turn_map(
@@ -324,10 +372,11 @@ fn check_window_update(
                 return Err(error);
             }
             super::shallow::refuse_held_barrier_keys(&root)?;
-            crate::sync::custody::admit_custody_map(
+            crate::sync::custody::admit_custody_map_with_txn(
                 vault,
                 key,
                 &root.get_map(crate::sync::custody::CUSTODY_MAP),
+                txn,
             )?;
             crate::sync::room_turns::admit_room_turn_map(
                 key,
@@ -418,13 +467,14 @@ fn check_window_update(
                 key,
                 &historical,
                 staged,
+                txn,
             )?;
         }
         let tombstones = candidate.get_map("tombstones");
         let mut tombstone_keys = Vec::new();
         tombstones.for_each(|id, _| tombstone_keys.push(id.to_owned()));
         for id in tombstone_keys {
-            check_tombstone_residence(vault, &id, key)?;
+            check_tombstone_residence(vault, &id, key, txn)?;
         }
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
@@ -466,7 +516,9 @@ fn check_window_update(
             crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
         } else if op.container == custody {
             // OF-422: put-then-delete still carries the bytes on the wire.
-            crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
+            crate::sync::custody::admit_custody_carrier_with_txn(
+                vault, key, &map_key, &value, txn,
+            )?;
         } else if op.container == room_turns {
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == room_facts {
@@ -513,6 +565,7 @@ fn check_window_update(
                                     &id,
                                     &blob,
                                     key,
+                                    txn,
                                 )?,
                                 _ => false,
                             })
@@ -537,15 +590,18 @@ fn check_window_update(
                     key,
                     &historical,
                     staged,
+                    txn,
                 )?;
             } else if op.container == tombstones {
-                check_tombstone_residence(vault, &map_key, key)?;
+                check_tombstone_residence(vault, &map_key, key, txn)?;
             }
         }
     }
     Ok(cutoffs)
 }
 
+/// Edge residence over an optional caller-supplied reader (`None` opens the
+/// original independent reader at the original point).
 fn check_edge_residence(
     vault: &crate::Vault,
     doc: &LoroDoc,
@@ -554,6 +610,7 @@ fn check_edge_residence(
     key: &crate::sync::WindowKey,
     historical: &HashMap<EntityId, Vec<u8>>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+    txn: Option<&heed::RoTxn<'_>>,
 ) -> Result<()> {
     let denied = || Error::InvalidConfig("edge outside window residence".into());
     let Some((src, _, tgt)) = crate::sync::bridge::parse_edge_key(edge) else {
@@ -563,8 +620,15 @@ fn check_edge_residence(
             Err(Error::InvalidKey)
         };
     };
-    let txn = vault.store.env.read_txn().map_err(read_fault)?;
-    if crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, tombstones, &src, &tgt, key)
+    let owned;
+    let txn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(read_fault)?;
+            &owned
+        }
+    };
+    if crate::sync::types::edge_belongs_to_window_in(vault, txn, doc, tombstones, &src, &tgt, key)
         .map_err(read_fault)?
     {
         return Ok(());
@@ -576,7 +640,7 @@ fn check_edge_residence(
     let mut worlds = [None, None];
     let mut learned = [None, None];
     for (index, id) in [src, tgt].iter().enumerate() {
-        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &txn, id)
+        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, id)
             .map_err(read_fault)?;
         let live = map_get_bytes(&entities, &id.to_hex());
         let old = historical.get(id);
@@ -641,10 +705,13 @@ fn check_edge_residence(
     Ok(())
 }
 
+/// Tombstone residence over an optional caller-supplied reader (`None` opens
+/// the original independent reader at the original point).
 fn check_tombstone_residence(
     vault: &crate::Vault,
     id: &str,
     key: &crate::sync::WindowKey,
+    txn: Option<&heed::RoTxn<'_>>,
 ) -> Result<()> {
     let Ok(id) = crate::EntityId::from_hex(id) else {
         return if key.world().is_none() {
@@ -653,8 +720,15 @@ fn check_tombstone_residence(
             Err(Error::InvalidKey)
         };
     };
-    let txn = vault.store.env.read_txn().map_err(read_fault)?;
-    if crate::sync::types::tombstone_residence_in(vault, &txn, &id, key).map_err(read_fault)?
+    let owned;
+    let txn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(read_fault)?;
+            &owned
+        }
+    };
+    if crate::sync::types::tombstone_residence_in(vault, txn, &id, key).map_err(read_fault)?
         == crate::sync::types::TombstoneResidence::Wrong
     {
         return Err(Error::InvalidConfig(
@@ -664,89 +738,17 @@ fn check_tombstone_residence(
     Ok(())
 }
 
-/// Loro 1.16 lays a fast snapshot out as a header (magic, checksum, mode)
-/// and three u32-length-prefixed sections: ops, latest state, root state.
-const SNAPSHOT_HEADER: usize = 22;
-/// A latest-state section Loro left out: the decode replays from the root.
-const EMPTY_STATE: &[u8] = b"E";
-
-/// The sections of a fast snapshot, `None` for any other layout, so
-/// admission refuses rather than guesses.
-fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
-    let mut rest = snapshot.get(SNAPSHOT_HEADER..)?;
-    let mut sections = [&[][..]; 3];
-    for section in &mut sections {
-        let (len, tail) = rest.split_first_chunk::<4>()?;
-        let len = usize::try_from(u32::from_le_bytes(*len)).ok()?;
-        (*section, rest) = tail.split_at_checked(len)?;
-    }
-    rest.is_empty().then_some(sections)
-}
-
-/// The state a fast snapshot encodes at its root, read from that section
-/// itself: loaded as the latest state, with no replay, so neither the
-/// latest-state section nor a checkout can steer a read away from its bytes
-/// (FIX 10165). A full snapshot can keep a root as well as a shallow one.
-/// `None` when the bytes are no fast snapshot whose state sections read one
-/// way, or the root does not load; `Some(None)` when it encodes no root.
-pub(super) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
-    let sections = snapshot_sections(snapshot)?;
-    let [_, latest, root] = sections;
-    if !(latest == EMPTY_STATE || state_section_is_canonical(latest))
-        || !state_section_is_canonical(root)
-    {
-        return None;
-    }
-    if root.is_empty() {
-        return Some(None);
-    }
-    let root = root_as_latest_state(snapshot, sections)?;
-    LoroDoc::from_snapshot(&root).ok().map(Some)
-}
-
-/// `snapshot` with its root-state section copied over its latest-state
-/// section, so a decode loads the encoded root as the doc's state and
-/// replays nothing. The checksum is xxh32 over everything from byte 20.
-fn root_as_latest_state(snapshot: &[u8], [ops, _, root]: [&[u8]; 3]) -> Option<Vec<u8>> {
-    let mut rebuilt = snapshot.get(..SNAPSHOT_HEADER)?.to_vec();
-    for section in [ops, root, root] {
-        rebuilt.extend_from_slice(&u32::try_from(section.len()).ok()?.to_le_bytes());
-        rebuilt.extend_from_slice(section);
-    }
-    let checksum = xxhash_rust::xxh32::xxh32(&rebuilt[20..], u32::from_le_bytes(*b"LORO"));
-    rebuilt[16..20].copy_from_slice(&checksum.to_le_bytes());
-    Some(rebuilt)
-}
-
-/// Whether a state section reads one way through every Loro reader: empty,
-/// or a table whose blocks validate and whose keys strictly increase, each
-/// the canonical bytes of a container id or the frontiers entry. Loro's own
-/// encoder writes only such tables.
-fn state_section_is_canonical(section: &[u8]) -> bool {
-    if section.is_empty() {
-        return true;
-    }
-    let Ok(table) = loro::kv_store::sstable::SsTable::import_all(section.to_vec().into(), true)
-    else {
-        return false;
-    };
-    let mut previous: Option<Vec<u8>> = None;
-    table.iter().all(|(key, _)| {
-        let key = &key[..];
-        let canonical =
-            key == b"fr" || ContainerID::try_from_bytes(key).is_ok_and(|id| id.to_bytes() == key);
-        let increasing = previous.as_deref().is_none_or(|previous| previous < key);
-        previous = Some(key.to_vec());
-        canonical && increasing
-    })
-}
-
 /// The refusal of a late pad `blob`: one of a world whose keys this replica
 /// destroyed. A replica that cannot read its own destruction facts refuses.
-fn late_pad(vault: &crate::Vault, blob: &[u8]) -> Option<Error> {
+fn late_pad(vault: &crate::Vault, txn: Option<&heed::RoTxn<'_>>, blob: &[u8]) -> Option<Error> {
     let late = (|| -> Result<bool> {
-        let txn = vault.store.env.read_txn()?;
-        crate::world_keys::late_pad_in_txn(&vault.store, &txn, blob)
+        match txn {
+            Some(txn) => crate::world_keys::late_pad_in_txn(&vault.store, txn, blob),
+            None => {
+                let txn = vault.store.env.read_txn()?;
+                crate::world_keys::late_pad_in_txn(&vault.store, &txn, blob)
+            }
+        }
     })();
     match late {
         Ok(false) => None,
@@ -760,6 +762,8 @@ fn late_pad(vault: &crate::Vault, blob: &[u8]) -> Option<Error> {
 /// Whether the retained world shell `id` (`blob`) belongs to `key`'s window
 /// by this vault's own deletion record. A fault reading that record is the
 /// server's ([`read_fault`]), never a refusal of the peer's update.
+/// Shell residence over an optional caller-supplied reader (`None` opens the
+/// original independent reader at the original point).
 fn retained_shell_in_window(
     vault: &crate::Vault,
     candidate: &LoroDoc,
@@ -767,10 +771,18 @@ fn retained_shell_in_window(
     id: &EntityId,
     blob: &[u8],
     key: &crate::sync::WindowKey,
+    txn: Option<&heed::RoTxn<'_>>,
 ) -> Result<bool> {
-    let txn = vault.store.env.read_txn().map_err(read_fault)?;
+    let owned;
+    let txn: &heed::RoTxn<'_> = match txn {
+        Some(txn) => txn,
+        None => {
+            owned = vault.store.env.read_txn().map_err(read_fault)?;
+            &owned
+        }
+    };
     crate::sync::types::retained_world_shell_belongs_to_window(
-        vault, &txn, candidate, tombstones, id, blob, key, false,
+        vault, txn, candidate, tombstones, id, blob, key, false,
     )
     .map_err(read_fault)
 }
