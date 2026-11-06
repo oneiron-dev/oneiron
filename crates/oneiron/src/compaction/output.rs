@@ -218,9 +218,10 @@ impl OutputWorkingContext {
     ///
     /// `restore` returns `None` for a Full body the caller will not hold in
     /// memory; that entry's view is its stub, which reads it by reference.
-    /// `clean` judges an Overview's source as the Full read judges its body:
-    /// an overview is made from the output, so one whose output may not enter
-    /// model context as it stands shows the withheld mark (FIX 9735).
+    /// `clean` judges whether an output may enter model context as it
+    /// stands: an Overview is made from the output, so one whose output may
+    /// not shows the withheld mark (FIX 9735), and so does a Full view, whose
+    /// body is then never restored or checked (FIX 9734).
     pub fn assemble_with(
         &self,
         turn: u64,
@@ -339,6 +340,16 @@ impl OutputContextEntry {
                     .to_vec()
             };
             (OutputTier::Overview, overview)
+        } else if !clean(self.source)? {
+            // A body that may not enter model context as it stands is shown
+            // as the withheld mark, never read or checked against the digest
+            // of bytes it does not carry (FIX 9734).
+            (
+                OutputTier::Full,
+                crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                    .as_bytes()
+                    .to_vec(),
+            )
         } else {
             let Some(bytes) = restore(self.source)? else {
                 return Ok(self.stub_view());
