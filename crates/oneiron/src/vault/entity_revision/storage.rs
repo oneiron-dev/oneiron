@@ -16,7 +16,8 @@ use history::{
     revision_raw,
 };
 pub(super) use history::{
-    RevisionNamespace, fork_revision_with_namespace, retained_row_sources_in_txn,
+    RevisionNamespace, common_binding_in_txn, fork_revision_with_namespace,
+    retained_row_sources_in_txn,
 };
 mod redact;
 mod retained;

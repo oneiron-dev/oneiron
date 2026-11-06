@@ -221,12 +221,19 @@ impl SyncConnection {
 
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
-    async fn stop_for_leave(&self) {
+    /// Stops the lane for a confirmed leave: no new connect starts once
+    /// `left` is set, and this waits for the running loop to end. Returns
+    /// whether the lane actually stopped: a loop still importing past the
+    /// quiesce timeout must refuse confirmation and retry, never purge
+    /// under a live writer.
+    async fn stop_for_leave(&self) -> bool {
         self.left.send_replace(true);
         let mut running = self.running.subscribe();
         // A loop that does not stop in time may queue its last buffer after
         // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running))
+            .await
+            .is_ok()
     }
 
     /// Asks the sync server for this member's own leave notices with the
@@ -348,7 +355,11 @@ impl SyncConnection {
         let Some(notice) = confirmed else {
             return Ok(None);
         };
-        self.stop_for_leave().await;
+        if !self.stop_for_leave().await {
+            return Err(TransportError::Storage(
+                "the sync lane did not quiesce for the leave; retry next round".to_owned(),
+            ));
+        }
         // Bind after the wait, with no await before confirmation: cancellation
         // while waiting must not strand this count on an unconfirmed notice.
         // Keep this owner on a failed transaction so its retry keeps the count.
@@ -356,11 +367,10 @@ impl SyncConnection {
             .leave_unqueued_receipt
             .get_or_init(|| notice.outcome().receipt_id.clone())
             == &notice.outcome().receipt_id;
-        // Published before `running=false` when the wait succeeded: the leave
-        // arms publish before any `Close`/cleanup await, and the final slot
-        // before `running=false`. 0 when every flush was admitted. When the
-        // 10s wait expired before publish, the count is missed and the receipt
-        // undercounts (FIX 12816, NOT fixed here).
+        // Published before `running=false`: the leave arms publish before any
+        // `Close`/cleanup await, and the final slot before `running=false`.
+        // A failed quiesce returned above, before binding or confirmation.
+        // 0 when every flush was admitted.
         let unqueued = if owns_unqueued {
             self.leave_unqueued
                 .load(std::sync::atomic::Ordering::Acquire)

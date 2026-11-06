@@ -115,8 +115,10 @@ where
     }
     let bytes = read_exact()?;
     let masked = |bytes: Vec<u8>| -> Result<RepoBodyProjection> {
-        let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, marks, bytes)
+        vault.with_known_values(|known| {
+            let txn = vault.store.env.read_txn()?;
+            project_repo_bytes_in_txn(vault, &txn, marks, bytes, known)
+        })
     };
     let raw_blake3 = *blake3::hash(&bytes).as_bytes();
     // Bytes the marks were not kept under are no file this check names.
