@@ -228,7 +228,8 @@ impl Memory<'_> {
                         {
                             return Err(MemoryError::bad_request(
                                 "transcript upload changed during ingestion",
-                            ));
+                            )
+                            .into());
                         }
                         let meeting = event
                             .map(|event| {

@@ -11,6 +11,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+    TranscriptRetainedCaller,
 };
 use crate::runtime_hooks::verb::VerbHookWaitStatus;
 use crate::session_lifecycle::SessionImportHint;
@@ -33,6 +34,7 @@ pub(super) struct TranscriptRetry {
 struct PendingTranscript {
     actor: String,
     actor_class: u8,
+    caller: TranscriptRetainedCaller,
     source_blob_ref: String,
     arrived_at_ms: u64,
     event_ref: Option<String>,
@@ -67,7 +69,8 @@ impl Memory<'_> {
         let mut active: Option<(AttemptRecord, PendingTranscript)> = None;
         let mut retry = None;
         let result = self.calendar_transcript_ingest_once(input, &mut retry, &mut |prepared| {
-            let pending = self.pending_transcript(input, prepared.clone(), now);
+            let pending = self.pending_transcript(input, prepared.clone(), now)?;
+            let caller = pending.caller.clone();
             let payload = pending.encode()?;
             let dedupe_key = self.transcript_dedupe_key(input);
             let (record, claimed, saved) = vault.try_with_write_txn_grouped(|txn| {
@@ -111,6 +114,7 @@ impl Memory<'_> {
                 let ClaimOutcome::Claimed(claimed) = claimed else {
                     return Ok((record, None, saved));
                 };
+                saved.caller = caller;
                 if saved.retry.session.is_none() {
                     saved.retry.session = prepared.session.clone();
                 }
@@ -135,6 +139,7 @@ impl Memory<'_> {
             Ok(None)
         });
         if let Some((attempt, mut pending)) = active {
+            pending.caller = self.retain_transcript_caller()?;
             pending.retry = retry.ok_or(crate::Error::InvariantViolation(
                 "transcript retry was not prepared",
             ))?;
@@ -154,7 +159,7 @@ impl Memory<'_> {
             let retry = retry.ok_or(crate::Error::InvariantViolation(
                 "transcript retry was not prepared",
             ))?;
-            let pending = self.pending_transcript(input, retry, now);
+            let pending = self.pending_transcript(input, retry, now)?;
             let payload = pending.encode()?;
             let dedupe_key = self.transcript_dedupe_key(input);
             vault.try_with_write_txn_grouped(|txn| {
@@ -191,16 +196,17 @@ impl Memory<'_> {
         input: &TranscriptFileDropInput,
         retry: TranscriptRetry,
         now: u64,
-    ) -> PendingTranscript {
-        PendingTranscript {
+    ) -> MemoryResult<PendingTranscript> {
+        Ok(PendingTranscript {
             actor: self.actor().to_hex(),
             actor_class: self.actor_class() as u8,
+            caller: self.retain_transcript_caller()?,
             source_blob_ref: input.source_blob_ref.clone(),
             arrived_at_ms: input.arrived_at_ms,
             event_ref: input.event_ref.clone(),
             retry,
             deadline: Some(now.saturating_add(TRANSCRIPT_OPEN_SESSION_WAIT_SECS)),
-        }
+        })
     }
 }
 
@@ -264,52 +270,56 @@ fn land(
         .map_err(|_| MemoryError::bad_request("transcript caller is not an entity id"))?;
     let class = EdgeActorClass::try_from_u8(pending.actor_class)
         .ok_or_else(|| MemoryError::bad_request("transcript caller class is unknown"))?;
-    let memory = vault.memory(actor, class);
-    if let (Some(hint), Some(ask)) = (&pending.retry.session, pending.retry.ask) {
-        match vault.session_import_hook_wait(hint, ask)? {
-            VerbHookWaitStatus::Waiting => {
-                return Ok(TranscriptIngestOutcome::HookPending {
-                    session_ref: hint.id(),
-                    ask,
-                });
+    let memory = pending.caller.memory(vault, actor, class)?;
+    let result = (|| {
+        if let (Some(hint), Some(ask)) = (&pending.retry.session, pending.retry.ask) {
+            match vault.session_import_hook_wait(hint, ask)? {
+                VerbHookWaitStatus::Waiting => {
+                    return Ok(TranscriptIngestOutcome::HookPending {
+                        session_ref: hint.id(),
+                        ask,
+                    });
+                }
+                VerbHookWaitStatus::Unavailable => {
+                    return Err(MemoryError::bad_request(
+                        "transcript saved hook invocation is unavailable",
+                    ));
+                }
+                VerbHookWaitStatus::Ready => {}
             }
-            VerbHookWaitStatus::Unavailable => {
-                return Err(MemoryError::bad_request(
-                    "transcript saved hook invocation is unavailable",
-                ));
-            }
-            VerbHookWaitStatus::Ready => {}
         }
-    }
-    let bytes = memory
-        .read_blob_version(&pending.source_blob_ref, pending.retry.version)?
-        .ok_or_else(|| MemoryError::bad_request("transcript source bytes are unavailable"))?;
-    let input = TranscriptFileDropInput {
-        source_blob_ref: pending.source_blob_ref.clone(),
-        decoded_text: String::from_utf8(bytes)
-            .map_err(|_| MemoryError::bad_request("transcript source is not UTF-8"))?,
-        arrived_at_ms: pending.arrived_at_ms,
-        event_ref: pending.event_ref.clone(),
-    };
-    let mut retry = Some(pending.retry.clone());
-    let mut saved = pending.clone();
-    let result = memory.calendar_transcript_ingest_once(&input, &mut retry, &mut |prepared| {
-        saved.retry = prepared.clone();
-        let payload = saved.encode()?;
-        *attempt = vault.try_with_write_txn_grouped(|txn| {
-            queue.replace_leased_payload_in_txn(
-                txn,
-                attempt,
-                lease_owner,
-                attempt.attempt_count,
-                payload,
-            )
-        })?;
-        Ok(None)
-    });
-    if let Some(retry) = retry {
-        pending.retry = retry;
-    }
+        let bytes = memory
+            .read_blob_version(&pending.source_blob_ref, pending.retry.version)?
+            .ok_or_else(|| MemoryError::bad_request("transcript source bytes are unavailable"))?;
+        let input = TranscriptFileDropInput {
+            source_blob_ref: pending.source_blob_ref.clone(),
+            decoded_text: String::from_utf8(bytes)
+                .map_err(|_| MemoryError::bad_request("transcript source is not UTF-8"))?,
+            arrived_at_ms: pending.arrived_at_ms,
+            event_ref: pending.event_ref.clone(),
+        };
+        let mut retry = Some(pending.retry.clone());
+        let mut saved = pending.clone();
+        let result = memory.calendar_transcript_ingest_once(&input, &mut retry, &mut |prepared| {
+            saved.retry = prepared.clone();
+            let payload = saved.encode()?;
+            *attempt = vault.try_with_write_txn_grouped(|txn| {
+                queue.replace_leased_payload_in_txn(
+                    txn,
+                    attempt,
+                    lease_owner,
+                    attempt.attempt_count,
+                    payload,
+                )
+            })?;
+            Ok(None)
+        });
+        if let Some(retry) = retry {
+            pending.retry = retry;
+        }
+        result
+    })();
+    pending.caller = memory.retain_transcript_caller()?;
     result
 }
 
@@ -341,7 +351,6 @@ fn finish(
             return Ok(Settlement::Landed);
         }
         Ok(TranscriptIngestOutcome::HookPending { .. }) => {
-            pending.deadline = None;
             "the transcript's session hook awaits its native ask".to_owned()
         }
         Ok(TranscriptIngestOutcome::RetryOpenSession { .. }) => {
@@ -364,7 +373,9 @@ fn finish(
             return Ok(Settlement::Failed);
         }
     };
-    if pending.deadline.is_some_and(|deadline| now >= deadline) {
+    if !matches!(result, Ok(TranscriptIngestOutcome::HookPending { .. }))
+        && pending.deadline.is_some_and(|deadline| now >= deadline)
+    {
         fail(
             queue,
             attempt,
