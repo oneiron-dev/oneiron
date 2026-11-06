@@ -201,7 +201,7 @@ impl SyncConnection {
                 frame = client.document_updates.recv() => {
                     match frame {
                         Ok(frame) => {
-                            let id = match transport::decode_document(&frame[1..]) {
+                            let id = match transport::decode_unsplit_document(&frame[1..]) {
                                 Ok(doc) => {
                                     if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
                                         if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }

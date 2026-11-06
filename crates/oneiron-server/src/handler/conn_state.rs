@@ -66,6 +66,7 @@ pub(super) struct ConnState {
     proven_machine: oneiron::authority::PeerMachine,
     /// Window pad envelopes still coming in on this socket (FIX 7107).
     pub(super) window_pads: oneiron::sync::transport::WindowPadAssembly,
+    pub(super) document_parts: oneiron::sync::transport::DocumentAssembly,
     /// Windows the peer could not install sealed pads for: they go to it as
     /// today's carrier.
     pub(super) window_pad_carrier: std::collections::HashSet<WindowKey>,
@@ -109,6 +110,7 @@ impl ConnState {
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
             window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
+            document_parts: oneiron::sync::transport::DocumentAssembly::default(),
             window_pad_carrier: std::collections::HashSet::new(),
             repo_copy_generations: std::sync::Mutex::default(),
             asset_bodies: std::sync::Mutex::default(),
