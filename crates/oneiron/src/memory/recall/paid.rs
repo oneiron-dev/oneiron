@@ -106,10 +106,15 @@ pub trait RecallRerankHost: Sync {
         cancel: Option<WorkCancel>,
     ) -> MemoryResult<RerankScores>;
 
-    /// Whether every model `score` can reach runs on this device, in this
-    /// process. Only then is it sent the words of a row a device-only world
-    /// keeps; any other host is sent such a row empty. A host that cannot
-    /// say runs elsewhere.
+    /// Whether every model `score` can reach, through every request, batch
+    /// and fallback of this block, runs on this physical device: in this
+    /// process, or in a model runtime this host supervises and reaches only
+    /// over a channel it authenticates against that child, so that no
+    /// transport it may use leaves the device (I2-LOCAL). Only then is it
+    /// sent the words of a row a device-only world keeps; any other host is
+    /// sent such a row empty. A host that cannot say runs elsewhere, and so
+    /// does one whose scoring plan could reach an endpoint over HTTP, even
+    /// on this machine.
     fn runs_on_device(&self) -> bool {
         false
     }
