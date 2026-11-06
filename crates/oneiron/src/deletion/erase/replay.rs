@@ -296,9 +296,12 @@ impl Vault {
             }
             // No canonical row here names it, but a residence copy may: its
             // own, or a cached NOTE's that cites it. Both go now its marker
-            // stands (FIX 18400).
+            // stands, and each NOTE whose copy went is a changed document
+            // (FIX 18400).
             #[cfg(feature = "sync")]
-            crate::note::erase_residence_copies_of_in_txn(self, wtxn, id)?;
+            let residence_changed = crate::note::erase_residence_copies_of_in_txn(self, wtxn, id)?;
+            #[cfg(not(feature = "sync"))]
+            let residence_changed: Vec<EntityId> = Vec::new();
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
@@ -350,7 +353,7 @@ impl Vault {
                     receipt_id: None,
                     sweep_key: None,
                 },
-                Vec::new(),
+                residence_changed,
                 cancelled,
             ));
         }

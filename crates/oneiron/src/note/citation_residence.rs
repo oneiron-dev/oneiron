@@ -14,6 +14,7 @@ use heed::{RoTxn, RwTxn};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::Store;
 use crate::store::document_frame_tags::{TAG_DOCUMENT, document_sub_tags};
+use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::{EntityId, Error, Result, Vault};
 
 /// The residence rows that hold a cached item's text document.
@@ -23,7 +24,9 @@ const BODY_ROWS: &str = "ri:b:";
 
 /// Drops the residence copy of every cached NOTE whose document pins an
 /// erased document or claim ([`super::citation_erase::pin_is_erased`]), or
-/// does not read as a NOTE state that could show it does not. Returns the
+/// does not read as a NOTE state that could show it does not. A copy of a
+/// NOTE a legal hold names stays, as age eviction keeps it: a hold keeps
+/// every byte of the rows it names, a cached copy too (OF-470). Returns the
 /// NOTEs whose copy went.
 ///
 /// # Errors
@@ -47,7 +50,10 @@ pub(super) fn erase_residence_citations_in_txn(
         let Some(item) = item else {
             continue;
         };
-        if is_note_copy(&vault.store, txn, item)? && !copy_clean(vault, txn, item, &document)? {
+        if is_note_copy(&vault.store, txn, item)?
+            && !copy_clean(vault, txn, item, &document)?
+            && !held(&vault.store, txn, item)?
+        {
             gone.push(item);
         }
     }
@@ -80,7 +86,8 @@ pub(super) fn erase_own_copies_in_txn(
 
 /// A replayed hard erase of `id` that found no canonical row here (FIX
 /// 18400): its own residence copy goes, and so does every cached NOTE that
-/// cites it, its hard-delete marker now written.
+/// cites it, its hard-delete marker now written. Returns the NOTEs whose
+/// copy went, for the replay's changed documents.
 ///
 /// # Errors
 ///
@@ -89,10 +96,9 @@ pub(crate) fn erase_residence_copies_of_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<Vec<EntityId>> {
     erase_own_copies_in_txn(&vault.store, txn, [*id])?;
-    erase_residence_citations_in_txn(vault, txn)?;
-    Ok(())
+    erase_residence_citations_in_txn(vault, txn)
 }
 
 /// Refuses to keep a fetched residence copy of `item` (FIX 18400): an item
@@ -120,6 +126,15 @@ pub(crate) fn refuse_erased_residence_copy_in_txn(
         ));
     }
     Ok(())
+}
+
+/// Whether a standing customer legal hold names `item`.
+fn held(store: &Store, txn: &RoTxn<'_>, item: EntityId) -> Result<bool> {
+    match store.reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED) {
+        Ok(()) => Ok(false),
+        Err(error) if is_hold_refusal(&error) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether `item`'s cached body is a NOTE's.
