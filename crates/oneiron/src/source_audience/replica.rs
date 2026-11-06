@@ -73,11 +73,13 @@ pub(crate) fn merge_policy_in_txn(
     Ok(ReplicaMerge::Written)
 }
 
-/// Files the thread policy `id` in its source's thread index, in `txn`,
-/// when no policy is filed under its thread there yet: how a replica finds
-/// the threads of a source, and how a later landing of the thread here
-/// finds the policy its rows were born under. A source policy files nothing,
-/// and a thread filed under another policy stays as it is.
+/// Files the thread policy `id` in its source's thread index, in `txn`:
+/// how a replica finds the threads of a source, and how a later landing of
+/// the thread here finds the policy its rows were born under. The thread's
+/// own key takes the first policy filed for it. Another install's policy
+/// for the same thread, minted before the two met, keeps its own bindings
+/// and shares, so it is filed beside the first under a key of its own, and
+/// a scan of the source finds it too. A source policy files nothing.
 fn index_thread_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -87,7 +89,16 @@ fn index_thread_in_txn(
     let SourceAudienceKind::Thread { source, thread, .. } = &policy.kind else {
         return Ok(());
     };
-    let key = (*source, *thread);
+    let key = match THREADS.get(&vault.store, txn, &(*source, *thread))? {
+        None => (*source, *thread),
+        Some(first) if first == *id => return Ok(()),
+        Some(_) => {
+            let mut beside = blake3::Hasher::new();
+            beside.update(thread);
+            beside.update(id.as_bytes());
+            (*source, *beside.finalize().as_bytes())
+        }
+    };
     if THREADS.get(&vault.store, txn, &key)?.is_none() {
         THREADS.put(&vault.store, txn, &key, id)?;
     }
@@ -144,9 +155,33 @@ pub(crate) fn event_conflicts_in(
         .is_some_and(|held| event_meet(&held, incoming).is_none()))
 }
 
+/// Two receipts of one change as all they tell: each actor either names.
+/// `None` when they tell different changes. Admission folds a range's
+/// copies of one receipt this way: a redacted copy between two that name
+/// two people never hides the contradiction.
+pub(crate) fn event_join(
+    one: &SourceAudienceEvent,
+    other: &SourceAudienceEvent,
+) -> Option<SourceAudienceEvent> {
+    let actor = |left: Option<EntityId>, right: Option<EntityId>| match (left, right) {
+        (Some(left), Some(right)) if left != right => None,
+        (Some(named), _) | (None, Some(named)) => Some(Some(named)),
+        (None, None) => Some(None),
+    };
+    if one.op != other.op || one.at != other.at {
+        return None;
+    }
+    Some(SourceAudienceEvent {
+        op: one.op,
+        person: actor(one.person, other.person)?,
+        by: actor(one.by, other.by)?,
+        at: one.at,
+    })
+}
+
 /// Two receipts of one change as one: the change both tell, without each
 /// actor either lost to an erase. `None` when they tell different changes.
-pub(crate) fn event_meet(
+fn event_meet(
     one: &SourceAudienceEvent,
     other: &SourceAudienceEvent,
 ) -> Option<SourceAudienceEvent> {
