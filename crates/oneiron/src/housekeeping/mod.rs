@@ -104,7 +104,8 @@ impl Vault {
     /// before that sweep is next due (a failing sweep waits out its backoff),
     /// and the erasure sweep's due time while an obligation waits, and a left
     /// env's owed body collection (FIX 2413), and the earliest deadline of
-    /// the retained peer work (FIX 11183). Cache and retention hygiene never
+    /// the retained peer work (FIX 11183), and a paced verb call's window or
+    /// deadline (FIX 8753). Cache and retention hygiene never
     /// wake a vault. Reads one row per sweep, the schedule and the retained
     /// work queues, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
@@ -127,6 +128,11 @@ impl Vault {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
         sync_work::push_retained_work_due_at(self, &mut owed)?;
+        // A paced verb call's window opening or deadline (FIX 8753): the
+        // host's settler runs its turn once the vault is up again.
+        if let Some(at) = self.paced_verb_wake_at()? {
+            owed.push((HousekeepingSweep::GateDecisionRetention, at));
+        }
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
             let Runner::Engine { every, .. } = sweep.runner() else {

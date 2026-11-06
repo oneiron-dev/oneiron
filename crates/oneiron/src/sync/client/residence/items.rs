@@ -51,16 +51,15 @@ struct TouchPartReply {
 /// The bytes of `item`, the touch item `name` of `touch` (its window,
 /// selector and entity id): inline, or read from the home a part at a time
 /// (`residence.touch.part`) and checked whole against the hash the touch
-/// named (FIX 12116). An item over `limit` is refused: inline by its
-/// decoded length, by reference by the total the touch declares, before
-/// any part is read, so a home cannot name a length this machine then
-/// chases part after part.
+/// named (FIX 12116). `limit` keeps a caller's whole-item ceiling where
+/// one applies. A logical document has no single-frame ceiling: its parts
+/// keep their existing reply bound and its complete digest is still checked.
 async fn touch_item_bytes(
     rpc: &mut ResidenceRpc,
     touch: &serde_json::Value,
     name: &str,
     item: TouchItemReply,
-    limit: u64,
+    limit: Option<u64>,
 ) -> Result<Vec<u8>, TransportError> {
     let decode = |encoded: &str| {
         base64::engine::general_purpose::STANDARD
@@ -74,7 +73,7 @@ async fn touch_item_bytes(
             total: None,
         } => {
             let bytes = decode(&inline)?;
-            if bytes.len() as u64 > limit {
+            if limit.is_some_and(|limit| bytes.len() as u64 > limit) {
                 return Err(refused());
             }
             return Ok(bytes);
@@ -86,7 +85,7 @@ async fn touch_item_bytes(
         } => (hash, total),
         _ => return Err(refused()),
     };
-    if total > limit {
+    if limit.is_some_and(|limit| total > limit) {
         return Err(refused());
     }
     let digest = <[u8; 32]>::try_from(decode(&hash)?.as_slice()).map_err(|_| refused())?;
@@ -103,7 +102,7 @@ async fn touch_item_bytes(
         if reply.total != total
             || part.is_empty()
             || part.len() > RESIDENCE_PAGE_REPLY_BYTES
-            || (bytes.len() + part.len()) as u64 > total
+            || part.len() as u64 > total - bytes.len() as u64
         {
             return Err(refused());
         }
@@ -180,25 +179,17 @@ impl SyncClient {
         // A row or document past what one reply holds comes in parts (FIX
         // 12116), and a row past one frame, such as an authority entry, is
         // taken whole (FIX 8246).
-        // A row is read under the remote-read ceiling (it carries at most
-        // a largest legal blob plus its header), a document under the
-        // frame ceiling its use below already refuses past.
+        // The row keeps the remote-read ceiling. The logical document is
+        // fetched whole over the same bounded parts, not one wire frame.
         let blob = touch_item_bytes(
             &mut rpc,
             &touch,
             "blob",
             reply.blob,
-            crate::memory::caps::MAX_REMOTE_RESPONSE_BYTES as u64,
+            Some(crate::memory::caps::MAX_REMOTE_RESPONSE_BYTES as u64),
         )
         .await?;
-        let document = touch_item_bytes(
-            &mut rpc,
-            &touch,
-            "document",
-            reply.document,
-            transport::MAX_DECODED_PAYLOAD_BYTES as u64,
-        )
-        .await?;
+        let document = touch_item_bytes(&mut rpc, &touch, "document", reply.document, None).await?;
         let header = crate::batch::EntityMetadataHeader::parse(&blob).ok_or_else(refused)?;
         if window
             .start_timestamp()
@@ -209,12 +200,10 @@ impl SyncClient {
         {
             return Err(refused());
         }
-        if document.len() > transport::MAX_DECODED_PAYLOAD_BYTES
-            || document.first() != Some(&transport::TAG_DOCUMENT)
-        {
+        if document.first() != Some(&transport::TAG_DOCUMENT) {
             return Err(refused());
         }
-        let document_frame = transport::decode_document(&document[1..])?;
+        let document_frame = transport::decode_unsplit_document(&document[1..])?;
         if document_frame.entity != item
             || !matches!(
                 document_frame.kind,
@@ -245,6 +234,15 @@ impl SyncClient {
                     }
                     return Ok(());
                 }
+                // A copy of an item erased here, or of a NOTE that cites one,
+                // is not kept: the home may not have erased it yet (FIX 18400).
+                crate::note::refuse_erased_residence_copy_in_txn(
+                    &self.vault,
+                    txn,
+                    item,
+                    header.entity_type,
+                    &document,
+                )?;
                 self.vault
                     .store
                     .sync_state
