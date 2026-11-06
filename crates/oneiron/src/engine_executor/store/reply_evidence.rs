@@ -8,29 +8,33 @@ use crate::code_run::ExecutorStorage;
 use crate::{ContentPart, EntityId, Error, LlmMessage, Result};
 
 /// Sweeps the original encoding once, with PERSON spans restricted to typed
-/// Text parts. `None` leaves the ordinary custody-sweeping sink in place.
+/// Text parts. Without PERSON prints, skips encoding and leaves the ordinary
+/// custody-sweeping JSON sink in place.
 pub(super) fn for_run_bytes(
     storage: &ExecutorStorage<'_>,
     exec_run: EntityId,
     reply: &LlmMessage,
 ) -> Result<Option<Zeroizing<Vec<u8>>>> {
-    // Borrowed RawValues locate native typed fields in the exact full encoding.
-    let mut encoded = Zeroizing::new(Vec::new());
-    serde_json::to_writer(&mut *encoded, reply).map_err(encoding_error)?;
-    let positions: EncodedReply<'_> = serde_json::from_slice(&encoded).map_err(encoding_error)?;
-    let mut texts = Vec::with_capacity(reply.content.len());
-    for (part, encoded_part) in reply.content.iter().zip(positions.content) {
-        let ContentPart::Text { text, .. } = part else {
-            continue;
-        };
-        let position: EncodedText<'_> =
-            serde_json::from_str(encoded_part.get()).map_err(encoding_error)?;
-        let scalar = position.text.get();
-        let start = scalar.as_ptr() as usize - encoded.as_ptr() as usize;
-        texts.push((text.as_str(), start..start + scalar.len()));
-    }
     let source = storage.code_run_known_source(exec_run)?;
-    source.replace_reply_person_texts(&texts, &encoded)
+    source.replace_reply_person_texts(|| {
+        // Borrowed RawValues locate typed fields only when PERSON prints exist.
+        let mut encoded = Zeroizing::new(Vec::new());
+        serde_json::to_writer(&mut *encoded, reply).map_err(encoding_error)?;
+        let positions: EncodedReply<'_> =
+            serde_json::from_slice(&encoded).map_err(encoding_error)?;
+        let mut texts = Vec::with_capacity(reply.content.len());
+        for (part, encoded_part) in reply.content.iter().zip(positions.content) {
+            let ContentPart::Text { text, .. } = part else {
+                continue;
+            };
+            let position: EncodedText<'_> =
+                serde_json::from_str(encoded_part.get()).map_err(encoding_error)?;
+            let scalar = position.text.get();
+            let start = scalar.as_ptr() as usize - encoded.as_ptr() as usize;
+            texts.push((text.as_str(), start..start + scalar.len()));
+        }
+        Ok((encoded, texts))
+    })
 }
 
 #[derive(Deserialize)]
