@@ -58,3 +58,18 @@ path, including receipts without a native admission. They do not gain NET
 pairing or an extra invoice charge from this step accounting. Staffed stronger
 providers remain excluded from Arc openings until their per-read cost and
 freshness contract is complete.
+
+## SystemOne native-source attachment
+
+A captured SystemOne pack or single read can carry the actual paid permit's
+original native admission on its runtime settlement copy. The caller's existing
+capture behavior stays in place. An own-meter read enables capture only when
+its context supplies an original native source. Binding failure warns and keeps
+the ordinary read, deadline and settlement paths.
+
+This attachment does not retain a native input or response invoice. An invoice
+lookup may still be unknown. The binding does not change the permit's pricing
+quantity, settle it again, or authorize a payment. Existing captured-receipt
+consumers keep their own accounting paths. Staffed stronger providers remain
+excluded from Arc openings. Ordinary host receipt sinks do not receive the
+runtime admission attachment.
