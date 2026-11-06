@@ -45,11 +45,30 @@ const EVENTS_PAGE_SIZE: u32 = 250;
 const MAX_ID_BYTES: usize = 1_024;
 
 /// Where a calendar source's pull stands: the sync token of the last
-/// finished listing, and the next page of the listing in progress.
+/// finished listing, the next page of the listing in progress, and the
+/// calendar's zone that listing wrote into its resources (fix list row
+/// 17868).
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct GoogleCalendarCursor {
     sync: Option<String>,
     page: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    zone: Option<String>,
+}
+
+/// The longest calendar zone name written into a resource.
+const MAX_ZONE_BYTES: usize = 64;
+
+/// The calendar's zone a listing page names (its top-level `timeZone`),
+/// when it is a plain zone name: ASCII letters, digits and `/_+-` only.
+fn page_zone(page: &Value) -> Option<String> {
+    text_of(page.get("timeZone")).filter(|zone| {
+        !zone.is_empty()
+            && zone.len() <= MAX_ZONE_BYTES
+            && zone
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-".contains(&byte))
+    })
 }
 
 /// Host-side Google Calendar wire over `reqwest::blocking`, for the calendar
@@ -195,6 +214,14 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 )));
             }
         };
+        // The calendar's zone places its all-day days, and every resource
+        // carries it. A zone other than the one this pull's earlier pages or
+        // listing wrote leaves those resources on the old one: the calendar
+        // is listed again whole, so each all-day event takes the new zone.
+        let zone = page_zone(&page);
+        if (cursor.sync.is_some() || cursor.page.is_some()) && cursor.zone != zone {
+            return Ok(MailCalendarRead::Expired);
+        }
         let mut by_uid: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         // UIDs whose series is read again whole, and deleted resources by UID.
         let mut reread: BTreeSet<String> = BTreeSet::new();
@@ -240,14 +267,14 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 events
             };
             gone.remove(&uid);
-            if let Some(change) = resource_change(&uid, &series)? {
+            if let Some(change) = resource_change(&uid, &series, zone.as_deref())? {
                 changes.push(change);
             }
         }
         for uid in reread {
             gone.remove(&uid);
             let series = self.series(source, &uid)?;
-            if let Some(change) = resource_change(&uid, &series)? {
+            if let Some(change) = resource_change(&uid, &series, zone.as_deref())? {
                 changes.push(change);
             }
         }
@@ -262,6 +289,7 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 GoogleCalendarCursor {
                     sync: cursor.sync,
                     page: Some(next),
+                    zone,
                 },
                 false,
             ),
@@ -269,6 +297,7 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 GoogleCalendarCursor {
                     sync: Some(sync),
                     page: None,
+                    zone,
                 },
                 true,
             ),
@@ -276,6 +305,7 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 GoogleCalendarCursor {
                     sync: cursor.sync,
                     page: None,
+                    zone,
                 },
                 true,
             ),
@@ -294,8 +324,13 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
 
 /// One UID's resource from its events: a delete when its master is
 /// cancelled, the master with its instances otherwise, nothing when no
-/// master is among them.
-fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarChange>> {
+/// master is among them. The calendar's `zone` heads the resource as its
+/// `X-WR-TIMEZONE`, which places its all-day days (fix list row 17868).
+fn resource_change(
+    uid: &str,
+    events: &[Value],
+    zone: Option<&str>,
+) -> Result<Option<RemoteCalendarChange>> {
     let Some(master) = events
         .iter()
         .find(|event| event.get("recurringEventId").is_none())
@@ -311,6 +346,11 @@ fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarC
     }
     let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
     ics.push_str("PRODID:-//oneiron//mail-pack google calendar//EN\r\n");
+    if let Some(zone) = zone {
+        ics.push_str("X-WR-TIMEZONE:");
+        ics.push_str(zone);
+        ics.push_str("\r\n");
+    }
     write_vevent(&mut ics, uid, master, None)?;
     for instance in events
         .iter()
