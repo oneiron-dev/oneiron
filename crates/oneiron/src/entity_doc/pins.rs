@@ -16,6 +16,11 @@ use oneiron_contracts::memory::MemoryResult;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
+#[cfg(feature = "sync")]
+mod record_sources;
+#[cfg(feature = "sync")]
+pub(crate) use record_sources::RecordDocumentHistoryCut;
+
 /// Produced only inside the authenticated owner's purge transaction, after
 /// its original admission and the constrained `floor` / `shallow_at` transform.
 /// Raw snapshots and decoded facts cannot construct this source.
@@ -411,6 +416,10 @@ impl Vault {
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
             let old_state = doc.text();
             let shallow = shallow_at(self, txn, entity, &h.incarnation, &doc, &applied)?;
+            #[cfg(feature = "sync")]
+            crate::store::window_record_sources::remove_history_in_txn(
+                RecordDocumentHistoryCut::new(&self.store, txn, *entity, &h, &doc, &shallow),
+            )?;
             let purged = PurgedDocument {
                 vault: self,
                 entity: *entity,

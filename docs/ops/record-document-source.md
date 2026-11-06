@@ -28,8 +28,16 @@ The restore class is historical CONTENT. Payload classification starts as Unclas
 
 A valid structural row depends on its entity and sending MACHINE. The existing authenticated checkpoint landing and opened-owner/erasure filtering remain required. `CanonicalSnapshot` remains the closed window manifest; it gains no arbitrary database-row vocabulary.
 
-Generic entity/MACHINE erasure removes source rows naming that entity or sender in the same writer. Exact window removal deletes only that window's transport metadata, not its members' documents, history, sequence rows or provenance. These hooks do not establish selective partial-history invalidation.
+Generic entity/MACHINE erasure removes source rows naming that entity or sender in the same writer. Exact window removal deletes only that window's transport metadata, not its members' documents, history, sequence rows or provenance.
+
+The owner's constrained entity-document history purge also removes affected transport facts in its original writer. Its private cut product holds the actual entity, incarnation, old shallow floor, new shallow floor and mutable transaction. A source is affected only when its retained per-peer operation interval intersects the operations that cut removed. This includes another logical-document alias of the same incarnation when it retains those operations. An already-shallow source that excludes them stays. A version that covers the new floor can still retain erased older operations; version coverage alone does not keep its source fact.
+
+## Retained transport selection
+
+A replay without a matching live import can select the exact persisted transport fact through the Store's private reader. The reader checks the canonical metadata, its exact key, entity and sender erasures, and retained stored bytes. The sync owner then reconstructs the actual durable `d:w:` snapshot plus every surviving `u:w:` update in that same transaction. Its row, document head, snapshot and FIRST must match the selected pair. A decoded row, a caller's Loro document, or a negative peer-origin marker alone supplies no transport proof.
+
+Every batch-consumption recheck repeats the metadata and durable-carrier comparison and the original live-carrier, carried-origin and peer-origin checks. Live import selections still require their original current weak scope. Retained selections do not require a new live `OwnDeviceImport` or new historical MACHINE standing.
 
 ## Admission boundary
 
-The metadata is not currently a source for retained-record admission. Replay still requires the live import's selected source and all original native checks. A persisted source row is not `SkillStateWrite`, a native final input, or a commit receipt. Retained-source readmission and precise history-cut invalidation require their actual source-owner continuations; capture and persistence alone do not supply them.
+Retained transport selection supplies transport facts to the existing record/document candidate. It is not retained native-operation admission. The candidate and every original record phase still judge the current local document, exact source records and native continuations. A persisted source row is not `SkillStateWrite`, a native final input, or a commit receipt. The full retained native source/admission producers, mirror and native root-list activation remain separate work; capture, persistence and transport readmission alone do not supply them.
