@@ -194,7 +194,12 @@ unchanged.
 for a bubble series' existing workbook-backed `c:bubbleSize` range. The write uses
 that range's existing length, updates its workbook cells and every overlapping
 cache together, and re-imports before landing. The other sequence names remain
-`name`, `categories` and `values`. Literal, external, formula-backed, shared or
+`name`, `categories` and `values`. For workbook-backed multi-level categories,
+`categories` takes the same leaf-first, level-major vector the native reader
+returns, including missing points. A same-length write updates each retained
+level's points in place and all overlapping workbook-backed caches; the level
+order, outer point count, formulas and unrelated XML remain unchanged. Literal,
+external, formula-backed, shared or
 length-changing ranges keep the native writer's existing refusals. Live exports
 still use the full rewrite when a size sequence is added or removed, is literal,
 grows beyond its existing range, or the checked native write refuses. This does
