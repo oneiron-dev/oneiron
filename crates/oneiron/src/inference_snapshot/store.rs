@@ -571,7 +571,10 @@ impl Vault {
             for (id, _) in catalog::rows(store, &wtxn)? {
                 match store.read_inference_snapshot_key(&wtxn, &id.0) {
                     Ok(Some(wrapped)) => wrapped.retire(),
-                    Ok(None) => dead.push(id),
+                    Ok(None) => {
+                        dead.try_reserve(1).map_err(std::io::Error::from)?;
+                        dead.push(id);
+                    }
                     Err(error) => tracing::warn!(
                         kind = ?error.kind(),
                         "an inference snapshot key did not read; its row is kept"

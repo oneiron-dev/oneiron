@@ -309,7 +309,7 @@ impl SnapshotLedger<'_> {
                 continue;
             };
             kept = kept.saturating_add(record.sealed_bytes);
-            candidates.push(SnapshotCandidate {
+            let candidate = SnapshotCandidate {
                 id,
                 bytes: record.sealed_bytes,
                 reusable: record.reusable(),
@@ -317,7 +317,9 @@ impl SnapshotLedger<'_> {
                 reuse_count: record.reuse_count,
                 last_used_ms: record.last_used_ms,
                 pinned: pinned.contains(&id) || leased.contains(&id),
-            });
+            };
+            candidates.try_reserve(1).map_err(std::io::Error::from)?;
+            candidates.push(candidate);
         }
         let limit = budget.limit();
         let in_flight = self.ledger().lock().in_flight();
