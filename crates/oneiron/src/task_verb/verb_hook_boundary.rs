@@ -514,6 +514,7 @@ fn row_pre_with_saved(
     };
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
+        pre.with_read_capture(memory.read_capture());
     }
     Ok(ended)
 }
