@@ -121,6 +121,10 @@ fn validate_document_metadata_field(
     if Some(field) == body_field {
         return Err(invalid("document body duplicated in metadata"));
     }
+    validate_document_metadata_value(field, bytes)
+}
+
+fn validate_document_metadata_value(field: &str, bytes: &[u8]) -> Result<()> {
     let mut cursor = bytes;
     let value =
         rmpv::decode::read_value(&mut cursor).map_err(|_| invalid("document metadata encoding"))?;
