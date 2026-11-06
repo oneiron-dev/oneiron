@@ -4,6 +4,7 @@
 
 mod boundary;
 mod dispatch;
+mod live_cutoff;
 mod prompt;
 mod readers;
 mod receipts;
@@ -367,6 +368,9 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             if output.output_ref() != *source {
                 return Err(Error::CorruptedIndex("recoverable output integrity"));
             }
+            // A scoped child reads the chunk only before its live cutoff,
+            // checked again before the chunk is released (FIX 8233).
+            self.check_live_cutoff("recorded output")?;
             let chunk = storage
                 .read_code_run_raw_output_range(
                     output,
@@ -374,6 +378,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
                     RECOVERABLE_OUTPUT_CHUNK_BYTES,
                 )?
                 .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            self.check_live_cutoff("recorded output")?;
             return Ok(Some(chunk));
         }
         Err(Error::InvalidConfig(

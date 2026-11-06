@@ -151,12 +151,17 @@ impl ContributionForkModel for ExactFork<'_> {
         let Ok(call) = runtime.admit_seat_bound(self.vault, CHAT_ROLE, request) else {
             return Ok(None);
         };
-        // The replay runs only while the rung's configured prompt is the one
-        // the capsule's call was answered under, by its digest; the stored
-        // prompt then takes its place, put first once.
-        if call.ladder.exact_prompt_digest() != Some(rung.prompt_digest) {
+        // The rung that answered the capsule's call, as it is configured
+        // now. The replay runs only while its configured prompt is the one
+        // the call was answered under, by its digest; the stored prompt then
+        // takes its place, put first once.
+        let Some(ladder) = call
+            .ladder
+            .for_replay_binding(&rung.binding.model, rung.binding.locality)
+            .filter(|ladder| ladder.exact_prompt_digest() == rung.prompt_digest)
+        else {
             return Ok(None);
-        }
+        };
         let run_id = format!("coach-contribution-fork:{}", EntityId::now().to_hex());
         let guard = self.vault.policy_budget_guard(
             run_id.clone(),
@@ -169,7 +174,7 @@ impl ContributionForkModel for ExactFork<'_> {
         let may_send = || !clock.decision_time_left().is_zero();
         let response = self
             .handle
-            .block_on(call.ladder.generate_exact_masked_within(
+            .block_on(ladder.generate_exact_within(
                 &run,
                 call.request,
                 None,

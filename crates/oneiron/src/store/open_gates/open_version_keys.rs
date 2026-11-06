@@ -15,6 +15,10 @@ pub const MAX_DBS: u32 = 32;
 /// hook invocation is retained on the pause; only that hold can auto-resume.
 /// No old-format reader or migration is provided.
 ///
+/// v26 (FIX 10898): attempt record v4 requires each requeue-history entry
+/// to carry its failure count and latest instant. No old-format reader or
+/// migration is provided.
+///
 /// v25 (FIX 7831, ARCH-0058): WORKFLOW moved from byte 18 to byte 43,
 /// inside its declared AgentsAndSurfacing family (40-49); short-id prefix
 /// `wf` is unchanged. ABI 24 vaults fail closed at the ABI gate — there is

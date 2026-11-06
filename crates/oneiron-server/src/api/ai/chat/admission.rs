@@ -336,6 +336,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         &request.text,
         &request.conversation_ref,
         request.agent_ref.as_deref(),
+        agent,
     )
     .await;
     // Admitted through its role on the current snapshot, after hydration:
