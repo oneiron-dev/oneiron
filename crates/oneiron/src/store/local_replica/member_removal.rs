@@ -10,6 +10,7 @@ use loro::LoroMap;
 
 use super::RemovedReplica;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{
@@ -59,6 +60,7 @@ pub(super) fn remove_member(
     edges: &LoroMap,
     id: &EntityId,
     released: bool,
+    keep_birth_facet: bool,
     report: &mut RemovedReplica,
 ) -> Result<()> {
     let Some(raw) = store.port_entity_raw(txn, id)? else {
@@ -75,7 +77,7 @@ pub(super) fn remove_member(
     crate::code_symbol::delete_code_symbol_manifest_in_txn(store, txn, id)?;
     crate::counterparty_contact::drop_contact_index_rows_in_txn(store, txn, id)?;
     remove_vectors(store, txn, id, report)?;
-    let neighbors = remove_member_edges(store, txn, edges, id, released, report)?;
+    let neighbors = remove_member_edges(store, txn, edges, id, released, keep_birth_facet, report)?;
     if let Some((short_id, hash)) = store.port_short_id_reference(txn, id)? {
         let forward = crate::batch::encode_short_id_forward_key(&short_id, hash);
         store.short_ids.delete(txn, &forward)?;
@@ -156,6 +158,7 @@ fn remove_member_edges(
     edges: &LoroMap,
     id: &EntityId,
     all: bool,
+    keep_birth_facet: bool,
     report: &mut RemovedReplica,
 ) -> Result<Vec<EntityId>> {
     let mut incident = Vec::new();
@@ -173,6 +176,9 @@ fn remove_member_edges(
     let mut neighbors = Vec::with_capacity(incident.len());
     for (source, kind, target) in incident {
         neighbors.push(if source == *id { target } else { source });
+        if keep_birth_facet && source == *id && kind == EdgeKind::FacetOf {
+            continue;
+        }
         if (all || map_contains_binary(edges, &format_edge_key(&source, kind, &target)))
             && store.port_remove_edge_rows(txn, &source, kind, &target)?
         {
