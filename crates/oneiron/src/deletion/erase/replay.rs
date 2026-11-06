@@ -378,6 +378,9 @@ impl Vault {
         // the purge so local delete truth survives CRDT-map manipulation.
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
         crate::deletion::ActorErasureWriter::new(self, wtxn, *id).erase_planned_pack_revision()?;
+        crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
+            crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+        )?;
         let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut *wtxn, *id);
         crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
         crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
