@@ -482,7 +482,7 @@ pub fn decode_hash(value: &Value) -> Result<[u8; 32]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
-fn decode_16(value: &Value) -> Result<[u8; 16]> {
+pub fn decode_16(value: &Value) -> Result<[u8; 16]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 

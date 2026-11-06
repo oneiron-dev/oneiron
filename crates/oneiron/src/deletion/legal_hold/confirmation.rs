@@ -270,13 +270,13 @@ impl Vault {
         self.note_backup_hold_recheck();
         self.finish_redaction_erases_logged();
         let memory = self.memory(settled.actor, EdgeActorClass::Human);
-        let hard = crate::deletion::SafeDeleteReason::UserHardDelete;
+        let reason = DeleteReason::OwnerErase;
         let mut statuses = Vec::with_capacity(records.len());
         let mut failed = false;
         for record in records {
             let status = match settled.veto_vault {
                 Some(vault_id) => self.wait_out_veto(owner, vault_id, record, &settled.waiting),
-                None => match memory.owner_confirmed_erase(owner, record, hard) {
+                None => match memory.owner_confirmed_erase(owner, record, reason) {
                     Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
                     Err(error) => {
                         failed = true;
@@ -389,7 +389,7 @@ impl Vault {
                     confirmed_by: Some(actor.to_hex()),
                     confirmed_at: now,
                     kind: PendingEraseKind::LiftAndErase,
-                    reason: DeleteReason::UserHardDelete,
+                    reason: DeleteReason::OwnerErase,
                     generation: self.store.clock.entity_id()?,
                     veto_act: None,
                     withdrawn: None,
