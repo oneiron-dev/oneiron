@@ -526,11 +526,7 @@ impl StepRunner {
             && let Some(answer) = &saved.transcript.answer
         {
             stamp_executor(vault, attempt, &answer.rung);
-            let binding = ModelCallBinding {
-                rung: answer.rung.clone(),
-                route: answer.route.clone(),
-                answering: None,
-            };
+            let binding = ModelCallBinding::saved(answer.rung.clone(), answer.route.clone());
             let no_record = no_record_at_arrival
                 || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
             record_workflow_response(
