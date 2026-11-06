@@ -78,6 +78,17 @@ Storage errors have a distinct typed denial and a host-storage model error,
 not an exhausted-budget or provider-health result. No native commit failure
 publishes a terminal into a legacy sink that could settle it independently.
 
+`PersistentAllocation::retry_settlements` retries each currently queued native
+terminal once. A failed precommit write retains the original receipt, clock and
+digest in that backend's memory, even after its caller drops the run handle.
+Retries do not settle the run's line again or call a second money producer.
+They clear the original ownership marker and publish the original observer
+receipt only after the native write commits. Failed entries remain queued;
+other calls can still make progress. No queue, run, meter or resident lock spans
+the vault writer. This is memory custody, not durable terminal crash recovery.
+The server must retain the selected backend and invoke this drain from its
+existing usage lifecycle when it installs the concrete producer.
+
 This is not server activation. The server still needs an `AllocationProducer`
 that freezes its original `AdmittedCall` under its actual custody/erase contract,
 preserves service-cost updates, and stages the original event into the existing
