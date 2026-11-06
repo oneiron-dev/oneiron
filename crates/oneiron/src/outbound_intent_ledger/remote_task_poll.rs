@@ -10,7 +10,10 @@
 //! the provider's hint, never sooner than the host's pass, backing off while
 //! it runs. A task waiting on input (`input_required`) is polled as running:
 //! this host answers no task input, so such a task ends when its provider
-//! drops it. The poll table keeps only
+//! drops it. A session the connector ended (HTTP 404) is renewed: the host
+//! opens a new one under the row's own endpoint and credential, and the
+//! handle keeps its id for the polls that follow (FIX 16028). The poll
+//! table keeps only
 //! the next poll time, the count and the last status: the session and the
 //! credential choice stay in the handle, which an erase forgets.
 
@@ -38,8 +41,10 @@ const MAX_STATUS_BYTES: usize = 64;
 /// had open. Opaque provider data: never logged.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteTaskPoll {
-    /// The MCP session the task was created in (`Mcp-Session-Id`), kept
-    /// open for its polls; `None` for a server that keeps no session.
+    /// The MCP session the task's polls go in (`Mcp-Session-Id`): the one
+    /// it was created in, kept open for them, or the one that replaced it
+    /// once the connector ended that one; `None` for a server that keeps no
+    /// session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     /// The protocol revision the send pinned (`MCP-Protocol-Version`).
@@ -105,7 +110,10 @@ pub struct DueRemoteTask {
 impl fmt::Debug for DueRemoteTask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DueRemoteTask")
-            .field("task_id", &format_args!("[{} bytes redacted]", self.task_id.len()))
+            .field(
+                "task_id",
+                &format_args!("[{} bytes redacted]", self.task_id.len()),
+            )
             .field("poll", &self.poll)
             .field("polls", &self.polls)
             .finish_non_exhaustive()
@@ -269,6 +277,32 @@ impl Vault {
             && intent_settlement_in_txn(self, &txn, intent)?
                 .remote_task
                 .is_some_and(|handle| handle.id == task_id && handle.poll.is_some()))
+    }
+
+    /// Records that row `intent`'s task `task_id` is polled in the MCP
+    /// session `session` from now on (FIX 16028): the connector ended the
+    /// one its polls went in (HTTP 404), and a new `initialize` under the
+    /// row's own endpoint and credential opened this one. Only a row still
+    /// Deferred on that task changes.
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn remote_task_session_renewed(
+        &self,
+        intent: &[u8; 32],
+        task_id: &str,
+        session: Option<String>,
+    ) -> IntentLedgerResult<()> {
+        self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<()> {
+            let deferred = super::store::get_ledger_record(self, txn, intent)?
+                .is_some_and(|record| record.state == IntentState::Deferred);
+            if deferred {
+                super::settlement::renew_remote_task_session_in_txn(
+                    self, txn, intent, task_id, session,
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// Settles row `intent` by how a poll found its task ended (FIX 11023):
