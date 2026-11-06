@@ -32,6 +32,21 @@ pub struct AllocationCallKey {
     pub lease: String,
 }
 
+/// Original admission metadata and run-line conversion basis for one native
+/// call. The canonical admitted facts and durable hold remain separate; this
+/// neither mirrors their money nor admits a replacement call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllocationCallContext {
+    pub run: String,
+    pub revision: u32,
+    pub admitted_occurred_at: u64,
+    pub native: LeaseUnit,
+    pub unit_cost: u64,
+    pub reserve_native: u128,
+    pub rates: Vec<UnitRate>,
+    pub metered: bool,
+}
+
 /// Immutable host-supplied conversion terms for one original allocation.
 /// Rate order is significant: conversion uses the first matching rate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
