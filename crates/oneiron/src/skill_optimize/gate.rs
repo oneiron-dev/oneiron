@@ -145,6 +145,10 @@ mod deferred_approval;
 mod goal_axis;
 mod judge_binding;
 mod ledger;
+pub(crate) use ledger::{
+    CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
+    canonical_skill_edit_verdict_in_txn, verdict_rows_sourced_observed_in_txn,
+};
 mod live;
 mod measurement;
 mod preflight;

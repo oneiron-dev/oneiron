@@ -3,7 +3,12 @@
 use super::*;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
+mod canonical;
 mod codec;
+pub(crate) use canonical::{
+    CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
+    canonical_skill_edit_verdict_in_txn,
+};
 
 use self::codec::decode_verdict_with_marker;
 
@@ -254,11 +259,15 @@ pub(super) fn verdict_rows_sourced_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<(Vec<HeldOutVerdict>, Option<Vec<EntityId>>)> {
-    let verdicts = VERDICTS
-        .scan(&vault.store, rtxn)?
-        .into_iter()
-        .map(|(id, raw)| decode_verdict_with_marker(vault, rtxn, id, &raw))
-        .collect::<Result<Vec<_>>>()?;
+    verdict_rows_sourced_observed_in_txn(vault, rtxn, None)
+}
+
+pub(crate) fn verdict_rows_sourced_observed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    observer: Option<&mut VerdictReadObserver<'_>>,
+) -> Result<(Vec<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let verdicts = canonical::verdict_rows_observed_in_txn(vault, rtxn, observer)?;
     let sources = verdicts
         .iter()
         .all(|verdict| verdict.displaced_by_revision.is_none())

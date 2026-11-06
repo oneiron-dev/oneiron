@@ -4,7 +4,7 @@
 
 use super::*;
 
-fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
+pub(super) fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
         .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
     let Value::Map(entries) = &value else {
