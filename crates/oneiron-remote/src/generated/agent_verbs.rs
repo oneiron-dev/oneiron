@@ -2876,6 +2876,30 @@ impl OneironClient {
                 "ai.voice.close" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LiveVoiceProcessed,
                 >(client, verb, &input),
+                "ai.phone.voice.start" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceSession,
+                >(client, verb, &input),
+                "ai.phone.voice.audio" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.phone.voice.events" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceEvents,
+                >(client, verb, &input),
+                "ai.phone.voice.ack" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.phone.voice.usage" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceUsage,
+                >(client, verb, &input),
+                "ai.phone.voice.tool" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::LiveVoiceToolReply>,
+                >(client, verb, &input),
+                "ai.phone.voice.end" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.phone.voice.close" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
                 "ai.anonymous_chat" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AnonymousChatResponse,
                 >(client, verb, &input),
@@ -15298,6 +15322,105 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.voice.close", value)
+    }
+    pub fn ai_phone_voice_start(
+        &self,
+        input: &oneiron::task_verb::sdk::PhoneVoiceStartRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceSession, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.start", value)
+    }
+    pub fn ai_phone_voice_audio(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceAudioRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.audio", value)
+    }
+    pub fn ai_phone_voice_events(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceEventsRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceEvents, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.events", value)
+    }
+    pub fn ai_phone_voice_ack(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceAckRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.ack", value)
+    }
+    pub fn ai_phone_voice_usage(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceUsageRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceUsage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.usage", value)
+    }
+    pub fn ai_phone_voice_tool(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceToolRequest,
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::LiveVoiceToolReply>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.tool", value)
+    }
+    pub fn ai_phone_voice_end(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceSessionRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.end", value)
+    }
+    pub fn ai_phone_voice_close(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceSessionRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.phone.voice.close", value)
     }
     pub fn ai_anonymous_chat(
         &self,

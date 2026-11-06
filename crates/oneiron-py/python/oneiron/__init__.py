@@ -6427,6 +6427,9 @@ class Oneiron:
         @property
         def voice(self) -> "Oneiron._AiVoiceVerbs":
             return Oneiron._AiVoiceVerbs(self._client)
+        @property
+        def phone(self) -> "Oneiron._AiPhoneVerbs":
+            return Oneiron._AiPhoneVerbs(self._client)
         def anonymous_chat(self, spec):
             """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
             return json.loads(_translate(lambda: self._client.ai_anonymous_chat(json.dumps(spec))))
@@ -6535,6 +6538,39 @@ class Oneiron:
         def close(self, spec):
             """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
             return json.loads(_translate(lambda: self._client.ai_voice_asr_close(json.dumps(spec))))
+    class _AiPhoneVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def voice(self) -> "Oneiron._AiPhoneVoiceVerbs":
+            return Oneiron._AiPhoneVoiceVerbs(self._client)
+    class _AiPhoneVoiceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """Opens an anonymous phone session from the receiving agent's credential, actual line identity and opaque admitted arrival; uses its configured models and original phone share ceiling."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_start(json.dumps(spec))))
+        def audio(self, spec):
+            """Feeds PCM16LE to the exact receiving-agent phone session through the shared voice queue and cancellation path."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_audio(json.dumps(spec))))
+        def events(self, spec):
+            """Reads the phone session's source-checked event page; tool-context labels remain withheld and saved audio retains its original generation checks."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_events(json.dumps(spec))))
+        def ack(self, spec):
+            """Acknowledges the exact phone playout event through the existing generation and event-sequence checks."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_ack(json.dumps(spec))))
+        def usage(self, spec):
+            """Observes the phone session's existing run settlements and metering state without creating usage or settling it."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_usage(json.dumps(spec))))
+        def tool(self, spec):
+            """Calls a connector as the phone session's proved receiving agent on its original credential memory conjoined with the phone ceiling; delivered results enter the next utterance with their actual listed sources."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_tool(json.dumps(spec))))
+        def end(self, spec):
+            """Ends the exact receiving-agent phone session through the shared cancellation path while retaining final events."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_end(json.dumps(spec))))
+        def close(self, spec):
+            """Ends and releases the receiving-agent phone session and retained events through the existing teardown path."""
+            return json.loads(_translate(lambda: self._client.ai_phone_voice_close(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

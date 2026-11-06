@@ -931,6 +931,14 @@ pub enum AgentVerb {
     AiVoiceTool,
     AiVoiceEnd,
     AiVoiceClose,
+    AiPhoneVoiceStart,
+    AiPhoneVoiceAudio,
+    AiPhoneVoiceEvents,
+    AiPhoneVoiceAck,
+    AiPhoneVoiceUsage,
+    AiPhoneVoiceTool,
+    AiPhoneVoiceEnd,
+    AiPhoneVoiceClose,
     AiAnonymousChat,
     VaultModelsCatalogRefresh,
     VaultModelsCatalogGet,
@@ -2218,6 +2226,14 @@ impl AgentVerb {
         Self::AiVoiceTool,
         Self::AiVoiceEnd,
         Self::AiVoiceClose,
+        Self::AiPhoneVoiceStart,
+        Self::AiPhoneVoiceAudio,
+        Self::AiPhoneVoiceEvents,
+        Self::AiPhoneVoiceAck,
+        Self::AiPhoneVoiceUsage,
+        Self::AiPhoneVoiceTool,
+        Self::AiPhoneVoiceEnd,
+        Self::AiPhoneVoiceClose,
         Self::AiAnonymousChat,
         Self::VaultModelsCatalogRefresh,
         Self::VaultModelsCatalogGet,
@@ -3538,6 +3554,14 @@ impl AgentVerb {
             Self::AiVoiceTool => "ai.voice.tool",
             Self::AiVoiceEnd => "ai.voice.end",
             Self::AiVoiceClose => "ai.voice.close",
+            Self::AiPhoneVoiceStart => "ai.phone.voice.start",
+            Self::AiPhoneVoiceAudio => "ai.phone.voice.audio",
+            Self::AiPhoneVoiceEvents => "ai.phone.voice.events",
+            Self::AiPhoneVoiceAck => "ai.phone.voice.ack",
+            Self::AiPhoneVoiceUsage => "ai.phone.voice.usage",
+            Self::AiPhoneVoiceTool => "ai.phone.voice.tool",
+            Self::AiPhoneVoiceEnd => "ai.phone.voice.end",
+            Self::AiPhoneVoiceClose => "ai.phone.voice.close",
             Self::AiAnonymousChat => "ai.anonymous_chat",
             Self::VaultModelsCatalogRefresh => "vault.models.catalog.refresh",
             Self::VaultModelsCatalogGet => "vault.models.catalog.get",
@@ -4831,6 +4855,14 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiPhoneVoiceStart
+                | Self::AiPhoneVoiceAudio
+                | Self::AiPhoneVoiceEvents
+                | Self::AiPhoneVoiceAck
+                | Self::AiPhoneVoiceUsage
+                | Self::AiPhoneVoiceTool
+                | Self::AiPhoneVoiceEnd
+                | Self::AiPhoneVoiceClose
                 | Self::AiAnonymousChat
                 | Self::VaultModelsCatalogRefresh
                 | Self::VaultModelsCatalogGet
@@ -6147,6 +6179,14 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiPhoneVoiceStart
+                | Self::AiPhoneVoiceAudio
+                | Self::AiPhoneVoiceEvents
+                | Self::AiPhoneVoiceAck
+                | Self::AiPhoneVoiceUsage
+                | Self::AiPhoneVoiceTool
+                | Self::AiPhoneVoiceEnd
+                | Self::AiPhoneVoiceClose
                 | Self::AiAnonymousChat
                 | Self::VaultModelsCatalogRefresh
                 | Self::VaultModelsCatalogGet
@@ -7581,6 +7621,14 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiPhoneVoiceStart
+                | Self::AiPhoneVoiceAudio
+                | Self::AiPhoneVoiceEvents
+                | Self::AiPhoneVoiceAck
+                | Self::AiPhoneVoiceUsage
+                | Self::AiPhoneVoiceTool
+                | Self::AiPhoneVoiceEnd
+                | Self::AiPhoneVoiceClose
                 | Self::AiAnonymousChat
                 | Self::VaultModelsCatalogRefresh
                 | Self::VaultModelsCatalogGet
@@ -8449,6 +8497,14 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiPhoneVoiceStart
+                | Self::AiPhoneVoiceAudio
+                | Self::AiPhoneVoiceEvents
+                | Self::AiPhoneVoiceAck
+                | Self::AiPhoneVoiceUsage
+                | Self::AiPhoneVoiceTool
+                | Self::AiPhoneVoiceEnd
+                | Self::AiPhoneVoiceClose
                 | Self::VaultModelsCatalogRefresh
                 | Self::VaultModelsTrialsNominate
                 | Self::VaultModelsTrialsApprove
@@ -9630,6 +9686,14 @@ impl AgentVerb {
             Self::AiVoiceTool => &["spec"],
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
+            Self::AiPhoneVoiceStart => &["spec"],
+            Self::AiPhoneVoiceAudio => &["spec"],
+            Self::AiPhoneVoiceEvents => &["spec"],
+            Self::AiPhoneVoiceAck => &["spec"],
+            Self::AiPhoneVoiceUsage => &["spec"],
+            Self::AiPhoneVoiceTool => &["spec"],
+            Self::AiPhoneVoiceEnd => &["spec"],
+            Self::AiPhoneVoiceClose => &["spec"],
             Self::AiAnonymousChat => &["spec"],
             Self::VaultModelsCatalogRefresh => &["spec"],
             Self::VaultModelsCatalogGet => &["spec"],
@@ -10918,6 +10982,14 @@ impl AgentVerb {
             Self::AiVoiceTool => &["spec"],
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
+            Self::AiPhoneVoiceStart => &["spec"],
+            Self::AiPhoneVoiceAudio => &["spec"],
+            Self::AiPhoneVoiceEvents => &["spec"],
+            Self::AiPhoneVoiceAck => &["spec"],
+            Self::AiPhoneVoiceUsage => &["spec"],
+            Self::AiPhoneVoiceTool => &["spec"],
+            Self::AiPhoneVoiceEnd => &["spec"],
+            Self::AiPhoneVoiceClose => &["spec"],
             Self::AiAnonymousChat => &["spec"],
             Self::VaultModelsCatalogRefresh => &["spec"],
             Self::VaultModelsCatalogGet => &["spec"],
@@ -14012,6 +14084,30 @@ impl AgentVerb {
             }
             Self::AiVoiceClose => {
                 "Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."
+            }
+            Self::AiPhoneVoiceStart => {
+                "Opens an anonymous phone session from the receiving agent's credential, actual line identity and opaque admitted arrival; uses its configured models and original phone share ceiling."
+            }
+            Self::AiPhoneVoiceAudio => {
+                "Feeds PCM16LE to the exact receiving-agent phone session through the shared voice queue and cancellation path."
+            }
+            Self::AiPhoneVoiceEvents => {
+                "Reads the phone session's source-checked event page; tool-context labels remain withheld and saved audio retains its original generation checks."
+            }
+            Self::AiPhoneVoiceAck => {
+                "Acknowledges the exact phone playout event through the existing generation and event-sequence checks."
+            }
+            Self::AiPhoneVoiceUsage => {
+                "Observes the phone session's existing run settlements and metering state without creating usage or settling it."
+            }
+            Self::AiPhoneVoiceTool => {
+                "Calls a connector as the phone session's proved receiving agent on its original credential memory conjoined with the phone ceiling; delivered results enter the next utterance with their actual listed sources."
+            }
+            Self::AiPhoneVoiceEnd => {
+                "Ends the exact receiving-agent phone session through the shared cancellation path while retaining final events."
+            }
+            Self::AiPhoneVoiceClose => {
+                "Ends and releases the receiving-agent phone session and retained events through the existing teardown path."
             }
             Self::AiAnonymousChat => {
                 "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."

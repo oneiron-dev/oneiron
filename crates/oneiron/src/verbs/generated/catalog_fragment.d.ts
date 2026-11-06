@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4629 declarations.
-// Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1321 code-mode rows (1281 host rows, 40 run rows), 4630 declarations.
+// Replies: 1131 fully typed, 189 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -3414,6 +3414,7 @@ declare namespace Sdk {
   type LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply;
   type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: LiveVoiceToolCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
+  type PhoneVoiceStartRequest = { identity_ref: string; arrival_ref: string; voice: LiveVoiceStartRequest };
   type AnonymousChatRequestTarget = "house_mind" | "plain_model";
   type AnonymousChatRequest = { text: string; target?: AnonymousChatRequestTarget; model?: ModelId | null };
   type AnonymousChatSkippedCheckView = { input: boolean; reason: PolicySkipReason };
@@ -4662,6 +4663,26 @@ declare const ai: {
   image(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows. */
   options(input: Sdk.AiOptionsRequest): Promise<Sdk.AiOptions | StoredResult>;
+  phone: {
+    voice: {
+      /** Acknowledges the exact phone playout event through the existing generation and event-sequence checks. */
+      ack(input: Sdk.LiveVoiceAckRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+      /** Feeds PCM16LE to the exact receiving-agent phone session through the shared voice queue and cancellation path. */
+      audio(input: Sdk.LiveVoiceAudioRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+      /** Ends and releases the receiving-agent phone session and retained events through the existing teardown path. */
+      close(input: Sdk.LiveVoiceSessionRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+      /** Ends the exact receiving-agent phone session through the shared cancellation path while retaining final events. */
+      end(input: Sdk.LiveVoiceSessionRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+      /** Reads the phone session's source-checked event page; tool-context labels remain withheld and saved audio retains its original generation checks. */
+      events(input: Sdk.LiveVoiceEventsRequest): Promise<Sdk.LiveVoiceEvents | StoredResult>;
+      /** Opens an anonymous phone session from the receiving agent's credential, actual line identity and opaque admitted arrival; uses its configured models and original phone share ceiling. */
+      start(input: Sdk.PhoneVoiceStartRequest): Promise<Sdk.LiveVoiceSession | StoredResult>;
+      /** Calls a connector as the phone session's proved receiving agent on its original credential memory conjoined with the phone ceiling; delivered results enter the next utterance with their actual listed sources. */
+      tool(input: Sdk.LiveVoiceToolRequest): Promise<Sdk.ActAnswer<Sdk.LiveVoiceToolReply> | StoredResult>;
+      /** Observes the phone session's existing run settlements and metering state without creating usage or settling it. */
+      usage(input: Sdk.LiveVoiceUsageRequest): Promise<Sdk.LiveVoiceUsage | StoredResult>;
+    };
+  };
   /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
   reply(input: Sdk.AiReplyRequest): Promise<Sdk.AiReply | StoredResult>;
   /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. The owner calls it, or an agent whose Grant names ai.speech, as his call. */

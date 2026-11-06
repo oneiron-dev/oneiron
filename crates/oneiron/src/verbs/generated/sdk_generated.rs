@@ -5143,6 +5143,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.phone.voice.start",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::PhoneVoiceStartRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.audio",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceAudioRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.events",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceEventsRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.ack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceAckRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.usage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceUsageRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.tool",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceToolRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.end",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceSessionRequest,
+                >(),
+            ),
+            (
+                "ai.phone.voice.close",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceSessionRequest,
+                >(),
+            ),
+            (
                 "ai.anonymous_chat",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::AnonymousChatRequest,
@@ -7898,6 +7946,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.voice.usage",
     "ai.voice.end",
     "ai.voice.close",
+    "ai.phone.voice.start",
+    "ai.phone.voice.audio",
+    "ai.phone.voice.ack",
+    "ai.phone.voice.usage",
+    "ai.phone.voice.end",
+    "ai.phone.voice.close",
     "ai.anonymous_chat",
     "vault.models.catalog.refresh",
     "vault.models.catalog.get",
@@ -10092,6 +10146,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::task_verb::sdk::LiveVoiceProcessed,
         >(),
         "ai.voice.close" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.phone.voice.start" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceSession>()
+        }
+        "ai.phone.voice.audio" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.phone.voice.ack" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.phone.voice.usage" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceUsage>()
+        }
+        "ai.phone.voice.end" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.phone.voice.close" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::LiveVoiceProcessed,
         >(),
         "ai.anonymous_chat" => crate::code_run::vault_read::request_schema::<
@@ -17339,6 +17411,62 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.phone.voice.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.audio" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.events" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.ack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.usage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.tool" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.end" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.phone.voice.close" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.anonymous_chat" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22772,6 +22900,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.voice.close" => {
             let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
         }
+        "ai.phone.voice.start" => {
+            let _input: crate::task_verb::sdk::PhoneVoiceStartRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.audio" => {
+            let _input: crate::task_verb::sdk::LiveVoiceAudioRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.events" => {
+            let _input: crate::task_verb::sdk::LiveVoiceEventsRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.ack" => {
+            let _input: crate::task_verb::sdk::LiveVoiceAckRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.usage" => {
+            let _input: crate::task_verb::sdk::LiveVoiceUsageRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.tool" => {
+            let _input: crate::task_verb::sdk::LiveVoiceToolRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.end" => {
+            let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
+        }
+        "ai.phone.voice.close" => {
+            let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
+        }
         "ai.anonymous_chat" => {
             let _input: crate::task_verb::sdk::AnonymousChatRequest = decode(value.clone())?;
         }
@@ -25868,6 +26020,14 @@ pub fn invoke(
         "ai.voice.tool" => encode(ai_voice_tool(memory, decode(value)?)?),
         "ai.voice.end" => encode(ai_voice_end(memory, decode(value)?)?),
         "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
+        "ai.phone.voice.start" => encode(ai_phone_voice_start(memory, decode(value)?)?),
+        "ai.phone.voice.audio" => encode(ai_phone_voice_audio(memory, decode(value)?)?),
+        "ai.phone.voice.events" => encode(ai_phone_voice_events(memory, decode(value)?)?),
+        "ai.phone.voice.ack" => encode(ai_phone_voice_ack(memory, decode(value)?)?),
+        "ai.phone.voice.usage" => encode(ai_phone_voice_usage(memory, decode(value)?)?),
+        "ai.phone.voice.tool" => encode(ai_phone_voice_tool(memory, decode(value)?)?),
+        "ai.phone.voice.end" => encode(ai_phone_voice_end(memory, decode(value)?)?),
+        "ai.phone.voice.close" => encode(ai_phone_voice_close(memory, decode(value)?)?),
         "ai.anonymous_chat" => encode(ai_anonymous_chat(memory, decode(value)?)?),
         "vault.models.catalog.refresh" => {
             encode(vault_models_catalog_refresh(memory, decode(value)?)?)
@@ -34379,6 +34539,54 @@ pub fn ai_voice_close(
     input: crate::task_verb::sdk::LiveVoiceSessionRequest,
 ) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
     crate::task_verb::sdk::host_only(memory, "ai.voice.close", &input)
+}
+pub fn ai_phone_voice_start(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::PhoneVoiceStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceSession> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.start", &input)
+}
+pub fn ai_phone_voice_audio(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceAudioRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.audio", &input)
+}
+pub fn ai_phone_voice_events(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceEventsRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceEvents> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.events", &input)
+}
+pub fn ai_phone_voice_ack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceAckRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.ack", &input)
+}
+pub fn ai_phone_voice_usage(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceUsageRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceUsage> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.usage", &input)
+}
+pub fn ai_phone_voice_tool(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceToolRequest,
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.tool", &input)
+}
+pub fn ai_phone_voice_end(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.end", &input)
+}
+pub fn ai_phone_voice_close(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.phone.voice.close", &input)
 }
 pub fn ai_anonymous_chat(
     memory: &Memory<'_>,

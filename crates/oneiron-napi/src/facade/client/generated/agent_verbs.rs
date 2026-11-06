@@ -8215,6 +8215,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_phone_voice_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.start", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_audio(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.audio", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_events(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.events", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.ack", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_usage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.usage", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_tool(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.tool", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_end(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.end", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_phone_voice_close(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.phone.voice.close", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_anonymous_chat(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.anonymous_chat", js_json(input))
