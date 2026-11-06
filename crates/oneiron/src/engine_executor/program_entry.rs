@@ -551,6 +551,10 @@ impl<'a> EngineNativeExecutor<'a> {
             .keep_preparation(&mut record, ran)?
             .or(pinned_preparation);
         let script = format!("pinned:{}@{}", entry.skill.to_hex(), entry.content_hash);
+        // Where the entry's calls end, and what its guest read (FIX 6354,
+        // FIX 6351, FIX 6352).
+        let (end, context) =
+            self.step_context(config, &record, bridge_start, host.context_capture)?;
         let state_hash = prepared_step_state_hash(
             previous_state_hash(&record),
             seq,
@@ -565,6 +569,7 @@ impl<'a> EngineNativeExecutor<'a> {
             },
             None,
             &record.bridge_calls[bridge_start..],
+            end,
         )?;
         let bridge_end = record.bridge_calls.len();
         record.step_checkpoints.push(
@@ -574,6 +579,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 state_hash,
                 config.determinism.frozen_unix_ms.saturating_add(seq),
             )?
+            .ending_at(end.bridge_end)
             .with_bridge_calls(bridge_start, bridge_end),
         );
         let parked = parked_wait(&record, Some(&status), bridge_start);
@@ -602,6 +608,7 @@ impl<'a> EngineNativeExecutor<'a> {
             &host.receipts,
             parked.as_ref(),
             &resume,
+            &context,
         ) {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!(
@@ -613,6 +620,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     &host.receipts,
                     parked.as_ref(),
                     &resume,
+                    &context,
                 )?
             }
             result => result?,
