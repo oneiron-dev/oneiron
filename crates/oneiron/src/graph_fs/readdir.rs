@@ -393,7 +393,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !after.is_empty() && entry.name.as_str() <= after {
                 continue;
             }
-            if !builder.try_push(entry.clone()) {
+            let after = entry.name.clone();
+            if !builder.try_push_after(entry.clone(), after) {
                 next_cursor = builder.last_entry_name();
                 break;
             }
@@ -424,7 +425,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         if after.is_none()
             && self.world_visible(&rtxn, &policy, None)?
-            && !builder.try_push(GraphFsEntry::directory("base"))
+            && !builder.try_push_after(
+                GraphFsEntry::directory("base"),
+                scope.seal(&WorldPosition(None)),
+            )
         {
             return Ok(builder.finish(None));
         }
@@ -442,7 +446,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !self.world_visible(&rtxn, &policy, Some(id))? {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
+            let entry = GraphFsEntry::directory(id.to_hex());
+            if !builder.try_push_after(entry, scope.seal(&WorldPosition(Some(id)))) {
                 next_cursor = builder
                     .last_entry_name()
                     .map(|_| scope.seal(&WorldPosition(last_listed)));
@@ -506,7 +511,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&cursor)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -560,7 +565,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&temporal)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -615,7 +620,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&cursor)) {
                 next_cursor = last_emitted.map(|cursor| scope.seal(&cursor));
                 break;
             }
@@ -678,7 +683,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if listed.is_some_and(|listed| day <= listed) {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::directory(format_day_shard(day))) {
+            // After this day: past its first row, the rest of the day listed.
+            let after = scope.seal(&resume(Some(temporal), Some(day)));
+            if !builder.try_push_after(GraphFsEntry::directory(format_day_shard(day)), after) {
                 // Resumes before this row, the first of a day not listed yet.
                 next_cursor = Some(scope.seal(&resume(scanned_before, listed)));
                 break;
@@ -736,7 +743,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&temporal)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -811,6 +818,7 @@ pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
         next_cursor: None,
         byte_count: 0,
         read_receipt: None,
+        entry_cursors: Vec::new(),
     }
 }
 
