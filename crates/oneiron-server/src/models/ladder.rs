@@ -23,6 +23,7 @@ mod decision_posture;
 mod live_fork;
 mod model_call;
 mod model_list;
+mod retained;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
@@ -687,21 +688,33 @@ impl OfferLadder {
         stream: bool,
     ) -> LlmResult<(LlmRequest, RunPermit)> {
         let call = rung.bind(request.clone());
+        let permit = self.admit_bound(run, rung, &call, selector, stream)?;
+        Ok((call, permit))
+    }
+
+    fn admit_bound(
+        &self,
+        run: &RunAdmission,
+        rung: &LadderRung,
+        request: &LlmRequest,
+        selector: Option<&str>,
+        stream: bool,
+    ) -> LlmResult<RunPermit> {
         let run_call = RunCall {
             selector: Some(selector.unwrap_or(self.name.as_str())),
-            request: &call,
+            request,
             offer: &rung.offer.binding,
         };
         // A request the backend cannot build is admitted unbound: the gate's
         // preflight then refuses it with a denial row, before any byte leaves.
-        let permit = match rung.offer.backend.request_digest(&call, stream) {
+        let permit = match rung.offer.backend.request_digest(request, stream) {
             Ok(Some(digest)) => run.admit_request(run_call, &digest)?,
             Ok(None) | Err(_) => run.admit(run_call)?,
         };
-        if let Some(manifest) = call.host_segments.as_deref() {
+        if let Some(manifest) = request.host_segments.as_deref() {
             super::worker_host::rung_admitted(manifest);
         }
-        Ok((call, permit))
+        Ok(permit)
     }
 
     /// The usage an answer of the rung at `index` reports, with this ladder's
@@ -1446,6 +1459,7 @@ impl OfferLadder {
                 deadline,
                 may_fall_back,
                 sources,
+                false,
             )
             .await
         })
@@ -1458,28 +1472,19 @@ impl OfferLadder {
     async fn walk_generate(
         &self,
         run: &RunAdmission,
-        request: LlmRequest,
+        mut request: LlmRequest,
         selector: Option<&str>,
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
+        retain_request: bool,
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
         let routes = self.rests.world_routes(&request);
-        let call = Call {
-            run,
-            request: &request,
-            selector,
-            needs: Needs::Chat {
-                request: &request,
-                stream: false,
-            },
-            routes: &routes,
-            deadline,
-        };
+        let frame = retained::GenerationFrame { run, selector, routes: &routes, deadline };
         let mut walk = Walk::default();
         // The chain, each rung at most once a pass; then, while only rests
         // stopped it, the owner's fallback, or a wait for its first offer
@@ -1487,7 +1492,7 @@ impl OfferLadder {
         // budget.
         for pass in 0.. {
             if pass > 0 {
-                if may_fall_back && let Some(target) = self.fallback(call, &walk) {
+                if may_fall_back && let Some(target) = self.fallback(frame.call(&request), &walk) {
                     let fallback = self.fallback_call(&target, &walk);
                     let mut fell_request = request.clone();
                     fell_request.model = fallback.model().clone();
@@ -1503,11 +1508,11 @@ impl OfferLadder {
                         )
                         .await;
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs, call.run.principal());
+                        self.ask_parked(&walk, frame.call(&request).needs, run.principal());
                     }
                     return fell;
                 }
-                let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
+                let Some(back) = self.waits_for(frame.call(&request), &mut walk).filter(|_| may_send()) else {
                     break;
                 };
                 self.wait_back(back, may_send).await;
@@ -1515,36 +1520,43 @@ impl OfferLadder {
             let mut sent = vec![false; self.rungs.len()];
             loop {
                 if !may_send() || deadline.expired() {
-                    return Err(self.ended(call, walk));
+                    return Err(self.ended(frame.call(&request), walk));
                 }
-                let Some(index) = self.next_rung(call, &sent, &mut walk) else {
+                let Some(index) = self.next_rung(frame.call(&request), &sent, &mut walk) else {
                     break;
                 };
                 sent[index] = true;
-                match self.send(call, index, may_send, sources, &mut walk).await? {
+                let input = if retain_request {
+                    retained::GenerationInput::Retained(&mut request)
+                } else {
+                    retained::GenerationInput::Copied(&request)
+                };
+                match self.send_generation(frame, input, index, may_send, sources, &mut walk).await? {
                     Sent::Answer(response) => {
                         return Ok((response, ModelCallBinding::for_rung(&self.rungs[index])));
                     }
                     Sent::Failed | Sent::Held => {}
-                    Sent::Stopped => return Err(self.ended(call, walk)),
+                    Sent::Stopped => return Err(self.ended(frame.call(&request), walk)),
                 }
             }
         }
-        Err(self.ended(call, walk))
+        Err(self.ended(frame.call(&request), walk))
     }
 
     /// Sends the call to the rung at `index`, with what `sources` admits for
     /// that rung's destination when a caller opted in (FIX 8714). A failure
     /// that ends the call is the error.
-    async fn send(
+    async fn send_generation(
         &self,
-        call: Call<'_>,
+        frame: retained::GenerationFrame<'_>,
+        mut request: retained::GenerationInput<'_>,
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
         sources: Option<&dyn SourceAdmission>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
         let mut rung = self.rungs[index].clone();
+        let call = frame.call(request.original());
         let offered = match source_admission::offered(sources, call.request, &rung.offer) {
             Ok(offered) => offered,
             Err(reason) => {
@@ -1552,10 +1564,11 @@ impl OfferLadder {
                 return Ok(Sent::Held);
             }
         };
-        let call = Call {
-            request: offered.as_ref().unwrap_or(call.request),
-            ..call
+        let mut request = match offered.as_ref() {
+            Some(offered) => retained::GenerationInput::Copied(offered),
+            None => request,
         };
+        let call = frame.call(request.original());
         // Held through every admitted wire attempt and its settlement.
         let _lease = match self.hold_worker(index).await {
             Ok(lease) => lease,
@@ -1573,11 +1586,14 @@ impl OfferLadder {
             if !may_send() {
                 return Ok(Sent::Stopped);
             }
-            if call.deadline.expired() {
+            if frame.deadline.expired() {
                 return Err(CallDeadline::expiry());
             }
-            let (bound, permit) =
-                self.admit(&rung_run, &rung, call.request, call.selector, false)?;
+            let mut bound = request.prepare(&rung);
+            let permit = self.admit_bound(
+                &rung_run, &rung, bound.bound(), frame.selector, false,
+            )?;
+            let call = frame.call(bound.original());
             if !may_send() {
                 settle_failed(permit);
                 return Ok(Sent::Stopped);
@@ -1602,15 +1618,14 @@ impl OfferLadder {
                 return Ok(Sent::Held);
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-            let warmth = cache_warmth::Sending::of(&rung, &bound);
-            let sent = gate.generate(bound, permit.lease());
-            let Some(answered) = call
-                .deadline
-                .bound(super::http::holding_chat_replies(
-                    self.rests.reply_budgets(),
-                    sent,
-                ))
-                .await
+            let warmth = cache_warmth::Sending::of(&rung, bound.bound());
+            let answered = {
+                let sent = bound.generate(&gate, permit.lease());
+                frame.deadline.bound(super::http::holding_chat_replies(
+                    self.rests.reply_budgets(), sent,
+                )).await
+            };
+            let Some(answered) = answered
             else {
                 settle_failed(permit);
                 return Err(CallDeadline::expiry());
@@ -1621,7 +1636,7 @@ impl OfferLadder {
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                     permit.settle(CallOutcome::Answered(&response.usage))?;
                     response.usage = self.answered(index, walk, response.usage);
-                    rung.note_answered(call.request);
+                    rung.note_answered(bound.original());
                     return Ok(Sent::Answer(response));
                 }
                 Err(error) => {

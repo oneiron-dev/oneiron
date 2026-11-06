@@ -192,3 +192,30 @@ auth clones and the remaining response-byte copies still need their own physical
 accounting and admission. Retained-input FIFO progress remains open. Future untimed memory waits must use this caller's
 stop condition; the full-body relationship-set wait does so. There is no full-Q,
 runtime or throughput claim here.
+
+## Retained exact generation requests
+
+An exact picked-model generation can keep one owned request through admission,
+provider dispatch, wire fallback and cooling repasses. The shared generation walk
+uses temporary read-only call views. General and source-projected generation keep
+their original copied requests; streaming keeps its existing owned APIs.
+
+The retained path binds the rung in place. It moves aside the original model,
+locality, cache descriptor and segment manifest. It restores the original view
+for the same post-admission route, on-device, source and probation checks, then
+reinstates the already-admitted bound view without binding twice. The exact
+original cache value is swapped back, not shifted down after a saturated index.
+An empty configured rung prompt is still inserted. Successful replay capture sees
+the original messages, as it did before. Drop restores that same original view.
+
+The gate still derives and checks its admitted dispatch digest before starting
+the permit. Borrowed concrete adapters use their real wire builders and preserve
+digest-selected responses/chat routing. The local runtime has a required borrowed
+generation operation. Own-server transports pass the actual serialized wire bytes
+into their original runtime task or cancellable HTTP thread, not a cloned request.
+Owned generation and streaming interfaces remain available with their old behavior.
+
+This removes a deep request copy on the retained exact path. It does not admit
+provider JSON or wire allocations, shifted prompt/manifest storage, request-vector
+reallocation or other independent response memory. General fallback and streaming
+copies remain. It is not a full memory-accounting or runtime proof.

@@ -256,7 +256,7 @@ impl OfferLadder {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
-        self.generate_from(run, request, selector, may_send, deadline, false, None)
+        self.generate_retained_from(run, request, selector, may_send, deadline)
             .await
     }
 

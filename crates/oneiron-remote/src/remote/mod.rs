@@ -86,6 +86,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Full-vault exports can be much larger than one ordinary verb response.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
+/// A serialized generation request kept across the transport's runtime handoff.
+pub(crate) struct PreparedLlmRequest {
+    url: Url,
+    bytes: Vec<u8>,
+}
+
 /// The remote half of [`crate::OneironClient`].
 pub(crate) struct RemoteClient {
     base_url: Url,
@@ -454,6 +460,14 @@ impl RemoteClient {
         request: &oneiron::LlmRequest,
         lease: &oneiron::BudgetLease,
     ) -> Result<reqwest::Response, oneiron::LlmError> {
+        let prepared = self.prepare_llm_post(request)?;
+        self.llm_post_prepared(prepared, lease).await
+    }
+
+    pub(crate) fn prepare_llm_post(
+        &self,
+        request: &oneiron::LlmRequest,
+    ) -> Result<PreparedLlmRequest, oneiron::LlmError> {
         let path = "v1/llm/generate";
         let url = self
             .base_url
@@ -461,6 +475,15 @@ impl RemoteClient {
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         let bytes =
             serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        Ok(PreparedLlmRequest { url, bytes })
+    }
+
+    pub(crate) async fn llm_post_prepared(
+        &self,
+        prepared: PreparedLlmRequest,
+        lease: &oneiron::BudgetLease,
+    ) -> Result<reqwest::Response, oneiron::LlmError> {
+        let PreparedLlmRequest { url, bytes } = prepared;
         let mut credential = self
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;

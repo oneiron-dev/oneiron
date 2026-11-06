@@ -98,6 +98,25 @@ impl GatedBackend {
         Ok(digest)
     }
 
+    /// Generates while the caller retains the admitted request's owner.
+    pub fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let digest = self.open(request, lease, false)?;
+            lease.attach_work_context(self.work_context.clone());
+            let mut pending = self.pending(request, lease, digest.clone());
+            let result = self.inner.generate_borrowed_bound(request, lease, &digest).await;
+            match &result {
+                Ok(response) => pending.finish(served_model(&response.usage), true),
+                Err(error) => pending.failed(error),
+            }
+            result
+        })
+    }
+
     fn pending(&self, request: &LlmRequest, lease: &BudgetLease, digest: String) -> Pending<'_> {
         Pending {
             gate: self,

@@ -83,6 +83,20 @@ impl OwnServerBackend<MeshLlmTransport> {
 impl<T: OwnServerTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
     for OwnServerBackend<T>
 {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            self.admit(request, false)?;
+            let response = self.transport.generate_borrowed(request, lease).await?;
+            validate_terminal(&response.message, &response.finish_reason)?;
+            Ok(response)
+        })
+    }
     fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
         self.admit(request, stream)
     }

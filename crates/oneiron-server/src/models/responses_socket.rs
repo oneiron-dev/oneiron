@@ -538,6 +538,39 @@ fn chat_stream_metadata(stream: LlmStream<'_>) -> LlmStream<'_> {
     }))
 }
 
+impl OpenAiSessions {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            if !self.carries(request) {
+                return self
+                    .chat
+                    .generate_borrowed_bound(request, lease, digest)
+                    .await
+                    .map(chat_response_metadata);
+            }
+            let turn = self.turn(request, false)?;
+            match self.sockets.checkout(&turn).await {
+                Some(session) => {
+                    OpenAiResponsesLlmStream::new(self.sockets.run(session, turn))
+                        .into_response()
+                        .await
+                }
+                None => self
+                    .chat
+                    .generate_borrowed_bound(request, lease, digest)
+                    .await
+                    .map(chat_response_metadata),
+            }
+        })
+    }
+
+}
+
 impl LlmBackend for OpenAiSessions {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.chat.supports(model, capability)
@@ -600,6 +633,15 @@ impl LlmBackend for OpenAiSessions {
 /// socket opens; neither is sent twice, save a chained turn the socket
 /// refused before generating, which goes again whole on that socket.
 impl SingleRouteBackend for OpenAiSessions {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_borrowed(request, lease, digest)
+    }
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         self.chat.preflight(request, stream)?;
         if self.carries(request) {

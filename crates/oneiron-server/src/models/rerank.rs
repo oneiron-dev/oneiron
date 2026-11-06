@@ -134,6 +134,16 @@ impl RerankBackend {
 impl oneiron::llm::SingleSend for RerankBackend {}
 
 impl SingleRouteBackend for RerankBackend {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_borrowed(request, lease)
+    }
+
     fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
         if stream || !self.wire_models.contains_key(&request.model) || parts(request).is_none() {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -142,19 +152,15 @@ impl SingleRouteBackend for RerankBackend {
     }
 }
 
-impl LlmBackend for RerankBackend {
-    fn supports(&self, _model: &ModelId, _capability: LlmCapability) -> bool {
-        false
-    }
-
-    fn generate<'a>(
+impl RerankBackend {
+    fn generate_borrowed<'a>(
         &'a self,
-        request: LlmRequest,
+        request: &'a LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            self.preflight(&request, false)?;
-            let (query, documents) = parts(&request).ok_or(FatalLlmError::InvalidRequest)?;
+            self.preflight(request, false)?;
+            let (query, documents) = parts(request).ok_or(FatalLlmError::InvalidRequest)?;
             let wire_model = &self.wire_models[&request.model];
             let mut scores = vec![None; documents.len()];
             let mut tokens = 0u64;
@@ -229,6 +235,21 @@ impl LlmBackend for RerankBackend {
                 token_scores: None,
             })
         })
+    }
+
+}
+
+impl LlmBackend for RerankBackend {
+    fn supports(&self, _model: &ModelId, _capability: LlmCapability) -> bool {
+        false
+    }
+
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move { self.generate_borrowed(&request, lease).await })
     }
 
     fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {

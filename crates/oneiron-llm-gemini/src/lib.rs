@@ -47,12 +47,45 @@ impl<T: GeminiTransport> GeminiBackend<T> {
 impl<T: GeminiTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRouteBackend
     for GeminiBackend<T>
 {
+
+    fn generate_borrowed_bound<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+        _digest: &'a str,
+    ) -> LlmGenerateFuture<'a> {
+        self.generate_borrowed(request, lease)
+    }
+
     fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
         let entry = self
             .models
             .get(&request.model)
             .ok_or(FatalLlmError::InvalidRequest)?;
         build_request(entry, request, stream).map(drop)
+    }
+}
+
+impl<T: GeminiTransport> GeminiBackend<T> {
+    fn generate_borrowed<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let entry = self
+                .models
+                .get(&request.model)
+                .ok_or(FatalLlmError::InvalidRequest)?;
+            let response = self
+                .transport
+                .execute(build_request(entry, request, false)?, lease)
+                .await?;
+            if !(200..300).contains(&response.status) {
+                return Err(classify_status(response.status, &response.body));
+            }
+            parse_response(response.body)
+        })
     }
 }
 
@@ -67,21 +100,9 @@ impl<T: GeminiTransport> LlmBackend for GeminiBackend<T> {
         request: LlmRequest,
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            let entry = self
-                .models
-                .get(&request.model)
-                .ok_or(FatalLlmError::InvalidRequest)?;
-            let response = self
-                .transport
-                .execute(build_request(entry, &request, false)?, lease)
-                .await?;
-            if !(200..300).contains(&response.status) {
-                return Err(classify_status(response.status, &response.body));
-            }
-            parse_response(response.body)
-        })
+        Box::pin(async move { self.generate_borrowed(&request, lease).await })
     }
+
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let entry = self
             .models
