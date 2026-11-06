@@ -464,10 +464,10 @@ pub use ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskLaunchHold, TaskAskNeed,
-    TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
-    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
-    TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
-    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskRec, TaskAskReceipt,
+    TaskAskResult, TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
 use crate::memory::{MemoryError, MemoryResult};

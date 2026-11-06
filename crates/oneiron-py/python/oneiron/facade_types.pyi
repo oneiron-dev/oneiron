@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4595 declarations.
+Census: 1263 facade rows, 4597 declarations.
 Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -1778,6 +1778,9 @@ class TaskAskTargetPeople(TypedDict):
 class TaskAskTargetGuests(TypedDict):
     guests: dict[str, TaskAskGuest]
 TaskAskTarget = TaskAskTargetAuthority | TaskAskTargetResponder | TaskAskTargetPeople | TaskAskTargetGuests
+class TaskAskOption(TypedDict):
+    label: str
+    then: NotRequired[str | None]
 class OutcomeSourceClaim(TypedDict):
     kind: Literal["claim"]
     predicate: str
@@ -1805,13 +1808,16 @@ class TaskAskLadderPrediction(TypedDict):
 class TaskAskQuestion(TypedDict):
     reference: ConsultPayloadRef
     revision: int
-    options: dict[str, str]
+    options: dict[str, TaskAskOption]
     context_refs: list[ConsultPayloadRef]
     label: NotRequired[str | None]
     outcome_binding: NotRequired[OutcomeBinding | None]
     ladder_answer: NotRequired[TaskAskLadderPrediction | None]
     class_key: NotRequired[str | None]
     commitment: NotRequired[bool]
+class TaskAskRec(TypedDict):
+    option: TaskAskOptionId
+    why: str
 class TaskAskNeed(TypedDict):
     count: int
     of: NotRequired[TaskAskElectorate]
@@ -1820,7 +1826,7 @@ TaskAskBranch = Literal["hold", "proceed"]
 class TaskAskDisagree(TypedDict):
     branch: TaskAskBranch
     surface: TaskAskSurface
-TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
+TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "rec": NotRequired[TaskAskRec | None], "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
 class TaskAskSettlement(TypedDict):
     group_ref: EntityId
     reference: EntityId
@@ -1841,6 +1847,8 @@ class TaskAskResult(TypedDict):
     effect_authorization: TaskAskEffectAuthorization
     coverage: TaskAskCoverage
     decision: TaskAskDecision
+    picked: NotRequired[TaskAskOptionId | None]
+    was_rec: bool
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
