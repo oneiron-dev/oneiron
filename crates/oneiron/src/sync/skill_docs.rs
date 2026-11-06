@@ -4,6 +4,8 @@
 //! authorize a record put or install a document. The ingest door consumes
 //! the data only under its selected own-device import and ordinary gates.
 
+pub(crate) mod checkpoint;
+
 use std::collections::BTreeSet;
 
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
