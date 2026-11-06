@@ -36,6 +36,15 @@ pub struct MicroVmOutputBodies {
     pub files: Vec<(String, SandboxProposalBody)>,
 }
 
+/// Every stream role, retained without choosing a step observation.
+#[derive(Debug)]
+pub struct MicroVmOutputStreamBodies {
+    pub console: Option<SandboxProposalBody>,
+    pub finish: Option<SandboxProposalBody>,
+    pub store: Option<SandboxProposalBody>,
+    pub files: Vec<(String, SandboxProposalBody)>,
+}
+
 impl MicroVmOutputSpool {
     pub fn new(floor: Arc<dyn ProposalSpoolFloor>) -> Self {
         Self {
@@ -45,6 +54,29 @@ impl MicroVmOutputSpool {
             store: None,
             files: Vec::new(),
         }
+    }
+
+    /// Retains each role as received when the caller's result is not a selected observation.
+    pub fn into_stream_bodies(self) -> Result<MicroVmOutputStreamBodies> {
+        Ok(MicroVmOutputStreamBodies {
+            console: self
+                .console
+                .map(SandboxProposalBodyWriter::finish)
+                .transpose()?,
+            finish: self
+                .finish
+                .map(SandboxProposalBodyWriter::finish)
+                .transpose()?,
+            store: self
+                .store
+                .map(SandboxProposalBodyWriter::finish)
+                .transpose()?,
+            files: self
+                .files
+                .into_iter()
+                .map(|(path, writer)| Ok((path, writer.finish()?)))
+                .collect::<Result<_>>()?,
+        })
     }
 
     /// Selects finish for a completed step, otherwise console, as the executor does.
