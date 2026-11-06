@@ -62,6 +62,7 @@ pub(crate) mod ai;
 mod anonymous_chat;
 // FIX 8238: an answer's resources kept until the answer is encoded.
 pub(crate) mod answer_hold;
+mod artifact_backend_pairing;
 mod artifacts;
 // OF-469: a kept authority checkpoint and its attestations, for adoption.
 mod authority_checkpoint;
