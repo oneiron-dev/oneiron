@@ -138,6 +138,9 @@ pub struct WorldEviction {
     pub cached_items_removed: usize,
     /// Thin read caches a legal hold keeps.
     pub cached_items_held: usize,
+    /// Sealed updates this install made of the worlds and the home had not
+    /// stored, which the owner's discard took.
+    pub sealed_sends_discarded: usize,
 }
 
 /// The home's version vector of world window `window_key`, as this device
@@ -277,11 +280,18 @@ fn evict(
         && report.windows_unconfirmed == 0
         && report.windows_with_local_members == 0
     {
-        vault.with_write_txn_grouped(|wtxn| {
+        report.sealed_sends_discarded = vault.with_write_txn_grouped(|wtxn| {
+            let mut discarded = 0;
             for world in worlds {
                 crate::world_keys::purge_world_mirrors_in_txn(&vault.store, wtxn, *world)?;
+                // The owner's discard takes its unsent sealed updates of the
+                // world too, once nothing of it waits here (call 3 = A).
+                if matches!(confirmation, Confirmation::Owner) {
+                    discarded +=
+                        super::sealed_updates::discard_world_outbox_in_txn(vault, wtxn, *world)?;
+                }
             }
-            Ok(())
+            Ok(discarded)
         })?;
     }
     Ok(report)
