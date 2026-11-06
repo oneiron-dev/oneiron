@@ -186,6 +186,20 @@ pub(super) fn bearer_header_for_client(
     }
 }
 
+/// Exchanges an injected refresh grant after Google rejects an access token.
+/// The returned header is sensitive and stays inside the admitted callback.
+pub(super) fn refreshed_bearer_header_for_client(
+    client: &reqwest::blocking::Client,
+    token: &[u8],
+) -> Result<Option<HeaderValue>> {
+    let refreshed =
+        crate::connector_key::ProviderConnectionChecks::refresh_stored_google_grant(client, token)
+            .map_err(|_| Error::InvalidConfig("gmail_refresh_failed".to_owned()))?;
+    refreshed
+        .map(|access_token| bearer_header(access_token.as_bytes()))
+        .transpose()
+}
+
 /// The sensitive `Authorization: Bearer` value for one injected credential.
 pub(super) fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
     let invalid =
