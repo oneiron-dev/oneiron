@@ -1,0 +1,18 @@
+# FIX 14974: the direct requirements of scripts/drafter/worker.py, one Linux x86_64 CUDA host
+# (the one the target's managed EXL3 worker runs on). The serving-format converter runs with
+# the same interpreter, so exllamav3 is installed beside the trainer. The worker records every
+# installed distribution in its receipt.
+#
+# torch and exllamav3 are the house serving lock's (deploy/house-model/requirements-exl3.lock);
+# safetensors, tokenizers, jinja2 and blake3 are the training pack's
+# (scripts/training_pack/requirements.txt). transformers and accelerate load the tap model.
+# They carry no pin yet: the first booked run pins the versions it resolves here.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+exllamav3==1.6.0
+safetensors==0.8.0
+tokenizers==0.22.2
+jinja2==3.1.6
+blake3==1.0.11
+transformers
+accelerate

@@ -82,6 +82,18 @@ impl Vault {
             ) {
                 continue;
             }
+            // FIX 10188: an operation part is no event, and a manifest is its
+            // whole decision or, while a part is missing, nothing.
+            let Some(record) =
+                super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+                    &self.store,
+                    rtxn,
+                    &event_id,
+                    record,
+                )?
+            else {
+                continue;
+            };
             events.push(IdentityTopologyEvent {
                 event_id,
                 seq: record.seq,
@@ -192,9 +204,12 @@ impl Vault {
                 if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
                     return Err(Error::InvalidEntityType(entity_type));
                 }
-                let target_record = self
-                    .identity_topology_event_in_txn(rtxn, &target)?
-                    .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+                // The target read whole (FIX 10188); a manifest still waiting
+                // on a part defers like an absent target.
+                let Some(target_record) = self.identity_topology_decision_in_txn(rtxn, &target)?
+                else {
+                    return Ok(());
+                };
                 if let IdentityTopologyAction::Apply(op) = target_record.action.to_fold_action()
                     && let IdentityTopologyParticipantValidation::Invalid(rejection) =
                         self.validate_identity_op_participants_in_txn(rtxn, &op)?
@@ -208,7 +223,7 @@ impl Vault {
                 else {
                     return Err(Error::InvariantViolation("cancellation action codec"));
                 };
-                let Some(target) = self.identity_topology_event_in_txn(rtxn, &proposal)? else {
+                let Some(target) = self.identity_topology_decision_in_txn(rtxn, &proposal)? else {
                     return Ok(());
                 };
                 let IdentityTopologyAction::Apply(op) = target.action.to_fold_action() else {
@@ -252,9 +267,13 @@ impl Vault {
                 if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
                     return Err(Error::InvalidEntityType(entity_type));
                 }
-                let proposal_record = self
-                    .identity_topology_event_in_txn(rtxn, &proposal)?
-                    .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+                // Read whole (FIX 10188); a manifest still waiting on a part
+                // defers to the effective projection like an absent proposal.
+                let Some(proposal_record) =
+                    self.identity_topology_decision_in_txn(rtxn, &proposal)?
+                else {
+                    return Ok(());
+                };
                 // Exactly the local door's rule, replayed: the ruling axis
                 // is this row's own consent (`record.approval`), the stamp
                 // must match the tuple the proposal row derives, and an

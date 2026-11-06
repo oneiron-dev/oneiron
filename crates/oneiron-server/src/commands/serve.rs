@@ -137,7 +137,9 @@ pub(super) async fn serve_anchored(
         .await
         .map_err(|error| anyhow::anyhow!("artifact listener bind {artifact_bind}: {error}"))?;
     let artifact_addr = artifact_listener.local_addr()?;
-    let sync_server = sync_server.with_artifact_listener(artifact_addr.port());
+    let sync_server = sync_server
+        .with_artifact_listener(artifact_addr.port())
+        .with_api_listener(listener.local_addr()?);
     tracing::info!(%addr, artifacts = %artifact_addr, "listening");
     // Borrowed uniquely, so the closure is `Send` whenever the host is.
     let awake_host = &mut host;
@@ -204,6 +206,17 @@ pub(super) async fn serve_anchored(
         // mesh when the home has a paired address there.
         device_sync =
             crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
+        // Dedicated shared environments open beside the personal lane, never
+        // through HOME/XDG discovery (FIX 2051, FIX 11136).
+        let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+            config.shared_env.clone(),
+            &config,
+            config.lease_vault_id,
+            crate::server::admit_every_pass(),
+            None,
+        )
+        .await;
+        mesh_server.install_shared_envs(shared);
         host.ready()?;
         anyhow::Ok(())
     }

@@ -9,17 +9,19 @@
 //! hard delete of one takes that ref out of the rows that name it, and the
 //! period and its other rows stay (FIX 7693).
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::super::loop_decision_read::ReadableLoopDecision;
 use super::super::weave_report::admissions::loop_decision_item;
 use super::invalid;
+use super::wire::WireItem;
+use super::{DIGEST_PREFIX, WireDigest, digest_row_in, put_digest_row_in_txn, rerender};
 use super::{ScopedRead, WeaveDigestReader, WeaveItem, WeaveReader, WeaveReport};
 use crate::EntityId;
 use crate::error::Result;
-use crate::store::GateDecisionId;
+use crate::store::{GateDecisionId, Store};
 
 /// A saved loop decision row: every field its live row carries.
 #[derive(Serialize, Deserialize)]
@@ -33,6 +35,8 @@ pub(super) struct WireLoopDecision {
     reason_codes: Vec<String>,
     redacted: bool,
     claim_ref: Option<EntityId>,
+    /// Whether the original publication named its claim, before any ref erasure.
+    claim_was_named: bool,
     actor_ref: Option<EntityId>,
     evidence_refs: Vec<EntityId>,
 }
@@ -64,6 +68,7 @@ impl WireLoopDecision {
             reason_codes: reason_codes.clone(),
             redacted: *redacted,
             claim_ref: *claim_ref,
+            claim_was_named: claim_ref.is_some(),
             actor_ref: *actor_ref,
             evidence_refs: evidence_refs.clone(),
         })
@@ -84,6 +89,81 @@ impl WireLoopDecision {
             evidence_refs: self.evidence_refs,
         }
     }
+}
+
+/// The original named-claim flags survive ref erasure (FIX 7693).
+pub(super) fn named_claim_decisions(wire: &WireDigest) -> BTreeSet<[u8; 16]> {
+    wire.sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter_map(|item| match item {
+            WireItem::LoopDecision(row) if row.claim_was_named => Some(row.decision_id.as_bytes()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(super) fn retain_named_claim_decisions(wire: &mut WireDigest, named: &BTreeSet<[u8; 16]>) {
+    for item in wire
+        .sections
+        .iter_mut()
+        .flat_map(|section| &mut section.items)
+    {
+        if let WireItem::LoopDecision(row) = item {
+            row.claim_was_named = named.contains(&row.decision_id.as_bytes());
+        }
+    }
+}
+
+/// The canonical ledger redacted this claim-bound decision, or restore
+/// dropped its retired key generation, in `txn`. An initially unnamed saved
+/// copy may have no source-index entry (FIX 7692), so discover its period
+/// directly. Only the copied reasons change; named-claim history and the
+/// current-policy saved-read checks stay intact.
+pub(crate) fn scrub_saved_weave_loop_reasons_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    decision: GateDecisionId,
+) -> Result<()> {
+    let keys = store
+        .vault_meta
+        .prefix_iter(&*txn, DIGEST_PREFIX)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<Result<Vec<_>>>()?;
+    for key in keys {
+        let Some(raw) = digest_row_in(store, txn, &key)? else {
+            continue;
+        };
+        // An undecodable, unindexed period proves no decision binding.
+        let Ok(mut wire) = serde_json::from_slice::<WireDigest>(&raw) else {
+            continue;
+        };
+        let mut rewritten = false;
+        for item in wire
+            .sections
+            .iter_mut()
+            .flat_map(|section| &mut section.items)
+        {
+            if let WireItem::LoopDecision(row) = item
+                && row.decision_id == decision
+                && !row.claim_was_named
+                && !row.reason_codes.is_empty()
+            {
+                row.reason_codes.clear();
+                rewritten = true;
+            }
+        }
+        if !rewritten {
+            continue;
+        }
+        wire.report_revision = EntityId::now();
+        wire.lens = None;
+        wire.lens_refused = None;
+        let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
+        put_digest_row_in_txn(store, txn, &key, &bytes)?;
+        rerender::mark_in_txn(store, txn, &key)?;
+    }
+    Ok(())
 }
 
 /// A loop row's claim, actor and evidence refs, for its period's erase

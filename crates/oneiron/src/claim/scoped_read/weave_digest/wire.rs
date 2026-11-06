@@ -104,6 +104,7 @@ impl WireSchedule {
 #[serde(deny_unknown_fields)]
 pub(super) struct WireDigest {
     pub(super) rendered_at: u64,
+    pub(super) report_revision: EntityId,
     pub(super) receipt: ScopedReadReceipt,
     pub(super) sections: Vec<WireSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -167,6 +168,7 @@ impl WireDigest {
     ) -> Result<Self> {
         Ok(Self {
             rendered_at,
+            report_revision: EntityId::now(),
             receipt: report.receipt.clone(),
             sections: report
                 .value

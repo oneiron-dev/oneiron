@@ -68,7 +68,7 @@ use crate::authority::{AuthorityFold, OwnerWorkBody};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncEngineContext};
 use crate::secret_custody::{
-    CustodyApplied, CustodyTransition, RelayedInput, SecretCustodyStatus,
+    CustodyApplied, CustodyPieces, CustodyTransition, RelayedInput, SecretCustodyStatus,
     apply_custody_transition_in_txn, completed_custody_groups_in_txn, custody_transitions,
     held_inputs, holds_custody_carrier_in_txn, keep_custody_piece_in_txn, keep_input_in_txn,
 };
@@ -580,24 +580,7 @@ fn apply_carriers(
         }
         vault
             .with_write_txn_grouped(|wtxn| {
-                // Every piece that stands is kept first, the rest of its
-                // transition owed; a piece an admitted revoke of its id refused,
-                // or that no longer stands on this transaction's fold, is not
-                // kept, so it is never relayed from here (WILL L04 row 04).
-                let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-                for piece in &arrived {
-                    keep_custody_piece_in_txn(vault, wtxn, &fold, piece)?;
-                }
-                let mut written = 0;
-                for (group, value) in &whole {
-                    let value = value.as_ref().map(|value| value.as_slice());
-                    let at = group.lead().signed_at;
-                    let applied = apply_custody_transition_in_txn(vault, wtxn, group, value, at)?;
-                    if applied == CustodyApplied::Written {
-                        written += 1;
-                    }
-                }
-                Ok(written)
+                stage_custody_pieces_in_txn(vault, wtxn, &arrived, &whole)
             })
             .and_then(|written| match open_error {
                 Some(error) => Err(error),
@@ -653,18 +636,7 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
             return Ok(0);
         }
         vault.with_write_txn_grouped(|wtxn| {
-            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-            let mut kept = 0;
-            for input in &due {
-                if input_awaits(&fold, machine, input)
-                    && witness::input_genuine(vault, wtxn, input)?
-                    && witness::input_slot_open(vault, wtxn, &input.row_key())?
-                {
-                    keep_input_in_txn(vault, wtxn, input)?;
-                    kept += 1;
-                }
-            }
-            Ok(kept)
+            stage_custody_inputs_in_txn(vault, wtxn, machine, &due)
         })
     })();
     match outcome {
@@ -676,6 +648,54 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
             tracing::warn!(window, error = %error, "custody inputs not kept");
         }
     }
+}
+
+/// Keeps the prepared transitions and applies each completed group in the caller's writer.
+pub(super) fn stage_custody_pieces_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    arrived: &[CustodyTransition],
+    whole: &[(CustodyPieces, Option<zeroize::Zeroizing<Vec<u8>>>)],
+) -> Result<usize> {
+    // Every piece that stands is kept first, the rest of its
+    // transition owed; a piece an admitted revoke of its id refused,
+    // or that no longer stands on this transaction's fold, is not
+    // kept, so it is never relayed from here (WILL L04 row 04).
+    let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+    for piece in arrived {
+        keep_custody_piece_in_txn(vault, wtxn, &fold, piece)?;
+    }
+    let mut written = 0;
+    for (group, value) in whole {
+        let value = value.as_ref().map(|value| value.as_slice());
+        let at = group.lead().signed_at;
+        let applied = apply_custody_transition_in_txn(vault, wtxn, group, value, at)?;
+        if applied == CustodyApplied::Written {
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
+/// Rechecks and keeps prepared input rows in the caller's writer.
+pub(super) fn stage_custody_inputs_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    machine: EntityId,
+    due: &[RelayedInput],
+) -> Result<usize> {
+    let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+    let mut kept = 0;
+    for input in due {
+        if input_awaits(&fold, machine, input)
+            && witness::input_genuine(vault, wtxn, input)?
+            && witness::input_slot_open(vault, wtxn, &input.row_key())?
+        {
+            keep_input_in_txn(vault, wtxn, input)?;
+            kept += 1;
+        }
+    }
+    Ok(kept)
 }
 
 impl Vault {

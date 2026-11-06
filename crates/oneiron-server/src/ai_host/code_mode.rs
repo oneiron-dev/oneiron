@@ -218,6 +218,7 @@ pub(super) async fn bind(
         global_tier: ModelTierRef(ENGINE_EXECUTOR_PURPOSE_NAME.to_owned()),
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
+        wake: None,
     };
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
@@ -521,6 +522,8 @@ impl CodeModeBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let pinned = self.planned.as_ref().is_some_and(|planned| planned.exact);
+            let staged_len = request.messages.len();
+            let capture_run = browser_planner::step_run(&request);
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
             let (role, request, handoff) = self.browser.route(request, pinned);
@@ -542,6 +545,14 @@ impl CodeModeBackend {
                         tracing::warn!(%refusal, "a code-mode model call was refused");
                         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
                     })?;
+            if let Some(run) = capture_run {
+                oneiron::code_run::refresh_step_capture_request(
+                    &self.vault,
+                    run,
+                    &call.request,
+                    staged_len,
+                );
+            }
             let no_record_at_arrival = self.caller.as_ref().is_some_and(|caller| {
                 self.vault.model_call_keeps_no_record_for(
                     caller.session.as_deref(),
