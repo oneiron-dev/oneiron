@@ -34,7 +34,6 @@ mod slate_setting;
 mod tool_effect;
 mod tool_remember;
 mod txn;
-
 #[cfg(test)]
 mod tests;
 
@@ -90,7 +89,7 @@ pub(crate) use self::credential_binding::{
 };
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
-    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_messages,
+    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
     budget_block_pooled, budget_exhausted_reason, charge_effector_budgets,
     charge_effector_budgets_pooled, fire_settled_effector_debits_in_txn,
     preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,

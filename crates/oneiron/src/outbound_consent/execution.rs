@@ -67,12 +67,13 @@ impl ScopedMcpDispatchResult {
             .as_ref()
             .map(EffectorBudgetCharge::steering_messages)
             .unwrap_or_default();
-        crate::connector_key::append_effector_steering_messages(
-            &mut messages,
-            self.budget_settlement_events
-                .iter()
-                .flat_map(|events| &events.ladder_events),
-        );
+        for event in self
+            .budget_settlement_events
+            .iter()
+            .flat_map(|events| &events.ladder_events)
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
         messages
     }
 

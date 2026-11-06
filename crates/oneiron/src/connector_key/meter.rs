@@ -425,16 +425,14 @@ pub struct EffectorBudgetCharge {
     pub debits: Vec<EffectorBudgetDebit>,
 }
 
-pub(crate) fn append_effector_steering_messages<'a>(
+pub(crate) fn append_effector_steering_message(
     messages: &mut Vec<String>,
-    events: impl IntoIterator<Item = &'a EffectorBudgetLadderEvent>,
+    event: &EffectorBudgetLadderEvent,
 ) {
-    for event in events {
-        if let Some(signal) = &event.steering
-            && !messages.contains(&signal.message)
-        {
-            messages.push(signal.message.clone());
-        }
+    if let Some(signal) = &event.steering
+        && !messages.contains(&signal.message)
+    {
+        messages.push(signal.message.clone());
     }
 }
 
@@ -447,7 +445,9 @@ impl EffectorBudgetCharge {
     pub fn steering_messages(&self) -> Vec<String> {
         let pool = self.pool.iter().flat_map(|pool| &pool.ladder_events);
         let mut messages: Vec<String> = Vec::new();
-        append_effector_steering_messages(&mut messages, self.ladder_events.iter().chain(pool));
+        for event in self.ladder_events.iter().chain(pool) {
+            append_effector_steering_message(&mut messages, event);
+        }
         messages
     }
 }
