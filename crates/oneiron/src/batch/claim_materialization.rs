@@ -104,7 +104,8 @@ impl ClaimMaterialization {
             return Err(binding_error());
         }
         let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next =
+            crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, txn, data, false)?;
         let expected = demotion_body(&vault.store, txn, id, &prior, &next, &ops[1..])?;
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());

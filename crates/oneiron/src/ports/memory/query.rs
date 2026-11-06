@@ -334,6 +334,7 @@ impl TombstoneStoreRead for Memory {
                     DeletionFamily::HardDelete => matches!(
                         value.reason,
                         crate::deletion::TombstoneReason::UserHardDelete
+                            | crate::deletion::TombstoneReason::OwnerErase
                             | crate::deletion::TombstoneReason::GdprDelete
                             | crate::deletion::TombstoneReason::PolicyDelete
                     ),
@@ -370,7 +371,10 @@ impl TombstoneStoreRead for Memory {
             DeletionMarker::Archive => value.reason == Reason::ArchivedByCleanup,
             DeletionMarker::HardDelete => matches!(
                 value.reason,
-                Reason::UserHardDelete | Reason::GdprDelete | Reason::PolicyDelete
+                Reason::UserHardDelete
+                    | Reason::OwnerErase
+                    | Reason::GdprDelete
+                    | Reason::PolicyDelete
             ),
             DeletionMarker::RowFence => value.reason != Reason::ArchivedByCleanup,
             DeletionMarker::IdentitySoftDelete => value.reason == Reason::UserDelete,
