@@ -104,6 +104,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("ready-fd", |args| args.ready_fd.is_some(), ArgvUse::Read),
     (
+        "allocation-fd",
+        |args| args.allocation_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "credentials-fd",
         |args| args.credentials_fd.is_some(),
         ArgvUse::Read,

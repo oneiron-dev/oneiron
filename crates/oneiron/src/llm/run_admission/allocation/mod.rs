@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::declaration::LeaseUnit;
-use super::host::{Allocation, AllocationRef, AllocationRefusal};
+use super::host::{Allocation, AllocationRef, AllocationRefusal, UnitRate};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -32,12 +32,23 @@ pub struct AllocationCallKey {
     pub lease: String,
 }
 
+/// Immutable host-supplied conversion terms for one original allocation.
+/// Rate order is significant: conversion uses the first matching rate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AllocationTerms {
+    pub usage_owner: String,
+    pub rates: Vec<UnitRate>,
+    pub issued_at: u64,
+}
+
 /// A durable reservation on one original allocation, retained after replacement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DurableAllocationHold {
     pub key: AllocationCallKey,
     pub allocation: AllocationRef,
     pub unit: LeaseUnit,
+    /// The selected allocation's original rates, captured in its reserve writer.
+    pub rates: Vec<UnitRate>,
     pub reserved_units: u64,
     pub serving_fence: AllocationServingFence,
     pub resident: Option<EntityId>,
@@ -64,6 +75,7 @@ pub struct AllocationTerminal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DurableAllocationRead {
     pub allocation: Allocation,
+    pub terms: Option<AllocationTerms>,
     pub accepting: bool,
     pub remaining_units: u64,
     pub pending_units: u64,
@@ -92,6 +104,8 @@ pub enum AllocationStoreError {
     ServingChanged,
     #[error("allocation generation is not newer than one already held")]
     StaleGeneration,
+    #[error("the allocation delivery differs from the original immutable grant")]
+    AllocationConflict,
     #[error("the host has delivered no allocation")]
     NoAllocation,
     #[error("the selected allocation is not accepting reservations")]
@@ -142,6 +156,7 @@ struct AccountRow {
 #[serde(deny_unknown_fields)]
 struct AllocationRow {
     allocation: Allocation,
+    terms: Option<AllocationTerms>,
     accepting: bool,
     remaining_units: u64,
     pending_units: u64,
