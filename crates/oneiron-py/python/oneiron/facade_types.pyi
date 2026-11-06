@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4581 declarations.
+Census: 1262 facade rows, 4583 declarations.
 Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -9132,6 +9132,7 @@ class OfferEvidence(TypedDict):
     exposures: list[EntityId]
     rubric_revision: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    paired_measurement: NotRequired[list[int] | None]
     losses: list[str]
     risk: NotRequired[str | None]
 class ComputeDestinationSelfHostedBody(TypedDict):
@@ -9165,6 +9166,14 @@ class TrainingOffer(TypedDict):
     source_rows: NotRequired[list[EntityId] | None]
     digest: str
 OfferAnswer = Literal["keep_baseline", "approve_switch", "approve_train", "decline", "postpone"]
+class OfferAnswerAuthorityOwner(TypedDict):
+    kind: Literal["owner"]
+    owner: EntityId
+    authentication: str
+class OfferAnswerAuthorityStockPolicy(TypedDict):
+    kind: Literal["stock_policy"]
+    revision: EntityId
+OfferAnswerAuthority = OfferAnswerAuthorityOwner | OfferAnswerAuthorityStockPolicy
 OfferIntentSwitchBody = TypedDict("OfferIntentSwitchBody", {"seat": EvalSeat, "from": OfferModelPin, "to": OfferModelPin})
 class OfferIntentSwitch(TypedDict):
     switch: OfferIntentSwitchBody
@@ -9179,8 +9188,7 @@ OfferIntent = OfferIntentSwitch | OfferIntentTrain
 class OfferAnswerRecord(TypedDict):
     offer: EntityId
     answer: OfferAnswer
-    owner: EntityId
-    authentication: str
+    authority: OfferAnswerAuthority
     offer_digest: str
     intent: NotRequired[OfferIntent | None]
     at: int
@@ -17486,7 +17494,6 @@ class ModelTrialPolicy(TypedDict):
     exploration_remaining: float
     vault_cost_cap: NotRequired[float | None]
     project_cost_cap: NotRequired[float | None]
-    auto_approve: NotRequired[bool]
     candidate_needs_download: bool
 class ModelTrialRequest(TypedDict):
     principal: EntityId
@@ -17548,10 +17555,14 @@ class TrialAssessment(TypedDict):
     canary_diverged: bool
 TrialQuality = Literal["better", "not_worse", "worse", "unknown"]
 ModelTrialAction = Literal["stay", "offer", "auto_approve", "ask_tradeoff", "unknown"]
+class StockAutoapprovePolicy(TypedDict):
+    enabled: bool
+    revision: NotRequired[EntityId | None]
 class ModelTrialReceipt(TypedDict):
     assessment: TrialAssessment
     quality: TrialQuality
     action: ModelTrialAction
+    stock_autoapprove_policy: StockAutoapprovePolicy
     candidate_cost_per_unit: float
     added_cost_per_thousand: float
     added_future_cost: float

@@ -78,6 +78,8 @@ pub enum PolicySetting {
     FreeTimePolicy,
     /// The owner's board cap and board layout layers (BOARD-LAYOUT).
     BoardLayout,
+    /// The owner's stock-model automatic approval setting (ARCH-0053 R13).
+    StockAutoapprove,
 }
 
 impl PolicySetting {
@@ -91,6 +93,7 @@ impl PolicySetting {
             Self::RoomThreadAdmin => "settings.room_thread_admin",
             Self::FreeTimePolicy => "settings.free_time_policy",
             Self::BoardLayout => "settings.board_layout",
+            Self::StockAutoapprove => "settings.stock_autoapprove",
         }
     }
 
@@ -103,6 +106,7 @@ impl PolicySetting {
             Self::RoomThreadAdmin => "room_thread_admin",
             Self::FreeTimePolicy => "free_time_policy",
             Self::BoardLayout => "board_layout",
+            Self::StockAutoapprove => "stock_autoapprove",
         }
     }
 
@@ -115,6 +119,7 @@ impl PolicySetting {
             "room_thread_admin" => Self::RoomThreadAdmin,
             "free_time_policy" => Self::FreeTimePolicy,
             "board_layout" => Self::BoardLayout,
+            "stock_autoapprove" => Self::StockAutoapprove,
             _ => return None,
         })
     }
@@ -126,7 +131,8 @@ impl PolicySetting {
             Self::DreamerWakePolicy
             | Self::InferenceDefaults
             | Self::RoomThreadAdmin
-            | Self::BoardLayout => OwnerActKind::PolicySetting,
+            | Self::BoardLayout
+            | Self::StockAutoapprove => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }
