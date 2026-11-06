@@ -268,12 +268,16 @@ fn dev_partition_reading_sourced(
     prior: SkillReliabilityPosterior,
 ) -> Result<(DevPartitionReading, Option<Vec<EntityId>>)> {
     let rtxn = vault.store.env.read_txn()?;
-    let outcomes = crate::skill_reliability::attributed_outcomes_weighted(vault, &rtxn, skill)?;
+    let (outcomes, outcome_sources) =
+        crate::skill_reliability::attributed_outcomes_weighted_sourced(vault, &rtxn, skill)?;
     let receipts = outcomes
         .iter()
         .map(|(receipt, _)| receipt.clone())
         .collect();
-    let rows = attempt_row_ids(&receipts);
+    let rows = crate::attempt_queue::source_rows::union_source_rows([
+        outcome_sources,
+        attempt_row_ids(&receipts),
+    ]);
     let mut reading = DevPartitionReading {
         posterior: prior,
         attributed: 0,

@@ -19,7 +19,9 @@ use super::read::read_skill;
 
 mod sources;
 
-pub(crate) use sources::attributed_outcome_results_sourced;
+pub(crate) use sources::{
+    attributed_outcome_results_sourced, attributed_outcomes_weighted_sourced,
+};
 
 /// Durable per-(skill, receipt) attributed-outcome ledger. Key: id16(skill) + string(receipt).
 ///
