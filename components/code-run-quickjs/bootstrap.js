@@ -62,7 +62,8 @@
     // `list`, `schema`, `status`, `outbound`) stay the table's rows, and the
     // wrong roots (`tools.`, `connectors.`, `mcp.`, `self.mcp.`,
     // `self.connectors.`) keep their refusal below: none of them ever
-    // reaches a connector.
+    // reaches a connector. The callable `connector.answer` also exposes
+    // missing tool members of the connector named `answer`.
     let connectorCall = null;
     const tools = name => new Proxy(Object.create(null), {
       get: (_, tool) => typeof tool === "string" && !plain.has(tool)
@@ -72,8 +73,10 @@
     // `connector` answers a name it does not hold with that connector's tools.
     guard = (path, object) => {
       for (const [key, value] of Object.entries(object))
-        if (value && (typeof value === "object" || typeof value === "function" && Object.keys(value).length)) object[key] = guard(`${path}.${key}`, value);
-      const missing = path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
+        if (value && (typeof value === "object" || typeof value === "function" && (Object.keys(value).length || path === "connector" && key === "answer"))) object[key] = guard(`${path}.${key}`, value);
+      const missing = path === "connector.answer" && connectorCall
+        ? tool => tools("answer")[tool]
+        : path === "connector" && connectorCall ? tools : key => refusal(`${path}.${key}`);
       return new Proxy(object, {
         get: (target, key, receiver) => typeof key !== "string" || plain.has(key) || key in target
           ? Reflect.get(target, key, receiver) : missing(key),

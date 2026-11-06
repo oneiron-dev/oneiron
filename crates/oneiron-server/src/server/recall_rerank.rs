@@ -6,10 +6,11 @@
 //! reservation. Nothing a request carries picks the model, its endpoint or
 //! the lease: the door holds them. The words a call sends are known before
 //! it leaves, so it is priced on them first ([`payload_units`]), and a line
-//! that cannot cover them refuses the call unsent. A `[models]` rung is
-//! reached over HTTP, never in this process, so this host does not run on
-//! the device (`RecallRerankHost::runs_on_device`): a row a device-only world
-//! keeps is sent to it empty. Each rung a call reaches reserves that price,
+//! that cannot cover them refuses the call unsent. A `[models]` reranker rung
+//! is reached over HTTP (`/v1/rerank`), never in this process nor over a
+//! supervised worker's native channel (I2-LOCAL names no native rerank), so
+//! this host does not run on the device (`RecallRerankHost::runs_on_device`):
+//! a row a device-only world keeps is sent to it empty. Each rung a call reaches reserves that price,
 //! so a fallback rung goes out only while the line still covers the whole
 //! payload, and a rung that failed after it went out is charged what it may
 //! have billed. Each rung, the first too, goes out only while the
