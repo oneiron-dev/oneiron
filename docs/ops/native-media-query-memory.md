@@ -173,10 +173,27 @@ error-to-scan fallback. The existing-row scope, cleanup order, validation and
 later puts are unchanged. Native keys and cleanup buffers drop before the
 caller lease, which conservatively keeps their known charges until it drops.
 An unbound stage uses the same native operations without capacity accounting.
-This covers neither the separately decoded existing row and trace nor raw
-value copies, overlay copies, database pages, transaction scratch, allocation
-peaks or a full working-set bound. Other pre-put and marker/index allocations
-remain separate.
+This key and cleanup accounting does not cover the separately decoded
+existing row and trace, raw value copies, overlay copies, database pages,
+transaction scratch, allocation peaks or a full working-set bound. Other
+pre-put and marker/index allocations remain separate.
+
+When that original pre-put lookup finds an existing row, the same optional
+caller lease separately records four stable parts of this owned decode before
+cleanup: the actual slot capacities of its signal, degradation and
+policy-decision vectors, using their native element sizes, and its optional
+query-expander ID string's actual capacity. These are the existing row's own
+buffers, not the incoming record's fields or the finalizer's separate decode.
+No extra decode, copy, scan or lease is made. An unbound stage adds no capacity
+work, and absent optional fields add no backing.
+
+These four buffers stay unchanged through the original cleanup and drop at the
+end of the existing-row scope, before the caller lease, including errors and
+unwind. Their known charge stays conservative until that same lease drops.
+The lookup's error propagation, validation, cleanup order and later puts are
+unchanged. All other fields of this decoded row, the fork helper's separate
+decode, raw value copies, allocation peaks and a full working-set bound remain
+outside this charge.
 
 At that bound provisional stage's original false-branch marker put, the same
 caller lease separately records the typed staged row's actual encoded key and

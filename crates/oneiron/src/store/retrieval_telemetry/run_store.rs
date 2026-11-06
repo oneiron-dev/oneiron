@@ -759,6 +759,28 @@ fn stage_retrieval_run_with_visibility(
             }
         })?
     {
+        if let Some(memory) = memory.as_deref_mut() {
+            let bytes = (existing.signals.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
+                .saturating_add((existing.degradation.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
+                ))
+                .saturating_add(
+                    existing
+                        .query_expander_id
+                        .as_ref()
+                        .map_or(0, |id| id.capacity() as u64),
+                );
+            let bytes = existing.policy_trace.as_ref().map_or(bytes, |trace| {
+                bytes.saturating_add(
+                    (trace.decisions.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<
+                            crate::store::retrieval_policy::RetrievalPolicyDecision,
+                        >() as u64),
+                )
+            });
+            memory.materialized(0, bytes);
+        }
         super::turn_index::delete_with_memory(target, wtxn, &existing, memory.as_deref_mut())?;
         delete_retrieval_trace_fork_indexes_for_run_with_memory(
             target,
