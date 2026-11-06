@@ -31,6 +31,7 @@ pub mod remote_embedder;
 mod self_heal;
 pub mod serve_args;
 pub mod server_config;
+pub mod shared_env;
 mod skills;
 mod trusted_proxy;
 
@@ -77,6 +78,7 @@ pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
 pub use server_config::{EmbeddedHolderOverrides, IngressAuth, ServeConfig, SyncServerConfig};
+pub use shared_env::SharedEnvConfig;
 pub use skills::{ReplayJudgeWording, SkillsConfig};
 pub use trusted_proxy::TrustedProxy;
 

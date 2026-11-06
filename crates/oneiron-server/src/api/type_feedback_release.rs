@@ -11,6 +11,10 @@
 //! (`self.off_record.execute`, the foreign `execute_code`) gives each item
 //! released whole; its carrier is known by the verb, never by its JSON's
 //! shape.
+//!
+//! A read of a step's stored diagnostics body (FIX 10614) shows a view of
+//! that step's feedback: the view is judged with the step's own feedback, as
+//! the item it is part of ([`stored_feedback_hold`]).
 
 use oneiron::code_run::{FeedbackWithheldReason, ProgramStepFeedback, ProgramStepFeedbackRelease};
 use oneiron::settings::ReadDestination;
@@ -71,15 +75,53 @@ fn feedback_hold(
     let Ok(value) = serde_json::to_value(feedback) else {
         return Some(FeedbackWithheldReason::ReleaseCheckFailed);
     };
+    payload_hold(vault, destination, rows, &value, scan)
+}
+
+/// Why the view a read of a step's stored diagnostics body shows may not
+/// leave for `destination` now, or `None` (FIX 10614). The view is part of
+/// the step's `feedback`, so both are judged as [`release_step_feedback`]
+/// judges one item: the feedback as JSON, and the view as its carrier is
+/// judged, its whole strings as short refs and its bytes for whole ids, each
+/// by `rows` too. A hold in either, or a check that cannot run, withholds
+/// the feedback.
+pub(crate) fn stored_feedback_hold(
+    vault: &Vault,
+    destination: &ReadDestination,
+    rows: Option<&[EntityId]>,
+    feedback: &ProgramStepFeedback,
+    view: &Value,
+) -> Option<FeedbackWithheldReason> {
+    if let Some(reason) = feedback_hold(vault, destination, rows, feedback, FeedbackScan::Named) {
+        return Some(reason);
+    }
+    // Past that check, a view on this device leaves whole, and off it the
+    // rows are known.
+    let rows = match rows {
+        Some(rows) if destination.is_off_device() => rows,
+        _ => return None,
+    };
+    payload_hold(vault, destination, rows, view, FeedbackScan::Named)
+}
+
+/// Why `value`, a step's feedback or a view of it, may not leave for
+/// `destination` now, by `rows` and every row it names under `scan`.
+fn payload_hold(
+    vault: &Vault,
+    destination: &ReadDestination,
+    rows: &[EntityId],
+    value: &Value,
+    scan: FeedbackScan,
+) -> Option<FeedbackWithheldReason> {
     let mut named = match scan {
-        FeedbackScan::Named => match crate::device_local::short_refs_named(vault, &value) {
+        FeedbackScan::Named => match crate::device_local::short_refs_named(vault, value) {
             Some(named) => named,
             None => return Some(FeedbackWithheldReason::Placement),
         },
         FeedbackScan::Bytes => Vec::new(),
     };
     named.extend_from_slice(rows);
-    let Ok(bytes) = serde_json::to_vec(&value) else {
+    let Ok(bytes) = serde_json::to_vec(value) else {
         return Some(FeedbackWithheldReason::ReleaseCheckFailed);
     };
     match crate::device_local::retained_hold(vault, destination, &named, &bytes) {

@@ -192,7 +192,7 @@ impl Memory<'_> {
             None,
             &filter,
             &policy,
-            output.read_suppressed,
+            0,
             &output.revisions,
         )?;
         let reads = results

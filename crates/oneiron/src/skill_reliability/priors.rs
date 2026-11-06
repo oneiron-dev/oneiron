@@ -59,13 +59,20 @@ pub(super) fn provenance_prior_in_txn(
 
 /// Capture the borrowed/provenance starting point before the first own run.
 /// Later evidence keeps that same prior; an explicit swap/seed may replace it
-/// through the shared learning door.
+/// through the shared learning door. A hard-deleted subject captures nothing.
 pub(super) fn ensure_prior_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     cell: &LearningCell,
     parents: &[TypeRef],
 ) -> Result<()> {
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &cell.subject)? {
+        tracing::warn!(
+            subject = %cell.subject.to_hex(),
+            "a reliability prior was not captured: its subject was hard-deleted"
+        );
+        return Ok(());
+    }
     let digest = cell.digest();
     if PRIOR.contains(&vault.store, txn, &digest)? {
         return Ok(());

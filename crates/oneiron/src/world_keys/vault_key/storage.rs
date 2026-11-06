@@ -268,6 +268,9 @@ impl Vault {
     /// at once.
     pub async fn lock_vault_key(&self) -> crate::store::snapshot_lock_result::SnapshotLockReceipt {
         let receipt = self.release_inference_snapshots_for_lock().await;
+        // FIX 14976: no private drafter serves a locked vault; its plaintext
+        // goes before the key does.
+        self.drafter_serving_locking();
         *self
             .world_keys
             .vault_key
