@@ -8,7 +8,8 @@
 //! navigation or an act that the failure ends answers it, not a generic
 //! error; every other failure fails only its request, as before. A
 //! navigation, or a request the browser did not classify, is admitted by the
-//! handler before it is performed, and one it refuses fails unsent.
+//! handler in the frame it would load before it is performed, and one it
+//! refuses fails unsent; only a main-frame navigation's refusal is kept.
 //!
 //! The answer to each main-document request is noted by its page session
 //! and frame: the URL answered and its status, for the session's rendered
@@ -19,7 +20,7 @@
 //! The note never changes what the page is answered.
 
 use super::Pipe;
-use crate::{BrowserError, DestinationRefusal, SpooledResponse};
+use crate::{BrowserError, DestinationRefusal, NavigationFrame, SpooledResponse};
 use oneiron_container::{EgressRelay, HttpRequest, HttpResponse};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -65,10 +66,14 @@ impl Pipe {
         request: HttpRequest,
     ) -> Option<PausedResponse> {
         if let Some(handler) = self.custody.handler()
-            && navigates(event)
-            && let Err(error) = handler.admit_navigation(&request.url)
+            && let Some(frame) = self.navigation_frame(session, event)
+            && let Err(error) = handler.admit_navigation(&request.url, frame)
         {
-            if let BrowserError::DestinationRefused(refusal) = error {
+            // A refused in-page frame's document fails unsent, and the page
+            // goes on without it; only the main frame's refusal is kept.
+            if frame == NavigationFrame::Main
+                && let BrowserError::DestinationRefused(refusal) = error
+            {
                 self.custody.refuse(refusal);
             }
             return None;
@@ -96,6 +101,38 @@ impl Pipe {
             self.note_document(session, event, response.status());
         }
         answered
+    }
+
+    /// The frame paused `event` of page `session` would load, when it is a
+    /// navigation the host's handler admits before it is performed: a
+    /// document request, or one the browser did not classify, which counts
+    /// as an in-page frame's. A document request is the main frame's when
+    /// its frame is its page's target (a page's main frame id is its
+    /// target's), and when the browser names no frame or the session's page
+    /// is unknown; an in-page frame's otherwise, an out-of-process frame's
+    /// own session's included.
+    fn navigation_frame(&self, session: &str, event: &Value) -> Option<NavigationFrame> {
+        let params = &event["params"];
+        match params["resourceType"].as_str() {
+            None => return Some(NavigationFrame::Sub),
+            Some("Document") => {}
+            Some(_) => return None,
+        }
+        let Some(frame) = params["frameId"].as_str() else {
+            return Some(NavigationFrame::Main);
+        };
+        let main = match self.page_target(session) {
+            Some(target) => target == frame,
+            None => !self
+                .frame_sessions()
+                .iter()
+                .any(|(own, _, _)| own == session),
+        };
+        Some(if main {
+            NavigationFrame::Main
+        } else {
+            NavigationFrame::Sub
+        })
     }
 
     /// Notes the answer to a document request of page `session`, by its
@@ -170,14 +207,6 @@ impl Pipe {
     pub(crate) fn refusal_pending(&self) -> Option<DestinationRefusal> {
         self.custody.pending()
     }
-}
-
-/// Whether paused `event` is a navigation the host's handler admits before
-/// it is performed: a document request, or one the browser did not classify.
-fn navigates(event: &Value) -> bool {
-    event["params"]["resourceType"]
-        .as_str()
-        .is_none_or(|kind| kind == "Document")
 }
 
 /// The status a rendered document names (`document_status_policy`, CALLS
