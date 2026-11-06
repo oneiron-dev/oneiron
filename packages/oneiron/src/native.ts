@@ -489,6 +489,7 @@ vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
 vaultEvalsRepairPrepare(input: unknown): unknown
 vaultEvalsRepairRecord(input: unknown): unknown
+vaultEvalsRepairCohortsSetup(input: unknown): unknown
 vaultEvalsMeasurementsRequest(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
 vaultEvalsAuthorNow(input: unknown): unknown

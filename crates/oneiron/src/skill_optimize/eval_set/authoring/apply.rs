@@ -91,6 +91,25 @@ pub struct EvalCohortSetup {
     pub cuts: Vec<CutDecision>,
 }
 
+/// Explicit Repair recipes recorded before this owner's ordinary cohort cuts.
+/// The caller supplies source pins, not read authority or expected responses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCohortSetup {
+    pub setup: EvalCohortSetup,
+    pub repairs: Vec<super::super::EvalRepairCaseRequest>,
+}
+
+/// The ordinary receipt-based setup report beside actual Repair case refs.
+/// Repair results may be newly recorded or reused; the ordinary counters do
+/// not invent that distinction for them.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCohortReport {
+    pub authoring: EvalAuthoringReport,
+    pub repairs: Vec<super::super::EvalRepairCaseReference>,
+}
+
 /// Set up sealed cohorts as the verified owner. The same inventory validation,
 /// family/case doors, near-copy audit and atomic cut used by the authoring skill
 /// apply; the audit names the owner, never a fabricated authoring attempt.

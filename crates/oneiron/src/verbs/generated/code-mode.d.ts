@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4649 declarations.
-// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1317 code-mode rows (1277 host rows, 40 run rows), 4651 declarations.
+// Replies: 1128 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1776,6 +1776,14 @@ declare namespace Sdk {
   type EvalRepairCasePreparation = { recipe?: EvalRepairCaseRecipe | null; receipt: ScopedReadReceipt };
   type EvalRepairCaseRequest = { recipe: EvalRepairCaseRecipe; purpose: FamilyPurpose };
   type EvalRepairCaseReference = { case_ref?: EntityId | null; receipt: ScopedReadReceipt };
+  type FamilyDecision = { group: string; purpose: FamilyPurpose };
+  type CaseDecision = { candidate: string; stratum?: string | null };
+  type CutDecision = { seat: EvalSeat; from: number; until: number; rubric_revision: string; reference: boolean };
+  type EvalCohortSetup = { inventory_at: number; inventory_digest: string; families?: FamilyDecision[]; cases?: CaseDecision[]; cuts: CutDecision[] };
+  type EvalRepairCohortSetup = { setup: EvalCohortSetup; repairs: EvalRepairCaseRequest[] };
+  type EvalAuthoringSkip = { item: string; reason: string };
+  type EvalAuthoringReport = { families_assigned: number; families_extended: number; cases_recorded: number; cases_reused: number; labels_added: number; cohorts_cut: EntityId[]; source_receipts: ScopedReadReceipt[]; cuts_with_coverage_gaps: number; cohorts_retired: EntityId[]; cohorts_kept: number; skipped: EvalAuthoringSkip[] };
+  type EvalRepairCohortReport = { authoring: EvalAuthoringReport; repairs: EvalRepairCaseReference[] };
   type EvalArmPin = { model: string; revision: string; skill_digest?: string | null };
   type ScoreDirection = "higher_is_better" | "lower_is_better";
   type EvalAxisPin = { axis: string; direction: ScoreDirection; units: string };
@@ -1783,12 +1791,6 @@ declare namespace Sdk {
   type MeasurementMethodPin = { revision: number; within_family: string; across_families: string; resamples: number; ci_level: number; quantile: string; sampler: string; seed_domain: string; detectable_z_alpha: number; detectable_z_power: number; min_interval_families: number };
   type EvalMeasurementRequest = { decision: string; seat: EvalSeat; incumbent: EvalArmPin; candidate: EvalArmPin; cohort: EntityId; membership_digest: string; rubric_revision: string; scorer: string; axis: EvalAxisPin; floor_slices: FloorSlicePolicy; canary?: string | null; method: MeasurementMethodPin; retry: number };
   type EvalMeasurementRef = { digest: string };
-  type FamilyDecision = { group: string; purpose: FamilyPurpose };
-  type CaseDecision = { candidate: string; stratum?: string | null };
-  type CutDecision = { seat: EvalSeat; from: number; until: number; rubric_revision: string; reference: boolean };
-  type EvalCohortSetup = { inventory_at: number; inventory_digest: string; families?: FamilyDecision[]; cases?: CaseDecision[]; cuts: CutDecision[] };
-  type EvalAuthoringSkip = { item: string; reason: string };
-  type EvalAuthoringReport = { families_assigned: number; families_extended: number; cases_recorded: number; cases_reused: number; labels_added: number; cohorts_cut: EntityId[]; source_receipts: ScopedReadReceipt[]; cuts_with_coverage_gaps: number; cohorts_retired: EntityId[]; cohorts_kept: number; skipped: EvalAuthoringSkip[] };
   type EvalAuthorNowRequest = Record<string, never>;
   type EvalAuthoringRef = { attempt: EntityId };
   type EvalAuthoringResult = { attempt: EntityId; state: AttemptState; terminal: boolean; last_error?: string | null };
@@ -6311,6 +6313,10 @@ declare const vault: Sdk.VaultHost & {
       request(input: Sdk.EvalMeasurementRequest): Promise<Sdk.EvalMeasurementRef | StoredResult>;
     };
     repair: {
+      cohorts: {
+        /** The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses. */
+        setup(input: Sdk.EvalRepairCohortSetup): Promise<Sdk.EvalRepairCohortReport | StoredResult>;
+      };
       /** Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case. */
       prepare(input: Sdk.EvalRepairTaskSource): Promise<Sdk.EvalRepairCasePreparation | StoredResult>;
       /** The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger. */

@@ -2706,6 +2706,11 @@ class Oneiron:
             """Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case."""
         def record(self, spec: Facade.EvalRepairCaseRequest) -> Facade.EvalRepairCaseReference:
             """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""
+        @property
+        def cohorts(self) -> "Oneiron._VaultEvalsRepairCohortsVerbs": ...
+    class _VaultEvalsRepairCohortsVerbs:
+        def setup(self, spec: Facade.EvalRepairCohortSetup) -> Facade.EvalRepairCohortReport:
+            """The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses."""
     class _VaultEvalsMeasurementsVerbs:
         def request(self, spec: Facade.EvalMeasurementRequest) -> Facade.EvalMeasurementRef:
             """The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response."""

@@ -125,3 +125,38 @@ pub(crate) async fn vault_evals_repair_record(
     rows.extend(source_rows);
     (answer, rows)
 }
+
+/// Apply explicit Repair recipes before the existing owner setup's scoped
+/// cuts. Source refs and actual audit rows accompany the whole result.
+pub(crate) async fn vault_evals_repair_cohorts_setup(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_optimize::EvalRepairCohortSetup,
+) -> Listed<oneiron::skill_optimize::EvalRepairCohortReport> {
+    const VERB: &str = "vault.evals.repair.cohorts.setup";
+    let source_rows = super::host_doors::support::hex_rows(
+        input
+            .repairs
+            .iter()
+            .map(|repair| &repair.recipe.source.claim_ref),
+    );
+    let clock_server = Arc::clone(server);
+    let (answer, mut rows) = owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
+        Ok(memory.setup_eval_repair_cohorts_listing(
+            owner,
+            input,
+            clock_server.vault().now_recorded_at(),
+        ))
+    })
+    .await;
+    rows.extend(source_rows);
+    match answer {
+        Ok((answer, audited)) => {
+            rows.extend(audited);
+            rows.sort_unstable();
+            rows.dedup();
+            (answer, rows)
+        }
+        Err(error) => (Err(error), rows),
+    }
+}

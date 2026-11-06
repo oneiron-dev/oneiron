@@ -603,6 +603,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.evals.inventory" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.repair.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.repair.record" => a.spec.clone().ok_or_else(invalid),
+        "vault.evals.repair.cohorts.setup" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.measurements.request" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.cohorts.setup" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.author_now" => a.spec.clone().ok_or_else(invalid),
@@ -2962,6 +2963,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.evals.repair.record" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.evals.repair.cohorts.setup" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.evals.measurements.request" => {
@@ -13486,6 +13490,26 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_evals_repair_record(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.evals.repair.cohorts.setup" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.evals.repair.cohorts.setup", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::skill_optimize::EvalRepairCohortSetup =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_repair_cohorts_setup(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

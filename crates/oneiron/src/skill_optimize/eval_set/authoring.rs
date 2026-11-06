@@ -47,8 +47,8 @@ use crate::receipt::{MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptR
 
 pub use apply::{
     CaseDecision, CutDecision, EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip,
-    EvalCohortDecision, EvalCohortSetup, FamilyDecision, apply_eval_authoring_plan,
-    setup_eval_cohorts,
+    EvalCohortDecision, EvalCohortSetup, EvalRepairCohortReport, EvalRepairCohortSetup,
+    FamilyDecision, apply_eval_authoring_plan, setup_eval_cohorts,
 };
 pub(super) use lineage::{LineageReader, SOURCE_TURN_ROOT, amendment_artifact};
 use lineage::{ReceiptLineage, receipt_seat};

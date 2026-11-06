@@ -34,3 +34,24 @@ These calls provide an explicit preparation and recording path. They do not add
 automatic capture discovery, change the receipt-based authoring inventory or its
 plan format, or authorize training. Existing family purposes, sealed-cohort
 exposure, source erasure, and measurement release checks still apply.
+
+## Record explicit recipes before cohort cuts
+
+`vault.evals.repair.cohorts.setup` accepts `setup`, the existing pinned
+`EvalCohortSetup`, and `repairs`, an explicit list of `EvalRepairCaseRequest`.
+It first validates the inventory and applies its ordinary family/case decisions,
+then records or reuses each exact Repair recipe under the same original reader,
+then runs the existing scoped cut audits and cohort cuts. It does not retire
+cohorts or discover captures automatically.
+
+The result contains `authoring`, the ordinary setup report, and `repairs`, the
+actual Repair case refs and receipts. The ordinary `cases_recorded` and
+`cases_reused` counters count its receipt-based decisions, not Repair results;
+the existing Repair writer does not distinguish a new case from a reused case
+in this response. A null Repair case ref still means missing or withheld.
+
+Each stage keeps its existing transaction. An error can follow earlier committed
+stages; this call does not promise rollback of the whole setup. Existing setup
+calls and the receipt-based automatic authoring plan are unchanged. The new
+facade setup uses the existing owner-host admission policy; this is not a claim
+of room-turn support for owner-host doors.

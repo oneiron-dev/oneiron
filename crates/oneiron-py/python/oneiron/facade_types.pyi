@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1265 facade rows, 4592 declarations.
-Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1266 facade rows, 4594 declarations.
+Inputs: 1196 of 1266 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1098 of 1266 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -8905,6 +8905,40 @@ class EvalRepairCaseRequest(TypedDict):
 class EvalRepairCaseReference(TypedDict):
     case_ref: NotRequired[EntityId | None]
     receipt: ScopedReadReceipt
+class FamilyDecision(TypedDict):
+    group: str
+    purpose: FamilyPurpose
+class CaseDecision(TypedDict):
+    candidate: str
+    stratum: NotRequired[str | None]
+CutDecision = TypedDict("CutDecision", {"seat": EvalSeat, "from": int, "until": int, "rubric_revision": str, "reference": bool})
+class EvalCohortSetup(TypedDict):
+    inventory_at: int
+    inventory_digest: str
+    families: NotRequired[list[FamilyDecision]]
+    cases: NotRequired[list[CaseDecision]]
+    cuts: list[CutDecision]
+class EvalRepairCohortSetup(TypedDict):
+    setup: EvalCohortSetup
+    repairs: list[EvalRepairCaseRequest]
+class EvalAuthoringSkip(TypedDict):
+    item: str
+    reason: str
+class EvalAuthoringReport(TypedDict):
+    families_assigned: int
+    families_extended: int
+    cases_recorded: int
+    cases_reused: int
+    labels_added: int
+    cohorts_cut: list[EntityId]
+    source_receipts: list[ScopedReadReceipt]
+    cuts_with_coverage_gaps: int
+    cohorts_retired: list[EntityId]
+    cohorts_kept: int
+    skipped: list[EvalAuthoringSkip]
+class EvalRepairCohortReport(TypedDict):
+    authoring: EvalAuthoringReport
+    repairs: list[EvalRepairCaseReference]
 class EvalArmPin(TypedDict):
     model: str
     revision: str
@@ -8946,34 +8980,6 @@ class EvalMeasurementRequest(TypedDict):
     retry: int
 class EvalMeasurementRef(TypedDict):
     digest: str
-class FamilyDecision(TypedDict):
-    group: str
-    purpose: FamilyPurpose
-class CaseDecision(TypedDict):
-    candidate: str
-    stratum: NotRequired[str | None]
-CutDecision = TypedDict("CutDecision", {"seat": EvalSeat, "from": int, "until": int, "rubric_revision": str, "reference": bool})
-class EvalCohortSetup(TypedDict):
-    inventory_at: int
-    inventory_digest: str
-    families: NotRequired[list[FamilyDecision]]
-    cases: NotRequired[list[CaseDecision]]
-    cuts: list[CutDecision]
-class EvalAuthoringSkip(TypedDict):
-    item: str
-    reason: str
-class EvalAuthoringReport(TypedDict):
-    families_assigned: int
-    families_extended: int
-    cases_recorded: int
-    cases_reused: int
-    labels_added: int
-    cohorts_cut: list[EntityId]
-    source_receipts: list[ScopedReadReceipt]
-    cuts_with_coverage_gaps: int
-    cohorts_retired: list[EntityId]
-    cohorts_kept: int
-    skipped: list[EvalAuthoringSkip]
 class EvalAuthorNowRequest(TypedDict):
     ...
 class EvalAuthoringRef(TypedDict):

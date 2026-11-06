@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1265 facade rows, 4591 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
+// UniFFI census: 1266 facade rows, 4593 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1218.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -27589,6 +27589,114 @@ pub struct EvalRepairCaseReference {
     pub receipt: ScopedReadReceipt,
 }
 
+/// `oneiron::skill_optimize::eval_set::authoring::apply::FamilyDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FamilyDecision {
+    #[serde(rename = "group")]
+    pub group: String,
+    #[serde(rename = "purpose")]
+    pub purpose: FamilyPurpose,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::CaseDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CaseDecision {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "stratum", default, skip_serializing_if = "Option::is_none")]
+    pub stratum: Option<String>,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::CutDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CutDecision {
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "until")]
+    pub until: u64,
+    #[serde(rename = "rubric_revision")]
+    pub rubric_revision: String,
+    #[serde(rename = "reference")]
+    pub reference: bool,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalCohortSetup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalCohortSetup {
+    #[serde(rename = "inventory_at")]
+    pub inventory_at: u64,
+    #[serde(rename = "inventory_digest")]
+    pub inventory_digest: String,
+    #[serde(rename = "families", default, skip_serializing_if = "Option::is_none")]
+    pub families: Option<Vec<FamilyDecision>>,
+    #[serde(rename = "cases", default, skip_serializing_if = "Option::is_none")]
+    pub cases: Option<Vec<CaseDecision>>,
+    #[serde(rename = "cuts")]
+    pub cuts: Vec<CutDecision>,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalRepairCohortSetup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCohortSetup {
+    #[serde(rename = "setup")]
+    pub setup: EvalCohortSetup,
+    #[serde(rename = "repairs")]
+    pub repairs: Vec<EvalRepairCaseRequest>,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalAuthoringSkip`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EvalAuthoringSkip {
+    #[serde(rename = "item")]
+    pub item: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EvalAuthoringReport {
+    #[serde(rename = "families_assigned")]
+    pub families_assigned: u64,
+    #[serde(rename = "families_extended")]
+    pub families_extended: u64,
+    #[serde(rename = "cases_recorded")]
+    pub cases_recorded: u64,
+    #[serde(rename = "cases_reused")]
+    pub cases_reused: u64,
+    #[serde(rename = "labels_added")]
+    pub labels_added: u64,
+    #[serde(rename = "cohorts_cut")]
+    pub cohorts_cut: Vec<String>,
+    #[serde(rename = "source_receipts")]
+    pub source_receipts: Vec<ScopedReadReceipt>,
+    #[serde(rename = "cuts_with_coverage_gaps")]
+    pub cuts_with_coverage_gaps: u64,
+    #[serde(rename = "cohorts_retired")]
+    pub cohorts_retired: Vec<String>,
+    #[serde(rename = "cohorts_kept")]
+    pub cohorts_kept: u64,
+    #[serde(rename = "skipped")]
+    pub skipped: Vec<EvalAuthoringSkip>,
+}
+
+/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalRepairCohortReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCohortReport {
+    #[serde(rename = "authoring")]
+    pub authoring: EvalAuthoringReport,
+    #[serde(rename = "repairs")]
+    pub repairs: Vec<EvalRepairCaseReference>,
+}
+
 /// `oneiron::skill_optimize::eval_set::measurement::EvalArmPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27704,94 +27812,6 @@ pub struct EvalMeasurementRequest {
 pub struct EvalMeasurementRef {
     #[serde(rename = "digest")]
     pub digest: String,
-}
-
-/// `oneiron::skill_optimize::eval_set::authoring::apply::FamilyDecision`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct FamilyDecision {
-    #[serde(rename = "group")]
-    pub group: String,
-    #[serde(rename = "purpose")]
-    pub purpose: FamilyPurpose,
-}
-
-/// `oneiron::skill_optimize::eval_set::authoring::apply::CaseDecision`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct CaseDecision {
-    #[serde(rename = "candidate")]
-    pub candidate: String,
-    #[serde(rename = "stratum", default, skip_serializing_if = "Option::is_none")]
-    pub stratum: Option<String>,
-}
-
-/// `oneiron::skill_optimize::eval_set::authoring::apply::CutDecision`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct CutDecision {
-    #[serde(rename = "seat")]
-    pub seat: EvalSeat,
-    #[serde(rename = "from")]
-    pub from: u64,
-    #[serde(rename = "until")]
-    pub until: u64,
-    #[serde(rename = "rubric_revision")]
-    pub rubric_revision: String,
-    #[serde(rename = "reference")]
-    pub reference: bool,
-}
-
-/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalCohortSetup`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortSetup {
-    #[serde(rename = "inventory_at")]
-    pub inventory_at: u64,
-    #[serde(rename = "inventory_digest")]
-    pub inventory_digest: String,
-    #[serde(rename = "families", default, skip_serializing_if = "Option::is_none")]
-    pub families: Option<Vec<FamilyDecision>>,
-    #[serde(rename = "cases", default, skip_serializing_if = "Option::is_none")]
-    pub cases: Option<Vec<CaseDecision>>,
-    #[serde(rename = "cuts")]
-    pub cuts: Vec<CutDecision>,
-}
-
-/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalAuthoringSkip`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct EvalAuthoringSkip {
-    #[serde(rename = "item")]
-    pub item: String,
-    #[serde(rename = "reason")]
-    pub reason: String,
-}
-
-/// `oneiron::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct EvalAuthoringReport {
-    #[serde(rename = "families_assigned")]
-    pub families_assigned: u64,
-    #[serde(rename = "families_extended")]
-    pub families_extended: u64,
-    #[serde(rename = "cases_recorded")]
-    pub cases_recorded: u64,
-    #[serde(rename = "cases_reused")]
-    pub cases_reused: u64,
-    #[serde(rename = "labels_added")]
-    pub labels_added: u64,
-    #[serde(rename = "cohorts_cut")]
-    pub cohorts_cut: Vec<String>,
-    #[serde(rename = "source_receipts")]
-    pub source_receipts: Vec<ScopedReadReceipt>,
-    #[serde(rename = "cuts_with_coverage_gaps")]
-    pub cuts_with_coverage_gaps: u64,
-    #[serde(rename = "cohorts_retired")]
-    pub cohorts_retired: Vec<String>,
-    #[serde(rename = "cohorts_kept")]
-    pub cohorts_kept: u64,
-    #[serde(rename = "skipped")]
-    pub skipped: Vec<EvalAuthoringSkip>,
 }
 
 /// `oneiron::skill_optimize::eval_set::doors::EvalAuthoringRef`.

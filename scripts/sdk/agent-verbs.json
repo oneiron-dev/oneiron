@@ -7124,6 +7124,22 @@
       "openapi": true
     },
     {
+      "name": "vault.evals.repair.cohorts.setup",
+      "description": "The owner records explicit Repair recipes under the original scoped reader before audited cohort cuts. Returns actual Repair refs and receipts beside the ordinary setup report, never source text or expected responses.",
+      "input": "crate::skill_optimize::EvalRepairCohortSetup",
+      "output": "crate::skill_optimize::EvalRepairCohortReport",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.repair.cohorts.setup\", &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.evals.measurements.request",
       "description": "The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response.",
       "input": "crate::skill_optimize::EvalMeasurementRequest",
