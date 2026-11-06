@@ -273,9 +273,12 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<WalkOutput> {
         let scope = self.cursor_scope(listing);
         let mut at = scope
-            .open_with(cursor, |bytes| {
-                WalkPosition::from_bytes(bytes, reader, self.options.page_byte_cap)
-            })?
+            .open_with(
+                cursor,
+                self.options.page_byte_cap.max(char::MAX.len_utf8()),
+                || checkpoint(reader),
+                |bytes| WalkPosition::from_bytes(bytes, reader, self.options.page_byte_cap),
+            )?
             .unwrap_or_default();
         let mut walk = Walk {
             out: CommandOutputBuilder::new(self.options),
@@ -287,8 +290,12 @@ impl GraphFsResolver<'_, '_> {
             bytes: walk.out.into_bytes(),
             next_cursor: cut
                 .then(|| {
-                    at.to_bytes(reader, self.options.page_byte_cap)
-                        .map(|position| scope.seal_bytes(&position))
+                    let position = at.to_bytes(reader, self.options.page_byte_cap)?;
+                    scope.seal_bytes_with(
+                        &position,
+                        self.options.page_byte_cap.max(char::MAX.len_utf8()),
+                        || checkpoint(reader),
+                    )
                 })
                 .transpose()?,
             total: walk.total,
