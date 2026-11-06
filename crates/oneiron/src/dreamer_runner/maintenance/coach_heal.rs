@@ -615,6 +615,10 @@ impl Vault {
             {
                 value["repair"] = stale;
             }
+            if route == HealRoute::Person {
+                value["repair"] = super::coach_person::report_repair_in_txn(self, txn, &receipt, issue)
+                    .unwrap_or(serde_json::Value::Null);
+            }
             let proposal = proposals::emit_in_txn(
                 self,
                 txn,
