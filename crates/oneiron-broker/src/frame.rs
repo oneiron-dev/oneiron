@@ -15,6 +15,11 @@
 //! to edit) comes as chunks the same way (FIX 1895): in place of its
 //! segment, the length word [`CHUNKED_BODY`], then one segment per chunk,
 //! then an empty segment, then the key. It is at most [`MAX_STREAM`] bytes.
+//!
+//! A git exchange (OSH-3) opens with the length word [`GIT_CALL`] in place
+//! of the header's length, and runs its own steps (see `git_http`): its
+//! header, its body in chunks, the broker's acknowledgement, then the key,
+//! then a streamed reply.
 
 use std::io;
 
@@ -22,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::Zeroizing;
 
+use crate::git_http::GitCallHeader;
 use crate::send::push_wiped;
 use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
@@ -49,14 +55,21 @@ pub const MAX_SECRET: usize = 4096;
 /// The largest JSON header segment.
 pub(crate) const MAX_HEADER: usize = 64 << 10;
 
-async fn write_segment<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
+/// The length word that opens a git exchange's frame in place of a model
+/// call's header length. No header is that long: [`MAX_HEADER`] bounds one.
+pub(crate) const GIT_CALL: u32 = u32::MAX - 1;
+
+pub(crate) async fn write_segment<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    bytes: &[u8],
+) -> io::Result<()> {
     let len =
         u32::try_from(bytes.len()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(bytes).await
 }
 
-async fn read_segment<R: AsyncRead + Unpin>(
+pub(crate) async fn read_segment<R: AsyncRead + Unpin>(
     reader: &mut R,
     max: usize,
 ) -> io::Result<Zeroizing<Vec<u8>>> {
@@ -166,10 +179,33 @@ pub(crate) struct ReadCall {
     pub(crate) secret: Zeroizing<Vec<u8>>,
 }
 
-/// Reads one call. Any cut, oversized or undecodable segment is
-/// [`Refusal::Frame`].
-pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<ReadCall, Refusal> {
-    let header = read_call_header(reader).await?;
+/// One frame as read from the wire: a model call whole, or a git
+/// exchange's header, its body still to come.
+pub(crate) enum ReadFrame {
+    Model(ReadCall),
+    Git(GitCallHeader),
+}
+
+/// Reads one frame: a model call whole, or a git exchange's header. Any
+/// cut, oversized or undecodable segment is [`Refusal::Frame`].
+pub(crate) async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<ReadFrame, Refusal> {
+    let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
+    if len == GIT_CALL {
+        return read_git_header(reader).await.map(ReadFrame::Git);
+    }
+    let header = read_sized(reader, len, MAX_HEADER)
+        .await
+        .map_err(|_| Refusal::Frame)?;
+    let header = serde_json::from_slice(&header).map_err(|_| Refusal::Frame)?;
+    read_call_rest(reader, header).await.map(ReadFrame::Model)
+}
+
+/// Reads the rest of a call whose header is `header`: its body, the whole
+/// Responses turn, and its key.
+async fn read_call_rest<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    header: CallHeader,
+) -> Result<ReadCall, Refusal> {
     let body = read_body(reader).await.map_err(|_| Refusal::Frame)?;
     let whole = if header.shape == crate::Shape::OpenAiResponses {
         Some(
@@ -191,12 +227,29 @@ pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Re
     })
 }
 
-/// Reads one call's header, then passes over its body, keeping none of it,
-/// and reads its key into a buffer wiped as it drops: for a call answered
-/// without a send (FIX 8559). Any cut, oversized or undecodable segment is
-/// [`Refusal::Frame`].
-pub(crate) async fn skip_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<CallHeader, Refusal> {
-    let header = read_call_header(reader).await?;
+/// A frame whose call ran out of time before it had a slot: a model call
+/// read past, or a git exchange's header, its body still to come.
+pub(crate) enum SkippedFrame {
+    Model(CallHeader),
+    Git(GitCallHeader),
+}
+
+/// Reads one frame for a call answered without a send (FIX 8559): a model
+/// call's header, then past its body, keeping none of it, and its key into
+/// a buffer wiped as it drops; or a git exchange's header alone, since a
+/// git exchange keeps no model deadline. Any cut, oversized or undecodable
+/// segment is [`Refusal::Frame`].
+pub(crate) async fn skip_frame<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<SkippedFrame, Refusal> {
+    let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
+    if len == GIT_CALL {
+        return read_git_header(reader).await.map(SkippedFrame::Git);
+    }
+    let header = read_sized(reader, len, MAX_HEADER)
+        .await
+        .map_err(|_| Refusal::Frame)?;
+    let header: CallHeader = serde_json::from_slice(&header).map_err(|_| Refusal::Frame)?;
     skip_body(reader).await.map_err(|_| Refusal::Frame)?;
     if header.shape == crate::Shape::OpenAiResponses {
         let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
@@ -207,7 +260,15 @@ pub(crate) async fn skip_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Ca
     read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
-    Ok(header)
+    Ok(SkippedFrame::Model(header))
+}
+
+/// Reads a git exchange's header, after its frame's opening word.
+async fn read_git_header<R: AsyncRead + Unpin>(reader: &mut R) -> Result<GitCallHeader, Refusal> {
+    let header = read_segment(reader, MAX_HEADER)
+        .await
+        .map_err(|_| Refusal::Frame)?;
+    serde_json::from_slice(&header).map_err(|_| Refusal::Frame)
 }
 
 /// Reads a call's body: one segment of at most [`MAX_BODY`] bytes, or the
@@ -246,13 +307,6 @@ async fn skip_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<()> {
         }
         skip_sized(reader, len, STREAM_CHUNK).await?;
     }
-}
-
-async fn read_call_header<R: AsyncRead + Unpin>(reader: &mut R) -> Result<CallHeader, Refusal> {
-    let header = read_segment(reader, MAX_HEADER)
-        .await
-        .map_err(|_| Refusal::Frame)?;
-    serde_json::from_slice(&header).map_err(|_| Refusal::Frame)
 }
 
 /// Writes one reply: its header, then its body.
