@@ -295,6 +295,11 @@ pub(super) fn touch(
     let basis = touch_basis(server, &target)?;
     let (blob, document) = read_touch(server, &target, None)?;
     let rows = touch_rows(server, target.id)?;
+    // Where the row sits, kept beside the machine's copy (FIX 14534).
+    let content_world = target
+        .admission
+        .content_world(target.id)
+        .map_err(|_| AppError::internal_server_error("touch content world unavailable"))?;
     let mut room = RESIDENCE_PAGE_REPLY_BYTES;
     let mut named = Vec::new();
     let blob = touch_item(
@@ -314,6 +319,7 @@ pub(super) fn touch(
         "entityId": target.id.to_hex(),
         "blob": blob,
         "document": document,
+        "contentWorld": content_world,
     });
     if let Some(basis) = basis
         && !named.is_empty()
