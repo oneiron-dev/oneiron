@@ -60,6 +60,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 /// sealed-content door calls it, and what it packs leaves this machine only
 /// sealed under the world's key. It packs no key pad, which lives in its
 /// world's windows too: pads ride only the sealed pad object.
+///
+/// After the pass, the erased-actor scrubs that every window export and
+/// persist runs (`egress::export_scrubbed_window_snapshot`) run over
+/// the whole mirror (FIX 19525): a room fact, origin claim, section-fit
+/// receipt or birth carrier that names an actor this vault erased is
+/// rewritten or goes, also one a merged bundle section brought for a row not
+/// held here, and the window is pinned history-free first.
 pub(crate) fn reverse_rematerialize_for_sealing(
     vault: &Vault,
     doc: &LoroDoc,
@@ -70,7 +77,17 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     if let Err(error) = super::sealed_membership::drop_departed_carriers(vault, doc, window_key) {
         tracing::warn!(%error, window = %window_key.as_str(), "sealed mirror kept departed rows");
     }
-    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)
+    let packed =
+        reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)?;
+    // FIX 4227, 4228: a room fact that names an erased actor.
+    crate::sync::room_facts::scrub_room_facts(vault, doc, Some(window_key))?;
+    // FIX 3877: an origin claim carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(window_key))?;
+    // FIX 12769: a section-fit receipt carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(window_key))?;
+    // FIX 6279: a birth carrier whose maker this vault erased.
+    crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(window_key))?;
+    Ok(packed)
 }
 
 /// [`reverse_rematerialize`] for only the `rows` a commit just wrote, not the
