@@ -22,4 +22,3 @@ pub const NO_KEY_CALL_DOMAIN: &[u8] = b"oneiron.esign.dispatch.no_key.call.v1";
 /// How many bytes of that digest the key keeps, as lower hex: a fresh
 /// nonce's length.
 pub const NO_KEY_CALL_KEY_BYTES: usize = 16;
-
