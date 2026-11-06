@@ -63,6 +63,12 @@ pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.a
 /// bound to no actor (`api::facade::hooks`, FIX 1439). No parts.
 pub const FACADE_UNBOUND_CALLER: &[u8] = b"oneiron:facade-unbound-caller:v1";
 
+/// The run id of one shared agent action (`code_run::actions::execution`,
+/// FIX 9702). Parts: the actor, the verb id, the idempotency key, then for a
+/// live run's action `live-run`, the attempt id and its try count (u32
+/// big-endian).
+pub const SHARED_ACTION: &[u8] = b"oneiron:shared-action:v1";
+
 /// One occurrence of one commitment series
 /// (`commitment_schedule::commitment_instance_id`). Parts: series, due-at, window
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
@@ -301,12 +307,6 @@ pub const SYNC_TEXT_BIRTH_INCARNATION: &[u8] = b"oneiron.sync-text.birth-incarna
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
-/// The run id of one shared agent action (`code_run::actions::execution`,
-/// FIX 9702). Parts: the actor, the verb id, the idempotency key, then for a
-/// live run's action `live-run`, the attempt id and its try count (u32
-/// big-endian).
-pub const SHARED_ACTION: &[u8] = b"oneiron:shared-action:v1";
-
 /// A channel-identity autonomy handle (`channel_identity_autonomy::codec::address`,
 /// FIX 9675): a read or action envelope, a read or action grant, an autonomy
 /// mode, a graduation scope or evidence row, a space-posting envelope. Parts:
@@ -395,5 +395,4 @@ pub(crate) const ALL: [&[u8]; 60] = [
     ASSET_BODY_HELD,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,
-    SHARED_ACTION,
 ];
