@@ -314,7 +314,7 @@ fn whole_sequence_values<'ast, 'src>(
         }
     }
     let last = last.get_inner_expression();
-    if !values.is_empty() && fresh_value(last) {
+    if fresh_value(last) {
         values.push(last);
     } else if !whole_value(last, semantic, &mut sequence_accounted)
         && !(values.is_empty()
