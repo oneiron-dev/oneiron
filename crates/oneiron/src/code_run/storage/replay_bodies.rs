@@ -138,7 +138,22 @@ pub(crate) fn replay_owners(
 ///
 /// An outcome that does not encode.
 pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
-    for call in &mut record.bridge_calls {
+    let retained_calls: std::collections::BTreeSet<usize> = record
+        .bridge_calls
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| {
+            record
+                .outputs
+                .iter()
+                .any(|output| record.call_retains_output(call, output))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    for (index, call) in record.bridge_calls.iter_mut().enumerate() {
+        if retained_calls.contains(&index) {
+            continue;
+        }
         // A verb's answer keeps the rows it was served from; one that does
         // not decode names none it is known to be served from.
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
@@ -158,8 +173,14 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
     }
+    let retained: std::collections::BTreeSet<String> = record
+        .outputs
+        .iter()
+        .filter(|output| record.output_is_retained_receipt(output))
+        .map(|output| output.path.clone())
+        .collect();
     for output in &mut record.outputs {
-        if holds_reply_content(&output.path) {
+        if holds_reply_content(&output.path) && !retained.contains(&output.path) {
             output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
         }
     }
