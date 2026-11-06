@@ -227,8 +227,8 @@ impl AgentPatternLaunchRunner {
         // until the capture returns on any path (FIX 4639).
         let _turn = self.ai.enter_turn();
         std::thread::scope(|scope| {
-            scope
-                .spawn(move || -> Result<LlmResponse> {
+            crate::engine_thread("resident-pattern".into())
+                .spawn_scoped(scope, move || -> Result<LlmResponse> {
                     let reactor = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
@@ -242,6 +242,7 @@ impl AgentPatternLaunchRunner {
                         .block_on(self.backend.generate(request, &self.lease))
                         .map_err(unanswered)
                 })
+                .expect("failed to spawn thread")
                 .join()
         })
         .unwrap_or_else(|_| Err(fault(STOPPED)))
