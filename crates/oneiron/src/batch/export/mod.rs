@@ -66,6 +66,7 @@ mod document_snapshot;
 mod document_types;
 mod document_validation;
 mod embedding_setup;
+mod evidence_import;
 pub use embedding_setup::*;
 mod epoch_floors;
 mod expression_import;
