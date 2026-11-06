@@ -48,7 +48,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
-use super::session_ops::{SnapshotSourceCheck, SnapshotSourceMiss};
+use super::session_ops::{AppendSourceCheck, SnapshotSourceCheck, SnapshotSourceMiss};
 use super::wire::{self, Incoming, Outgoing};
 use super::worker_host;
 
@@ -562,7 +562,7 @@ impl Channel {
         &mut self,
         op: &str,
         epoch: Option<&str>,
-        mut body: JsonValue,
+        body: JsonValue,
         input: Outbound<'_>,
         lease: &oneiron::BudgetLease,
     ) -> Result<Incoming, ReleasedExchangeError> {
@@ -572,46 +572,71 @@ impl Channel {
                 .await
                 .map_err(ReleasedExchangeError::Transport);
         }
-        let request_id = next_request_id();
-        if let Some(fields) = body.as_object_mut() {
-            fields.insert(
-                "input".to_owned(),
-                wire::region(request_id, input.len, input.encoding),
-            );
-        }
-        self.send_with_fd_released(op, request_id, epoch, body, input.fd, lease, false)
-            .await
-            .map_err(|error| match error {
-                DispatchWriteError::Transport(error) => ReleasedExchangeError::Transport(error),
-                DispatchWriteError::Release(error) => ReleasedExchangeError::Release(error),
-                DispatchWriteError::Source(never) => match never {},
-            })?;
-        loop {
-            match self
-                .next()
-                .await
-                .map_err(ReleasedExchangeError::Transport)?
-            {
-                Some(frame) if frame.request_id == request_id => return Ok(frame),
-                Some(_) => {}
-                None => {
-                    return Err(ReleasedExchangeError::Transport(
-                        io::ErrorKind::UnexpectedEof.into(),
-                    ));
-                }
-            }
-        }
+        self.exchange_fd_checked(
+            op,
+            epoch,
+            body,
+            input,
+            lease,
+            None::<fn() -> std::future::Ready<Result<(), std::convert::Infallible>>>,
+        )
+        .await
+        .map_err(|error| match error {
+            DispatchWriteError::Transport(error) => ReleasedExchangeError::Transport(error),
+            DispatchWriteError::Release(error) => ReleasedExchangeError::Release(error),
+            DispatchWriteError::Source(never) => match never {},
+        })
     }
 
     pub(super) async fn exchange_snapshot_released(
         &mut self,
         op: &str,
         epoch: Option<&str>,
-        mut body: JsonValue,
+        body: JsonValue,
         input: Outbound<'_>,
         lease: &oneiron::BudgetLease,
         source: &SnapshotSourceCheck<'_>,
     ) -> Result<Incoming, SnapshotExchangeError> {
+        self.exchange_fd_checked(op, epoch, body, input, lease, Some(source))
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => SnapshotExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => SnapshotExchangeError::Release(error),
+                DispatchWriteError::Source(miss) => SnapshotExchangeError::Source(miss),
+            })
+    }
+
+    pub(super) async fn exchange_append_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: &AppendSourceCheck<'_>,
+    ) -> Result<Incoming, AppendExchangeError> {
+        self.exchange_fd_checked(op, epoch, body, input, lease, Some(source))
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => AppendExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => AppendExchangeError::Release(error),
+                DispatchWriteError::Source(miss) => AppendExchangeError::Source(miss),
+            })
+    }
+
+    async fn exchange_fd_checked<F, Fut, E>(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: Option<F>,
+    ) -> Result<Incoming, DispatchWriteError<E>>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), E>>,
+    {
         let request_id = next_request_id();
         if let Some(fields) = body.as_object_mut() {
             fields.insert(
@@ -619,32 +644,14 @@ impl Channel {
                 wire::region(request_id, input.len, input.encoding),
             );
         }
-        self.send_with_fd_checked(
-            op,
-            request_id,
-            epoch,
-            body,
-            input.fd,
-            lease,
-            false,
-            Some(source),
-        )
-        .await
-        .map_err(|error| match error {
-            DispatchWriteError::Transport(error) => SnapshotExchangeError::Transport(error),
-            DispatchWriteError::Release(error) => SnapshotExchangeError::Release(error),
-            DispatchWriteError::Source(miss) => SnapshotExchangeError::Source(miss),
-        })?;
+        self.send_with_fd_checked(op, request_id, epoch, body, input.fd, lease, false, source)
+            .await?;
         loop {
-            match self
-                .next()
-                .await
-                .map_err(SnapshotExchangeError::Transport)?
-            {
+            match self.next().await.map_err(DispatchWriteError::Transport)? {
                 Some(frame) if frame.request_id == request_id => return Ok(frame),
                 Some(_) => {}
                 None => {
-                    return Err(SnapshotExchangeError::Transport(
+                    return Err(DispatchWriteError::Transport(
                         io::ErrorKind::UnexpectedEof.into(),
                     ));
                 }
@@ -799,6 +806,12 @@ pub(super) enum SnapshotExchangeError {
     Transport(io::Error),
     Release(oneiron::LlmError),
     Source(SnapshotSourceMiss),
+}
+
+pub(super) enum AppendExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(oneiron::llm::SessionInvalidation),
 }
 
 enum DispatchWriteError<E = std::convert::Infallible> {

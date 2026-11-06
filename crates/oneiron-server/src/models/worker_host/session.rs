@@ -41,6 +41,8 @@
 //! work; the next fork reuses only the identical beginning of the real
 //! turn's tokens (`prepare.rs`).
 #[cfg(unix)]
+mod append;
+#[cfg(unix)]
 mod commit;
 #[cfg(unix)]
 mod lifecycle;

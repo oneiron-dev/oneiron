@@ -21,11 +21,12 @@ use oneiron::llm::{
 use serde_json::{Value as JsonValue, json};
 
 use super::lifecycle::{self, Admitted};
-use super::park;
 use super::policy::{self, SuffixPlan};
 use super::prepare;
-use super::registry::{self, Basis, PendingTurn, Phase, Place, ReleasedSessionFault, send};
+use super::registry::{self, Basis, PendingTurn, Phase, Place, send};
 use super::{AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit};
+use super::{append, park};
+use crate::models::native_exl3::AppendSourceFuture;
 
 /// [`super::reply_committed`] on this platform: claims the turn's pending
 /// successor and advances it on a task of its own; once it is published,
@@ -191,17 +192,22 @@ async fn advance(
         &commit,
         &conversation,
         dispatch_lease.as_ref(),
+        &authority,
     )
     .await;
     let staged = match outcome {
         Ok(Some(staged)) => staged,
         Ok(None) => return,
-        Err(ReleasedSessionFault::Invalidation(reason)) => {
+        Err(append::Failure::Invalidation(reason)) => {
             registry::drop_session(&worker_id, &place.epoch, &binding, reason);
             return;
         }
-        Err(ReleasedSessionFault::Release(error)) => {
+        Err(append::Failure::Release(error)) => {
             tracing::debug!(?error, "a model session's successor dispatch ended");
+            return;
+        }
+        Err(append::Failure::Source(reason)) => {
+            registry::drop_session(&worker_id, &place.epoch, &binding, reason);
             return;
         }
     };
@@ -365,7 +371,8 @@ async fn stage(
     commit: &ReplyCommit,
     path: &JsonValue,
     dispatch_lease: Option<&oneiron::BudgetLease>,
-) -> Result<Option<CanonicalCheckpointRef>, ReleasedSessionFault> {
+    authority: &Arc<dyn CheckpointAuthority>,
+) -> Result<Option<CanonicalCheckpointRef>, append::Failure> {
     let append = SessionAppend {
         target: target.clone(),
         stamp: SessionOpStamp {
@@ -375,18 +382,35 @@ async fn stage(
         base: base.cloned(),
         head: Some(commit.head),
     };
+    let source = || -> AppendSourceFuture<'_> {
+        let authority = Arc::clone(authority);
+        let commit = ReplyCommit {
+            head: commit.head,
+            message: commit.message,
+            text: String::new(),
+        };
+        Box::pin(async move {
+            let verdict = tokio::task::spawn_blocking(move || authority.recheck(&commit))
+                .await
+                .unwrap_or(AuthorityVerdict::Rejects(
+                    SessionInvalidation::DisclosureOrScope,
+                ));
+            match verdict {
+                AuthorityVerdict::Holds => Ok(()),
+                AuthorityVerdict::Rejects(reason) => Err(reason),
+            }
+        })
+    };
     let appended: SessionAppended = match dispatch_lease {
-        Some(lease) => {
-            registry::send_released(place, SessionOp::Append, &append, path, lease).await
-        }
+        Some(lease) => append::send(place, &append, path, lease, &source).await,
         None => send(place, SessionOp::Append, &append, Some(path))
             .await
-            .map_err(ReleasedSessionFault::Invalidation),
+            .map_err(append::Failure::Invalidation),
     }?;
     match policy::suffix_plan(base, &appended) {
         SuffixPlan::Compute => {}
         SuffixPlan::Nothing => return Ok(None),
-        SuffixPlan::Drop(reason) => return Err(ReleasedSessionFault::Invalidation(reason)),
+        SuffixPlan::Drop(reason) => return Err(append::Failure::Invalidation(reason)),
     }
     let suffix = SessionSuffixCommit {
         target: target.clone(),
@@ -397,14 +421,14 @@ async fn stage(
     };
     let staged: SessionSuffixStaged = send(place, SessionOp::SuffixCommit, &suffix, None)
         .await
-        .map_err(ReleasedSessionFault::Invalidation)?;
+        .map_err(append::Failure::Invalidation)?;
     // The chain: a successor names its base and ends at the reply's HEAD;
     // one that does not is stale, repaired by dropping it, never trusted.
     let chained = staged.staged.parent == base.map(|base| base.digest)
         && staged.staged.head == Some(commit.head)
         && staged.staged.frontier_tokens == appended.staged_tokens;
     if !chained {
-        return Err(ReleasedSessionFault::Invalidation(
+        return Err(append::Failure::Invalidation(
             SessionInvalidation::StaleHead,
         ));
     }

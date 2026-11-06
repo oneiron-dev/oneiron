@@ -29,6 +29,10 @@ mod transport;
 mod updates;
 mod wire;
 
+pub(super) use session_ops::{
+    AppendSourceCheck, AppendSourceFuture, ReleasedAppendFault,
+    append_source_released as session_append_source_released,
+};
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
 pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
 pub(super) use transport::next_request_id;
