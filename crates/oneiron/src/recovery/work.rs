@@ -11,8 +11,8 @@
 //! Artifact validation yields between ordered groups, rows and nested history
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
-//! retained-parent and workflow checks, encoding and its envelope checksum
-//! still run whole. The outer canonical digest yields between BLAKE3 chunks.
+//! retained-parent and workflow checks, and encoding still run whole. The
+//! envelope checksum and outer canonical digest yield between BLAKE3 chunks.
 //! Aborted-transaction preflight and the NOTE workflow plan also run whole;
 //! manifest construction yields between its original whole pack/hash chunks.
 //! Recapture yields between structural stages while retaining one store read
@@ -244,7 +244,7 @@ impl RecoveryWork {
                     }
                     let encoded = self
                         .source
-                        .encode_validated_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
+                        .encode_validated_payload_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
                     limit(encoded.len(), self.budget.max_bytes)?;
                     self.encoded_digest = Some(EncodedDigest::new(encoded));
                 }
