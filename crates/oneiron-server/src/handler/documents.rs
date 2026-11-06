@@ -278,6 +278,17 @@ fn owner_request(
         })
         .map_err(storage_error)?;
         let _ = direct.send(frame);
+        // The NOTE's pending forks follow its text (FIX 12789). A denial
+        // withholds them as it withholds the text.
+        if let Ok(forks) = crate::server::blocking(|| {
+            server
+                .reassert_manager
+                .export_owner_note_forks_for(entity, peer)
+        }) {
+            for frame in forks {
+                let _ = direct.send(frame);
+            }
+        }
     }
     Ok(())
 }
@@ -553,6 +564,18 @@ pub(super) fn document_delivery_retrying(
                 owner_receipt(server, &doc, remote_vv, peer, &mut out, retry)?;
                 continue;
             }
+            // A fork change moves no text: the device takes the NOTE's
+            // pending forks again, then their set (FIX 12789).
+            if doc.kind == document_sub_tags::NOTE_FORK_SET {
+                if let Ok(forks) = crate::server::blocking(|| {
+                    server
+                        .reassert_manager
+                        .export_owner_note_forks_for(doc.entity, peer)
+                }) {
+                    out.extend(forks);
+                }
+                continue;
+            }
             // Denial withholds this entity; it never falls back to the raw notice.
             match crate::server::blocking(|| {
                 server
@@ -563,6 +586,10 @@ pub(super) fn document_delivery_retrying(
                 Err(error) if waited_out(&error) => retry.extend(notice(&doc)),
                 Err(_) => {}
             }
+            continue;
+        }
+        // NOTE forks go only to the owner's own devices (FIX 12789).
+        if doc.kind == document_sub_tags::NOTE_FORK_SET {
             continue;
         }
         // FIX 10730: a marked source's notice reaches its copy-id subscribers as the copy.

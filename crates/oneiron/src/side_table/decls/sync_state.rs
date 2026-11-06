@@ -300,6 +300,11 @@ side_tables! {
     /// Loro snapshot bytes of a proposal (non-live) NOTE document head. Key: hex32(note) ":"
     /// hex32(head).
     NOTE_PROPOSAL_DOC: SyncState b"note_proposal_doc:v1:" Raw;
+    /// Marks a replica's NOTE fork its authority sent (FIX 12789): the
+    /// authority's fork set settles it, and a fork made here carries no mark.
+    /// Key: hex32(note) ":" hex32(fork); value: BLAKE3 of the fork document
+    /// as sent.
+    NOTE_FORK_AUTHORITY: SyncState b"note_fork_authority:v1:" Raw;
     /// Idempotent operation receipt for one authenticated NOTE command. Key: hex32(note) ":"
     /// hex32(request id).
     NOTE_RECEIPT_BY_REQUEST: SyncState b"nr:e:" LegacyJson
