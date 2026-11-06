@@ -19,6 +19,7 @@ use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use mark::{Mark, WalkRow};
+mod read_sources;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -225,11 +226,7 @@ pub(super) fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkP
 }
 
 fn entity_type_in(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
-    Ok(dbs
-        .entities()
-        .get(txn, id.as_bytes())?
-        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-        .map(|header| header.entity_type))
+    read_sources::entity_type_in(dbs, txn, id, &mut None)
 }
 
 /// Withdraws `document`'s dependents for `door` in the caller's transaction:
@@ -431,34 +428,16 @@ pub(super) fn pending_withdrawal_in(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<CarriedWorlds>> {
-    if !any_pending_walk(dbs, txn)? {
-        return Ok(None);
-    }
-    let mut withdrawn: Option<CarriedWorlds> = None;
-    let mut seen = BTreeSet::new();
-    // A worklist up the epoch summaries' sources, not recursion.
-    let mut pending = vec![*id];
-    while let Some(node) = pending.pop() {
-        if !seen.insert(node) {
-            continue;
-        }
-        let sources = super::regeneration::sources_of(dbs, txn, &node)?;
-        if sources.is_empty() {
-            continue;
-        }
-        let entity_type = entity_type_in(dbs, txn, &node)?;
-        if let Some(worlds) = direct_withdrawal_in(dbs, txn, &node, &sources, entity_type)? {
-            withdrawn
-                .get_or_insert_with(CarriedWorlds::default)
-                .absorb(&worlds);
-        }
-        if entity_type == Some(crate::registry::ENTITY_TYPE_SUMMARY)
-            && integrity::epoch_summary_in(dbs, txn, &node)?
-        {
-            pending.extend(sources.iter().map(|source| source.document));
-        }
-    }
-    Ok(withdrawn)
+    pending_withdrawal_observed_in(dbs, txn, id, &mut None)
+}
+
+pub(super) fn pending_withdrawal_observed_in(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    observer: &mut Option<&mut super::StaleReadObserver<'_>>,
+) -> Result<Option<CarriedWorlds>> {
+    read_sources::pending_withdrawal_in(dbs, txn, id, observer)
 }
 
 /// The worlds the pending walks withdraw `node` for through its own
@@ -470,26 +449,7 @@ fn direct_withdrawal_in(
     sources: &[SourceSpan],
     entity_type: Option<u8>,
 ) -> Result<Option<CarriedWorlds>> {
-    let mut withdrawn: Option<CarriedWorlds> = None;
-    for SourceSpan { document, frontier } in sources {
-        let row = row_key(*frontier, node);
-        let Some(walk) = WALK.get(dbs, txn, document)? else {
-            continue;
-        };
-        if !walk.mark.covers(&row) {
-            continue;
-        }
-        let settled = SETTLED.get(dbs, txn, &(*document, row))?;
-        if let Some(worlds) = walk.worlds_for(&row, settled)
-            && !(entity_type == Some(crate::registry::ENTITY_TYPE_EVENT)
-                && crate::calendar::origin::survives_source_deletion(dbs, txn, *node)?)
-        {
-            withdrawn
-                .get_or_insert_with(CarriedWorlds::default)
-                .absorb(&worlds);
-        }
-    }
-    Ok(withdrawn)
+    read_sources::direct_withdrawal_in(dbs, txn, node, sources, entity_type, &mut None)
 }
 
 /// Whether a pending walk withdraws `id` through its own dependency rows: it
@@ -511,7 +471,7 @@ pub(super) fn withdrawn_directly_in(
 
 /// Whether any walk is pending: one seek, so a hot read asks once.
 pub(crate) fn any_pending_walk(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(WALK.iter_raw_from(dbs, txn, &[])?.next().is_some())
+    read_sources::any_pending_walk(dbs, txn, &mut None)
 }
 
 /// A dependency row written while its source's walk is pending is the new

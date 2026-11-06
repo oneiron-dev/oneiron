@@ -446,7 +446,18 @@ pub(crate) fn pending_gate_consent_in(
     txn: &RoTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<Option<PendingGateConsentRecord>> {
-    let Some(record) = TRAY.get(dbs, txn, claim_id.as_bytes())? else {
+    pending_gate_consent_observed_in(dbs, txn, claim_id, &mut None)
+}
+
+pub(crate) fn pending_gate_consent_observed_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+    observer: &mut Option<&mut crate::ports::StaleReadObserver<'_>>,
+) -> Result<Option<PendingGateConsentRecord>> {
+    let Some(record) =
+        crate::ports::stale_reads::side_row(TRAY, dbs, txn, claim_id.as_bytes(), observer)?
+    else {
         return Ok(None);
     };
     if record.claim_id != *claim_id.as_bytes() {

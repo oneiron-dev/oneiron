@@ -510,6 +510,8 @@ struct PickJudgeAsk {
     ask: String,
     /// `a` or `b`: the ask's `option_a` or its `option_b`.
     choice: JudgeAskChoice,
+    /// The new label's explicit read position, not a grant.
+    read_position: Option<oneiron::skill_optimize::JudgeLabelReadPosition>,
 }
 
 #[derive(Debug, Serialize)]
@@ -538,6 +540,7 @@ async fn pick_judge_ask(
             ask,
             matches!(request.choice, JudgeAskChoice::B),
             now_secs(),
+            request.read_position,
         )?;
         Ok(JudgeLabelView {
             ask: hex_id(&label.ask.id),

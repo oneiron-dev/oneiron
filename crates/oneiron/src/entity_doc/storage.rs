@@ -18,6 +18,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod history;
+mod read_sources;
 mod repo_index;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
@@ -96,30 +97,7 @@ pub(super) fn load(
     txn: &RoTxn<'_>,
     h: &Head,
 ) -> Result<EntityDoc> {
-    let slot = DocumentSlot::from_hex(&h.document)?;
-    let bytes = store
-        .port_document_row(txn, slot, DocumentRow::Snapshot)?
-        .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
-    let doc = EntityDoc::from_snapshot(&bytes)?;
-    if doc.birth().entity != h.entity {
-        return Err(Error::CorruptedIndex("document birth entity mismatch"));
-    }
-    // Strictly replay snapshot then updates. Fixed-width keys preserve order.
-    let mut count = 0_u64;
-    for update in store.port_document_updates(txn, slot)? {
-        let status = doc
-            .doc
-            .import(&update.bytes)
-            .map_err(|_| Error::CorruptedIndex("entity document update"))?;
-        if status.pending.is_some() {
-            return Err(Error::CorruptedIndex("entity document update dependencies"));
-        }
-        count += 1;
-    }
-    if count != h.pending {
-        return Err(Error::CorruptedIndex("entity document update sequence"));
-    }
-    Ok(doc)
+    read_sources::load(store, txn, h, None)
 }
 
 /// The write door's scan of a document's new `text`: a text whose only hits
@@ -673,10 +651,16 @@ pub(crate) fn pointer_field_in(
     txn: &RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<TextField>> {
-    Ok(ENTITY_DOC_HEAD
-        .get(dbs, txn, &HexId(*entity))?
-        .filter(|h| h.entity == entity.to_hex())
-        .map(|h| h.field))
+    read_sources::pointer_field_in(dbs, txn, entity, None)
+}
+
+pub(crate) fn pointer_field_in_observed(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    observe: Option<&mut crate::ports::DocumentReadObserver<'_>>,
+) -> Result<Option<TextField>> {
+    read_sources::pointer_field_in(dbs, txn, entity, observe)
 }
 
 /// Read the exact durable document head after the live body was admitted.
@@ -696,12 +680,19 @@ pub(crate) fn resolve_record_body(
     entity: &EntityId,
     body: &[u8],
 ) -> Result<Vec<u8>> {
-    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
-        return Ok(body.to_vec());
-    };
-    require_live(store, txn, entity)?;
-    let doc = load(store, txn, &h)?;
-    body_with_document(&h.field, body, &doc)
+    read_sources::resolve_record_body(store, txn, entity, body, None)
+}
+
+/// Observe only the head and document-backend inputs of the original projection.
+/// Live-row/deletion reads and caller authority still need their own witnesses.
+pub(crate) fn resolve_record_body_observed(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    body: &[u8],
+    observe: &mut crate::ports::DocumentReadObserver<'_>,
+) -> Result<Vec<u8>> {
+    read_sources::resolve_record_body(store, txn, entity, body, Some(observe))
 }
 
 /// The common document, not a second revision-owned text document.

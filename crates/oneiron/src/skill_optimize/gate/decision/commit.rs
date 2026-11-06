@@ -2,6 +2,7 @@
 //! Entry function: `decide_in_txn`.
 //! The gate root owns the verdict and score vocabulary imported through `super`.
 
+use super::sources::observe_sources;
 use super::*;
 
 /// The decision itself, over the committing snapshot. `primary_unknown`: a
@@ -21,15 +22,47 @@ pub(super) fn decide_in_txn(
     goal_axes: &BTreeMap<String, GoalAxisScore>,
     primary_unknown: bool,
 ) -> Result<SkillEditDisposition> {
+    decide_sourced_in_txn(
+        vault,
+        wtxn,
+        proposal,
+        staged,
+        current,
+        cycle,
+        basis,
+        goal_axes,
+        primary_unknown,
+    )
+    .map(|(disposition, _)| disposition)
+}
+
+/// The committing decision beside the native rows its own reads consulted.
+/// Caller-supplied records, basis and scores are not certified by this set.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the decision names every input it rests on, and hiding them in a struct would only move the list"
+)]
+pub(super) fn decide_sourced_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    proposal: &EntityId,
+    staged: &SkillRecord,
+    current: Option<&SkillRecord>,
+    cycle: &SkillEditCycle,
+    basis: &ScoredBasis,
+    goal_axes: &BTreeMap<String, GoalAxisScore>,
+    primary_unknown: bool,
+) -> Result<(SkillEditDisposition, Option<Vec<EntityId>>)> {
+    let mut sources = Some(Vec::new());
     require_open_optimizer_proposal(staged)?;
     // The predecessor was readable when the basis was taken; if it is not
     // readable now it was purged or overwritten mid-flight, which is the same
     // stale-target answer — carried, this time, with the real score pair.
     let Some(current) = current else {
-        return Ok(SkillEditDisposition::RefusedStaleTarget);
+        return Ok((SkillEditDisposition::RefusedStaleTarget, sources));
     };
     if !target_is_current(staged, current) {
-        return Ok(SkillEditDisposition::RefusedStaleTarget);
+        return Ok((SkillEditDisposition::RefusedStaleTarget, sources));
     }
     // The two bodies, as they stand in the snapshot this row commits into,
     // against the two that were scored. A version bump would already have been
@@ -53,13 +86,16 @@ pub(super) fn decide_in_txn(
     // A moved TARGET is the durable answer it always was: the revision this
     // proposal was drafted against is not the one it would now supersede.
     if skill_body_binding_digest(current)? != basis.target_digest {
-        return Ok(SkillEditDisposition::RefusedStaleTarget);
+        return Ok((SkillEditDisposition::RefusedStaleTarget, sources));
     }
     // The evidence, RECOMPUTED here rather than trusted from the read that fed
     // the scorer. An outcome attributed while the judge was thinking reserves
     // new held-out evidence, and accepting on a stale reserve would be exactly
     // the accept-time recomputation rule stated and then not kept.
-    let committed = held_out_receipts_in_txn(vault, wtxn, &target_of(staged)?)?;
+    let committed = observe_sources(
+        &mut sources,
+        super::super::basis::held_out_evidence_sourced_in_txn(vault, wtxn, &target_of(staged)?)?,
+    );
     let (count, digest) = evidence_identity(&committed);
     if count != basis.evidence_count || digest != basis.evidence_digest {
         // Not a ruling: the scores in hand are about a set this transaction can
@@ -71,14 +107,35 @@ pub(super) fn decide_in_txn(
             "the reserved evidence moved while the scorer was thinking",
         ));
     }
-    let world_now = held_out_outcome_results_in_txn(vault, wtxn, &target_of(staged)?)?;
+    let world_now = observe_sources(
+        &mut sources,
+        super::super::basis::held_out_outcome_results_sourced_in_txn(
+            vault,
+            wtxn,
+            &target_of(staged)?,
+        )?,
+    );
     if world_labels_digest(&world_now) != basis.world_digest {
         return Err(retry(
             "world outcome labels moved while the judge was measuring",
         ));
     }
-    if goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.revision != basis.goal_revision
-        || goal_definition_in_txn(vault, wtxn, &target_of(staged)?)?.goal_id != basis.goal_id
+    if observe_sources(
+        &mut sources,
+        super::super::goal_axis::goal_definition_sourced_in_txn(vault, wtxn, &target_of(staged)?)?,
+    )
+    .revision
+        != basis.goal_revision
+        || observe_sources(
+            &mut sources,
+            super::super::goal_axis::goal_definition_sourced_in_txn(
+                vault,
+                wtxn,
+                &target_of(staged)?,
+            )?,
+        )
+        .goal_id
+            != basis.goal_id
     {
         return Err(retry("goal definition moved while the scorer was thinking"));
     }
@@ -87,25 +144,35 @@ pub(super) fn decide_in_txn(
     // Mixed non-floor gains and losses need a separate preference decision;
     // only strict vector dominance reaches automatic admission.
     if floor_regressed(goal_axes) {
-        return Ok(SkillEditDisposition::Rejected);
+        return Ok((SkillEditDisposition::Rejected, sources));
     }
     // An unknown primary axis is carried as a tie, so a vector with no gain
     // on its known axes still rejects; one it would admit or escalate defers
     // below, after the tier checks (OF-495).
     if !dominates(goal_axes) && !is_tradeoff(goal_axes) {
-        return Ok(SkillEditDisposition::Rejected);
+        return Ok((SkillEditDisposition::Rejected, sources));
     }
     // Accept-time recheck. ONE-1448 already excluded protected tiers at
     // SELECTION; this is the second door, and the one that binds a proposal
     // nobody's selector drafted.
-    let target_tier = tier_verdict_in_txn(vault, wtxn, &target_of(staged)?, current)?.tier();
+    let target_tier = observe_sources(
+        &mut sources,
+        crate::skill_optimize::tier::tier_verdict_sourced_in_txn(
+            vault,
+            wtxn,
+            &target_of(staged)?,
+            current,
+        )
+        .map(|(tier, rows)| (tier, Some(rows)))?,
+    )
+    .tier();
     match target_tier {
         Some(tier) if tier.is_protected() => {
-            return Ok(SkillEditDisposition::RefusedProtectedTier);
+            return Ok((SkillEditDisposition::RefusedProtectedTier, sources));
         }
         // An ambiguous tier is not optimizable either: the fail-closed rule is
         // the same one the candidate list applies.
-        None => return Ok(SkillEditDisposition::RefusedProtectedTier),
+        None => return Ok((SkillEditDisposition::RefusedProtectedTier, sources)),
         Some(_) => {}
     }
     // And the PROPOSAL's own tier, resolved independently in this same
@@ -115,44 +182,59 @@ pub(super) fn decide_in_txn(
     // be accepted and then activated as a protected record the loop was never
     // allowed to author. Protected, ambiguous, or simply not the tier the basis
     // was taken over are all the same answer.
-    let proposal_tier = tier_verdict_in_txn(vault, wtxn, proposal, staged)?.tier();
+    let proposal_tier = observe_sources(
+        &mut sources,
+        crate::skill_optimize::tier::tier_verdict_sourced_in_txn(vault, wtxn, proposal, staged)
+            .map(|(tier, rows)| (tier, Some(rows)))?,
+    )
+    .tier();
     let bound = proposal_tier.is_some_and(|tier| !tier.is_protected())
         && proposal_tier == basis.proposal_tier
         && proposal_tier == target_tier;
     if !bound {
-        return Ok(SkillEditDisposition::RefusedProtectedTier);
+        return Ok((SkillEditDisposition::RefusedProtectedTier, sources));
     }
     // The judge's rubric revises at most once per campaign, and only on k
     // fresh anchored labels since its last revision (ARCH-0042 judge re-pin
     // cadence). A tradeoff on it is not put to anyone before then either.
     if current.skill_id == JUDGE_SKILL_ID
-        && !judge_revision_due_in_txn(
-            vault,
-            wtxn,
-            cycle,
-            proposal,
-            &target_of(staged)?,
-            world_now.len(),
-        )?
+        && !observe_sources(
+            &mut sources,
+            super::sources::judge_revision_due_sourced_in_txn(
+                vault,
+                wtxn,
+                cycle,
+                proposal,
+                &target_of(staged)?,
+                world_now.len(),
+            )?,
+        )
     {
-        return Ok(SkillEditDisposition::DeferredJudgeCadence);
+        return Ok((SkillEditDisposition::DeferredJudgeCadence, sources));
     }
     // The full vector's non-regression is not established while a primary
     // axis is unknown: no automatic admission and no ask on a partial vector.
     // The proposal stays open, and the next pass measures it again.
     if primary_unknown {
-        return Ok(SkillEditDisposition::DeferredInconclusive);
+        return Ok((SkillEditDisposition::DeferredInconclusive, sources));
     }
     // A mixed vector may reach the preference ladder only after both tier
     // checks. Otherwise a protected candidate could remain open indefinitely.
     if is_tradeoff(goal_axes) {
-        return Ok(SkillEditDisposition::NeedsTradeoffDecision);
+        return Ok((SkillEditDisposition::NeedsTradeoffDecision, sources));
     }
-    let cap = cycle_cap_in_txn(vault, wtxn)?;
-    if accepted_in_cycle_in_txn(vault, wtxn, cycle, proposal)? >= cap {
-        return Ok(SkillEditDisposition::DeferredCycleCap);
+    let cap = observe_sources(
+        &mut sources,
+        super::super::basis::cycle_cap_sourced_in_txn(vault, wtxn)?,
+    );
+    if observe_sources(
+        &mut sources,
+        super::sources::accepted_in_cycle_sourced_in_txn(vault, wtxn, cycle, proposal)?,
+    ) >= cap
+    {
+        return Ok((SkillEditDisposition::DeferredCycleCap, sources));
     }
-    Ok(SkillEditDisposition::Accepted)
+    Ok((SkillEditDisposition::Accepted, sources))
 }
 
 /// Moves an ANSWERED proposal out of the open question set.

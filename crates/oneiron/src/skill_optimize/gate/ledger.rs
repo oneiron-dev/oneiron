@@ -3,7 +3,12 @@
 use super::*;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
+mod canonical;
 mod codec;
+pub(crate) use canonical::{
+    CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
+    canonical_skill_edit_verdict_in_txn, canonical_skill_edit_verdicts_in_txn,
+};
 
 use self::codec::decode_verdict_with_marker;
 
@@ -103,7 +108,7 @@ pub(super) fn record_verdict_in_txn(
             "a judged skill edit verdict must carry measurements",
         ));
     }
-    let row = Value::Map(vec![
+    let mut row = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(VERDICT_SCHEMA_VERSION),
@@ -227,9 +232,18 @@ pub(super) fn record_verdict_in_txn(
                 .map_or(Value::Nil, Value::from),
         ),
         (Value::from(KEY_AT), Value::from(verdict.at)),
-    ]);
+    ];
+    if let Some(position) = &verdict.read_position {
+        row.push((
+            Value::from(KEY_READ_POSITION),
+            Value::from(
+                serde_json::to_string(position)
+                    .map_err(|_| invalid("skill verdict read position encode failed"))?,
+            ),
+        ));
+    }
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &row)
+    rmpv::encode::write_value(&mut encoded, &Value::Map(row))
         .map_err(|_| invalid("skill edit verdict MessagePack encode failed"))?;
     VERDICTS.put(&vault.store, wtxn, &verdict.id, &encoded)?;
     // A ruling ends the proposal's live trial; admission stays this gate's.
@@ -245,11 +259,29 @@ pub(super) fn verdict_rows_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Vec<HeldOutVerdict>> {
-    VERDICTS
-        .scan(&vault.store, rtxn)?
-        .into_iter()
-        .map(|(id, raw)| decode_verdict_with_marker(vault, rtxn, id, &raw))
-        .collect()
+    verdict_rows_sourced_in_txn(vault, rtxn).map(|(verdicts, _)| verdicts)
+}
+
+/// All native verdict bodies and their consulted row identities. A decoded
+/// displacement marker is an additional body without an identity on its carrier.
+pub(super) fn verdict_rows_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<(Vec<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    verdict_rows_sourced_observed_in_txn(vault, rtxn, None)
+}
+
+pub(crate) fn verdict_rows_sourced_observed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    observer: Option<&mut VerdictReadObserver<'_>>,
+) -> Result<(Vec<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let verdicts = canonical::verdict_rows_observed_in_txn(vault, rtxn, observer)?;
+    let sources = verdicts
+        .iter()
+        .all(|verdict| verdict.displaced_by_revision.is_none())
+        .then(|| verdicts.iter().map(|verdict| verdict.id).collect());
+    Ok((verdicts, sources))
 }
 
 /// Every gate verdict this vault has ruled, in ruling order.
@@ -306,6 +338,31 @@ pub(crate) fn skill_edit_verdict_in_txn(
     Ok(verdict_rows_in_txn(vault, rtxn)?
         .into_iter()
         .rfind(|verdict| verdict.proposal == *proposal))
+}
+
+/// The standing verdict and every verdict row decoded on the same snapshot,
+/// including rows rejected by the proposal filter. These are consulted rows,
+/// not the verdict's held-out inputs or a grant to read them. A stored
+/// displacement marker has no body identity, so it makes the set unknown.
+pub(crate) fn skill_edit_verdict_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<(Option<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let (verdicts, sources) = verdict_rows_sourced_in_txn(vault, rtxn)?;
+    let verdict = verdicts
+        .into_iter()
+        .rfind(|verdict| verdict.proposal == *proposal);
+    Ok((verdict, sources))
+}
+
+/// [`skill_edit_verdict_sourced_in_txn`] on its own read snapshot.
+pub(crate) fn skill_edit_verdict_sourced(
+    vault: &Vault,
+    proposal: &EntityId,
+) -> Result<(Option<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    skill_edit_verdict_sourced_in_txn(vault, &rtxn, proposal)
 }
 
 // ---------------------------------------------------------------------------
