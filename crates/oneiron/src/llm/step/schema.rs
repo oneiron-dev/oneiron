@@ -81,6 +81,7 @@ pub(super) async fn generate(
         }
         let response =
             super::retry::generate_with_retry(backend, request, lease, max_retries).await?;
+        calls.invoiced(0, &response.usage);
         let Some(Err(error)) = check.map(|check| check(&response)) else {
             return Ok(GenerationOutcome::Completed(response));
         };
@@ -196,6 +197,7 @@ pub(super) async fn generate(
                 });
             }
         };
+        calls.invoiced(u32::from(attempt - 1), &response.usage);
         // The completed call is paid before another corrective call can reserve.
         guard
             .settle_per_call(active_lease, &response.usage)

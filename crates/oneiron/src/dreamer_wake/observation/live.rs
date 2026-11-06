@@ -247,6 +247,16 @@ impl<'a> StepCalls<'a> {
             at: crate::unix_seconds_now(),
         };
         if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::retain_native_call_in_txn(
+                self.vault,
+                wtxn,
+                self.step_hash,
+                &owed,
+            )
+        }) {
+            skipped(&error, "native call admission");
+        }
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
             crate::dreamer_wake::owed::put_owed_call_in_txn(
                 self.vault,
                 wtxn,
@@ -256,6 +266,21 @@ impl<'a> StepCalls<'a> {
             )
         }) {
             skipped(&error, "owed call");
+        }
+    }
+
+    /// Keep a physical response's native NET quantity before any corrective
+    /// aggregation. This records no payment and never changes the call result.
+    pub(crate) fn invoiced(&self, ordinal: u32, usage: &oneiron_model::llm::LlmUsage) {
+        let Some(mut origin) = self.origin else {
+            return;
+        };
+        origin.ordinal = ordinal;
+        let units = crate::dreamer_consolidation::step_charge::usage_units(usage);
+        if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, origin, units)
+        }) {
+            skipped(&error, "native call invoice");
         }
     }
 

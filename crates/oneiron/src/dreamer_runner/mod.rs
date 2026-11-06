@@ -29,7 +29,10 @@ mod wake_park;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::admission::{AdmittedBudgetLine, AdmittedCallId};
+pub(crate) use self::admission::{
+    AdmittedBudgetLine, AdmittedCallId, NativeCallPayment, invoice_native_call_in_txn,
+    retain_native_call_in_txn,
+};
 
 // The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become
