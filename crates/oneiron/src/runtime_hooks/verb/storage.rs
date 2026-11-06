@@ -36,8 +36,7 @@
 //! fails hides the read's result, one that does not block fails open, and
 //! with no sandbox installed, hooks off or none matching the call passes
 //! through. When a session keeps no records for a call, its hooks' outcomes
-//! apply all the same and each hook's disposition says why the receipt was
-//! not kept.
+//! apply all the same and each hook's disposition says why the receipt was not kept.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -70,6 +69,7 @@ use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chai
 
 mod named_pause;
 mod room_pause;
+mod room_tail;
 mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
