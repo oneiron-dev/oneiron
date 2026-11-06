@@ -236,6 +236,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let writer = self.write_actor();
         self.with_verified_actor_write_txn(|txn| {
+            self.recheck_host_action_in_txn(txn)?;
             body::body_in(vault, txn, event.container)?;
             // A project room keeps its own rule: a PERSON enters it through
             // its roster, and a speaker enters it asked nothing.

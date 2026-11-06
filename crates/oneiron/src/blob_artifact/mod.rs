@@ -81,7 +81,10 @@ pub(crate) use self::holders::{
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
-pub(crate) use self::lifecycle::{hold_asset_reference_in_txn, release_asset_reference_in_txn};
+pub(crate) use self::lifecycle::{
+    discard_asset_reference_in_txn, discard_local_copy_in_txn, hold_asset_reference_in_txn,
+    release_asset_reference_in_txn,
+};
 // FIX 6225: a step response's exact version, released by its last pin.
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
 pub use self::provenance::BlobVersionProvenance;
@@ -108,11 +111,11 @@ pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.
-pub(crate) use self::versions::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 pub use self::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactAppendOutcome, BlobArtifactVersion, BlobBytes,
     CalcEngineStamp,
 };
+pub(crate) use self::versions::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 
 /// The closed deck transaction grammar a deck proposal carries.
 pub use oneiron_docedit::edit::transaction::DeckTransaction;

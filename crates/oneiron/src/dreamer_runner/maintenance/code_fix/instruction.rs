@@ -21,12 +21,6 @@ use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
-const REPRODUCED_WORDING: &str = "Does the reply fail the way the failure describes?";
-const FIXED_WORDING: &str = "The reply before failed the way the failure describes. Does the \
-    reply after no longer fail that way?";
-const SAFE_WORDING: &str = "Is this text plainly made up, with no real person's name, contact \
-    detail, account, address, private fact or secret in it?";
-
 /// The Coach's in-vault replay of one job: the failing agent's call as the
 /// vault kept it, or rebuilt from the real failure, run with no tool run,
 /// judged on the ladder.
@@ -96,8 +90,12 @@ impl CoachReplay<'_> {
             "conversation": conversation_state(conversation),
             "reply": reply,
         });
-        self.decisions
-            .yes("reproduced", REPRODUCED_WORDING, self.evidence, &state)
+        self.decisions.yes(
+            "reproduced",
+            &self.decisions.reproduced_wording,
+            self.evidence,
+            &state,
+        )
     }
 
     /// The real failing call: what the agent was briefed on and asked.
@@ -124,19 +122,21 @@ impl CoachReplay<'_> {
     /// took since the job read it, or one that no longer reads as it did, is
     /// dropped and never sent again, and the call may be rebuilt; a copy the
     /// job did not read is not taken up now. So is a copy the Coach's Grant
-    /// no longer admits, read again here before the send (FIX 8704).
+    /// no longer admits, read again here before the send (FIX 8704). A call
+    /// whose route prompt reads unavailable latches as an erased one does
+    /// (FIX 6255): no exact or rebuilt replay of it runs.
     fn live_exact(&self) -> Result<ExactReplay> {
-        if matches!(*self.exact.borrow(), ExactReplay::Erased) {
-            return Ok(ExactReplay::Erased);
+        if self.exact.borrow().runs_none() {
+            return Ok(self.exact.borrow().clone());
         }
         let live =
             self.snapshot
                 .replay
                 .pinned_exact(self.vault, &self.job.origin, self.admitted()?)?;
-        if matches!(live, ExactReplay::Erased) {
-            *self.exact.borrow_mut() = ExactReplay::Erased;
+        if live.runs_none() {
+            *self.exact.borrow_mut() = live.clone();
             *self.baseline.borrow_mut() = Some(None);
-            return Ok(ExactReplay::Erased);
+            return Ok(live);
         }
         let mut kept = self.exact.borrow_mut();
         if kept.request().is_some() && kept.request() == live.request() {
@@ -186,7 +186,7 @@ impl CoachReplay<'_> {
             return Ok(None);
         };
         let live = self.live_exact()?;
-        if matches!(live, ExactReplay::Erased) {
+        if live.runs_none() {
             return Ok(None);
         }
         if baseline.fidelity == ReplayFidelity::Rebuilt {
@@ -222,13 +222,14 @@ impl CoachReplay<'_> {
     }
 
     /// The call rebuilt from the failure's text, when it reproduces the
-    /// failure; none once the call's capsule reads erased, read again just
-    /// before the call is sent (FIX 6251).
+    /// failure; none once the call's capsule reads erased or its route
+    /// prompt unavailable, read again just before the call is sent (FIX
+    /// 6251, 6255): a failed exact send never rebuilds past them.
     fn rebuilt_baseline(&self) -> Result<Option<Baseline>> {
         let Some(conversation) = self.real_conversation() else {
             return Ok(None);
         };
-        if matches!(self.live_exact()?, ExactReplay::Erased) {
+        if self.live_exact()?.runs_none() {
             return Ok(None);
         }
         // The rebuilt call sends the failure's own texts alone.
@@ -270,10 +271,12 @@ impl CoachReplay<'_> {
             "before": before,
             "after": after,
         });
-        match self
-            .decisions
-            .yes("fixed", FIXED_WORDING, self.evidence, &state)
-        {
+        match self.decisions.yes(
+            "fixed",
+            &self.decisions.fixed_wording,
+            self.evidence,
+            &state,
+        ) {
             Some(true) => ShadowRun::Fixed,
             Some(false) => ShadowRun::NotFixed,
             None => ShadowRun::Unavailable,
@@ -380,10 +383,12 @@ impl ExportScrubber for CoachScrubber<'_> {
             .measure_limit(EngineLimit::MaintenanceTextBytes, text.len() as u64);
         let state = json!({ "text": text });
         Ok(
-            match self
-                .decisions
-                .yes("export_safe", SAFE_WORDING, self.evidence, &state)
-            {
+            match self.decisions.yes(
+                "export_safe",
+                &self.decisions.export_safe_wording,
+                self.evidence,
+                &state,
+            ) {
                 Some(true) => ScrubRun::Clean,
                 Some(false) => ScrubRun::Flagged,
                 None => ScrubRun::Unavailable,

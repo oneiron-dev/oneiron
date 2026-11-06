@@ -67,6 +67,7 @@ use crate::{EntityId, MemoryError, Result, Vault};
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
+mod invocation_claims;
 mod named_pause;
 mod room_pause;
 mod room_tail;
@@ -230,6 +231,7 @@ pub(crate) struct SessionHookKeep {
 /// What the keep holds under one key: its records and its paused calls.
 struct Kept {
     overlay: Arc<SessionOverlay>,
+    invocations: Option<invocation_claims::SessionInvocations>,
     /// The calls its hooks' asks paused, by invocation.
     asks: HashMap<[u8; 16], KeptAsk>,
     /// Their typed questions, answers and settlements, by group (FIX 10087).
@@ -486,6 +488,7 @@ impl SessionHookKeep {
         }
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
             overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
+            invocations: None,
             asks: HashMap::new(),
             ask_records: HashMap::new(),
         })))
