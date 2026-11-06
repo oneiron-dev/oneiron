@@ -1,6 +1,7 @@
 use super::{
     ACCOUNT, AccountRow, AllocationCallKey, AllocationCommit, AllocationRow,
-    AllocationServingFence, AllocationStoreError, AllocationTerminal, AllocationTerms,
+    AllocationServingFence, AllocationStoreError, AllocationTerminal, AllocationTerminalSelection,
+    AllocationTerms,
     DurableAllocationHold, DurableAllocationRead, VaultAllocationLedger,
 };
 use crate::llm::VaultResidentLedger;
@@ -307,59 +308,114 @@ impl VaultAllocationLedger {
         ) -> Result<()>,
     ) -> Result<AllocationCommit<()>> {
         self.write(true, |txn, row| {
-            let allocation = row
-                .allocations
-                .iter_mut()
-                .find(|allocation| allocation.holds.iter().any(|hold| &hold.key == key))
-                .ok_or(AllocationStoreError::HoldNotFound)?;
-            let index = allocation
-                .holds
-                .iter()
-                .position(|hold| &hold.key == key)
-                .ok_or(AllocationStoreError::HoldNotFound)?;
-            let hold = &allocation.holds[index];
-            if let Some(first) = &hold.terminal {
-                return if first == &terminal {
-                    Ok(((), false))
-                } else {
-                    Err(AllocationStoreError::TerminalMismatch)
-                };
-            }
-            if terminal.dispatched && !hold.dispatched {
-                return Err(AllocationStoreError::DispatchNotRecorded);
-            }
-            allocation.pending_units = allocation
-                .pending_units
-                .checked_sub(hold.reserved_units)
-                .ok_or(AllocationStoreError::Overflow)?;
-            allocation.used_units = allocation
-                .used_units
-                .checked_add(terminal.units)
-                .ok_or(AllocationStoreError::Overflow)?;
-            // True overrun remains used even beyond the original grant.
-            allocation.remaining_units = allocation
-                .allocation
-                .units
-                .saturating_sub(allocation.used_units)
-                .saturating_sub(allocation.pending_units);
-            if terminal.units > 0
-                && let Some(resident) = hold.resident
-            {
-                let room = hold
-                    .resident_share_units
-                    .saturating_sub(hold.resident_committed_units);
-                VaultResidentLedger::new(Arc::clone(&self.vault)).charge_in_write_txn(
-                    txn,
-                    resident,
-                    &hold.allocation,
-                    terminal.units,
-                    terminal.units.saturating_sub(room),
-                )?;
-            }
-            stage(txn, hold, &terminal)?;
-            allocation.holds[index].terminal = Some(terminal);
-            Ok(((), true))
+            self.settle_row(txn, row, key, terminal, stage)
         })
+    }
+
+    /// Prepares an original pending call's terminal under the same writer as
+    /// its once-selected accounting and caller-owned staged records. An
+    /// existing terminal returns its original identity without reading a
+    /// producer that the first settlement may already have consumed.
+    ///
+    /// `prepare` and `stage` use only the supplied transaction. The caller
+    /// still owns its original line-unit booking, receipt retention and any
+    /// notification after the actual durable commit.
+    pub fn settle_original_with<T>(
+        &self,
+        key: &AllocationCallKey,
+        prepare: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            &DurableAllocationHold,
+        ) -> Result<(AllocationTerminal, T)>,
+        stage: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            &DurableAllocationHold,
+            &AllocationTerminal,
+            &T,
+        ) -> Result<()>,
+    ) -> Result<AllocationCommit<AllocationTerminalSelection<T>>> {
+        self.write(true, |txn, row| {
+            let hold = row
+                .allocations
+                .iter()
+                .flat_map(|allocation| &allocation.holds)
+                .find(|hold| &hold.key == key)
+                .ok_or(AllocationStoreError::HoldNotFound)?;
+            if let Some(terminal) = &hold.terminal {
+                return Ok((AllocationTerminalSelection::Existing(terminal.clone()), false));
+            }
+            let (terminal, value) = prepare(txn, hold)?;
+            let ((), changed) = self.settle_row(txn, row, key, terminal, |txn, hold, terminal| {
+                stage(txn, hold, terminal, &value)
+            })?;
+            Ok((AllocationTerminalSelection::Selected(value), changed))
+        })
+    }
+
+    fn settle_row(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        row: &mut AccountRow,
+        key: &AllocationCallKey,
+        terminal: AllocationTerminal,
+        stage: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            &DurableAllocationHold,
+            &AllocationTerminal,
+        ) -> Result<()>,
+    ) -> Result<((), bool)> {
+        let allocation = row
+            .allocations
+            .iter_mut()
+            .find(|allocation| allocation.holds.iter().any(|hold| &hold.key == key))
+            .ok_or(AllocationStoreError::HoldNotFound)?;
+        let index = allocation
+            .holds
+            .iter()
+            .position(|hold| &hold.key == key)
+            .ok_or(AllocationStoreError::HoldNotFound)?;
+        let hold = &allocation.holds[index];
+        if let Some(first) = &hold.terminal {
+            return if first == &terminal {
+                Ok(((), false))
+            } else {
+                Err(AllocationStoreError::TerminalMismatch)
+            };
+        }
+        if terminal.dispatched && !hold.dispatched {
+            return Err(AllocationStoreError::DispatchNotRecorded);
+        }
+        allocation.pending_units = allocation
+            .pending_units
+            .checked_sub(hold.reserved_units)
+            .ok_or(AllocationStoreError::Overflow)?;
+        allocation.used_units = allocation
+            .used_units
+            .checked_add(terminal.units)
+            .ok_or(AllocationStoreError::Overflow)?;
+        // True overrun remains used even beyond the original grant.
+        allocation.remaining_units = allocation
+            .allocation
+            .units
+            .saturating_sub(allocation.used_units)
+            .saturating_sub(allocation.pending_units);
+        if terminal.units > 0
+            && let Some(resident) = hold.resident
+        {
+            let room = hold
+                .resident_share_units
+                .saturating_sub(hold.resident_committed_units);
+            VaultResidentLedger::new(Arc::clone(&self.vault)).charge_in_write_txn(
+                txn,
+                resident,
+                &hold.allocation,
+                terminal.units,
+                terminal.units.saturating_sub(room),
+            )?;
+        }
+        stage(txn, hold, &terminal)?;
+        allocation.holds[index].terminal = Some(terminal);
+        Ok(((), true))
     }
 
     /// Explicit current selection and fresh-grant status, read from the store.
