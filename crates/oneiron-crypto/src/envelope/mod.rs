@@ -4,7 +4,9 @@
 mod hybrid;
 mod seal;
 
-pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad};
+pub use self::seal::{
+    OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad, seal_with_aad_into,
+};
 
 use std::io::Write;
 

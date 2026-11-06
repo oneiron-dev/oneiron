@@ -128,6 +128,12 @@ twice: into the key and into the AAD. Any failure to open is the single
 with the same `X`. An empty `X` gives `aad = H`: the same inputs and randomness seal
 the same bytes as `seal`, and `open` is `open_with_aad` with empty `X`.
 
+`seal_with_aad_into` consumes an output buffer of plaintext length plus `TAG_LEN`,
+seals directly into it, and moves that buffer into the envelope. This lets the
+caller reserve ciphertext storage fallibly without a separate plaintext copy.
+The supplied buffer is wiped on error. Header, AAD and key derivation may still
+allocate; `seal` and `seal_with_aad` keep their existing allocation path.
+
 ### Passphrase stretch outside envelopes
 
 `stretch_passphrase(passphrase, cost, salt)` returns the same Argon2id v0x13 output a
