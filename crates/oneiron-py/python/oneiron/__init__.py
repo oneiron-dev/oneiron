@@ -666,6 +666,9 @@ class Oneiron:
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs":
+            return Oneiron._VaultProactivityVerbs(self._client)
+        @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs":
             return Oneiron._VaultSkillsVerbs(self._client)
         @property
@@ -870,7 +873,7 @@ class Oneiron:
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
             return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
-            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
+            """Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
         def remember(self, input: dict[str, Any]) -> Any:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
@@ -1928,6 +1931,12 @@ class Oneiron:
         def resolve(self, spec):
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups_resolve(json.dumps(spec))))
+    class _VaultProactivityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def digest(self, spec):
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_digest(json.dumps(spec))))
     class _VaultSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3658,6 +3667,9 @@ class Oneiron:
         def code_run_lifts(self, spec):
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
             return json.loads(_translate(lambda: self._client.vault_secrets_code_run_lifts(json.dumps(spec))))
+        def code_run_room_lifts(self, spec):
+            """The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_code_run_room_lifts(json.dumps(spec))))
         def lift_history(self, spec):
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
             return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
