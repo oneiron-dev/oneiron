@@ -20,6 +20,7 @@ pub(crate) use refresh::refresh_staged_request;
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::{Mutex, PoisonError};
 
 use heed::RwTxn;
 
@@ -32,7 +33,7 @@ use super::super::super::replay_capsule::{
 };
 use super::super::StartCompaction;
 use super::super::fold_answers::words_withdrawn;
-use super::super::records::{REPLAY_RECORDS, finish_output};
+use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
 use super::pieces::{PieceScope, RequestPieces, unheld_lens};
@@ -78,11 +79,15 @@ pub(super) fn spilling(bound: u64, lens: &[usize]) -> usize {
 }
 
 /// Where a writer's bodies go: inline within the bound, past it into the
-/// instances minted before the writer opened.
+/// instances minted before the writer opened. FIX 7284: it keeps each body
+/// it published, with the reader pin on its final digest, until it is
+/// dropped after its writer commits or aborts, so the pin lasts through the
+/// commit that names the body.
 pub(super) struct Spill {
     bound: u64,
     mint: BodyMint,
     reserved: usize,
+    published: Mutex<Vec<FinishedOutput>>,
 }
 
 impl Spill {
@@ -95,6 +100,7 @@ impl Spill {
             bound,
             mint: vault.store.body_mint()?.reserve(reserved)?,
             reserved,
+            published: Mutex::new(Vec::new()),
         })
     }
 
@@ -126,7 +132,12 @@ impl Spill {
         })?;
         vault.put_code_run_output_in_txn(wtxn, &finished, &finished.output, Some(owner))?;
         tracing::debug!(bytes = bytes.len(), "a replay capsule body is published");
-        Ok(finished.output.output_ref())
+        let output = finished.output.output_ref();
+        self.published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(finished);
+        Ok(output)
     }
 }
 
@@ -144,6 +155,7 @@ pub(super) fn with_spill<T>(
             bound,
             mint: vault.store.body_mint()?.reserve(reserved)?,
             reserved,
+            published: Mutex::new(Vec::new()),
         };
         match vault.try_with_write_txn_grouped(|wtxn| write(wtxn, &spill)) {
             Ok(written) => return Ok(written),
