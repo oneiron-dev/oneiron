@@ -3273,7 +3273,7 @@ export class Oneiron {
         import_mbox: (input: Facade.MailMboxImportRequest): Facade.MailMboxImportReport => this.#call(() => this.#client.vaultMailSourcesImportMbox(input) as Facade.MailMboxImportReport),
         /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
         sync: (input: Facade.MailSourceSyncRequest): Facade.MailSyncReport => this.#call(() => this.#client.vaultMailSourcesSync(input) as Facade.MailSyncReport),
-        /** The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
+        /** The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
         search: (input: Facade.MailSourceSearchRequest): Facade.MailSearchReport => this.#call(() => this.#client.vaultMailSourcesSearch(input) as Facade.MailSearchReport),
       },
       threads: {

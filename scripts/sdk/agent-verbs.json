@@ -21100,7 +21100,7 @@
     },
     {
       "name": "vault.mail.sources.search",
-      "description": "The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience.",
+      "description": "The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience.",
       "input": "crate::mail_pack::MailSourceSearchRequest",
       "output": "crate::mail_pack::MailSearchReport",
       "call": "memory.mail_sources_search(&input)?",

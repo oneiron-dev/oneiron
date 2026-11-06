@@ -1,7 +1,8 @@
 //! Searching a mailbox at its provider (fix list row 15424, its remote
 //! search slice): `vault.mail.sources.search` asks the mailbox's provider
 //! for one page of the messages a query finds, in that provider's own search
-//! language (Gmail's `q`, Microsoft Graph's `$search`), and lands each one
+//! language (Gmail's `q`, Microsoft Graph's `$search`, an IMAP server's
+//! `SEARCH` keys, fix list row 19089), and lands each one
 //! the vault does not hold yet whole, bound to the source's audience in the
 //! same commit as every imported message. A message a search fetched stays
 //! kept, so a mailbox whose copy setting is "Search only" holds exactly what
@@ -13,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
+use super::imap::ImapMailWire;
 use super::landing::{LandOutcome, Landing};
 use super::microsoft365::HttpGraphMailWire;
 use super::pack::require_pack_active_in;
@@ -38,7 +40,8 @@ pub struct MailSourceSearchRequest {
     pub source_ref: String,
     /// The query, in the provider's own search language: Gmail's search
     /// operators for a Google mailbox, Microsoft Graph's `$search` text for
-    /// a Microsoft 365 one.
+    /// a Microsoft 365 one, `SEARCH` keys (RFC 3501 6.4.4, such as
+    /// `FROM "ann" SINCE 1-Jan-2025`) for an IMAP one.
     pub query: String,
     /// The provider's token for the next page of hits, as the last page
     /// returned it.
@@ -193,7 +196,7 @@ impl Vault {
 
     /// [`Self::mail_search_step`] through this host's wire for the source's
     /// provider: Gmail for Google mailboxes, Microsoft Graph for Microsoft
-    /// 365 ones.
+    /// 365 ones, the mailbox's own server for IMAP ones.
     ///
     /// # Errors
     ///
@@ -218,9 +221,12 @@ impl Vault {
             let wire = HttpGraphMailWire::new(self)?;
             return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
         }
-        Err(MemoryError::bad_request_with(
-            "this host searches Google and Microsoft 365 mailboxes at their provider",
-            &["An IMAP mailbox copies its mail through its sync; search it in the vault."],
+        if snapshot.provider == MailProvider::Imap {
+            let wire = ImapMailWire::new(self);
+            return self.mail_search_step(owner, source, &wire, &input.query, page, limit);
+        }
+        Err(MemoryError::bad_request(
+            "this host searches Google, Microsoft 365 and IMAP mailboxes at their provider",
         ))
     }
 }
