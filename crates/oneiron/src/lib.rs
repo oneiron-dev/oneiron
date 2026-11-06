@@ -247,6 +247,7 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
 pub use oneiron_base::posterior;
 pub mod skill;
@@ -257,6 +258,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.

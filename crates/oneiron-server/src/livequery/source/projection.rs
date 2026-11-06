@@ -41,10 +41,12 @@ impl LiveQuerySource for BoundSource {
         let limit = match channel {
             // Read any count: receipts/consent in scoped pages with a continuation
             // (FIX 8859); notifications in one inbox page that already loops to the
-            // whole limit (FIX 13283).
-            Channel::Receipts | Channel::PendingConsent | Channel::Notifications => {
-                facade_count(filter.limit, 100)?
-            }
+            // whole limit (FIX 13283). Views use the recall path, not a scoped
+            // page cursor.
+            Channel::Receipts
+            | Channel::PendingConsent
+            | Channel::Notifications
+            | Channel::View => facade_count(filter.limit, 100)?,
             _ => facade_limit(filter.limit, 100)?,
         };
         if channel != Channel::View

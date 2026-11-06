@@ -14,6 +14,8 @@ use utoipa::ToSchema;
 pub enum ErrorCode {
     #[serde(rename = "BAD_REQUEST")]
     BadRequest,
+    #[serde(rename = "DEADLINE_EXCEEDED")]
+    DeadlineExceeded,
     #[serde(rename = "UNAUTHORIZED")]
     Unauthorized,
     #[serde(rename = "FORBIDDEN")]
@@ -101,6 +103,7 @@ impl ErrorCode {
     /// Canonical catalog order used by schema generation and drift tests.
     pub const ALL: &'static [Self] = &[
         Self::BadRequest,
+        Self::DeadlineExceeded,
         Self::Unauthorized,
         Self::Forbidden,
         Self::NotFound,
@@ -135,6 +138,7 @@ impl ErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BadRequest => "BAD_REQUEST",
+            Self::DeadlineExceeded => "DEADLINE_EXCEEDED",
             Self::Unauthorized => "UNAUTHORIZED",
             Self::Forbidden => "FORBIDDEN",
             Self::NotFound => "NOT_FOUND",
@@ -175,6 +179,7 @@ impl ErrorCode {
             | Self::CrdtDecodeError
             | Self::CrdtUnknownTag
             | Self::CrdtVersionMismatch => StatusCode::BAD_REQUEST,
+            Self::DeadlineExceeded => StatusCode::REQUEST_TIMEOUT,
             Self::Unauthorized | Self::CrdtAuthExpired => StatusCode::UNAUTHORIZED,
             Self::Forbidden
             | Self::HostActionRequiresSupportGrant
@@ -207,6 +212,8 @@ impl ErrorCode {
 pub enum ApiErrorDetails {
     #[serde(rename = "BAD_REQUEST", rename_all = "camelCase")]
     BadRequest { field: Option<String> },
+    #[serde(rename = "DEADLINE_EXCEEDED", rename_all = "camelCase")]
+    DeadlineExceeded { field: Option<String> },
     #[serde(rename = "UNAUTHORIZED")]
     Unauthorized,
     #[serde(rename = "FORBIDDEN", rename_all = "camelCase")]
@@ -320,6 +327,7 @@ impl ApiErrorDetails {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::BadRequest { .. } => ErrorCode::BadRequest,
+            Self::DeadlineExceeded { .. } => ErrorCode::DeadlineExceeded,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden { .. } => ErrorCode::Forbidden,
             Self::NotFound { .. } => ErrorCode::NotFound,
@@ -401,6 +409,19 @@ impl ApiError {
                 field: field.map(str::to_owned),
             },
             ["Fix the request shape and retry."],
+        )
+    }
+
+    /// An explicit caller budget expired without publishing a partial result.
+    pub fn deadline_exceeded(field: &str) -> Self {
+        Self::new(
+            format!("the caller's {field} expired; no signal page was published"),
+            ApiErrorDetails::DeadlineExceeded {
+                field: Some(field.to_owned()),
+            },
+            [
+                "Retry from the previous successful cursor with a larger budget, or omit the deadline.",
+            ],
         )
     }
 
