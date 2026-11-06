@@ -18,6 +18,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
+    // A restore never turns "Owners can export members' mail" on again once
+    // it was turned off (fix list row 15416).
+    (&t::MAIL_PACK_OWNERS_EXPORT_MEMBER_MAIL, LIVE),
     // A source's owner, custody name and settings are live configuration.
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),

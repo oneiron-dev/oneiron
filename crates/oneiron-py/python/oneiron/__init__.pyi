@@ -3630,6 +3630,8 @@ class Oneiron:
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
         @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
+        @property
+        def export_member_mail(self) -> "Oneiron._VaultMailExportMemberMailVerbs": ...
         def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
     class _VaultMailPackVerbs:
@@ -3670,6 +3672,9 @@ class Oneiron:
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
         def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+    class _VaultMailExportMemberMailVerbs:
+        def set(self, spec: Facade.MailExportMemberMailSetRequest) -> Facade.MailExportMemberMailSettingView:
+            """Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

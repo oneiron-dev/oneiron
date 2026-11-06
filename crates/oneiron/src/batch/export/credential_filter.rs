@@ -218,9 +218,68 @@ impl Vault {
     }
 
     /// The bundle both doors write; `scope` decides whether it carries the
-    /// embedding setup.
+    /// embedding setup. The whole vault's copy is the owner's, in its export
+    /// audit (FIX 6427). One that carries another member's personal mailbox
+    /// leaves only once its audit row and each mailbox's person's notice are
+    /// written, in one write (fix list row 15416); when that write fails, the
+    /// copy is made again without those mailboxes, each named in it.
     fn entity_bundle_json(&self, ids: &[EntityId], scope: ExportScope) -> Result<Vec<u8>> {
+        let bundle = self.entity_bundle_pass(ids, scope, false)?;
+        if scope != ExportScope::WholeVault {
+            return Ok(bundle.json);
+        }
+        let Some(member_mail) = bundle.member_mail else {
+            crate::memory::record_raw_json_export(self, &bundle.json, bundle.thread_roots);
+            return Ok(bundle.json);
+        };
+        match crate::memory::record_member_mail_json_export(
+            self,
+            &bundle.json,
+            &bundle.thread_roots,
+            &member_mail,
+        ) {
+            Ok(()) => Ok(bundle.json),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "JSON export: members' mailboxes left out, their people not told"
+                );
+                let bundle = self.entity_bundle_pass(ids, scope, true)?;
+                if bundle.member_mail.is_some() {
+                    return Err(Error::InvariantViolation(
+                        "an export whose mailboxes' people were not told carries a mailbox",
+                    ));
+                }
+                crate::memory::record_raw_json_export(self, &bundle.json, bundle.thread_roots);
+                Ok(bundle.json)
+            }
+        }
+    }
+
+    /// One pass of the bundle over `ids` in a snapshot of its own. A
+    /// whole-vault pass of a shared vault leaves out each row of a member's
+    /// personal mailbox it does not carry, and each row whose words came from
+    /// one ([`crate::mail_pack::MemberMailboxPlan`]), before the row is read
+    /// whole, and names each such mailbox in `mailbox_notices`; with
+    /// `untold`, it carries no member's mailbox.
+    fn entity_bundle_pass(
+        &self,
+        ids: &[EntityId],
+        scope: ExportScope,
+        untold: bool,
+    ) -> Result<BundlePass> {
         let txn = self.store.env.read_txn()?;
+        let plan = if scope == ExportScope::WholeVault {
+            let exporter = crate::vault::embedded_owner_actor_id()?;
+            crate::mail_pack::MemberMailboxPlan::read_in(self, &txn, exporter, untold)?
+        } else {
+            None
+        };
+        let dbs = self.store.read();
+        let mut judge = plan
+            .as_ref()
+            .map(|plan| plan.judge(self, &dbs, &txn))
+            .transpose()?;
         let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
         let mut nulled = false;
@@ -247,6 +306,13 @@ impl Vault {
             {
                 continue;
             }
+            // A member's mailbox the copy does not carry, and what was
+            // learned from it, stay home (fix list row 15416).
+            if let Some(judge) = judge.as_mut()
+                && !judge.carries(*id, Some(raw.as_slice()))?
+            {
+                continue;
+            }
             // A file-plane ASSET leaves as its body, never the manifest its
             // row keeps (FIX 3677).
             let raw = self.materialized_row_in_txn(&txn, id, raw)?;
@@ -260,7 +326,8 @@ impl Vault {
                 bytes,
                 |source, _| {
                     Ok(exported.contains(source)
-                        && !whole_vault_export_excludes_entity_in_txn(&self.store, &txn, source)?)
+                        && !whole_vault_export_excludes_entity_in_txn(&self.store, &txn, source)?
+                        && carried_by(judge.as_mut(), *source)?)
                 },
             )? == Some(false)
             {
@@ -332,7 +399,7 @@ impl Vault {
         };
         let manifest =
             ExportManifest::from_secrets_nulled(ExportSecretsNulledManifest::from_redacted(nulled));
-        let bundle = match setup {
+        let mut bundle = match setup {
             Some(setup) => serde_json::json!({
                 "manifest": manifest, "entities": entities,
                 "embedding_spaces": setup.spaces, "slot_bindings": setup.slots,
@@ -340,17 +407,49 @@ impl Vault {
             }),
             None => serde_json::json!({"manifest": manifest, "entities": entities}),
         };
+        // Each mailbox the pass left out is named beside the entities, to
+        // the Owner who exported; what it carried waits for its people.
+        let met = judge.map(crate::source_audience::ExportJudge::met);
+        let mut member_mail = None;
+        if let Some((plan, met)) = plan.zip(met) {
+            let (notices, carried) = plan.outcome(&met);
+            member_mail = carried;
+            let notices = serde_json::to_value(notices)
+                .map_err(|_| Error::InvariantViolation("export mailbox notices encode failed"))?;
+            if let Some(fields) = bundle.as_object_mut() {
+                fields.insert("mailbox_notices".into(), notices);
+            }
+        }
         let json = serde_json::to_vec(&bundle)
             .map_err(|_| Error::InvariantViolation("entity export JSON encode failed"))?;
         if scope == ExportScope::WholeVault {
-            thread_roots.capture_in(&self.store.read(), &txn);
+            thread_roots.capture_in(&dbs, &txn);
         }
-        drop(txn);
-        // The whole vault's copy is the owner's, in its export audit (FIX 6427).
-        if scope == ExportScope::WholeVault {
-            crate::memory::record_raw_json_export(self, &json, thread_roots);
-        }
-        Ok(json)
+        Ok(BundlePass {
+            json,
+            thread_roots,
+            member_mail,
+        })
+    }
+}
+
+/// One pass of an entity bundle: its bytes, the private threads it carries,
+/// and the other members' personal mailboxes it carries, whose people are
+/// told before it leaves (fix list row 15416).
+struct BundlePass {
+    json: Vec<u8>,
+    thread_roots: crate::workspace_roster::ExportThreadRoots,
+    member_mail: Option<crate::mail_pack::CarriedMemberMailboxes>,
+}
+
+/// Whether a pass's mailbox judge, when it has one, carries the row `id`.
+fn carried_by(
+    judge: Option<&mut crate::source_audience::ExportJudge<'_, '_, '_>>,
+    id: EntityId,
+) -> Result<bool> {
+    match judge {
+        Some(judge) => judge.carries(id, None),
+        None => Ok(true),
     }
 }
 

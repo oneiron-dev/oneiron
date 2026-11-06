@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1263 facade rows, 4594 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
+// UniFFI census: 1264 facade rows, 4596 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -70997,6 +70997,30 @@ pub struct MailComplianceSetRequest {
     pub purpose: String,
 }
 
+/// `oneiron::mail_pack::export_mailboxes::MailExportMemberMailSetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailExportMemberMailSetRequest {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+}
+
+/// `oneiron::mail_pack::export_mailboxes::MailExportMemberMailSettingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailExportMemberMailSettingView {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(
+        rename = "set_by_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub set_by_ref: Option<String>,
+    #[serde(rename = "set_at", default, skip_serializing_if = "Option::is_none")]
+    pub set_at: Option<u64>,
+}
+
 /// `oneiron::mail_pack::compliance::MailComplianceEventKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum MailComplianceEventKind {
@@ -71006,6 +71030,10 @@ pub enum MailComplianceEventKind {
     Disabled,
     #[serde(rename = "search")]
     Search,
+    #[serde(rename = "export_member_mail_enabled")]
+    ExportMemberMailEnabled,
+    #[serde(rename = "export_member_mail_disabled")]
+    ExportMemberMailDisabled,
 }
 
 /// `oneiron::mail_pack::compliance::MailComplianceEventView`.

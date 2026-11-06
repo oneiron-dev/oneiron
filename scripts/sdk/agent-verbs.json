@@ -21012,6 +21012,19 @@
       "section": false
     },
     {
+      "name": "vault.mail.export_member_mail.set",
+      "description": "Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes.",
+      "input": "crate::mail_pack::MailExportMemberMailSetRequest",
+      "output": "crate::mail_pack::MailExportMemberMailSettingView",
+      "call": "memory.mail_export_member_mail_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.mail.compliance.log",
       "description": "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.",
       "input": "EmptyRequest",

@@ -3292,6 +3292,10 @@ export class Oneiron {
         /** Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers. */
         search: (input: Facade.MailComplianceSearchRequest): Facade.MailComplianceSearchReply => this.#call(() => this.#client.vaultMailComplianceSearch(input) as Facade.MailComplianceSearchReply),
       },
+      export_member_mail: {
+        /** Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes. */
+        set: (input: Facade.MailExportMemberMailSetRequest): Facade.MailExportMemberMailSettingView => this.#call(() => this.#client.vaultMailExportMemberMailSet(input) as Facade.MailExportMemberMailSettingView),
+      },
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
     },

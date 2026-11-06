@@ -5822,6 +5822,9 @@ class Oneiron:
         @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs":
             return Oneiron._VaultMailComplianceVerbs(self._client)
+        @property
+        def export_member_mail(self) -> "Oneiron._VaultMailExportMemberMailVerbs":
+            return Oneiron._VaultMailExportMemberMailVerbs(self._client)
         def inbox(self, spec):
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
             return json.loads(_translate(lambda: self._client.vault_mail_inbox(json.dumps(spec))))
@@ -5891,6 +5894,12 @@ class Oneiron:
         def search(self, spec):
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
             return json.loads(_translate(lambda: self._client.vault_mail_compliance_search(json.dumps(spec))))
+    class _VaultMailExportMemberMailVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """Turns Owners can export members' mail on or off, by the vault's Owner or an Admin, each change kept in the compliance log; on, a person-owned shared vault's export carries members' personal mailboxes."""
+            return json.loads(_translate(lambda: self._client.vault_mail_export_member_mail_set(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

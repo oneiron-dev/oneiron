@@ -36,6 +36,11 @@
 //! A row held back here ([`super::HeldBack`]: its carried binding waits for
 //! its policy, or the vault it came from withheld it after it travelled)
 //! reads to no one, and neither does a row whose words came from it.
+//!
+//! An Owner's whole-vault export asks the same walk which source each row
+//! came from ([`ExportJudge`], fix list row 15416): a row whose lineage
+//! reaches a source the export leaves out stays home, and so does a row a
+//! source landed whose source this vault cannot name.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -203,17 +208,15 @@ pub(crate) fn withheld_by_lineage_in(
     };
     // The read's own judge, on heap frames, asking each row's binding to be
     // the one the row travels under.
-    let mut judge = Judge {
+    let mut judge = Judge::new(
         vault,
-        dbs: &dbs,
+        &dbs,
         txn,
-        ask: Ask::Travel {
+        Ask::Travel {
             under: travels_under,
             every_support: scope == ReplicationScope::Restricted,
         },
-        policies: BTreeMap::new(),
-        rows: BTreeMap::new(),
-    };
+    );
     let withheld = !judge.row_readable(*id, None)?;
     // On the owner's full window a row its lineage would keep home travels
     // with the policies that lineage reaches, when they publish (fix list
@@ -247,17 +250,15 @@ pub(crate) fn derived_travel_in(
         Some(policy) if super::replica::publishable_in(vault, txn, &policy)? => Some(policy),
         _ => None,
     };
-    let mut judge = Judge {
+    let mut judge = Judge::new(
         vault,
-        dbs: &dbs,
+        &dbs,
         txn,
-        ask: Ask::Travel {
+        Ask::Travel {
             under: travels_under,
             every_support: false,
         },
-        policies: BTreeMap::new(),
-        rows: BTreeMap::new(),
-    };
+    );
     if judge.row_readable(*id, None)? {
         return Ok(None);
     }
@@ -340,14 +341,7 @@ pub(crate) fn readable_with_read_in(
         // a source landed still reads to no one.
         return Ok(!source_marked(raw));
     }
-    let mut judge = Judge {
-        vault,
-        dbs,
-        txn,
-        ask: Ask::Read(viewers),
-        policies: BTreeMap::new(),
-        rows: BTreeMap::new(),
-    };
+    let mut judge = Judge::new(vault, dbs, txn, Ask::Read(viewers));
     judge.row_readable(id, Some(raw))
 }
 
@@ -364,6 +358,92 @@ enum Ask<'a> {
         under: Option<EntityId>,
         every_support: bool,
     },
+    /// An Owner's whole-vault export (fix list row 15416): the binding's
+    /// source is one the export carries ([`ExportAudience`]).
+    Export(&'a ExportAudience),
+}
+
+/// What an Owner's whole-vault export carries, by the source each row was
+/// landed from (fix list row 15416): a row goes when its own binding's
+/// source and the sources of everything its words came from go, a CLAIM
+/// when one of its supports does, as a read judges a row.
+pub(crate) struct ExportAudience {
+    /// The person the copy is for.
+    pub(crate) exporter: EntityId,
+    /// Each source policy a source this vault holds was born under, and
+    /// whether the copy carries its rows. A source policy no source here was
+    /// born under is carried when it stands open or its own readers name the
+    /// exporter ([`super::names_reader_in`]); a policy that does not resolve
+    /// to a source is not.
+    pub(crate) sources: BTreeMap<EntityId, bool>,
+}
+
+/// What an export's judge met while it judged a pass (fix list row 15416).
+#[derive(Debug, Default)]
+pub(crate) struct ExportMet {
+    /// Each source policy of [`ExportAudience::sources`] some row it judged
+    /// was bound under, its own or through a thread of it.
+    pub(crate) sources: BTreeSet<EntityId>,
+    /// Whether it left out a row whose source this vault cannot name: a row
+    /// a source landed with no binding here, a row held back here, or a row
+    /// bound under a policy that resolves to no source the copy carries.
+    pub(crate) unidentified: bool,
+}
+
+/// One Owner's whole-vault export pass over the source audiences (fix list
+/// row 15416): each row's verdict and each policy's, memoised across the
+/// whole pass, so the rows a lineage shares are judged once.
+pub(crate) struct ExportJudge<'a, 's, 't> {
+    judge: Judge<'a, 's, 't>,
+    /// No policy and no held row here: a row's own stamp alone decides, as
+    /// [`readable_with_read_in`] reads it.
+    quiet: bool,
+}
+
+impl<'a, 's, 't> ExportJudge<'a, 's, 't> {
+    /// The judge of a pass reading `dbs` in `txn` for `audience`.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn new(
+        vault: &'a Vault,
+        dbs: &'a crate::store::StoreRead<'s>,
+        txn: &'a heed::RoTxn<'t>,
+        audience: &'a ExportAudience,
+    ) -> Result<Self> {
+        let quiet = !super::any_policy_in(vault, txn)? && !super::any_held_in(vault, txn)?;
+        Ok(Self {
+            judge: Judge::new(vault, dbs, txn, Ask::Export(audience)),
+            quiet,
+        })
+    }
+
+    /// Whether the copy carries the row `id`: its bytes `raw`, else as the
+    /// pass's view holds them.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn carries(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
+        if !self.quiet {
+            return self.judge.row_readable(id, raw);
+        }
+        let marked = match raw {
+            Some(raw) => source_marked(raw),
+            None => {
+                crate::ports::EntityStoreRead::port_entity_raw(self.judge.dbs, self.judge.txn, &id)?
+                    .is_some_and(|raw| source_marked(&raw))
+            }
+        };
+        self.judge.met.unidentified |= marked;
+        Ok(!marked)
+    }
+
+    /// What the pass met.
+    pub(crate) fn met(self) -> ExportMet {
+        self.judge.met
+    }
 }
 
 /// One read's or one replication's verdicts, memoised by row and by policy.
@@ -374,6 +454,27 @@ struct Judge<'a, 's, 't> {
     ask: Ask<'a>,
     policies: BTreeMap<EntityId, bool>,
     rows: BTreeMap<EntityId, bool>,
+    /// What an export's judge met; nothing for any other ask.
+    met: ExportMet,
+}
+
+impl<'a, 's, 't> Judge<'a, 's, 't> {
+    fn new(
+        vault: &'a Vault,
+        dbs: &'a crate::store::StoreRead<'s>,
+        txn: &'a heed::RoTxn<'t>,
+        ask: Ask<'a>,
+    ) -> Self {
+        Self {
+            vault,
+            dbs,
+            txn,
+            ask,
+            policies: BTreeMap::new(),
+            rows: BTreeMap::new(),
+            met: ExportMet::default(),
+        }
+    }
 }
 
 /// A row the judge has opened: decided at once, or waiting on what its
@@ -511,9 +612,10 @@ impl Judge<'_, '_, '_> {
     /// from. A row held back here reads to no one; a replication judges it
     /// by its own binding and lineage alone.
     fn open(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<Opened> {
-        if matches!(self.ask, Ask::Read(_))
+        if matches!(self.ask, Ask::Read(_) | Ask::Export(_))
             && super::held_back_in(self.vault, self.txn, &id)?.is_some()
         {
+            self.met.unidentified |= matches!(self.ask, Ask::Export(_));
             return Ok(Opened::Decided(false));
         }
         // The policies a full-window carrier brought for a derived row (fix
@@ -530,6 +632,13 @@ impl Judge<'_, '_, '_> {
                         }
                     }
                 }
+                Ask::Export(audience) => {
+                    for policy in policies {
+                        if !self.export_carries(policy, audience)? {
+                            return Ok(Opened::Decided(false));
+                        }
+                    }
+                }
                 Ask::Travel { .. } => return Ok(Opened::Decided(false)),
             }
         }
@@ -537,6 +646,7 @@ impl Judge<'_, '_, '_> {
         if let Some(policy) = binding {
             let admitted = match self.ask {
                 Ask::Read(viewers) => self.policy_readable(policy, viewers)?,
+                Ask::Export(audience) => self.export_carries(policy, audience)?,
                 Ask::Travel { under, .. } => under == Some(policy),
             };
             if !admitted {
@@ -556,6 +666,7 @@ impl Judge<'_, '_, '_> {
         };
         // A row a source landed whose binding is absent here reads to no one.
         if binding.is_none() && source_marked(&bytes) {
+            self.met.unidentified |= matches!(self.ask, Ask::Export(_));
             return Ok(Opened::Decided(false));
         }
         let (mut every, mut supports) = word_sources(self.vault, self.dbs, self.txn, id, &bytes)?;
@@ -591,5 +702,55 @@ impl Judge<'_, '_, '_> {
         };
         self.policies.insert(policy, verdict);
         Ok(verdict)
+    }
+
+    /// Whether an export for `audience` carries the rows bound under
+    /// `policy`: a thread's by its source, a source by the audience's map, a
+    /// source no source here was born under when it stands open or its own
+    /// readers name the exporter. A policy that does not resolve carries
+    /// nothing.
+    fn export_carries(&mut self, policy: EntityId, audience: &ExportAudience) -> Result<bool> {
+        if let Some(known) = self.policies.get(&policy) {
+            return Ok(*known);
+        }
+        let source = match super::policy_in(self.vault, self.txn, &policy)?.map(|row| row.kind) {
+            Some(super::SourceAudienceKind::Source { .. }) => Some(policy),
+            Some(super::SourceAudienceKind::Thread { source, .. }) => Some(source),
+            None => None,
+        };
+        let verdict = match source {
+            Some(source) => match audience.sources.get(&source) {
+                Some(carried) => {
+                    self.met.sources.insert(source);
+                    *carried
+                }
+                None => {
+                    let carried = self.unnamed_source_carried(source, audience.exporter)?;
+                    self.met.unidentified |= !carried;
+                    carried
+                }
+            },
+            None => {
+                self.met.unidentified = true;
+                false
+            }
+        };
+        self.policies.insert(policy, verdict);
+        Ok(verdict)
+    }
+
+    /// Whether an export for `exporter` carries the rows of the source
+    /// policy `source`, which no source this vault holds was born under:
+    /// when it stands open, or its own readers name the exporter.
+    fn unnamed_source_carried(&self, source: EntityId, exporter: EntityId) -> Result<bool> {
+        Ok(
+            match super::policy_in(self.vault, self.txn, &source)?.map(|row| row.kind) {
+                Some(super::SourceAudienceKind::Source { open: true, .. }) => true,
+                Some(super::SourceAudienceKind::Source { readers, .. }) => {
+                    super::names_reader_in(self.vault, self.txn, &readers, exporter)?
+                }
+                _ => false,
+            },
+        )
     }
 }

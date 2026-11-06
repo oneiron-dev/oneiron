@@ -18,6 +18,12 @@
 //! copy carried as its handle because it did not open here is recorded in
 //! that write too, for its holder to seal to the owner (FIX 4624(b)), and
 //! the row lists them, each recorded or why not; on the same terms again.
+//!
+//! The one exception is a copy that carries another member's personal
+//! mailbox (fix list row 15416, [`crate::mail_pack`]): its row, which counts
+//! those mailboxes, and each mailbox's person's notice are written in one
+//! write before the copy leaves, and a write that fails leaves those
+//! mailboxes out of the copy.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,7 +54,8 @@ pub enum ExportAuditScope {
 /// One copy that left the vault, written by the call that made it, so every
 /// owner can see that the vault left, whose copy it was and in what shape.
 /// Never the bytes. A row that cannot be written is logged and does not
-/// withhold the copy.
+/// withhold the copy, but for a copy that carries another member's personal
+/// mailbox: that row is written before the copy leaves (fix list row 15416).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportReceipt {
@@ -84,6 +91,11 @@ pub struct ExportReceipt {
     /// stands, read again from the fold whenever the row is read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holder_requests: Vec<HolderExportRequest>,
+    /// How many other members' personal mailboxes the copy carried, each
+    /// mailbox's person told in this row's own write (fix list row 15416).
+    /// Never which mailboxes, whose, or a word of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_mailboxes: Option<u64>,
 }
 
 const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
@@ -276,6 +288,7 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExport
             diary_reads,
             act,
             holder_requests,
+            member_mailboxes: None,
         };
         if let Err(error) = append_in_txn(vault, txn, &receipt) {
             tracing::warn!(
@@ -359,6 +372,54 @@ pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: ExportTh
         ..ExportCopy::raw(exporter, EXPORT_FORMAT_JSON, Vec::new(), roots)
     };
     record_export(vault, copy);
+}
+
+/// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded,
+/// which carries other members' personal mailboxes (fix list row 15416),
+/// before a byte of it leaves: under one export id, its audit row with its
+/// length, digest and how many such mailboxes it carries, and each
+/// mailbox's person's notice ([`crate::mail_pack::tell_member_mailboxes_in_txn`]),
+/// in one write. Nothing here is best effort: whatever this meets fails the
+/// write and nothing of it stands, and the door then leaves those mailboxes
+/// out of the copy. Each private thread it carries, `roots`, is told as
+/// [`record_export`] tells it.
+///
+/// # Errors
+///
+/// A mailbox no longer goes with the copy; storage failures.
+pub(crate) fn record_member_mail_json_export(
+    vault: &Vault,
+    json: &[u8],
+    roots: &ExportThreadRoots,
+    mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
+) -> crate::Result<()> {
+    let exporter = mailboxes.exporter();
+    let export = vault.new_entity_id()?;
+    vault.with_write_txn(|txn| {
+        // The id's allocation floor is kept with the row that names it.
+        let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let told =
+            crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
+        let receipt = ExportReceipt {
+            export,
+            scope: ExportAuditScope::WholeVault,
+            exporter,
+            at,
+            format: EXPORT_FORMAT_JSON.to_owned(),
+            bytes: u64::try_from(json.len()).ok(),
+            digest: Some(blake3::hash(json).to_hex().to_string()),
+            by: exporter.to_hex(),
+            diary_reads: Vec::new(),
+            act: None,
+            holder_requests: Vec::new(),
+            member_mailboxes: Some(told),
+        };
+        append_in_txn(vault, txn, &receipt)?;
+        crate::workspace_roster::notify_exported_threads_in_txn(
+            vault, txn, roots, exporter, export,
+        );
+        Ok(())
+    })
 }
 
 /// Whether `person`, who takes a copy of an off-record room's talk, owns
