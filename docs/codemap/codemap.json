@@ -31078,7 +31078,7 @@
      "path": "src/dreamer_wake/driver/attribution.rs",
      "purpose": "One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -77977,7 +77977,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection/frames/shallow_tail.rs",
-     "purpose": "Rebuild held retained operations without changing a shallow snapshot's root",
+     "purpose": "Rebuild held retained operations with an unchanged root or exact frontier retarget",
      "surface": {
       "crate-vis": 1
      }
