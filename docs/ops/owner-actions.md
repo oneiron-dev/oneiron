@@ -514,7 +514,7 @@ like any other reveal; approve once opens the agent's next read of that file.
 
 When a write's mask lifts a key out of a record, or marks a file, you get one inbox notice for
 that record, whatever number of keys it held. The notice lists each key's handle, its kind and
-where it sat. Answer each key one of four ways:
+where it sat. Answer each key using an action in its `actions` list:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
@@ -536,8 +536,21 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
   value an earlier revoke erased can't be marked not a secret; if the value appears again, its new
   finding can.
 
-Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
-file. A key in a claim or a text field keeps its handle.
+Each answer writes its receipt. The listing's `actions` says what is available for that key.
+The native text rulings support a record's body, a text field, a claim or a file; a signed MACHINE
+claim whose history owns its body keeps its handle. A repository finding supports **Not a secret**
+only and leaves its bytes, history and marks unchanged.
+
+To keep a real secret as text by choice, rather than declare a false hit, use **Kept as text**
+(`kept_as_text` in the action list):
+
+```sh
+oneiron api raw POST /v1/owner/secrets/found/keep-as-text --data '{"handle": "sc12"}'
+```
+
+This uses the same native restore, custody revoke and kept-value screen as **Not a secret**, but
+records the owner's distinct choice and receipt reason. It does not declare that the value is
+not a secret. Use it only where the key's `actions` lists `kept_as_text`.
 
 ## Bind a secret so an agent can use it
 
