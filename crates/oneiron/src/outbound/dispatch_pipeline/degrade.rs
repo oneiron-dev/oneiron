@@ -10,6 +10,7 @@ use super::pipeline::OutboundDispatchPipeline;
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::outbound::connector_task::SEND_EXECUTOR_FENCE_FIELD;
 use crate::outbound::dispatch_types::{
     OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
@@ -63,6 +64,9 @@ fn ambient_alternative_request(
     request.delivery_window_local_minute_of_day = parent.delivery_window_local_minute_of_day;
     request.delivery_window_clock = parent.delivery_window_clock;
     request.delivery_window_human_explicit_instant = parent.delivery_window_human_explicit_instant;
+    // FIX 4747: the alternative sends for the interrupt's TASK, so its
+    // transport call passes the same send executor fence.
+    request.send_executor_fence = parent.send_executor_fence;
     request
 }
 
@@ -122,7 +126,14 @@ pub(super) fn dispatch_ambient_alternative<S: OutboundExecutionSink>(
                 ALTERNATIVE_OUTCOME_FIELD.to_owned(),
                 child.outcome.as_str().to_owned(),
             );
-            for field in ["retry_at", "provider_retry_after", "provider_wait"] {
+            // FIX 4747: an alternative the send executor fence stood down
+            // stands its interrupt's attempt down with it.
+            for field in [
+                "retry_at",
+                "provider_retry_after",
+                "provider_wait",
+                SEND_EXECUTOR_FENCE_FIELD,
+            ] {
                 if let Some(value) = child.receipt.fields.get(field) {
                     fields
                         .entry(field.to_owned())
