@@ -270,8 +270,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
-        // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
-        // limit stays a property of this nest alone.
+        // by the storage-shaped `/v1/core` routes above. Its bodies read up to
+        // the request floor this router sets (ABC transport row T2).
         .nest(
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),

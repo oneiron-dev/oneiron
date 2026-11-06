@@ -171,7 +171,7 @@ pub(crate) async fn classify_request(
         return Ok((request, None));
     }
     let (parts, body) = request.into_parts();
-    let limit = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+    let limit = crate::api::request_floor::request_floor(server);
     let bytes = axum::body::to_bytes(body, limit)
         .await
         .map_err(|_| clock_corrupt_refusal())?;
