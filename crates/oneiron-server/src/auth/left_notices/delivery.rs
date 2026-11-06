@@ -56,6 +56,7 @@ pub(super) async fn removal_delivery(
     let reading = Arc::clone(&server);
     let (person, owed) = tokio::task::spawn_blocking(move || {
         reading.vault().removal_deliveries(
+            reading.host_issuer(),
             &slip,
             proof.timestamp,
             &signature,
