@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, mpsc};
@@ -131,10 +131,14 @@ pub fn launch(
     socket: &Path,
     generation: String,
     reconnect: Duration,
+    read_only_paths: &[PathBuf],
     command: &[OsString],
 ) -> io::Result<i32> {
     if command.is_empty() {
         return Err(io::Error::other("missing fenced command"));
+    }
+    if read_only_paths.iter().any(|path| !path.is_absolute()) {
+        return Err(io::Error::other("fence read-only paths must be absolute"));
     }
     // SAFETY: get*id only inspect this process.
     if unsafe { libc::geteuid() } == 0 || unsafe { libc::getegid() } == 0 {
@@ -166,7 +170,13 @@ pub fn launch(
     }
     if pid == 0 {
         drop(parent);
-        if let Err(error) = child(&child_channel, command, parent_pid, inherit_group) {
+        if let Err(error) = child(
+            &child_channel,
+            command,
+            read_only_paths,
+            parent_pid,
+            inherit_group,
+        ) {
             eprintln!("oneiron fence: {error}");
         }
         // SAFETY: exit the fork child without parent destructors.
@@ -179,7 +189,7 @@ pub fn launch(
         generation,
         bootstrap_fd,
         parent_pid,
-        ruleset_hash: linux::ruleset_hash(),
+        ruleset_hash: linux::ruleset_hash(read_only_paths),
         seccomp_hash: linux::filter_hash(parent_pid, bootstrap_fd),
         landlock_abi: abi,
         no_new_privs: true,
@@ -259,6 +269,7 @@ pub fn launch(
 fn child(
     channel: &UnixStream,
     command: &[OsString],
+    read_only_paths: &[PathBuf],
     parent_pid: u32,
     inherit_group: bool,
 ) -> io::Result<()> {
@@ -269,7 +280,7 @@ fn child(
     {
         return Err(io::Error::last_os_error());
     }
-    let abi = linux::landlock()?;
+    let abi = linux::landlock(read_only_paths)?;
     let listener = linux::install(parent_pid, channel.as_raw_fd())?;
     wire::send_fd(channel, listener.as_raw_fd())?;
     // The filter hands send(2) to the parent's handler, which starts only

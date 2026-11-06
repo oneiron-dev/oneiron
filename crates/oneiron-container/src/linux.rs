@@ -4,7 +4,7 @@ use std::ffi::CString;
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) const CONTINUE: u32 = 1;
 const NOTIF_RECV: libc::c_ulong = 0xc050_2100;
@@ -116,6 +116,7 @@ pub(crate) const PATHS: &[(&str, bool)] = &[
     ("/proc", false),
     ("/sys", false),
     ("/srv", false),
+    ("/app", false),
     ("/mnt", false),
     ("/tmp", true),
     ("/dev/shm", true),
@@ -125,12 +126,18 @@ pub(crate) const PATHS: &[(&str, bool)] = &[
     ("/dev/random", false),
 ];
 
-pub(crate) fn ruleset_hash() -> String {
-    let bytes = serde_json::to_vec(&(3, READ | WRITE, PATHS)).expect("static fence rules");
+pub(crate) fn ruleset_hash(read_only_paths: &[PathBuf]) -> String {
+    let mut paths: Vec<&[u8]> = read_only_paths
+        .iter()
+        .map(|path| path.as_os_str().as_bytes())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let bytes = serde_json::to_vec(&(3, READ | WRITE, PATHS, paths)).expect("fence rules");
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-pub(crate) fn landlock() -> io::Result<i32> {
+pub(crate) fn landlock(read_only_paths: &[PathBuf]) -> io::Result<i32> {
     #[repr(C)]
     struct Ruleset {
         handled_access_fs: u64,
@@ -162,20 +169,28 @@ pub(crate) fn landlock() -> io::Result<i32> {
     }
     // SAFETY: successful create_ruleset returns an owned descriptor.
     let ruleset = unsafe { OwnedFd::from_raw_fd(fd as i32) };
-    for &(path, writable) in PATHS {
-        let path = CString::new(path).map_err(io::Error::other)?;
+    let paths = PATHS
+        .iter()
+        .map(|&(path, writable)| (Path::new(path), writable, false))
+        .chain(
+            read_only_paths
+                .iter()
+                .map(|path| (path.as_path(), false, true)),
+        );
+    for (path, writable, required) in paths {
+        let c_path = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
         // SAFETY: path is NUL terminated; O_PATH obtains only a path handle.
-        let fd = unsafe { libc::open(path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
         if fd < 0 {
             let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::NotFound {
+            if !required && error.kind() == io::ErrorKind::NotFound {
                 continue;
             }
             return Err(error);
         }
         // SAFETY: open returned a new owned descriptor.
         let parent = unsafe { OwnedFd::from_raw_fd(fd) };
-        let metadata = std::fs::metadata(path.to_str().map_err(io::Error::other)?)?;
+        let metadata = std::fs::metadata(path)?;
         let mut rights = if writable { READ | WRITE } else { READ };
         if !metadata.is_dir() {
             rights &= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14);
