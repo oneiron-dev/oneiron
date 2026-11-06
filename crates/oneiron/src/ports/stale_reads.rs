@@ -1,8 +1,8 @@
 //! Partial physical inputs of the original staleness read.
 //!
-//! These borrowed events cover the stale mark and direct walk/dependency reads,
-//! not delegated calendar-origin or epoch-summary/document-pointer reads. They
-//! grant no permission to retain bytes and are not a complete read certificate.
+//! These borrowed events cover the stale mark, direct walk/dependency reads and
+//! epoch-summary entity/head reads. Calendar-origin reads remain unobserved.
+//! They grant no permission to retain bytes and are not a complete read certificate.
 use crate::EntityId;
 use crate::error::Result;
 use crate::side_table::{SideCodec, SideDb, SideKey, SideTable};
