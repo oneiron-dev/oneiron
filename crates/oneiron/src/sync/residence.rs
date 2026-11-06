@@ -7,6 +7,7 @@ mod tests;
 mod admission;
 mod authority_parts;
 mod authority_tail;
+mod base_projection;
 mod bundle;
 mod bundle_access;
 mod bundle_payload;
@@ -135,10 +136,10 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
-pub(crate) use world_base_rows::{discarded_world_in, forget_discarded_in_txn};
+pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{
-    put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
+    home_window_vv_in_txn, put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
 };
 
 #[cfg(test)]
@@ -553,6 +554,7 @@ pub fn promotion_covers_full_window_for(
             super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,
+            super::ingest::MESSAGE_WRITER_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
         }
