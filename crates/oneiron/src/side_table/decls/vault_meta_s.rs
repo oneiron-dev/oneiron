@@ -72,6 +72,14 @@ side_tables! {
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
     /// entry hash).
     SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
+    /// The owner's mark that he imported one export secret request's supplement here, which this
+    /// install could not sign in the import's writer, with no live machine profile or no install
+    /// key loaded (FIX 12291): the owner the import revalidated, the surface he imported from
+    /// and the second the import was at, until a pass that can sign carries it or finds nothing
+    /// owed. Holds no secret byte, ciphertext, secret name, proof, credential or key. Key: hash32
+    /// (the request's entry hash).
+    SECRET_CUSTODY_PENDING_IMPORT_MARK: VaultMeta b"secret_custody:pending_import_mark:v1:" Named Engine
+        => crate::store::pending_import_mark::erase_pending_import_mark_actor_in_txn;
     /// A revoke of one portable custody record this install made but could not carry for the
     /// owner yet, with no live machine profile or no install key loaded (CALLS
     /// CUSTODY_REVOKE_PENDING_CARRY): the owner it is by, the surface he decided on, the second
