@@ -21,6 +21,7 @@ impl fmt::Debug for ServeArgs {
             .field("hypnos_socket", &self.hypnos_socket)
             .field("ready_fd", &self.ready_fd)
             .field("credentials_fd", &self.credentials_fd)
+            .field("allocation_fd", &self.allocation_fd)
             .field(
                 "custody_anchor_credentials_fd",
                 &self.custody_anchor_credentials_fd,

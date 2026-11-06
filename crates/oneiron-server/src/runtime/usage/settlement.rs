@@ -49,6 +49,7 @@ impl VaultUsage {
             price_sources,
             owner,
             service_cost: None,
+            context: None,
         }
     }
 
@@ -129,6 +130,7 @@ pub(super) fn settlement_event(
         price_sources,
         owner,
         service_cost,
+        context: _,
     } = call;
     let source = match facts.payer {
         Payer::Host => UsageMode::OneironCloud,

@@ -14,6 +14,7 @@ use oneiron_model::llm::{BudgetGuardId, BudgetMeterRange};
 mod metered_owed;
 mod net;
 mod observations;
+mod systemone;
 mod owed;
 use net::NativeNetCoverage;
 pub(in crate::dreamer_runner) use net::record_native_net_settlement_in_txn;
@@ -42,6 +43,7 @@ struct NativeCallObligation {
     net_response: NativeNetResponse,
     net_coverage: NativeNetCoverage,
     house_completions: Option<Vec<crate::dreamer_wake::DecisionCompletionObservation>>,
+    systemone_usage: Option<systemone::SystemOneTerminalUsage>,
     aggregate_observations: Vec<NativeAggregateObservation>,
     owed_reconciliations: Vec<owed::NativeOwedReconciliation>,
     metered_owed_observations: Vec<metered_owed::NativeMeteredOwedObservation>,
@@ -160,6 +162,7 @@ pub(crate) fn retain_native_call_in_txn(
         net_response: NativeNetResponse::Unknown,
         net_coverage: NativeNetCoverage::Unknown,
         house_completions: None,
+        systemone_usage: None,
         aggregate_observations: Vec::new(),
         owed_reconciliations: Vec::new(),
         metered_owed_observations: Vec::new(),
@@ -176,6 +179,7 @@ pub(crate) fn retain_native_call_in_txn(
         original.net_response = NativeNetResponse::Unknown;
         original.net_coverage = NativeNetCoverage::Unknown;
         original.house_completions = None;
+        original.systemone_usage = None;
         original.aggregate_observations.clear();
         original.owed_reconciliations.clear();
         original.metered_owed_observations.clear();
@@ -240,6 +244,49 @@ pub(crate) fn invoice_native_call_in_txn(
 }
 
 impl DreamerRunnerStore<'_> {
+    /// Native response totals from the already selected original admission.
+    /// This reads evidence only, never a payment, terminal alias or meter balance.
+    pub(crate) fn native_terminal_usage(
+        &self,
+        origin: AdmittedCallId,
+        boot: [u8; 16],
+        line: &str,
+        lease: &str,
+    ) -> Result<Option<oneiron_model::llm::LlmUsage>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let Some(row) = CALLS.get(&self.vault.store, &rtxn, &origin)? else {
+            return Ok(None);
+        };
+        if row.boot != boot || row.line != line || row.lease != lease {
+            return Err(invalid_dreamer_runner("native original admission differs"));
+        }
+        let units = match row.invoice {
+            NativeCallInvoice::Admitted => return Ok(None),
+            NativeCallInvoice::Invoiced { units } | NativeCallInvoice::Paid { units, .. } => units,
+        };
+        let usage = match (&row.house_completions, &row.systemone_usage) {
+            (Some(completions), None) => {
+                let Some(usage) =
+                    crate::dreamer_wake::DecisionCompletionObservation::terminal_usage(completions)
+                else {
+                    return Ok(None);
+                };
+                usage
+            }
+            (None, Some(observed)) => observed.terminal_usage(),
+            (None, None) => return Ok(None),
+            _ => {
+                return Err(invalid_dreamer_runner(
+                    "native terminal quantity sources differ",
+                ));
+            }
+        };
+        if usage.input.total.checked_add(usage.output.total) != Some(units) {
+            return Err(invalid_dreamer_runner("native terminal quantity differs"));
+        }
+        Ok(Some(usage))
+    }
+
     /// Pay one native NET invoice from its original retained line, regardless
     /// of a later generation's reservation. This primitive is not called by
     /// the aggregate driver: that caller must first retain exact coverage of

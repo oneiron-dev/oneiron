@@ -35,9 +35,11 @@ pub use admission::{
     UNRESOLVED_SELECTOR,
 };
 pub use allocation::{
-    AllocationCallKey, AllocationCommit, AllocationProducer, AllocationServingFence,
-    AllocationStoreError, AllocationTerminal, DurableAllocationHold, DurableAllocationRead,
-    PersistentAllocation, VaultAllocationLedger,
+    AllocationCallContext, AllocationCallIntent, AllocationCallKey, AllocationCommit,
+    AllocationProducer, AllocationServingFence, AllocationStoreError, AllocationTerminal,
+    AllocationTerminalSelection,
+    AllocationTerms, DurableAllocationHold, DurableAllocationRead, PersistentAllocation,
+    VaultAllocationLedger,
 };
 pub use capture::{capture_settlements, capture_settlements_shared, captured_sink};
 pub use declaration::{
@@ -63,7 +65,7 @@ pub use receipt::{
     RunReceiptSink, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
 };
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
-pub use settle::CallOutcome;
+pub use settle::{CallCharge, CallOutcome};
 pub use wire::{WireCallError, WireSeat};
 pub use work_context::{
     WorkCancel, WorkContext, WorkId, WorkPhysical, forget_work_parent, lookup_work_parent,

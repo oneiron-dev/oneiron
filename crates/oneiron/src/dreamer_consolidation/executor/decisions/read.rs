@@ -206,6 +206,7 @@ impl Decider<'_> {
         // Each rung past the generated read shows the pack's choices alike.
         let rungs = LabelledRungs::of(&held, wire);
         let ladder = rungs.ladder(&held);
+        let _ = vault.measure_decision_pack(&self.decisions.bands, pack.len());
         let decided = match context {
             Some(context) => {
                 ladder

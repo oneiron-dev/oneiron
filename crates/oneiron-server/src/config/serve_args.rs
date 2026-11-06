@@ -113,6 +113,13 @@ pub struct ServeArgs {
     #[arg(long = "credentials-fd")]
     pub credentials_fd: Option<i32>,
 
+    /// Trusted supervisor's original allocation descriptor: one
+    /// `oneiron_vault_contract::allocation::AllocationDelivery` JSON object,
+    /// then EOF. Consumed once before AI attachment. No descriptor keeps the
+    /// existing non-native startup; omission is never allocation revocation.
+    #[arg(long = "allocation-fd", requires = "managed_by_hypnos")]
+    pub allocation_fd: Option<i32>,
+
     /// Inherited file descriptor, the read end of a pipe, carrying the owner
     /// credential the custody anchor door (`[backup] custody_anchor_url`)
     /// admits: one JSON object, `{"bearer": "<token>", "binding_seed":
