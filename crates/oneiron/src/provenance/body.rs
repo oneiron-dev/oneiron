@@ -37,7 +37,9 @@ pub(crate) use crate::store::owned_body::{
 /// Publishes `body`'s descriptor in the caller's transaction. An occurrence
 /// may go from absent or incomplete to incomplete or complete; a complete
 /// body is final, so the same descriptor again is a no-op and a different one
-/// is refused. A publisher makes the bytes durable first, then publishes the
+/// is refused. The same is [`OwnedBody::eq_ignoring_origin`]: a stored
+/// descriptor that differs only in its code-run origin stays as it is (FIX
+/// 7365). A publisher makes the bytes durable first, then publishes the
 /// complete descriptor in the transaction that binds the result.
 ///
 /// # Errors
@@ -53,7 +55,7 @@ pub(crate) fn publish_body_in_txn(
 ) -> Result<()> {
     let key = (body.owner, body.occurrence);
     if let Some(prior) = BODY.get(store, txn, &key)? {
-        if prior == *body {
+        if prior.eq_ignoring_origin(body) {
             return Ok(());
         }
         if prior.state.is_complete() {
