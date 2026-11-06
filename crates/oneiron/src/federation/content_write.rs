@@ -124,8 +124,9 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
 
     /// Writes the `edge.provenance` Claim of one link this writer staged in
     /// this transaction (FIX 3959): a supporting effect of the NOTE the link
-    /// leaves, not a separately granted content record. The Claim names this
-    /// writer and its class, and no other actor.
+    /// leaves, not a separately granted content record, so it runs no claim
+    /// write gate of its own and leaves the link's value as stored. The Claim
+    /// names this writer and its class, and no other actor.
     pub(crate) fn put_authored_link_provenance(
         &mut self,
         write: crate::provenance::EdgeProvenanceWrite<'_>,
