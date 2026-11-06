@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4582 declarations.
+Census: 1262 facade rows, 4583 declarations.
 Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -17494,7 +17494,6 @@ class ModelTrialPolicy(TypedDict):
     exploration_remaining: float
     vault_cost_cap: NotRequired[float | None]
     project_cost_cap: NotRequired[float | None]
-    auto_approve: NotRequired[bool]
     candidate_needs_download: bool
 class ModelTrialRequest(TypedDict):
     principal: EntityId
@@ -17556,10 +17555,14 @@ class TrialAssessment(TypedDict):
     canary_diverged: bool
 TrialQuality = Literal["better", "not_worse", "worse", "unknown"]
 ModelTrialAction = Literal["stay", "offer", "auto_approve", "ask_tradeoff", "unknown"]
+class StockAutoapprovePolicy(TypedDict):
+    enabled: bool
+    revision: NotRequired[EntityId | None]
 class ModelTrialReceipt(TypedDict):
     assessment: TrialAssessment
     quality: TrialQuality
     action: ModelTrialAction
+    stock_autoapprove_policy: StockAutoapprovePolicy
     candidate_cost_per_unit: float
     added_cost_per_thousand: float
     added_future_cost: float

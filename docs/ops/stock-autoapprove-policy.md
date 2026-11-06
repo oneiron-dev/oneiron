@@ -22,6 +22,22 @@ An OFF -> ON change cannot revive an old ON revision. The owner-setting act
 and optional signed operation follow the native policy-setting record path.
 The setting is LIVE restore state, like the other owner policy settings.
 
+## Native trial recommendations
+
+`ModelTrialPolicy` no longer accepts a caller's `auto_approve` flag. On a new
+trial completion, the native writer reads this owner setting after the original
+question/backend/quality checks, and passes it to the existing action predicate.
+The same not-worse/not-pricier rule, download flag and tradeoff choices apply.
+The receipt keeps the exact `stock_autoapprove_policy` value that writer read.
+An immutable completion replay returns its original receipt before reading a
+new policy value. It never relabels a historical recommendation.
+
+`ModelTrialAction::AutoApprove` remains a recommendation for the activation
+owner. It does not bind a model or approve a training offer. An activation must
+re-read the live policy and verify current serving/quality/price/download
+facts. This change does not claim that automatic application or the actual
+download-card-once path is complete. Existing manual approval and undo remain.
+
 ## Authority is not authentication
 
 A policy revision identifies saved standing permission. It is not a current

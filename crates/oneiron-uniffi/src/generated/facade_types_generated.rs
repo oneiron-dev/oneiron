@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4581 generated types.
+// UniFFI census: 1262 facade rows, 4582 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -55059,12 +55059,6 @@ pub struct ModelTrialPolicy {
         skip_serializing_if = "Option::is_none"
     )]
     pub project_cost_cap: Option<f64>,
-    #[serde(
-        rename = "auto_approve",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub auto_approve: Option<bool>,
     #[serde(rename = "candidate_needs_download")]
     pub candidate_needs_download: bool,
 }
@@ -55286,6 +55280,16 @@ pub enum ModelTrialAction {
     Unknown,
 }
 
+/// `oneiron::settings::stock_autoapprove::StockAutoapprovePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StockAutoapprovePolicy {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(rename = "revision", default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+}
+
 /// `oneiron::llm::model_trials::types::ModelTrialReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -55296,6 +55300,8 @@ pub struct ModelTrialReceipt {
     pub quality: TrialQuality,
     #[serde(rename = "action")]
     pub action: ModelTrialAction,
+    #[serde(rename = "stock_autoapprove_policy")]
+    pub stock_autoapprove_policy: StockAutoapprovePolicy,
     #[serde(rename = "candidate_cost_per_unit")]
     pub candidate_cost_per_unit: f64,
     #[serde(rename = "added_cost_per_thousand")]
