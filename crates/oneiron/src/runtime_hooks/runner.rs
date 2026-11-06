@@ -512,7 +512,14 @@ impl Pass<'_, '_> {
                 return Ok(false);
             }
         };
-        let Some(seen) = read::fact_row(&lane, &grant, entry)? else {
+        let seen = if read::fact_point(entry).is_some() {
+            let _bodies = lane.prepare_point_read::<crate::Error>()?;
+            let txn = self.vault.store.env.read_txn()?;
+            read::fact_row_in_txn(&lane, &txn, &grant, entry)?
+        } else {
+            None
+        };
+        let Some(seen) = seen else {
             self.report.skipped += 1;
             return Ok(false);
         };
