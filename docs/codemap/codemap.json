@@ -5121,7 +5121,7 @@
      "purpose": "FIX 10624: the credential of an official CLI a seat host runs under one claimed BYOA attempt (ARCH-0069 T1…",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 7
      }
     },
     {
@@ -5159,7 +5159,7 @@
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 26,
-      "fn": 26,
+      "fn": 27,
       "struct": 6
      }
     },
@@ -45928,7 +45928,7 @@
       "crate-vis": 11,
       "enum": 1,
       "fn": 28,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -45965,6 +45965,19 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RawDispatch"
+     ],
+     "path": "src/llm/run_admission/admission/raw.rs",
+     "purpose": "A model call whose host sends the exact bytes its caller wrote, not a request the engine built: a seat's…",
+     "surface": {
+      "fn": 4,
       "struct": 1
      }
     },
@@ -52372,7 +52385,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 51,
+      "crate-vis": 52,
       "re-export": 19
      }
     },
@@ -52500,7 +52513,17 @@
      "path": "src/note/citation_erase.rs",
      "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/citation_residence.rs",
+     "purpose": "Erase reach for residence copies of NOTEs (FIX 18400)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92060,7 +92083,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 169,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92137,7 +92160,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 72,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92811,7 +92834,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6539,
+   "source_files": 6541,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93521,7 +93544,7 @@
      "path": "src/authority/slip_claims.rs",
      "purpose": "Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "fn": 5,
       "struct": 2
      }
@@ -96655,7 +96678,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 7
+      "fn": 10
      }
     },
     {
@@ -105416,8 +105439,8 @@
      "path": "src/lib/wire.rs",
      "purpose": "Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -105908,8 +105931,8 @@
      "path": "src/lib/wire.rs",
      "purpose": "Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 4,
-      "fn": 3
+      "crate-vis": 3,
+      "fn": 4
      }
     }
    ],
@@ -118996,7 +119019,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 51
+      "crate-vis": 52
      }
     },
     {
@@ -119131,6 +119154,16 @@
      "purpose": "`POST /v1/seat/credential-helper` (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim): the value a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/seat_model_door.rs",
+     "purpose": "`POST /v1/seat/model/{slot}/v1/chat/completions` and `POST /v1/seat/model/{slot}/v1/messages` (FIX 15702…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -125474,13 +125507,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/broker_context.rs",
      "purpose": "One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -126184,7 +126217,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 1,
       "re-export": 16,
       "struct": 2
@@ -126450,6 +126483,26 @@
      "surface": {
       "crate-vis": 5,
       "fn": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/seat_model.rs",
+     "purpose": "The model door's broker leg (FIX 15702; ARCH-0069 `#door-sign-loopback`): one model request from an official…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/seat_model_admission.rs",
+     "purpose": "A seat's paid model calls on the model door (FIX 15702 slice 3; Engine call 14:12, A, mirroring the AI…",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -127945,7 +127998,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -127994,14 +128047,16 @@
       "HelperRunEnd",
       "SeatHelperEnv",
       "SeatHelperRun",
-      "SeatHelperRuns"
+      "SeatHelperRuns",
+      "SeatModelDoor"
      ],
      "path": "src/runtime/seat_helpers.rs",
      "purpose": "The credential-helper destinations of a seat run (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim)",
      "surface": {
       "const": 5,
-      "fn": 15,
-      "struct": 6
+      "crate-vis": 1,
+      "fn": 16,
+      "struct": 7
      }
     },
     {
@@ -128025,13 +128080,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime/seat_host/helper_run.rs",
-     "purpose": "A seat run's credential helper (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim): begun before…",
+     "purpose": "A seat run's credential helper (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim) and model door…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -128180,6 +128235,25 @@
      "surface": {
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatModelBinding",
+      "SeatModelEnv",
+      "SeatModelProtocol",
+      "SeatModelReference",
+      "SeatModelSlot"
+     ],
+     "path": "src/runtime/seat_models.rs",
+     "purpose": "The model door of a seat run (FIX 15702 slice 1; ARCH-0069 `#door-sign-loopback`, OSH p6): an official CLI…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -130144,7 +130218,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -130494,7 +130568,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 129,
+     "files": 131,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -130557,7 +130631,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -130657,7 +130731,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1647,
+   "source_files": 1651,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
