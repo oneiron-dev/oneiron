@@ -219,6 +219,14 @@ impl<'a> StepCalls<'a> {
         lease: &BudgetLease,
         ordinal: u32,
     ) -> ObservedCall<'a> {
+        if let Some(line) = self
+            .deadline
+            .and_then(WakePassDeadline::original_budget_line)
+            && let Some(mut origin) = self.origin
+        {
+            origin.ordinal = ordinal;
+            line.retain_native_lease(origin, lease);
+        }
         self.record_owed(guard, lease, ordinal);
         ObservedCall {
             vault: self.vault,

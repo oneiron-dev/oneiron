@@ -11,7 +11,10 @@ use crate::attempt_queue::{
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::DreamerAttemptProgressProducer;
-use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
+use crate::dreamer_runner::{
+    AdmittedBudgetLine, DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause,
+    NativeMeterSnapshot,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::model_step_context::StepReceipt;
@@ -239,13 +242,26 @@ pub struct WakeAttemptContext<'a> {
 /// included (SCAN C012). Only the first registration counts.
 #[derive(Debug, Default)]
 pub struct WakeAttemptMeter {
-    line: OnceLock<(BudgetGuard, u64)>,
+    line: OnceLock<WakeMeterLine>,
     /// The terminal steps the executor tallied as paid on that line, each
     /// with its units, in the order it noted them (FIX 6100).
     terminal_steps: Mutex<Vec<(StepReceipt, u64)>>,
     /// What the executor's own tally spent before an error left it, with
     /// the terminal steps those units pay for (FIX 7432).
     spent_before_error: Mutex<(u64, Vec<StepReceipt>)>,
+}
+
+#[derive(Debug)]
+struct WakeMeterLine {
+    guard: BudgetGuard,
+    start_used_units: u64,
+    original: Option<AdmittedBudgetLine>,
+}
+
+pub(crate) struct WakeMeterSettlement {
+    pub(crate) charged_units: u64,
+    pub(crate) receipts: Vec<StepReceipt>,
+    pub(crate) native: Option<NativeMeterSnapshot>,
 }
 
 impl WakeAttemptMeter {
@@ -259,11 +275,12 @@ impl WakeAttemptMeter {
     }
 
     fn line_units(&self) -> u64 {
-        self.line.get().map_or(0, |(line, start)| {
-            line.accounting_snapshot(&[])
+        self.line.get().map_or(0, |line| {
+            line.guard
+                .accounting_snapshot(&[])
                 .read
                 .used_units
-                .saturating_sub(*start)
+                .saturating_sub(line.start_used_units)
         })
     }
 
@@ -276,13 +293,26 @@ impl WakeAttemptMeter {
     /// Captures one settlement's units and paid-step receipts together.
     /// The same line reading bounds the paid prefix, and error spend stays
     /// paired with the receipts recorded beside it.
-    pub(crate) fn settlement(&self) -> (u64, Vec<StepReceipt>) {
+    pub(crate) fn settlement(&self) -> WakeMeterSettlement {
         let spent = self.lock_spent_before_error();
         let steps = self
             .terminal_steps
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let line_units = self.line_units();
+        let native = self.line.get().and_then(|line| {
+            line.original
+                .as_ref()
+                .map(|original| original.meter_snapshot(&line.guard, line.start_used_units))
+        });
+        let line_units = native.as_ref().map_or_else(
+            || self.line_units(),
+            |native| {
+                let interval = native.interval();
+                interval
+                    .end_used_units
+                    .saturating_sub(interval.start_used_units)
+            },
+        );
         let charged = line_units.saturating_add(spent.0);
         let mut paid = spent.1.clone();
         let mut left = line_units;
@@ -295,7 +325,11 @@ impl WakeAttemptMeter {
                 paid.push(binding);
             }
         }
-        (charged, paid)
+        WakeMeterSettlement {
+            charged_units: charged,
+            receipts: paid,
+            native,
+        }
     }
 }
 
@@ -314,7 +348,11 @@ impl WakeAttemptContext<'_> {
     /// context with no meter, registers nothing.
     pub fn meter_run_line(&self, line: &BudgetGuard) {
         if let Some(meter) = self.spend_meter {
-            let _ = meter.line.set((line.clone(), line.read().used_units));
+            let _ = meter.line.set(WakeMeterLine {
+                guard: line.clone(),
+                start_used_units: line.accounting_snapshot(&[]).read.used_units,
+                original: self.deadline.original_budget_line().cloned(),
+            });
         }
     }
 
