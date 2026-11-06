@@ -7,7 +7,7 @@
 use super::step_charge::StepChargeTally;
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 
 pub(crate) use crate::store::conversation_residency::waits_on_residency;
 
@@ -16,7 +16,7 @@ pub(crate) use crate::store::conversation_residency::waits_on_residency;
 pub(super) fn residency_deferral(
     now_ms: u64,
     completed_units: u64,
-    step_bindings: Vec<StepEffectBinding>,
+    step_bindings: Vec<StepReceipt>,
 ) -> DreamerAttemptExecution {
     DreamerAttemptExecution::Deferred {
         completed_units,

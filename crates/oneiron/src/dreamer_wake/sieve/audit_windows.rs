@@ -39,7 +39,7 @@ use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{Scope, ScopeResource};
 
@@ -153,7 +153,7 @@ pub struct SieveWindowAudit {
     pub finding: SieveAuditFinding,
     pub at: u64,
     pub completed_units: u64,
-    pub step_bindings: Vec<StepEffectBinding>,
+    pub step_bindings: Vec<StepReceipt>,
 }
 
 /// A queued window audit: the window, and the recipe policy it was drawn
@@ -191,7 +191,7 @@ pub(crate) struct WindowOutcome {
     pub(crate) discovered: Vec<SieveAuditDiscovery>,
     pub(crate) unlocated: Vec<SieveUnlocatedDiscovery>,
     pub(crate) completed_units: u64,
-    pub(crate) step_bindings: Vec<StepEffectBinding>,
+    pub(crate) step_bindings: Vec<StepReceipt>,
     pub(crate) at: u64,
 }
 

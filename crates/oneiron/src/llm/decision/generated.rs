@@ -21,7 +21,7 @@ use crate::llm::{
     DurableStepContext, DurableStepResult, LlmBackend, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmUsage, ResponseFormat, StepOutcome, call_as_step,
 };
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 
@@ -100,7 +100,7 @@ pub enum GeneratedDecisions {
     /// durable binding (`None` for a raw or admitted generation), and memoized flag.
     Decided {
         decisions: Vec<TypedDecision>,
-        steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
+        steps: Vec<([u8; 32], LlmUsage, Option<StepReceipt>, bool)>,
     },
     /// The durable step suspended the attempt; it parked, and replays on resume.
     Trapped,
@@ -184,7 +184,7 @@ impl DecisionLadder<'_> {
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
-        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepReceipt>, bool)>,
         labels: Option<&dyn DecisionWireLabels>,
     ) -> DurableStepResult<GeneratedDecisions> {
         validate_pin(&rung.pin, dial.first)?;
@@ -267,7 +267,7 @@ async fn read(
     rung: &GeneratedRung<'_>,
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
-    steps: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
+    steps: &mut Vec<([u8; 32], LlmUsage, Option<StepReceipt>, bool)>,
     labels: Option<&dyn DecisionWireLabels>,
 ) -> DurableStepResult<Reply> {
     let asked = asked(call, pack.person);

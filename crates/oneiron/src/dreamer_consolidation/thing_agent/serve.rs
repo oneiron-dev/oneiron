@@ -375,12 +375,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));
             }
         };
-        charges.record_terminal(
-            pass.ctx.vault,
-            binding.attempt_id,
-            binding.step_hash,
-            &response.usage,
-        )?;
+        charges.record_terminal(pass.ctx.vault, binding, &response.usage)?;
         // Live rules, as today's path reads each reply.
         let rules = failure_rules::load(pass.ctx.vault)?;
         let (candidates, persons) = if accepted(rules.as_ref(), failure_policy, &response) {

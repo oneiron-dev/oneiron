@@ -367,12 +367,7 @@ impl ConsolidationExecutor<'_> {
             } => (response, binding),
             StepOutcome::Trapped { .. } => return Ok(None),
         };
-        charges.record_terminal(
-            step_ctx.vault,
-            binding.attempt_id,
-            binding.step_hash,
-            &response.usage,
-        )?;
+        charges.record_terminal(step_ctx.vault, binding, &response.usage)?;
         let rules = failure_rules::load(step_ctx.vault)?;
         if rules.is_some_and(|rules| !rules.accepts(Stage::Conflict, &response)) {
             return Ok(Some(MergeResolution::Escalate));

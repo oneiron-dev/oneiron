@@ -6,7 +6,7 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -78,7 +78,7 @@ pub struct SieveAudit {
     pub agrees: bool,
     pub at: u64,
     pub completed_units: u64,
-    pub step_bindings: Vec<StepEffectBinding>,
+    pub step_bindings: Vec<StepReceipt>,
     /// Every owed rung's typed decisions, rung by rung in pack order
     /// (OF-498a): what the reading was read from.
     pub decisions: Vec<KeptDecision>,
@@ -134,7 +134,7 @@ impl SieveAuditRecord {
         }
     }
 
-    fn step_bindings(&self) -> &[StepEffectBinding] {
+    fn step_bindings(&self) -> &[StepReceipt] {
         match self {
             Self::Flagged(audit) => &audit.step_bindings,
             Self::Window(audit) => &audit.step_bindings,
@@ -509,7 +509,7 @@ pub(crate) fn finish_rungs(
     confidence: u8,
     typing_owed: bool,
     completed_units: u64,
-    step_bindings: Vec<StepEffectBinding>,
+    step_bindings: Vec<StepReceipt>,
     decisions: Vec<KeptDecision>,
     now: u64,
 ) -> Result<bool> {
@@ -691,7 +691,7 @@ pub(super) fn history_in_txn(
 pub(crate) fn rung_result_units(
     vault: &Vault,
     attempt: AttemptId,
-) -> Result<Option<(u64, Vec<StepEffectBinding>)>> {
+) -> Result<Option<(u64, Vec<StepReceipt>)>> {
     let result = {
         let txn = vault.store.env.read_txn()?;
         AUDIT.get(&vault.store, &txn, &attempt)?
@@ -702,7 +702,7 @@ pub(crate) fn rung_result_units(
     let store = DreamerRunnerStore::new(vault);
     let mut paid = !result.step_bindings().is_empty();
     for binding in result.step_bindings() {
-        paid &= store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash)?;
+        paid &= store.checkpoint_step_charged(*binding)?;
     }
     Ok(Some(if paid {
         (0, Vec::new())

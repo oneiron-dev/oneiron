@@ -21,7 +21,7 @@ use crate::model_decision::catalogue::COMPACTION_SUPPORT;
 use crate::model_decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, ProviderPin, Reversibility,
 };
-use crate::model_step_context::{DurableStepContext, StepEffectBinding};
+use crate::model_step_context::{DurableStepContext, StepReceipt};
 use crate::model_step_error::DurableStepError;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault};
@@ -55,7 +55,7 @@ pub struct CompactionCheckDecisions<'a> {
 #[derive(Default)]
 pub(super) struct Spend {
     pub(super) units: u64,
-    step_bindings: Vec<StepEffectBinding>,
+    step_bindings: Vec<StepReceipt>,
 }
 
 impl Spend {
@@ -83,7 +83,7 @@ impl Spend {
     fn book(
         &mut self,
         vault: &Vault,
-        spent: &[([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)],
+        spent: &[([u8; 32], LlmUsage, Option<StepReceipt>, bool)],
     ) -> Result<()> {
         let store = DreamerRunnerStore::new(vault);
         for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
@@ -91,18 +91,17 @@ impl Spend {
                 if self.step_bindings.contains(binding) {
                     continue;
                 }
-                let charged =
-                    match store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash) {
-                        Ok(charged) => charged,
-                        Err(error) => {
-                            for (_, usage, _, memoized) in &spent[index..] {
-                                if !*memoized {
-                                    self.units = self.units.saturating_add(units(usage));
-                                }
+                let charged = match store.checkpoint_step_charged(*binding) {
+                    Ok(charged) => charged,
+                    Err(error) => {
+                        for (_, usage, _, memoized) in &spent[index..] {
+                            if !*memoized {
+                                self.units = self.units.saturating_add(units(usage));
                             }
-                            return Err(error);
                         }
-                    };
+                        return Err(error);
+                    }
+                };
                 if charged {
                     continue;
                 }

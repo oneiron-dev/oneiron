@@ -59,9 +59,9 @@ pub(super) const BUDGET_RESERVATION: SideTable<
     DreamerBudgetReservation,
     Raw,
 > = SideTable::new(&side_table::DREAMER_BUDGET_RESERVATION);
-/// Exact attempt/step memo charged by one wake checkpoint, holding the
-/// terminal claim the charge paid for (FIX 7489).
-const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), EntityId, Raw> =
+/// Exact terminal claim charged by one wake checkpoint, independent of
+/// which memo the attempt/step index selects later (FIX 7489).
+const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32], EntityId), EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
 
 /// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget

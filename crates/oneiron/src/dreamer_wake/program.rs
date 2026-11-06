@@ -53,7 +53,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::call_as_step;
 use crate::llm::seat::ModelSeat;
-use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepOutcome, StepReceipt};
 use crate::model_step_error::DurableStepError;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::{Vault, WriteActor};
@@ -352,7 +352,7 @@ struct Ran {
     outcome: EngineExecutorResult<PinnedProgramRun>,
     stop: Option<SeamStop>,
     pinned_finished: bool,
-    step_bindings: Vec<StepEffectBinding>,
+    step_bindings: Vec<StepReceipt>,
 }
 
 /// Runs one entry of the program's code run on the host's runtime, through
@@ -587,7 +587,7 @@ struct ProgramModelSeam<'s> {
     reactor: &'s dyn TurnProgramReactor,
     occurrence: AtomicU64,
     stop: Mutex<Option<SeamStop>>,
-    step_bindings: Mutex<Vec<StepEffectBinding>>,
+    step_bindings: Mutex<Vec<StepReceipt>>,
 }
 
 impl ProgramModelSeam<'_> {
@@ -595,7 +595,7 @@ impl ProgramModelSeam<'_> {
         *self.stop.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn step_bindings(&self) -> Vec<StepEffectBinding> {
+    fn step_bindings(&self) -> Vec<StepReceipt> {
         self.step_bindings
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -614,7 +614,7 @@ impl ProgramModelSeam<'_> {
     /// once, and never when a checkpoint already charged it, as
     /// `StepChargeTally::record_terminal` keeps its steps. A charge that
     /// cannot be read keeps today's empty pin.
-    fn note_fresh(&self, binding: StepEffectBinding) {
+    fn note_fresh(&self, binding: StepReceipt) {
         let mut held = self
             .step_bindings
             .lock()
@@ -622,9 +622,7 @@ impl ProgramModelSeam<'_> {
         if held.contains(&binding) {
             return;
         }
-        match DreamerRunnerStore::new(self.vault)
-            .checkpoint_step_charged(binding.attempt_id, &binding.step_hash)
-        {
+        match DreamerRunnerStore::new(self.vault).checkpoint_step_charged(binding) {
             Ok(true) => {}
             Ok(false) => held.push(binding),
             Err(error) => {

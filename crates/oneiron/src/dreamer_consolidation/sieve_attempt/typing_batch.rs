@@ -144,12 +144,7 @@ impl ConsolidationExecutor<'_> {
             // outcome (FIX 11554).
             for (index, (_, usage, binding, _)) in read.steps.iter().enumerate() {
                 if let Some(binding) = binding {
-                    if let Err(error) = charges.record_terminal(
-                        ctx.vault,
-                        binding.attempt_id,
-                        binding.step_hash,
-                        usage,
-                    ) {
+                    if let Err(error) = charges.record_terminal(ctx.vault, *binding, usage) {
                         for (_, usage, _, memoized) in &read.steps[index..] {
                             if !*memoized {
                                 charges.record_usage(usage);

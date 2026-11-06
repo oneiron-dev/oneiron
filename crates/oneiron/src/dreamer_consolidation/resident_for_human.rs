@@ -486,12 +486,7 @@ pub async fn run_free_time_for_human(
         Ok(StepOutcome::Finished {
             response, binding, ..
         }) => {
-            charges.record_terminal_metered(
-                ctx,
-                binding.attempt_id,
-                binding.step_hash,
-                &response.usage,
-            )?;
+            charges.record_terminal_metered(ctx, binding, &response.usage)?;
             response
         }
         Ok(StepOutcome::Trapped { .. }) => {

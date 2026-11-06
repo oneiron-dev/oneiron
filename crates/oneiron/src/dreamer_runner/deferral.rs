@@ -7,7 +7,7 @@
 
 use crate::attempt_queue::AttemptRecord;
 use crate::error::Result;
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 
 use super::DreamerRunnerStore;
 
@@ -32,13 +32,11 @@ pub(crate) fn selection_deferred(record: &AttemptRecord) -> bool {
 pub(super) fn unpinned_step_bindings_in_txn(
     store: &DreamerRunnerStore<'_>,
     txn: &heed::RoTxn<'_>,
-    step_bindings: &[StepEffectBinding],
-) -> Result<Vec<StepEffectBinding>> {
+    step_bindings: &[StepReceipt],
+) -> Result<Vec<StepReceipt>> {
     let mut unpinned = Vec::with_capacity(step_bindings.len());
     for binding in step_bindings {
-        if !unpinned.contains(binding)
-            && !store.step_charge_marked_in_txn(txn, binding.attempt_id, &binding.step_hash)?
-        {
+        if !unpinned.contains(binding) && !store.step_charge_marked_in_txn(txn, *binding)? {
             unpinned.push(*binding);
         }
     }

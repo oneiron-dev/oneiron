@@ -636,12 +636,7 @@ pub async fn run_resident_dream(
         Ok(StepOutcome::Finished {
             response, binding, ..
         }) => {
-            charges.record_terminal_metered(
-                ctx,
-                binding.attempt_id,
-                binding.step_hash,
-                &response.usage,
-            )?;
+            charges.record_terminal_metered(ctx, binding, &response.usage)?;
             (response, binding)
         }
         Ok(StepOutcome::Trapped { .. }) => {

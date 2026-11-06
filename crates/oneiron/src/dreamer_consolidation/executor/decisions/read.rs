@@ -22,7 +22,7 @@ use crate::llm::decision::{
 use crate::model_decision::{
     DecisionQuestion, DecisionRung, EvidenceVersion, HumanAskReason, ProviderPin, Reversibility,
 };
-use crate::model_step_context::{DurableStepContext, StepEffectBinding};
+use crate::model_step_context::{DurableStepContext, StepReceipt};
 use crate::model_step_error::DurableStepResult;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::WriteActor;
@@ -94,7 +94,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepReceipt>, bool)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();

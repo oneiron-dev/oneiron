@@ -16,7 +16,7 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::dreamer_wake::{SieveSpan, SpanKind};
 use crate::error::{Error, Result};
-use crate::model_step_context::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -204,7 +204,7 @@ pub(crate) struct ReadingRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Receipt {
     pub(crate) completed_units: u64,
-    pub(crate) step_bindings: Vec<StepEffectBinding>,
+    pub(crate) step_bindings: Vec<StepReceipt>,
     pub(crate) run_id: Option<String>,
     pub(crate) at: u64,
 }
@@ -547,10 +547,7 @@ pub(super) fn result_turns_in_txn(
 
 /// The units and original step bindings `attempt`'s results charge that no settlement
 /// has paid yet: a result published before a crash still settles once.
-pub(crate) fn unpaid_in(
-    vault: &Vault,
-    attempt: AttemptId,
-) -> Result<(u64, Vec<StepEffectBinding>)> {
+pub(crate) fn unpaid_in(vault: &Vault, attempt: AttemptId) -> Result<(u64, Vec<StepReceipt>)> {
     let rows = {
         let txn = vault.store.env.read_txn()?;
         RESULTS.scan_from(&vault.store, &txn, attempt.as_bytes())?
@@ -562,7 +559,7 @@ pub(crate) fn unpaid_in(
         let receipt = result.receipt();
         let mut paid = !receipt.step_bindings.is_empty();
         for binding in &receipt.step_bindings {
-            paid &= store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash)?;
+            paid &= store.checkpoint_step_charged(*binding)?;
         }
         if !paid {
             units = units.saturating_add(receipt.completed_units);

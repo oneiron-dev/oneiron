@@ -34,7 +34,7 @@ use crate::claim::{
 use crate::dreamer_runner::dreamer_turn_role;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::federation::record_scope::disclosure_scope_for_stored_row;
-use crate::model_step_effect::StepEffectBinding;
+use crate::model_step_context::StepReceipt;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
@@ -60,12 +60,12 @@ struct SourcePin {
 
 #[derive(Clone, Copy)]
 pub(super) struct FallbackOutputPin {
-    pub(super) step: StepEffectBinding,
+    pub(super) step: StepReceipt,
     pub(super) response_hash: [u8; 32],
 }
 
 impl FallbackOutputPin {
-    pub(super) fn new(step: StepEffectBinding, response: &LlmResponse) -> Result<Self> {
+    pub(super) fn new(step: StepReceipt, response: &LlmResponse) -> Result<Self> {
         let encoded = serde_json::to_vec(response)
             .map_err(|_| invalid_consolidation("fallback response encoding failed"))?;
         Ok(Self {

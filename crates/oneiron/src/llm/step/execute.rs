@@ -15,6 +15,8 @@ use super::step_state::{
 };
 use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
+use crate::model_step_context::StepReceipt;
+
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
     DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
@@ -213,7 +215,7 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
 pub(super) enum StepRecovery {
     Erased,
     Memo {
-        binding: StepEffectBinding,
+        binding: StepReceipt,
         response: LlmResponse,
     },
     Payload {
@@ -250,7 +252,14 @@ pub(super) fn recovery_in_txn(
         let decoded = decode_step_claim_value(&body.value)?;
         if step_claim_matches_request(&decoded, request)? {
             let response = load_step_response_in_txn(vault, txn, &decoded)?;
-            return Ok(Some(StepRecovery::Memo { binding, response }));
+            return Ok(Some(StepRecovery::Memo {
+                binding: StepReceipt {
+                    attempt_id,
+                    step_hash: *step_hash,
+                    claim_id,
+                },
+                response,
+            }));
         }
     }
     let Some(row) = state else {
@@ -300,7 +309,7 @@ pub(super) fn recover_step(
             // Resolve the same policy before any terminal write, as on
             // the original stored-payload recovery path.
             let policy = failure_policy(ctx.vault, &response)?;
-            if log_terminal_step(
+            let Some(claim_id) = log_terminal_step(
                 ctx,
                 binding,
                 owners,
@@ -310,12 +319,19 @@ pub(super) fn recover_step(
                 &payload,
                 StepTerminal::Recovered,
             )?
-            .is_none()
-            {
+            else {
                 return Err(erased_step());
-            }
+            };
             step_state_delete(ctx.vault, binding.attempt_id, &binding.step_hash)?;
-            (binding, response, policy)
+            (
+                StepReceipt {
+                    attempt_id: binding.attempt_id,
+                    step_hash: binding.step_hash,
+                    claim_id,
+                },
+                response,
+                policy,
+            )
         }
     };
     Ok(StepOutcome::Finished {
@@ -641,9 +657,10 @@ async fn durable_step(
     ctx.vault.capture_tier1_executed_step(&witness)?;
 
     Ok(StepOutcome::Finished {
-        binding: StepEffectBinding {
+        binding: StepReceipt {
             attempt_id: ctx.attempt_id,
             step_hash,
+            claim_id,
         },
         response,
         memoized: false,
@@ -681,11 +698,18 @@ pub(crate) fn verified_step_consolidation_eligible_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
-    binding: super::types::StepEffectBinding,
+    binding: StepReceipt,
     actor: crate::entity_id::EntityId,
     expected_response_hash: [u8; 32],
 ) -> DurableStepResult<bool> {
-    let (response, purpose) = verified_step_response_in_txn(vault, txn, binding, actor)?;
+    let (response, purpose) = verified_step_response_by_claim_in_txn(
+        vault,
+        txn,
+        binding.claim_id,
+        binding.attempt_id,
+        binding.step_hash,
+        actor,
+    )?;
     let payload = serde_json::to_vec(&response)?;
     if blake3::hash(&payload).as_bytes() != &expected_response_hash {
         return Err(Error::InvalidClaimBody("consolidation fallback response changed").into());
@@ -710,6 +734,24 @@ fn verified_step_response_in_txn(
         .ok_or(Error::InvalidClaimBody(
             "step-derived effect requires a completed step",
         ))?;
+    verified_step_response_by_claim_in_txn(
+        vault,
+        txn,
+        claim_id,
+        binding.attempt_id,
+        binding.step_hash,
+        effect_actor,
+    )
+}
+
+fn verified_step_response_by_claim_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: crate::entity_id::EntityId,
+    attempt_id: crate::attempt_queue::AttemptId,
+    step_hash: [u8; 32],
+    effect_actor: crate::entity_id::EntityId,
+) -> DurableStepResult<(LlmResponse, String)> {
     let body = vault
         .get_claim_in_txn(txn, &claim_id)?
         .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
@@ -717,8 +759,8 @@ fn verified_step_response_in_txn(
     if body.predicate != super::types::DREAMER_STEP_PREDICATE
         || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
         || body.stale
-        || decoded.attempt_id != binding.attempt_id
-        || decoded.step_hash != binding.step_hash
+        || decoded.attempt_id != attempt_id
+        || decoded.step_hash != step_hash
         || !super::step_claim::step_claim_binding_is_trusted(&decoded, &body)
     {
         return Err(Error::InvalidClaimBody("step-derived effect request mismatch").into());
