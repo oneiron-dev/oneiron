@@ -321,3 +321,12 @@ empty-assertion omission, counter width and per-verb conversion diagnostic.
 Native streams, public records, inputs, typed clients, hooks and authority
 are unchanged. This is selected output conversion, not end-to-end depth,
 heap or runtime proof.
+
+
+`vault.runs.step` and `vault.runs.program_step` reuse the owned response
+conversion for a readable settled model step. Missing outer rows and missing
+nested model steps stay missing. Availability, issue variants, result refs,
+base64 bodies, recorded run identity, clocks and all other finite fields keep
+the original whole-record codec. This changes no native reads, admission,
+public records, inputs, typed clients or hooks and makes no depth, heap or
+runtime claim.

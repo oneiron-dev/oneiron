@@ -5399,7 +5399,7 @@ export_facade! {
 "vault.runs.step" => fn vault_runs_step(&self, input: SettledStepRequest) -> Option<SettledStepView> = |client| {
     let input: oneiron::llm::model_step::SettledStepRequest = crate::codec::lower_record("vault.runs.step", input)?;
     let output = client.vault_runs_step(&input)?;
-    crate::codec::lift_record("vault.runs.step", &output)
+    crate::codec::lift_settled_step("vault.runs.step", output)
 };
 "vault.runs.checkpoint" => fn vault_runs_checkpoint(&self, input: CheckpointReadRequest) -> Option<CheckpointView> = |client| {
     let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest = crate::codec::lower_record("vault.runs.checkpoint", input)?;
@@ -5419,7 +5419,7 @@ export_facade! {
 "vault.runs.program_step" => fn vault_runs_program_step(&self, input: SettledProgramStepRequest) -> Option<SettledProgramStepView> = |client| {
     let input: oneiron::dreamer_runner::SettledProgramStepRequest = crate::codec::lower_record("vault.runs.program_step", input)?;
     let output = client.vault_runs_program_step(&input)?;
-    crate::codec::lift_record("vault.runs.program_step", &output)
+    crate::codec::lift_settled_program_step("vault.runs.program_step", output)
 };
 "vault.runs.program_checkpoint" => fn vault_runs_program_checkpoint(&self, input: ProgramCheckpointRequest) -> Option<ProgramCheckpointView> = |client| {
     let input: oneiron::dreamer_runner::ProgramCheckpointRequest = crate::codec::lower_record("vault.runs.program_checkpoint", input)?;
