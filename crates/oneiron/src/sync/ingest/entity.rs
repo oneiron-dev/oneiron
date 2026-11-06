@@ -279,6 +279,16 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
                 value.unwrap_or_default(),
             )?;
         }
+        if !matches!(step, EntityStep::Pending)
+            && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
+        {
+            crate::embed::home_vectors::copy_scope::retain_copies_in_txn(
+                ctx.vault,
+                &mut savepoint,
+                ctx.window_key,
+                &id,
+            );
+        }
         savepoint.commit()?;
     }
     Ok(step)
