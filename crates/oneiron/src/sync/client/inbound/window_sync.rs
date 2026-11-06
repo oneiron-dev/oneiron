@@ -110,9 +110,7 @@ impl SyncClient {
         let (sub_tag, payload, copies) =
             match self.accept_window_pad_frame(&key, sub_tag, payload)? {
                 std::ops::ControlFlow::Continue(frame) => frame,
-                std::ops::ControlFlow::Break(answer) => {
-                    return Ok(answer.into_iter().map(PreparedSyncFrame::from).collect());
-                }
+                std::ops::ControlFlow::Break(answer) => return Ok(answer),
             };
         let copy_delivery = payload.delivery_digest();
         let payload: &[u8] = &payload;
@@ -156,7 +154,6 @@ impl SyncClient {
             {
                 // The receipt binds what was sent for the row (FIX 7107).
                 self.accept_window_pad_receipt(window_key, sub_tag, payload)
-                    .map(|frames| frames.into_iter().map(PreparedSyncFrame::from).collect())
             }
             window_sub_tags::SELECTOR_DEFERRED => {
                 // The retry resumes a federated selector exchange: the same

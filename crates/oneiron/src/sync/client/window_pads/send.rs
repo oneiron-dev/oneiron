@@ -181,12 +181,7 @@ impl SyncClient {
             crate::sync::transport::window_sub_tags::UPDATE,
             Some(context),
         );
-        let (frames, _, releases) = prepared.send_frames(self, None, payload, false)?;
-        Ok(frames
-            .into_iter()
-            .zip(releases)
-            .map(|(frame, release)| PreparedSyncFrame { frame, release })
-            .collect())
+        prepared.reply_frames(self, None, payload)
     }
 
     pub(crate) fn prepare_window_claim_send(
@@ -233,6 +228,20 @@ impl SyncClient {
 }
 
 impl PreparedWindowClaimSend {
+    pub(crate) fn reply_frames(
+        &self,
+        client: &SyncClient,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+    ) -> Result<Vec<PreparedSyncFrame>, TransportError> {
+        let (frames, _, releases) = self.send_frames(client, queue_seq, raw, false)?;
+        Ok(frames
+            .into_iter()
+            .zip(releases)
+            .map(|(frame, release)| PreparedSyncFrame { frame, release })
+            .collect())
+    }
+
     fn encoded_frames(
         &self,
         queue_seq: Option<u64>,

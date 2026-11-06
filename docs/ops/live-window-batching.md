@@ -65,8 +65,13 @@ socket door, including during the initial handshake, convergence, normal
 incoming-message handling and the residence-ACK pump. These direct frames
 keep the standalone encoder's existing per-frame limits and order. A final
 source miss drops only the optional suffix, not the required window prefix.
-Receipt-resend, queued handshake replay, bulk, promotion and server-generated
-producers still do not add copies.
+A NotReady receipt's carrier resend also keeps native evidence. It uses the
+exact original resend bytes, the carrier made from those bytes and the current
+window document holding their dependencies. The same owning frames pass through
+both receipt entry points. The original receipt binding, queue sequence and
+ledger updates stay in place; no queued signed copy becomes a future grant.
+Queued handshake replay, bulk, promotion and server-generated producers still
+do not add copies.
 
 `SyncClient::handle_server_message` returns owning `PreparedSyncFrame` values.
 The connection keeps each whole native value in its existing split-sink slot
