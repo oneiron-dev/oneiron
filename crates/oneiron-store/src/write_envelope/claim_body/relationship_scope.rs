@@ -209,3 +209,9 @@ impl ValidatedRelationshipScope {
         }
     }
 }
+
+impl ValidatedRelationshipScope {
+    pub(super) fn storage_bytes(&self) -> u64 {
+        super::read_memory::value_storage_bytes(&self.value)
+    }
+}

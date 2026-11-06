@@ -430,6 +430,18 @@ impl MemoryLease {
         self.shared.changed.notify_all();
     }
 
+    /// Transfers allocated backing to a new holder on the same line, without a new charge.
+    /// Pending reservations cannot move as allocated backing.
+    pub fn split_allocated(&mut self, bytes: u64) -> MemoryLease {
+        assert!(bytes <= self.bytes.saturating_sub(self.pending));
+        self.bytes -= bytes;
+        MemoryLease {
+            shared: Arc::clone(&self.shared),
+            bytes,
+            pending: 0,
+        }
+    }
+
     /// Takes `other`'s bytes into this lease, named allocated (FIX 10589):
     /// the line keeps counting them as leased until this lease drops, and
     /// `other` gives back nothing as it drops. Never waits or refuses.

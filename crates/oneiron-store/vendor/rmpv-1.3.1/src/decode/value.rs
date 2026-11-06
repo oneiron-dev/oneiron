@@ -1,49 +1,80 @@
 use std::cmp::min;
 use std::io::{self, Read};
 
-use rmp::decode::{read_marker, RmpRead};
 use rmp::Marker;
+use rmp::decode::{RmpRead, read_marker};
 
 use super::Error;
 use crate::{Utf8String, Value};
 
+pub mod allocation;
+use allocation::{Allocation, DecodeError, Unbound};
+
 // See https://github.com/3Hren/msgpack-rust/issues/151
 const PREALLOC_MAX: usize = 64 * 1024; // 64 KiB
 
-fn read_array_data<R: Read>(rd: &mut R, mut len: usize, depth: u16) -> Result<Vec<Value>, Error> {
+fn read_array_data<R: Read, A: Allocation>(
+    rd: &mut R,
+    mut len: usize,
+    depth: u16,
+    allocation: &mut Option<&mut A>,
+) -> Result<Vec<Value>, DecodeError<A::Error>> {
     let depth = super::decrement_depth(depth)?;
 
     // Note: Do not preallocate a Vec of size `len`.
     // See https://github.com/3Hren/msgpack-rust/issues/151
     let mut vec = Vec::new();
+    let total = len;
 
     while len > 0 {
-        vec.push(read_value_inner(rd, depth)?);
+        let value = read_value_inner(rd, depth, allocation)?;
+        if let Some(allocation) = allocation.as_deref_mut() {
+            allocation::ensure_capacity(&mut vec, total, allocation)?;
+        }
+        vec.push(value);
         len -= 1;
     }
 
     Ok(vec)
 }
 
-fn read_map_data<R: Read>(rd: &mut R, mut len: usize, depth: u16) -> Result<Vec<(Value, Value)>, Error> {
+fn read_map_data<R: Read, A: Allocation>(
+    rd: &mut R,
+    mut len: usize,
+    depth: u16,
+    allocation: &mut Option<&mut A>,
+) -> Result<Vec<(Value, Value)>, DecodeError<A::Error>> {
     let depth = super::decrement_depth(depth)?;
 
     // Note: Do not preallocate a Vec of size `len`.
     // See https://github.com/3Hren/msgpack-rust/issues/151
     let mut vec = Vec::new();
+    let total = len;
 
     while len > 0 {
-        vec.push((read_value_inner(rd, depth)?, read_value_inner(rd, depth)?));
+        let pair = (
+            read_value_inner(rd, depth, allocation)?,
+            read_value_inner(rd, depth, allocation)?,
+        );
+        if let Some(allocation) = allocation.as_deref_mut() {
+            allocation::ensure_capacity(&mut vec, total, allocation)?;
+        }
+        vec.push(pair);
         len -= 1;
     }
 
     Ok(vec)
 }
 
-fn read_str_data<R: Read>(rd: &mut R, len: usize, depth: u16) -> Result<Utf8String, Error> {
+fn read_str_data<R: Read, A: Allocation>(
+    rd: &mut R,
+    len: usize,
+    depth: u16,
+    allocation: &mut Option<&mut A>,
+) -> Result<Utf8String, DecodeError<A::Error>> {
     let depth = super::decrement_depth(depth)?;
 
-    match String::from_utf8(read_bin_data(rd, len, depth)?) {
+    match String::from_utf8(read_bin_data(rd, len, depth, allocation)?) {
         Ok(s) => Ok(Utf8String::from(s)),
         Err(err) => {
             let e = err.utf8_error();
@@ -51,36 +82,58 @@ fn read_str_data<R: Read>(rd: &mut R, len: usize, depth: u16) -> Result<Utf8Stri
                 s: Err((err.into_bytes(), e)),
             };
             Ok(s)
-        },
+        }
     }
 }
 
-fn read_bin_data<R: Read>(rd: &mut R, len: usize, depth: u16) -> Result<Vec<u8>, Error> {
+fn read_bin_data<R: Read, A: Allocation>(
+    rd: &mut R,
+    len: usize,
+    depth: u16,
+    allocation: &mut Option<&mut A>,
+) -> Result<Vec<u8>, DecodeError<A::Error>> {
     let _depth = super::decrement_depth(depth)?;
 
+    if let Some(allocation) = allocation.as_deref_mut() {
+        return allocation::read_bin_data(rd, len, allocation);
+    }
+
     let mut buf = Vec::with_capacity(min(len, PREALLOC_MAX));
-    let bytes_read = rd.take(len as u64).read_to_end(&mut buf).map_err(Error::InvalidDataRead)?;
+    let bytes_read = rd
+        .take(len as u64)
+        .read_to_end(&mut buf)
+        .map_err(Error::InvalidDataRead)?;
     if bytes_read != len {
         return Err(Error::InvalidDataRead(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             format!("Expected {len} bytes, read {bytes_read} bytes"),
-        )));
+        ))
+        .into());
     }
 
     Ok(buf)
 }
 
-fn read_ext_body<R: Read>(rd: &mut R, len: usize, depth: u16) -> Result<(i8, Vec<u8>), Error> {
+fn read_ext_body<R: Read, A: Allocation>(
+    rd: &mut R,
+    len: usize,
+    depth: u16,
+    allocation: &mut Option<&mut A>,
+) -> Result<(i8, Vec<u8>), DecodeError<A::Error>> {
     let depth = super::decrement_depth(depth)?;
 
     let ty = rd.read_data_i8()?;
-    let vec = read_bin_data(rd, len, depth)?;
+    let vec = read_bin_data(rd, len, depth, allocation)?;
 
     Ok((ty, vec))
 }
 
 #[inline(never)]
-fn read_value_inner<R>(rd: &mut R, depth: u16) -> Result<Value, Error> where R: Read {
+fn read_value_inner<R: Read, A: Allocation>(
+    rd: &mut R,
+    depth: u16,
+    allocation: &mut Option<&mut A>,
+) -> Result<Value, DecodeError<A::Error>> {
     let depth = super::decrement_depth(depth)?;
     let val = match read_marker(rd)? {
         Marker::Null => Value::Nil,
@@ -99,107 +152,107 @@ fn read_value_inner<R>(rd: &mut R, depth: u16) -> Result<Value, Error> where R: 
         Marker::F32 => Value::F32(rd.read_data_f32()?),
         Marker::F64 => Value::F64(rd.read_data_f64()?),
         Marker::FixStr(len) => {
-            let res = read_str_data(rd, len as usize, depth)?;
+            let res = read_str_data(rd, len as usize, depth, allocation)?;
             Value::String(res)
-        },
+        }
         Marker::Str8 => {
             let len = rd.read_data_u8()?;
-            let res = read_str_data(rd, len as usize, depth)?;
+            let res = read_str_data(rd, len as usize, depth, allocation)?;
             Value::String(res)
-        },
+        }
         Marker::Str16 => {
             let len = rd.read_data_u16()?;
-            let res = read_str_data(rd, len as usize, depth)?;
+            let res = read_str_data(rd, len as usize, depth, allocation)?;
             Value::String(res)
-        },
+        }
         Marker::Str32 => {
             let len = rd.read_data_u32()?;
-            let res = read_str_data(rd, len as usize, depth)?;
+            let res = read_str_data(rd, len as usize, depth, allocation)?;
             Value::String(res)
-        },
+        }
         Marker::FixArray(len) => {
-            let vec = read_array_data(rd, len as usize, depth)?;
+            let vec = read_array_data(rd, len as usize, depth, allocation)?;
             Value::Array(vec)
-        },
+        }
         Marker::Array16 => {
             let len = rd.read_data_u16()?;
-            let vec = read_array_data(rd, len as usize, depth)?;
+            let vec = read_array_data(rd, len as usize, depth, allocation)?;
             Value::Array(vec)
-        },
+        }
         Marker::Array32 => {
             let len = rd.read_data_u32()?;
-            let vec = read_array_data(rd, len as usize, depth)?;
+            let vec = read_array_data(rd, len as usize, depth, allocation)?;
             Value::Array(vec)
-        },
+        }
         Marker::FixMap(len) => {
-            let map = read_map_data(rd, len as usize, depth)?;
+            let map = read_map_data(rd, len as usize, depth, allocation)?;
             Value::Map(map)
-        },
+        }
         Marker::Map16 => {
             let len = rd.read_data_u16()?;
-            let map = read_map_data(rd, len as usize, depth)?;
+            let map = read_map_data(rd, len as usize, depth, allocation)?;
             Value::Map(map)
-        },
+        }
         Marker::Map32 => {
             let len = rd.read_data_u32()?;
-            let map = read_map_data(rd, len as usize, depth)?;
+            let map = read_map_data(rd, len as usize, depth, allocation)?;
             Value::Map(map)
-        },
+        }
         Marker::Bin8 => {
             let len = rd.read_data_u8()?;
-            let vec = read_bin_data(rd, len as usize, depth)?;
+            let vec = read_bin_data(rd, len as usize, depth, allocation)?;
             Value::Binary(vec)
-        },
+        }
         Marker::Bin16 => {
             let len = rd.read_data_u16()?;
-            let vec = read_bin_data(rd, len as usize, depth)?;
+            let vec = read_bin_data(rd, len as usize, depth, allocation)?;
             Value::Binary(vec)
-        },
+        }
         Marker::Bin32 => {
             let len = rd.read_data_u32()?;
-            let vec = read_bin_data(rd, len as usize, depth)?;
+            let vec = read_bin_data(rd, len as usize, depth, allocation)?;
             Value::Binary(vec)
-        },
+        }
         Marker::FixExt1 => {
             let len = 1_usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::FixExt2 => {
             let len = 2_usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::FixExt4 => {
             let len = 4_usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::FixExt8 => {
             let len = 8_usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::FixExt16 => {
             let len = 16_usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::Ext8 => {
             let len = rd.read_data_u8()? as usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::Ext16 => {
             let len = rd.read_data_u16()? as usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::Ext32 => {
             let len = rd.read_data_u32()? as usize;
-            let (ty, vec) = read_ext_body(rd, len, depth)?;
+            let (ty, vec) = read_ext_body(rd, len, depth, allocation)?;
             Value::Ext(ty, vec)
-        },
+        }
         Marker::Reserved => Value::Nil,
     };
 
@@ -219,9 +272,11 @@ fn read_value_inner<R>(rd: &mut R, depth: u16) -> Result<Value, Error> where R: 
 /// [`read_value_with_max_depth`] instead.
 #[inline]
 pub fn read_value<R>(rd: &mut R) -> Result<Value, Error>
-    where R: Read
+where
+    R: Read,
 {
-    read_value_inner(rd, super::MAX_DEPTH as _)
+    read_value_inner(rd, super::MAX_DEPTH as _, &mut None::<&mut Unbound>)
+        .map_err(DecodeError::into_decode_error)
 }
 
 /// Attempts to read bytes from the given reader and interpret them as a [`Value`].
@@ -237,7 +292,22 @@ pub fn read_value<R>(rd: &mut R) -> Result<Value, Error>
 /// need recursion depth checking for your data, consider using [`read_value`] instead.
 #[inline]
 pub fn read_value_with_max_depth<R>(rd: &mut R, max_depth: usize) -> Result<Value, Error>
-    where R: Read
+where
+    R: Read,
 {
-    read_value_inner(rd, max_depth.min(u16::MAX as usize) as u16)
+    read_value_inner(
+        rd,
+        max_depth.min(u16::MAX as usize) as u16,
+        &mut None::<&mut Unbound>,
+    )
+    .map_err(DecodeError::into_decode_error)
+}
+
+/// The same owned decoder with allocation reservations on a caller-owned context.
+/// Requested backing is reserved before allocation; actual capacities are settled after it.
+pub fn read_value_with_allocation<R: Read, A: Allocation>(
+    rd: &mut R,
+    allocation: &mut A,
+) -> Result<Value, DecodeError<A::Error>> {
+    read_value_inner(rd, super::MAX_DEPTH as _, &mut Some(allocation))
 }

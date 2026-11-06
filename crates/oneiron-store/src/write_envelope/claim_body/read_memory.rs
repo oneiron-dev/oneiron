@@ -234,3 +234,47 @@ pub(super) fn value_storage_bytes(value: &Value) -> u64 {
         ),
     }
 }
+
+impl ClaimScopeReadMemory<'_> {
+    pub(super) fn decode_value(
+        self,
+        rd: &mut impl std::io::Read,
+        lease: &mut MemoryLease,
+    ) -> std::result::Result<Value, ClaimBodyReadError> {
+        let mut allocation = ClaimValueAllocation { read: self, lease };
+        rmpv::decode::value::read_value_with_allocation(rd, &mut allocation).map_err(|error| {
+            match error {
+                rmpv::decode::value::allocation::DecodeError::Decode(_) => {
+                    ClaimBodyReadError::Body(Error::InvalidClaimBody(
+                        "body is not valid MessagePack",
+                    ))
+                }
+                rmpv::decode::value::allocation::DecodeError::Allocation(refusal) => {
+                    ClaimBodyReadError::Refused(refusal)
+                }
+            }
+        })
+    }
+}
+
+struct ClaimValueAllocation<'read, 'lease> {
+    read: ClaimScopeReadMemory<'read>,
+    lease: &'lease mut MemoryLease,
+}
+
+impl rmpv::decode::value::allocation::Allocation for ClaimValueAllocation<'_, '_> {
+    type Error = MemoryRefusal;
+
+    fn reserve(&mut self, bytes: u64) -> std::result::Result<(), Self::Error> {
+        if bytes != 0 {
+            self.lease.check_irreducible_peak(self.read.pinned, bytes)?;
+            self.lease.grow_untimed(bytes, self.read.stopped)?;
+        }
+        Ok(())
+    }
+
+    fn materialized(&mut self, reserved: u64, old: u64, actual: u64) {
+        self.lease.materialized(reserved, actual);
+        self.lease.shrink(old);
+    }
+}
