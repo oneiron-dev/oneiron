@@ -29,7 +29,7 @@ pub enum TreeSinkOperation<'a, Handle> {
 pub(crate) struct TagAttributesHooks<Handle, Sink> {
     pub(crate) reserve: crate::tokenizer::TagAttributesReservation,
     pub(crate) create: Box<
-        dyn Fn(&Sink, QualName, crate::tokenizer::TagAttributes, super::ElementFlags) -> Handle
+        dyn Fn(&Sink, QualName, crate::tokenizer::TagAttributes, super::ElementFlags) -> Option<Handle>
             + Send,
     >,
     pub(crate) add: Box<dyn Fn(&Sink, &Handle, crate::tokenizer::TagAttributes) + Send>,

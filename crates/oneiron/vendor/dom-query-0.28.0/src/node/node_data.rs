@@ -9,6 +9,7 @@ use tendril::StrTendril;
 
 use super::NodeId;
 use crate::dom_tree::attributes::{AttributeReservation, PreparedAttributes};
+use crate::dom_tree::ArenaReserveError;
 use crate::entities::{into_tendril, wrap_attr, wrap_attrs, wrap_tendril, Attr, StrWrap};
 
 fn contains_class(classes: &str, target_class: &str) -> bool {
@@ -139,6 +140,37 @@ impl Element {
             attrs_reservation: prepared.reservation,
             input_attrs_reservation: None,
         }
+    }
+
+    pub(crate) fn try_new_with_prepared_attributes<R, E>(
+        name: QualName,
+        attrs: html5ever::tokenizer::TagAttributes,
+        template_contents: Option<NodeId>,
+        mathml_annotation_xml_integration_point: bool,
+        mut prepared: PreparedAttributes,
+        reserve: impl Fn(usize) -> Result<R, E>,
+        settle: impl Fn(&mut R, usize) -> Result<(), E>,
+    ) -> Result<Self, ArenaReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        for attr in attrs {
+            let attr = crate::entities::try_wrap_attr_with_reservation(attr, &reserve, &settle)
+                .map_err(|error| match error {
+                    tendril::ReserveError::Refused(error) => ArenaReserveError::Refused(error),
+                    tendril::ReserveError::CapacityOverflow => ArenaReserveError::CapacityOverflow,
+                    tendril::ReserveError::Allocation(error) => ArenaReserveError::Allocation(error),
+                })?;
+            prepared.attrs.push(attr);
+        }
+        Ok(Self {
+            name,
+            attrs: prepared.attrs,
+            template_contents,
+            mathml_annotation_xml_integration_point,
+            attrs_reservation: prepared.reservation,
+            input_attrs_reservation: None,
+        })
     }
 
     /// The name of the node.

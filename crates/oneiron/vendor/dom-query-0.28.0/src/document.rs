@@ -256,13 +256,21 @@ impl Document {
 }
 
 impl Document {
-    /// Consume the parser's whole input attribute allocation and its admission.
-    pub fn create_element_with_tag_attributes(
+    /// Consume owned parser attributes, admitting shared value copies before
+    /// publishing any node. Inline and unique values transfer their storage.
+    pub fn create_element_with_tag_attributes<R, E>(
         &self,
         name: QualName,
         attrs: html5ever::tokenizer::TagAttributes,
         flags: ElementFlags,
-    ) -> NodeId {
+        reserve: impl Fn(usize) -> Result<R, E>,
+        settle: impl Fn(&mut R, usize) -> Result<(), E>,
+    ) -> Result<NodeId, crate::ArenaReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        let mut prepared = self.tree.take_prepared_attributes().unwrap_or_default();
+        prepared.try_reserve(attrs.len(), &reserve, &settle)?;
         let mut nodes = self.tree.nodes.borrow_mut();
         let new_elem_id = NodeId::new(nodes.len());
         let template_contents = if flags.template {
@@ -270,33 +278,20 @@ impl Document {
         } else {
             None
         };
-
-        let element = match self.tree.take_prepared_attributes() {
-            Some(prepared) => Element::new_with_prepared_attributes(
-                name,
-                attrs,
-                template_contents,
-                flags.mathml_annotation_xml_integration_point,
-                prepared,
-            ),
-            None => Element::new_with_tag_attributes(
-                name,
-                attrs,
-                template_contents,
-                flags.mathml_annotation_xml_integration_point,
-            ),
-        };
-        let data = NodeData::Element(element);
-
-        nodes.push(TreeNode::new(new_elem_id, data));
-
+        let element = Element::try_new_with_prepared_attributes(
+            name,
+            attrs,
+            template_contents,
+            flags.mathml_annotation_xml_integration_point,
+            prepared,
+            reserve,
+            settle,
+        )?;
+        nodes.push(TreeNode::new(new_elem_id, NodeData::Element(element)));
         if let Some(fragment_id) = template_contents {
             nodes.push(TreeNode::new(fragment_id, NodeData::Fragment));
-            // The template's content is considered outside of the main document,
-            // so its DocumentFragment remains parentless.
         }
-
-        new_elem_id
+        Ok(new_elem_id)
     }
 
     /// Keep input admission through filtering and the final input-vector free.
@@ -383,7 +378,41 @@ impl TreeSink for Document {
         attrs: Vec<Attribute>,
         flags: ElementFlags,
     ) -> Self::Handle {
-        self.create_element_with_tag_attributes(name, attrs.into(), flags)
+        let attrs = html5ever::tokenizer::TagAttributes::from(attrs);
+        let mut nodes = self.tree.nodes.borrow_mut();
+        let new_elem_id = NodeId::new(nodes.len());
+        let template_contents = if flags.template {
+            Some(NodeId::new(nodes.len() + 1))
+        } else {
+            None
+        };
+
+        let element = match self.tree.take_prepared_attributes() {
+            Some(prepared) => Element::new_with_prepared_attributes(
+                name,
+                attrs,
+                template_contents,
+                flags.mathml_annotation_xml_integration_point,
+                prepared,
+            ),
+            None => Element::new_with_tag_attributes(
+                name,
+                attrs,
+                template_contents,
+                flags.mathml_annotation_xml_integration_point,
+            ),
+        };
+        let data = NodeData::Element(element);
+
+        nodes.push(TreeNode::new(new_elem_id, data));
+
+        if let Some(fragment_id) = template_contents {
+            nodes.push(TreeNode::new(fragment_id, NodeData::Fragment));
+            // The template's content is considered outside of the main document,
+            // so its DocumentFragment remains parentless.
+        }
+
+        new_elem_id
     }
 
     /// Create a comment node.
