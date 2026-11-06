@@ -492,10 +492,21 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
     ) -> Result<MailIdPage> {
         // Graph's `$search` takes the query quoted, and orders the hits by
         // relevance itself (it takes no `$orderby`).
+        let messages = format!("{GRAPH_ME_URL}/messages");
         let (url, params) = match page {
-            Some(next) => (next.to_owned(), Vec::new()),
+            // The caller hands back the next link: it reads this mailbox's
+            // messages, or nothing is read.
+            Some(next) => {
+                if !next
+                    .strip_prefix(messages.as_str())
+                    .is_some_and(|rest| rest.starts_with('?'))
+                {
+                    return Err(refused("graph_mail_search_page_not_this_mailbox"));
+                }
+                (next.to_owned(), Vec::new())
+            }
             None => (
-                format!("{GRAPH_ME_URL}/messages"),
+                messages,
                 vec![
                     (
                         "$select",
