@@ -12,6 +12,10 @@
 //! capsule keeps the step's start without it when the start admits, so a
 //! continuation still finds its checkpoint (FIX 6254).
 
+mod refresh;
+
+pub(crate) use refresh::refresh_staged_request;
+
 use std::borrow::Cow;
 use std::ops::Range;
 
