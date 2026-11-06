@@ -159,8 +159,9 @@ impl Vault {
                     .put(Tag::Released, body.blake3.as_bytes(), &[])?;
             }
         }
-        // The custody values a result body's sweep replaces, and the body
-        // instances it spills into, read and minted before the writer opens.
+        // FIX 6648: one body instance for each released result occurrence,
+        // minted before the writer opens. The custody values each body's
+        // sweep replaces are read in the writer (KS-3).
         let known = super::result_reserve::staged_result_sinks(self, &archive)?;
         // FIX 588: the digests this import stages are tracked for post-error
         // cleanup. Declared before the pin-all guard, so on every pre-commit
