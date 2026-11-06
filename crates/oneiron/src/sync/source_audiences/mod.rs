@@ -169,6 +169,9 @@ pub(crate) struct AdmissionRows {
     /// A policy revision or a change receipt the range carries names an
     /// actor this vault erased (fix list row 17238).
     names_erased: bool,
+    /// The policies every derived carrier met in the range names, by row,
+    /// the sets written over included (fix list row 17207).
+    derived: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
 impl AdmissionRows {
@@ -178,6 +181,15 @@ impl AdmissionRows {
     /// copy again (fix list row 17238).
     pub(crate) const fn names_erased(&self) -> bool {
         self.names_erased
+    }
+
+    /// The policies every derived carrier of the admitted range names, by
+    /// row, its retained history and shallow root included: each binds the
+    /// row here before the update lands ([`stage_derived_floors`]), so a set
+    /// a machine wrote over with a smaller one still binds it (fix list row
+    /// 17207).
+    pub(crate) fn into_derived_floors(self) -> BTreeMap<EntityId, BTreeSet<EntityId>> {
+        self.derived
     }
 
     /// Notes what `doc`'s own map holds, admitted already.
@@ -292,10 +304,49 @@ pub(crate) fn admit_carrier(
         // one, which no held word contradicts.
         Carrier::Withheld { .. } => {}
         // A derived row's policies only narrow who reads it, and each set adds
-        // to the others (fix list row 17207): none contradicts another.
-        Carrier::Derived { .. } => {}
+        // to the others (fix list row 17207): none contradicts another. Every
+        // set met binds the row, whichever value Loro keeps.
+        Carrier::Derived { row, policies, .. } => {
+            seen.derived.entry(row).or_default().extend(policies);
+        }
     }
     Ok(())
+}
+
+/// Binds each row `floors` names under the policies named for it, before the
+/// update that carries them lands, so no row it carries reads wider than
+/// every set it ever carried (fix list row 17207). A row this vault
+/// hard-erased takes none: its erase dropped its floor with it.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn stage_derived_floors(
+    vault: &Vault,
+    floors: &BTreeMap<EntityId, BTreeSet<EntityId>>,
+) -> Result<()> {
+    if floors.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|txn| {
+        for (row, policies) in floors {
+            if !hard_erased_in(vault, txn, row)? {
+                source_audience::add_derived_policies_in_txn(vault, txn, row, policies)?;
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Whether this vault hard-erased the row `row`: no carried floor binds it
+/// again (fix list row 17207).
+fn hard_erased_in(vault: &Vault, txn: &heed::RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    crate::ports::TombstoneStoreRead::port_deletion_marked(
+        &vault.store,
+        txn,
+        crate::ports::DeletionMarker::HardDelete,
+        row,
+    )
 }
 
 /// [`admit_carrier`] over every value `map` holds; a nested container
@@ -728,10 +779,11 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
     keys
 }
 
-/// Removes the binding of the row `id` from `doc`; the canonical binding
-/// stands. Each policy no binding reaches any longer goes at the window's
-/// next export or persist ([`refresh_and_scrub`]), once for a whole batch.
-/// Whether the map changed. The caller pins history and commits.
+/// Removes the binding of the row `id` from `doc`, and every machine's
+/// derived carrier of it (fix list row 17207); the canonical binding and
+/// floor stand. Each policy no binding reaches any longer goes at the
+/// window's next export or persist ([`refresh_and_scrub`]), once for a whole
+/// batch. Whether the map changed. The caller pins history and commits.
 ///
 /// # Errors
 ///
@@ -739,11 +791,17 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
 pub(crate) fn remove_record(doc: &LoroDoc, id: &EntityId) -> Result<bool> {
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     let key = record_key(id);
-    if map_get_bytes(&map, &key).is_none() {
-        return Ok(false);
+    let prefix = derived_prefix(id);
+    let mut keys = Vec::new();
+    map.for_each(|map_key, _| {
+        if map_key == key || map_key.starts_with(&prefix) {
+            keys.push(map_key.to_owned());
+        }
+    });
+    for map_key in &keys {
+        map_delete(&map, map_key)?;
     }
-    map_delete(&map, &key)?;
-    Ok(true)
+    Ok(!keys.is_empty())
 }
 
 /// The rows `doc`'s entity map carries, by their canonical keys.
@@ -945,10 +1003,26 @@ pub(crate) fn apply_record_in_txn(
 ) -> Result<ReplicaMerge> {
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     settle_withheld_in_txn(vault, txn, &map, id)?;
+    let heads = pass_heads(doc, window);
     // A derived row's carried policies land with it, in its own savepoint,
+    // each at its highest carried revision and its thread's source with it,
     // before it reads to anyone (fix list row 17207).
+    let mut floor = BTreeSet::new();
     for policies in derived_carried(&map, id) {
-        source_audience::add_derived_policies_in_txn(vault, txn, id, &policies)?;
+        floor.extend(policies);
+    }
+    for policy in &floor {
+        if merge_head_in_txn(vault, txn, &heads, policy)? == ReplicaMerge::Conflict {
+            return Ok(ReplicaMerge::Conflict);
+        }
+        if let Some(source) = source_audience::thread_source_in(vault, txn, policy)?
+            && merge_head_in_txn(vault, txn, &heads, &source)? == ReplicaMerge::Conflict
+        {
+            return Ok(ReplicaMerge::Conflict);
+        }
+    }
+    if !floor.is_empty() {
+        source_audience::add_derived_policies_in_txn(vault, txn, id, &floor)?;
     }
     let key = record_key(id);
     let Some(bytes) = map_get_bytes(&map, &key) else {
@@ -957,7 +1031,6 @@ pub(crate) fn apply_record_in_txn(
     let Ok(Carrier::Record { policy, .. }) = carrier(&key, &bytes) else {
         return Ok(ReplicaMerge::Conflict);
     };
-    let heads = pass_heads(doc, window);
     if merge_head_in_txn(vault, txn, &heads, &policy)? == ReplicaMerge::Conflict {
         return Ok(ReplicaMerge::Conflict);
     }
@@ -1095,7 +1168,8 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
         // A derived row reads under every policy any machine's carrier names
         // for it, here or arriving later (fix list row 17207).
         for (row, policies) in &derived {
-            if source_audience::add_derived_policies_in_txn(vault, txn, row, policies)?
+            if !hard_erased_in(vault, txn, row)?
+                && source_audience::add_derived_policies_in_txn(vault, txn, row, policies)?
                 && crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
             {
                 affected.push(*row);
