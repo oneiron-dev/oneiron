@@ -272,8 +272,10 @@ A native host holding an actual `oneiron_remote::HttpsSharedInvitationAcceptance
 `SyncServer::bootstrap_shared_env` with a borrowed `Arc` of that value, the selected
 `SharedEnvConfig`, and the dedicated target's `ServeConfig`. This is available without the
 `mesh` feature. The target config's `vault_path` must name the selected environment, and its
-page seal resolves at that target only. No personal vault handle, root secret or page seal
-supplies the replica's authority. The target may be new or an existing native unstarted store;
+page seal resolves at that target only. An explicit `maximum_tier=true` creates the target with
+its own native page seal and device wrap, verified before import; the existing native refusal
+for applying that setting to an already-plain store still applies. No personal vault handle,
+root secret or page seal supplies the replica's authority. The target may be new or an existing native unstarted store;
 the actual import repeats the unstarted-authority check in its own writer.
 
 The selected vault id, member, HTTPS home and caller-held credential key must match the

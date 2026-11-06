@@ -84,19 +84,11 @@ impl SharedEnvRegistry {
             (runtime.admission)().ok_or_else(|| anyhow::anyhow!("the host is frozen for reap"))?;
         let lease_vault_id = runtime.lease_vault_id;
         let accepted = Arc::clone(acceptance);
-        let mut target_config = target_serve.clone();
-        target_config.maximum_tier = false;
+        let target_config = target_serve.clone();
         let candidate_config = target_config.clone();
         let (imported, committed, path) = tokio::task::spawn_blocking(move || {
             paired_key(&spec.credential_file, &accepted)?;
-            let mut resolved = candidate_config.base_vault_config();
-            resolved.page_seal =
-                crate::commands::page_seal_at(&candidate_config, &spec.path, None)?;
-            let candidate = Vault::open_owned(&spec.path, resolved)?;
-            anyhow::ensure!(
-                candidate.is_unstarted_replica_target()?,
-                "the selected replica target's authority has already started"
-            );
+            let candidate = crate::commands::replica_target::open(&candidate_config)?;
             let path = candidate.path().to_owned();
             let (imported, committed) = accepted.bootstrap_replica_into(&candidate, lease_vault_id);
             // No candidate Vault, Arc, manager or connection crosses this
