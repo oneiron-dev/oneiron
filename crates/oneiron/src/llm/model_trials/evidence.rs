@@ -310,6 +310,7 @@ pub(super) fn action(
     trial: &ModelTrial,
     evidence: &TrialEvidence,
     quality: TrialQuality,
+    auto_approve: bool,
 ) -> ModelTrialAction {
     let old = evidence.incumbent_cost_per_thousand;
     let new = evidence.candidate_cost_per_thousand;
@@ -318,7 +319,7 @@ pub(super) fn action(
         TrialQuality::Unknown => ModelTrialAction::Unknown,
         TrialQuality::Worse => ModelTrialAction::Stay,
         TrialQuality::Better | TrialQuality::NotWorse if new <= old => {
-            if policy.auto_approve && !policy.candidate_needs_download {
+            if auto_approve && !policy.candidate_needs_download {
                 ModelTrialAction::AutoApprove
             } else {
                 ModelTrialAction::Offer

@@ -31,8 +31,6 @@ pub struct ModelTrialPolicy {
     /// Maximum cost per thousand future units, in catalog monetary units.
     pub vault_cost_cap: Option<f64>,
     pub project_cost_cap: Option<f64>,
-    #[serde(default)]
-    pub auto_approve: bool,
     pub candidate_needs_download: bool,
 }
 
@@ -187,6 +185,9 @@ pub struct ModelTrialReceipt {
     pub assessment: TrialAssessment,
     pub quality: TrialQuality,
     pub action: ModelTrialAction,
+    /// The owner's saved permission read in this receipt's committing write.
+    /// Historical provenance only: an activation must read the live policy again.
+    pub stock_autoapprove_policy: crate::settings::StockAutoapprovePolicy,
     pub candidate_cost_per_unit: f64,
     pub added_cost_per_thousand: f64,
     pub added_future_cost: f64,

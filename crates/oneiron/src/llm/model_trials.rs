@@ -444,8 +444,16 @@ impl Vault {
         if !added_future_cost.is_finite() {
             return Err(invalid("model switch cost overflow"));
         }
+        let stock_autoapprove_policy =
+            crate::settings::stock_autoapprove::stock_autoapprove_policy_in_txn(self, txn)?;
         let receipt = ModelTrialReceipt {
-            action: evidence::action(&previous, measured, quality),
+            action: evidence::action(
+                &previous,
+                measured,
+                quality,
+                stock_autoapprove_policy.enabled,
+            ),
+            stock_autoapprove_policy,
             quality,
             assessment,
             candidate_cost_per_unit: measured.candidate_cost_per_thousand / 1_000.0,
