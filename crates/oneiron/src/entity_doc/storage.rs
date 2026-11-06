@@ -100,7 +100,7 @@ pub(super) fn load(
 ) -> Result<EntityDoc> {
     let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
-        .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        .port_document_row_borrowed(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
     let doc = EntityDoc::from_snapshot(&bytes)?;
     if doc.birth().entity != h.entity {
