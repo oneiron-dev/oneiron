@@ -13,15 +13,14 @@ use super::ladder::{
 use super::questions::QuestionCriteria;
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::{Error, Result};
 use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
     BudgetGuard, BudgetLease, FatalLlmError, LabelReadDistribution, LabelReadFailure,
-    LabelReadGenerationOutcome, LabelReadGenerationReader,
-    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError,
-    LlmResult, LlmUsage, joint_marginals,
+    LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmResult, LlmUsage, joint_marginals,
 };
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::{Error, Result};
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
@@ -60,6 +59,18 @@ pub trait DecisionReadGate: Send + Sync {
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
     ) -> Result<GatedRead>;
+
+    /// Lends only the source captured by the actual permit. Ordinary gates have none.
+    fn read_with_native_admission(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&crate::dreamer_wake::DecisionCallAdmission>,
+        ) -> GatedRead,
+    ) -> Result<GatedRead> {
+        self.read(deadline, &mut |lease| read(lease, None))
+    }
 }
 
 /// A bare meter admits at once: the read's own pre-send check is its clock.
@@ -126,6 +137,18 @@ pub trait PreparedDecisionRead {
         may_send: Option<&(dyn Fn() -> bool + Sync)>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
     ) -> LlmResult<LabelReadGenerationOutcome>;
+
+    /// An optional original source cannot alter a host's ordinary prepared reader.
+    fn read_with_native_admission(
+        &self,
+        work_until: Option<Instant>,
+        lease: &BudgetLease,
+        may_send: Option<&(dyn Fn() -> bool + Sync)>,
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+        _admission: Option<&crate::dreamer_wake::DecisionCallAdmission>,
+    ) -> LlmResult<LabelReadGenerationOutcome> {
+        self.read(work_until, lease, may_send, admit_next)
+    }
 }
 
 /// Fills the escalation slot. It reads only the call's state, admits and settles each read
@@ -390,53 +413,56 @@ impl DecisionReadProvider<'_> {
             return Ok(interrupted(false));
         }
         let mut sent_request = None;
-        let gated = self.gate.read(deadline, &mut |lease| {
-            // Admission may wait; a read admitted after the work time is spent never starts.
-            if !deadline.decision_may_start() {
-                return GatedRead::NotStarted;
-            }
-            let request = LabelReadRequest {
-                state,
-                questions: &questions,
-                // An instant, not a duration, so the reader's own preparation spends it too.
-                work_until: Some(Instant::now() + deadline.decision_time_left()),
-            };
-            sent_request = Some(request);
-            if let Some(prepared) = &prepared {
-                let admit_next = || native.is_none_or(|(_, generation)| generation.admit());
-                return match prepared.read(
-                    request.work_until,
-                    lease,
-                    self.gate.send_guard(),
-                    native.map(|_| &admit_next as &(dyn Fn() -> bool + Sync)),
-                ) {
-                    Ok(LabelReadGenerationOutcome::Complete(read)) => GatedRead::Read(Ok(read)),
-                    Ok(LabelReadGenerationOutcome::StoppedPaidPrefix { usage }) => {
-                        GatedRead::StoppedPaidPrefix { usage }
-                    }
-                    Err(error) => GatedRead::Read(Err(error)),
+        let gated = self
+            .gate
+            .read_with_native_admission(deadline, &mut |lease, admission| {
+                // Admission may wait; a read admitted after the work time is spent never starts.
+                if !deadline.decision_may_start() {
+                    return GatedRead::NotStarted;
+                }
+                let request = LabelReadRequest {
+                    state,
+                    questions: &questions,
+                    // An instant, not a duration, so the reader's own preparation spends it too.
+                    work_until: Some(Instant::now() + deadline.decision_time_left()),
                 };
-            }
-            if let Some((reader, generation)) = native {
-                let admit_next = || generation.admit();
-                return match reader.read_admitted(
-                    &request,
-                    lease,
-                    self.gate.send_guard(),
-                    &admit_next,
-                ) {
-                    Ok(LabelReadGenerationOutcome::Complete(read)) => GatedRead::Read(Ok(read)),
-                    Ok(LabelReadGenerationOutcome::StoppedPaidPrefix { usage }) => {
-                        GatedRead::StoppedPaidPrefix { usage }
-                    }
-                    Err(error) => GatedRead::Read(Err(error)),
-                };
-            }
-            GatedRead::Read(match self.gate.send_guard() {
-                Some(guard) => self.reader.read_while(&request, lease, guard),
-                None => self.reader.read(&request, lease),
-            })
-        })?;
+                sent_request = Some(request);
+                if let Some(prepared) = &prepared {
+                    let admit_next = || native.is_none_or(|(_, generation)| generation.admit());
+                    return match prepared.read_with_native_admission(
+                        request.work_until,
+                        lease,
+                        self.gate.send_guard(),
+                        native.map(|_| &admit_next as &(dyn Fn() -> bool + Sync)),
+                        admission,
+                    ) {
+                        Ok(LabelReadGenerationOutcome::Complete(read)) => GatedRead::Read(Ok(read)),
+                        Ok(LabelReadGenerationOutcome::StoppedPaidPrefix { usage }) => {
+                            GatedRead::StoppedPaidPrefix { usage }
+                        }
+                        Err(error) => GatedRead::Read(Err(error)),
+                    };
+                }
+                if let Some((reader, generation)) = native {
+                    let admit_next = || generation.admit();
+                    return match reader.read_admitted(
+                        &request,
+                        lease,
+                        self.gate.send_guard(),
+                        &admit_next,
+                    ) {
+                        Ok(LabelReadGenerationOutcome::Complete(read)) => GatedRead::Read(Ok(read)),
+                        Ok(LabelReadGenerationOutcome::StoppedPaidPrefix { usage }) => {
+                            GatedRead::StoppedPaidPrefix { usage }
+                        }
+                        Err(error) => GatedRead::Read(Err(error)),
+                    };
+                }
+                GatedRead::Read(match self.gate.send_guard() {
+                    Some(guard) => self.reader.read_while(&request, lease, guard),
+                    None => self.reader.read(&request, lease),
+                })
+            })?;
         let (read, gate_run) = match gated {
             GatedRead::NotStarted => {
                 if native.is_some() {
