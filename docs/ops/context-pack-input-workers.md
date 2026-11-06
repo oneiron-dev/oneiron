@@ -454,3 +454,37 @@ Producer growth, temporary overlap, encoded and decoded entry buffers, newly
 stringified row/admission lists, cached body/header copies, source-set copies,
 allocation peaks and retained-input FIFO progress remain separate work. No
 memory wait, admission, cap, deadline, refusal, policy or format changes here.
+
+
+## Caller-bound canonical CLAIM DOM allocation
+
+A canonical CLAIM read with `ClaimScopeReadMemory` uses the same owned
+MessagePack parser, marker dispatch and depth checks as an unbound read. Its
+allocation context borrows the caller's original memory line, cancellation
+signal and distinct pinned-input count. Unbound reads still use the original
+push and `take(...).read_to_end` allocation paths and create no context.
+
+The bound path reserves each complete requested backing before its explicit
+allocation or growth. A replacement reservation includes the new backing while
+the old backing and any decoded child are still live. After the reserve, it
+records the actual native capacity and retires the old backing. Collections
+start empty and grow from their current capacity, bounded only by their actual
+declared element count. Byte backing keeps the existing initial preallocation
+bound, then grows explicitly; short reads and interrupted reads keep their
+native decoding behavior. Strings and invalid UTF-8 move the same byte backing.
+
+The DOM holder lives through canonical validation. After the top-level iterator
+has dropped its keys, discarded fields and container backing, it measures the
+remaining predicate, value, evidence, scope, session tag and raw relationship
+backing. Splitting the value's allocated charge creates its existing private
+payload holder without changing the shared ledger or making another admission.
+Other live DOM inputs stay held through history selection and typed relationship
+allocation; that allocation's floor includes both disjoint holders. Decode
+errors and allocation refusals keep their distinct native result variants.
+
+This reserves requested backing, not an allocator's unobservable excess capacity
+before allocation. Excess capacity is recorded after allocation. It is not a
+hard allocation-bound or multi-holder FIFO-progress proof. History projection,
+returned full-body fields other than the guarded value, later typed copies and
+other consumers still need their own allocation and last-use custody. No new
+memory cap, deadline, default, wire format or refusal policy is introduced.

@@ -119,8 +119,8 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
         .map_err(ClaimBodyReadError::into_unbound_error)
 }
 
-/// The canonical decoder with admission before its typed relationship backing.
-/// The MessagePack DOM itself is already allocated and is not admitted here.
+/// The canonical decoder with caller-bound allocation and relationship admission.
+/// Requested DOM backing is reserved before allocation and actual capacities are recorded.
 pub fn decode_claim_body_with_scope_memory(
     data: &[u8],
     allow_reserved_predicate: bool,
@@ -170,10 +170,14 @@ fn decode_claim(
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
-    let mut value_memory = memory.map(ClaimScopeReadMemory::value_lease);
+    let value_memory: Option<oneiron_contracts::host_memory::MemoryLease>;
+    let mut dom_memory = memory.map(ClaimScopeReadMemory::value_lease);
     let mut cursor = Cursor::new(data);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| Error::InvalidClaimBody("body is not valid MessagePack"))?;
+    let value = match (memory, dom_memory.as_mut()) {
+        (Some(memory), Some(lease)) => memory.decode_value(&mut cursor, lease)?,
+        _ => rmpv::decode::read_value(&mut cursor)
+            .map_err(|_| Error::InvalidClaimBody("body is not valid MessagePack"))?,
+    };
     if cursor.position() != data.len() as u64 {
         return Err(Error::InvalidClaimBody("trailing bytes after body map").into());
     }
@@ -351,9 +355,22 @@ fn decode_claim(
     // scope decision. Unknown sibling entries are not inspected.
     validate_known_claim_scope_entries(scope.as_ref())?;
 
-    if let Some(value_memory) = &mut value_memory {
-        value_memory.materialized(0, read_memory::value_storage_bytes(&claim_value));
+    if let Some(dom_memory) = &mut dom_memory {
+        let retained = read_memory::value_storage_bytes(&claim_value)
+            .saturating_add(predicate.capacity() as u64)
+            .saturating_add(
+                evidence
+                    .as_ref()
+                    .map_or(0, read_memory::value_storage_bytes),
+            )
+            .saturating_add(scope.as_ref().map_or(0, read_memory::value_storage_bytes))
+            .saturating_add(session_tag.as_ref().map_or(0, |tag| tag.capacity() as u64))
+            .saturating_add(rel.as_ref().map_or(0, |rel| rel.storage_bytes()));
+        dom_memory.shrink(dom_memory.bytes().saturating_sub(retained));
     }
+    value_memory = dom_memory.as_mut().map(|dom_memory| {
+        dom_memory.split_allocated(read_memory::value_storage_bytes(&claim_value))
+    });
     if let DecodeTarget::Value(history) = target {
         if let Some(projected) = history(&predicate, evidence.as_ref())? {
             return Ok(DecodedClaim::Value(
@@ -368,12 +385,15 @@ fn decode_claim(
             value_memory,
         )));
     }
-    let retained_value_bytes = value_memory.as_ref().map_or(0, |lease| lease.bytes());
+    let retained_input_bytes = value_memory
+        .as_ref()
+        .map_or(0, |lease| lease.bytes())
+        .saturating_add(dom_memory.as_ref().map_or(0, |lease| lease.bytes()));
     let rel = rel.expect("required relationship scope was validated");
     let mut memory = match (memory, rel.len()) {
         (Some(memory), Some(count)) => Some(
             memory
-                .with_additional_pinned(retained_value_bytes)
+                .with_additional_pinned(retained_input_bytes)
                 .admit(count)
                 .map_err(ClaimBodyReadError::Refused)?,
         ),

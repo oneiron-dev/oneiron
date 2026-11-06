@@ -1,14 +1,24 @@
-# rmpv 1.3.1 local capacity accessor
+# rmpv 1.3.1 local capacity accessor and allocation hooks
 
 Source: crates.io `rmpv` 1.3.1, archive SHA-256
 `7a4e1d4b9b938a26d2996af33229f0ca0956c652c1375067f0b45291c1df8417`.
 Repository: https://github.com/3Hren/msgpack-rust. License: MIT (`LICENSE`).
 
-The production sources are the locked upstream release, with one additive
-`Utf8String::capacity` method in `src/lib.rs`. It borrows the existing owned
-String or invalid-UTF-8 Vec and reports its actual capacity. It changes no
-bytes, decoder, encoder, layout, UTF-8 error or ownership. The canonical claim
-reader uses it to keep a retained value's memory charge with that value.
+The production sources are the locked upstream release with an additive
+`Utf8String::capacity` method in `src/lib.rs` and caller-bound allocation hooks
+in the owned decoder. The accessor borrows the existing owned String or
+invalid-UTF-8 Vec and reports its actual capacity. It changes no bytes,
+encoder, layout, UTF-8 error or ownership. The canonical claim reader uses
+it to keep a retained value's memory charge with that value.
+
+`src/decode/value.rs` keeps one shared marker/depth parser. Existing decode
+entrypoints retain their native unbound push and byte-read allocation paths.
+The new allocation entrypoint accepts a caller-owned hook, reserves requested
+backing before explicit growth, and reports actual capacities afterward.
+`src/decode/value/allocation.rs` carries the generic allocation/error interface
+and explicit bound byte/vector growth. It neither depends on the engine nor
+chooses a memory policy. Allocator excess capacity is observed afterward;
+these hooks do not prove a hard allocator bound or retained-input progress.
 
 The manifest is the normalized upstream manifest with only declarations for
 uncopied test and bench targets removed. Production dependencies, features,
@@ -16,7 +26,7 @@ version and MSRV are unchanged. Tests and benches are not vendored or run.
 The workspace dependency and both crates.io patches select this same directory.
 This vendor is excluded from the workspace, like the other local patches.
 
-## Unmodified upstream file hashes (SHA-256)
+## Original upstream file hashes (SHA-256)
 
 - `LICENSE`: `979d35e1d157289100ba2a7eb13fffe4e7a1b93506c755c4c66890918e467c4e`
 - `README.md`: `e6044427cdb5062dd2a0b78571ea6c06b8badd97c99e497245c2711f29e646cd`
@@ -31,6 +41,9 @@ This vendor is excluded from the workspace, like the other local patches.
 - `src/ext/se.rs`: `7e375ab659a97ee6dd85cc66077f299af5a4cdb359c4c32b124fe9c7636d1344`
 - `src/lib.rs`: `47826e29a6bc89eeb9d28062672cb4e62cfffd2953d83552589b6c4cf351ad09`
 
-Only `src/lib.rs` differs from its listed upstream hash, by the accessor above.
-Capacity is allocated backing, not wire length. Recursive value accounting,
-field-lifetime custody and progress remain responsibilities of the caller.
+`src/lib.rs` differs from its listed upstream hash by the accessor above;
+`src/decode/value.rs` differs by allocation-context threading and entrypoint.
+`src/decode/value/allocation.rs` is a local addition with the same MIT license.
+Other listed upstream files are unchanged. Capacity is allocated backing, not
+wire length. Recursive value accounting, field-lifetime custody and progress
+remain responsibilities of the caller.
