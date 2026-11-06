@@ -319,6 +319,8 @@ also handles an originally self-closing paragraph. Each actual paragraph is
 selected at most once across the same-count, outer and paired paths.
 The generic first-paragraph template renderer is unchanged: newly added
 paragraphs do not acquire arbitrary identity attributes from that template.
+Same-count actual fallback renders now keep their own wrapper attributes, as
+described below; cloned template fallbacks still do not acquire them.
 Run serialization, retained text mapping and field-cut receipts are unchanged.
 This is source preservation, not full native or PowerPoint fidelity proof.
 
@@ -554,4 +556,30 @@ Single-piece native and attribute-only fallback paths are unchanged. Paragraph
 and run selection, text, style templates, namespaces, fields and their removal
 receipts, errors, gaps and other retained-source classes keep their prior paths.
 This is source-only work in the existing 17480/18510 pack, not full table-cell
+fallback, OF-509/OF-510, compiler, runtime or Office fidelity proof.
+
+
+## Actual same-count paragraph wrapper after unsupported text coverage
+
+When a same-count native table-cell write reaches the fallback renderer, its
+same-index original paragraph now keeps every own attribute, not just namespace
+declarations, even if the styled path declined text coverage. One native case
+is a direct opaque child holding `ABCD` changed to `ABQD`: retained mapping and
+field-aware cutting decline a partial opaque edit, styled retention also declines,
+and the successful fallback previously dropped the original paragraph's `xml:id`
+and other wrapper attributes.
+
+Only the actual index-zero fallback and the first actual same-index fallback for
+later paragraphs carry those original attribute spans. Each original paragraph
+maps to that one output line. The later-paragraph retry using the first/global
+template, all count-changing template fallbacks and added lines keep the existing
+namespace-only wrapper. They never copy another paragraph's identity. The same
+private renderer still selects paragraph properties, run style and end properties
+and stages fresh-copy reservations in the same order; its errors and retries stay
+unchanged. Attribute-only wrapper preservation does not record a full original
+paragraph source interval or claim the opaque child survived.
+
+This changes no styled success, field conversion or removal receipt, text mapping,
+run retention, gap selection, count-changing behavior or added-line template.
+It is source-only preservation in the existing 17480/18510 pack, not full native
 fallback, OF-509/OF-510, compiler, runtime or Office fidelity proof.

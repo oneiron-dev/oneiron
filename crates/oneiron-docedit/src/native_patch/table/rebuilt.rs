@@ -43,6 +43,8 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// With no retained original, the first emitted fresh copy keeps its identity;
 /// failed render attempts do not reserve a fresh property source. A successful
 /// styled paragraph also owns its original pPr and endParaRPr sources; their original bytes stay.
+/// Same-count fallback renders keep their actual original paragraph's attributes;
+/// cloned first/global and added templates still copy only namespace declarations.
 /// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
@@ -162,6 +164,7 @@ fn rebuilt_pass(
     let render = |paragraph: (usize, &Node),
                   selected: Option<(usize, &Node)>,
                   line: &str,
+                  original_wrapper: bool,
                   copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Result<String, NativeRefusal> {
         let mut pending_sources = copied_sources.clone();
@@ -170,9 +173,17 @@ fn rebuilt_pass(
         let run = run_xml(selected, para_node, line, &mut pending_sources)?;
         let end = template_property(tree.child(para, DML, "endParaRPr")?, &mut pending_sources);
         let p = para_node.qualified.as_str();
-        let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
+        let p_attributes = if original_wrapper {
+            para_node
+                .attr_spans
+                .values()
+                .map(|span| format!(" {}", String::from_utf8_lossy(&bytes[span.clone()])))
+                .collect()
+        } else {
+            crate::edit::xml::own_bindings(bytes, para_node)
+        };
         *copied_sources = pending_sources;
-        Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
+        Ok(format!("<{p}{p_attributes}>{p_pr}{run}{end}</{p}>"))
     };
     let mut styled = |paragraph: (usize, &Node),
                       selected: Option<(usize, &Node)>,
@@ -526,16 +537,28 @@ fn rebuilt_pass(
         let rendered = if same_count && index == 0 {
             match styled((first, first_node), source_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => render((first, first_node), source_run, line, &mut copied_sources)?,
+                None => render(
+                    (first, first_node),
+                    source_run,
+                    line,
+                    true,
+                    &mut copied_sources,
+                )?,
             }
         } else if same_count && index > 0 {
             let actual = paragraphs[index];
             let actual_run = paragraph_run(actual.0);
             match styled(actual, actual_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => match render(actual, actual_run, line, &mut copied_sources) {
+                None => match render(actual, actual_run, line, true, &mut copied_sources) {
                     Ok(xml) => xml,
-                    Err(_) => render((first, first_node), source_run, line, &mut copied_sources)?,
+                    Err(_) => render(
+                        (first, first_node),
+                        source_run,
+                        line,
+                        false,
+                        &mut copied_sources,
+                    )?,
                 },
             }
         } else if !same_count && (index < head || index >= new_count - tail) {
@@ -546,15 +569,33 @@ fn rebuilt_pass(
             };
             match styled(actual, paragraph_run(actual.0), line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => render((first, first_node), source_run, line, &mut copied_sources)?,
+                None => render(
+                    (first, first_node),
+                    source_run,
+                    line,
+                    false,
+                    &mut copied_sources,
+                )?,
             }
         } else if !same_count && index >= head && index < head + paired {
             match styled(paragraphs[index], source_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => render((first, first_node), source_run, line, &mut copied_sources)?,
+                None => render(
+                    (first, first_node),
+                    source_run,
+                    line,
+                    false,
+                    &mut copied_sources,
+                )?,
             }
         } else {
-            render((first, first_node), source_run, line, &mut copied_sources)?
+            render(
+                (first, first_node),
+                source_run,
+                line,
+                false,
+                &mut copied_sources,
+            )?
         };
         out.extend_from_slice(rendered.as_bytes());
     }
