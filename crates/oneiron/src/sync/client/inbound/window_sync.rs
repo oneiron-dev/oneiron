@@ -607,111 +607,124 @@ impl SyncClient {
             &window.doc,
             payload,
         );
-        // FIX 11709: the MESSAGE rows an own machine's proven connection sent
-        // take the own-device lane in the doors this import and its retained
-        // world pass run, and no others.
-        crate::sync::ingest::with_own_device_import(
-            &self.vault,
-            own_device,
-            (&key, &window.doc),
-            payload,
-            || self.land_window_update(window, &key, payload),
-        )?;
-        if let Some(positions) = positions
-            && let Err(error) = positions.finish(&self.vault, &window.doc)
-        {
-            tracing::warn!(%error, "optional own-device position import did not settle");
-        }
-        // A no-op import can still reveal a same-process durability gap:
-        // compare the live doc with exactly what restart would load from
-        // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
-        // delta.
-        if window.doc.oplog_vv() == vv_before {
-            let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
-                Ok(doc) => doc,
-                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-                    let doc = create_window_doc("local", &key);
-                    if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+        let result = (|| {
+            // FIX 11709: the MESSAGE rows an own machine's proven connection sent
+            // take the own-device lane in the doors this import and its retained
+            // world pass run, and no others.
+            crate::sync::ingest::with_own_device_import(
+                &self.vault,
+                own_device,
+                (&key, &window.doc),
+                payload,
+                || self.land_window_update(window, &key, payload),
+            )?;
+            if let Some(positions) = positions.as_ref()
+                && let Err(error) = positions.finish(&self.vault, &window.doc)
+            {
+                tracing::warn!(%error, "optional own-device position import did not settle");
+            }
+            // A no-op import can still reveal a same-process durability gap:
+            // compare the live doc with exactly what restart would load from
+            // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
+            // delta.
+            if window.doc.oplog_vv() == vv_before {
+                let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
+                    Ok(doc) => doc,
+                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                        let doc = create_window_doc("local", &key);
+                        if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "load durable window updates: {e}"
+                            )));
+                        }
+                        doc
+                    }
+                    Err(e) => {
                         self.manager.discard_window(&key);
                         return Err(TransportError::Storage(format!(
-                            "load durable window updates: {e}"
+                            "load durable window state: {e}"
                         )));
                     }
-                    doc
+                };
+                let live_vv = window.doc.oplog_vv();
+                let durable_vv = durable_doc.oplog_vv();
+                if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                    return Ok(());
                 }
-                Err(e) => {
+                let fr_key = format!("fr:w:{window_key}");
+                match self.vault.sync_state_get(&fr_key) {
+                    Ok(Some(_)) => {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(
+                            "post-scrub echo deferred to full resync".to_string(),
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "read full-resync marker: {e}"
+                        )));
+                    }
+                }
+                let missing =
+                    match export_updates_since(&window.doc, &doc_version_vector(&durable_doc)) {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(super::map_delta_export_err(e));
+                        }
+                    };
+                // Its pads persist by reference where custody here holds them
+                // (FIX 7107).
+                let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
+                if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
                     self.manager.discard_window(&key);
                     return Err(TransportError::Storage(format!(
-                        "load durable window state: {e}"
+                        "persist live durable delta: {e}"
                     )));
                 }
-            };
-            let live_vv = window.doc.oplog_vv();
-            let durable_vv = durable_doc.oplog_vv();
-            if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
                 return Ok(());
             }
-            let fr_key = format!("fr:w:{window_key}");
-            match self.vault.sync_state_get(&fr_key) {
-                Ok(Some(_)) => {
-                    self.manager.discard_window(&key);
-                    return Err(TransportError::Storage(
-                        "post-scrub echo deferred to full resync".to_string(),
-                    ));
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    self.manager.discard_window(&key);
-                    return Err(TransportError::Storage(format!(
-                        "read full-resync marker: {e}"
-                    )));
-                }
-            }
-            let missing = match export_updates_since(&window.doc, &doc_version_vector(&durable_doc))
-            {
-                Ok(missing) => missing,
-                Err(e) => {
-                    self.manager.discard_window(&key);
-                    return Err(super::map_delta_export_err(e));
-                }
-            };
-            // Its pads persist by reference where custody here holds them
-            // (FIX 7107).
-            let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
-            if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
-                self.manager.discard_window(&key);
+            // Remote imports never fire Observer A (local-only), so persist the
+            // accepted update bytes ourselves: without a u:w: row, remote state —
+            // including tombstones, whose LMDB purge already ran — would vanish
+            // from the doc on restart. Its pads persist by reference where
+            // custody here holds them (FIX 7107).
+            let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
+            if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
+                // Never leave RAM ahead of durable state on a FAILED persist
+                // (client analog of the ONE-1129 server evict-on-persist-failure):
+                // the import advanced this doc's version vector, so keeping the
+                // doc registered would tell the server — on the next VV exchange —
+                // that we already hold bytes that never became durable; they would
+                // never be re-sent and would vanish from the doc on restart
+                // (tombstones included). Discard the live window WITHOUT
+                // persisting (a persist would durably commit the unconfirmed
+                // import); the next open reloads from durable state and the
+                // ONE-1127/1128 VV exchange re-delivers the update.
+                self.manager.discard_window(&WindowKey::new(window_key));
                 return Err(TransportError::Storage(format!(
-                    "persist live durable delta: {e}"
+                    "persist remote update: {e}"
                 )));
             }
-            return Ok(());
+            let _ = self.event_tx.send(SyncEvent::WindowUpdated {
+                window_key: window_key.to_string(),
+            });
+            Ok(())
+        })();
+        if result.is_ok()
+            && let Some(positions) = positions
+            && let Some(identity) = self.manager.weak_window_if_same(window)
+            && let Some(positions) = positions.select_deferred(window, identity)
+        {
+            self.asset_bodies
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain_positions(positions);
         }
-        // Remote imports never fire Observer A (local-only), so persist the
-        // accepted update bytes ourselves: without a u:w: row, remote state —
-        // including tombstones, whose LMDB purge already ran — would vanish
-        // from the doc on restart. Its pads persist by reference where
-        // custody here holds them (FIX 7107).
-        let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
-        if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
-            // Never leave RAM ahead of durable state on a FAILED persist
-            // (client analog of the ONE-1129 server evict-on-persist-failure):
-            // the import advanced this doc's version vector, so keeping the
-            // doc registered would tell the server — on the next VV exchange —
-            // that we already hold bytes that never became durable; they would
-            // never be re-sent and would vanish from the doc on restart
-            // (tombstones included). Discard the live window WITHOUT
-            // persisting (a persist would durably commit the unconfirmed
-            // import); the next open reloads from durable state and the
-            // ONE-1127/1128 VV exchange re-delivers the update.
-            self.manager.discard_window(&WindowKey::new(window_key));
-            return Err(TransportError::Storage(format!(
-                "persist remote update: {e}"
-            )));
-        }
-        let _ = self.event_tx.send(SyncEvent::WindowUpdated {
-            window_key: window_key.to_string(),
-        });
-        Ok(())
+        result
     }
 
     /// Imports `payload` into `window`'s live document, `key`'s, where Observer
