@@ -1265,7 +1265,9 @@ and says why; it never falls back to the Dreamer or to the plain house
 writer. Under `auto` a live fork that cannot be bound (no rung, a rung wider
 than `locality`, no room beside the prefix, a cold prefix, a request read
 from rows its host did not witness whole) is not such a failure: the cheap
-writer writes the flight as the agent. A forced
+writer writes the flight as the agent. An `auto` flight's first call goes out
+on the live fork only while its prefix is still warm; with no cheap writer
+served, one whose prefix went cold first keeps its raw window. A forced
 `live_fork` names every one of them. The run's `compaction` object carries
 `self_unavailable`: `live_fork_not_captured` (the row selects `live_fork` and
 the flight carries no capture from its breakpoint), `live_rung_unbound` (the
@@ -1273,7 +1275,9 @@ live route refused the step's request, or no rung of its ladder could take it
 then), `live_prefix_too_long` (the live request and the reply leave the live
 model no room for the span), `live_prefix_unwitnessed` (the live request was
 read from rows its host did not witness whole: a code run's step request, for
-now, since its host-built task names no row), `live_fork_not_admitted` (the profile's writer
+now, since its host-built task names no row), `live_prefix_cold` (a row on
+`auto` whose prefix went cold before the first call, with no cheap writer
+served: configure one, or select `live_fork`), `live_fork_not_admitted` (the profile's writer
 is not `self`, or the capture is not the run's own), `live_fork_stale` (the
 live route no longer admits the captured rung), `no_identity` (the actor is
 not an agent anchored to a PERSON), `identity_unreadable`,

@@ -60,6 +60,10 @@ pub enum SelfCompactionUnavailable {
     /// it could not derive from each (FIX 9463). A row on `auto` is written
     /// by the cheap writer instead.
     LivePrefixUnwitnessed,
+    /// A row on `auto` whose live prefix went cold before its flight's first
+    /// call, with no cheap writer served to write the flight instead (FIX
+    /// 9462): configure a cheap writer, or select `live_fork`.
+    LivePrefixCold,
     /// The run's driver did not admit the capture: the profile's writer is
     /// not `self`, or it was captured for another actor.
     LiveForkNotAdmitted,
@@ -92,6 +96,7 @@ impl SelfCompactionUnavailable {
             Self::LiveRungUnbound => "live_rung_unbound",
             Self::LivePrefixTooLong => "live_prefix_too_long",
             Self::LivePrefixUnwitnessed => "live_prefix_unwitnessed",
+            Self::LivePrefixCold => "live_prefix_cold",
             Self::LiveForkNotAdmitted => "live_fork_not_admitted",
             Self::LiveForkStale => "live_fork_stale",
             Self::NoIdentity => "no_identity",
