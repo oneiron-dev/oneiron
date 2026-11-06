@@ -29,6 +29,10 @@ pub use retrieval_weights::{
     RetrievalWeights, RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt,
     RetrievalWeightsView, configure_retrieval_weights_as_owner, retrieval_weights_as_owner,
 };
+mod scoped_grants;
+pub use scoped_grants::{
+    PolicyGrantExtension, PolicyGrantMapEntry, PolicyGrantValue, PolicyScopedGrantRow,
+};
 mod types;
 pub use types::*;
 
@@ -58,6 +62,8 @@ const FIELDS: &[&str] = &[
     "signatures",
     "auto_checker",
     "slide_review_policy",
+    "teacher_probe",
+    "sheet_answer_limits",
 ];
 
 fn invalid(message: &str) -> Error {
@@ -99,10 +105,24 @@ fn view_in_txn(
     body: &[u8],
 ) -> Result<PolicyManifestView> {
     let mut fields = decode_fields(body)?;
+    let scoped_grants = {
+        let mut tables = fields
+            .iter()
+            .filter(|(key, _)| key.as_str() == Some(super::constants::POLICY_SCOPED_GRANTS_KEY));
+        let rows = tables
+            .next()
+            .map(|(_, value)| scoped_grants::decode_table(value))
+            .transpose()?;
+        if tables.next().is_some() {
+            return Err(invalid("duplicate scoped grants table"));
+        }
+        rows
+    };
     fields.retain(|(key, _)| key.as_str().is_some_and(|key| FIELDS.contains(&key)));
     let selected = encode_fields(fields)?;
-    let manifest = rmp_serde::from_slice(&selected)
+    let mut manifest: PolicyManifest = rmp_serde::from_slice(&selected)
         .map_err(|_| invalid("policy manifest write axes do not decode"))?;
+    manifest.scoped_grants = scoped_grants;
     Ok(PolicyManifestView {
         manifest_ref: id.to_hex(),
         body_hash: blake3::hash(body).to_hex().to_string(),
@@ -124,8 +144,7 @@ fn decode_fields(body: &[u8]) -> Result<Vec<(rmpv::Value, rmpv::Value)>> {
 
 fn encode_fields(fields: Vec<(rmpv::Value, rmpv::Value)>) -> Result<Vec<u8>> {
     let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &rmpv::Value::Map(fields))
-        .map_err(|_| invalid("policy manifest encoding"))?;
+    super::value_encoding::write_value(&mut data, &rmpv::Value::Map(fields))?;
     Ok(data)
 }
 
@@ -136,7 +155,14 @@ fn encode_manifest(manifest: &PolicyManifest, existing: Option<&[u8]>) -> Result
     fields.retain(|(key, _)| !key.as_str().is_some_and(|key| FIELDS.contains(&key)));
     let replacement =
         rmp_serde::to_vec_named(manifest).map_err(|_| invalid("policy manifest encoding"))?;
-    fields.extend(decode_fields(&replacement)?);
+    fields.extend(
+        decode_fields(&replacement)?
+            .into_iter()
+            .filter(|(key, _)| key.as_str() != Some(super::constants::POLICY_SCOPED_GRANTS_KEY)),
+    );
+    if let Some(rows) = &manifest.scoped_grants {
+        scoped_grants::replace_table(&mut fields, rows)?;
+    }
     let data = encode_fields(fields)?;
     let decoded = super::decode::decode_policy_manifest(&data)
         .ok_or_else(|| invalid("malformed policy manifest"))?;

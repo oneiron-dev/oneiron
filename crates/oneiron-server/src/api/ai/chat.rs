@@ -74,6 +74,7 @@ mod answer;
 mod assertions;
 mod compaction;
 mod delivery;
+mod drafter_example;
 mod hook_ask;
 mod hooks;
 mod model_call;

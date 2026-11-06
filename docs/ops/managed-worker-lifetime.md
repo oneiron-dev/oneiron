@@ -24,6 +24,23 @@ first. Only an actual failed rearm invokes the existing managed stop/grace path
 and normal supervisor relaunch. Guardian status never substitutes for worker
 status. There is no new timer, restart delay, cap or admission policy.
 
+## Restart for a vault's own drafter
+
+A vault's drafter binding (FIX 14976) restarts a managed EXL3 worker through
+the same row replacement as a changed config row. A new supervisor takes the
+row, and its launch loads the vault's private load set as the draft. The
+predecessor drains and stops through the existing managed stop and grace
+path. Then the new worker starts and qualifies. There is no new timer,
+restart delay, cap or admission policy. Calls that arrive during the restart
+wait for the new worker, as they do after a config change. The new worker
+reloads the target and starts with an empty cache.
+
+Only a process that launches the worker for its own one vault restarts it
+for a drafter. An external worker is never restarted for one. The hosted row
+stays the configured row. If the same config is configured again, the
+replacement stays. If the config changes, the row is replaced with the stock
+draft, and the vault's drafter host applies the binding again.
+
 ## Stop during a join
 
 A guardian is first spawned in its own private group. The controller obtains its
@@ -70,8 +87,18 @@ drop use the captured launch context. A retiring session keeps its original
 context; it does not look up a replacement worker by name. Content-free activity
 and drain controls retain their existing UID check.
 
-This native transport check does not change provider locality, model offers,
-admission, charging or the device-only reranking guard. In particular, the
-existing HTTP fallback remains an OwnServer route. Other Unix targets retain
-their existing transport semantics; the child-PID check described here is for
-Linux and macOS.
+On Linux and macOS this check is what makes a managed EXL3 worker's native
+channel an on-device transport (I2-LOCAL): its models get an on-device offer
+whose backend holds the routes captured when the runtime was built and no HTTP
+sender, so a call it cannot send natively is not sent. The provider's own
+offer is unchanged: native when the current launch has a socket, HTTP
+otherwise, an OwnServer route either way. A call takes the on-device offer
+only when its route is on device; it never falls back to HTTP. The on-device
+offer keeps the provider offer's payer, key custody and rates, so charging is
+unchanged: free work (a local payer, no key) stays free, and a paid
+provider's call is charged to its payer under its run's budget line, as its
+own-server call is. A local-payer keyless provider at locality `third_party`
+gets no on-device offer, because on device its paid calls would turn free.
+The reranker keeps its HTTP route, so the device-only reranking guard still
+sends it a device-only row empty. Other Unix targets retain their existing
+transport semantics: no PID check, no on-device offer.
