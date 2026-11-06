@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     ContinuationRefusal, FINAL_ROW_DOMAIN, PreparedExecutorContinuation, ProvedStart,
     continuation_digest, continuation_of, continuation_row_in_txn, continuation_tail_effect,
-    prove_in_txn, source_in_txn,
+    prove_in_txn, source_in_txn, write_receipt_after,
 };
 use crate::code_run::{
     CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage, InheritedCompaction, StartCompaction,
@@ -176,6 +176,7 @@ pub(super) fn reopen(
 
 /// The source still has the approved cut. The child supplies only the frozen
 /// prefix and config; current predecessor, capsule and effect checks stay live.
+/// A write receipt past the cut that may have run refuses too (FIX 4199).
 fn prove_seeded_source(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -225,6 +226,7 @@ fn prove_seeded_source(
             .iter()
             .skip(bridge_start)
             .any(continuation_tail_effect)
+            || write_receipt_after(vault, txn, &source, bridge_start)?
         {
             return Err(ContinuationRefusal::EffectTail);
         }
@@ -236,6 +238,9 @@ fn prove_seeded_source(
             .any(|seq| seq >= capsule.step);
         if terminal || source.step_checkpoints.len() as u64 != row.step {
             return Err(ContinuationRefusal::NoCheckpoint);
+        }
+        if write_receipt_after(vault, txn, &source, source.bridge_calls.len())? {
+            return Err(ContinuationRefusal::EffectTail);
         }
         let mut prefix = source;
         prefix.live_run = None;
