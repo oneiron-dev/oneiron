@@ -62,7 +62,6 @@ impl ScopedRead<'_> {
                         crate::ports::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)
                             .map(|visible| visible.then_some(()))
                     })?;
-                    auxiliary_suppressed += evidence.suppression();
                     if !evidence.visible() {
                         admitted = false;
                         break;
@@ -75,21 +74,23 @@ impl ScopedRead<'_> {
             let had_capabilities = !pack.capabilities.is_empty();
             let mut capabilities = Vec::new();
             for hit in std::mem::take(&mut pack.capabilities) {
+                let mut floor_readable = false;
                 let item = self.admit_in(&rtxn, &hit.id, || {
-                    if !self
-                        .is_entity_retrievable_held_in(&rtxn, &policy, &filter, &hit.id, &held)?
-                    {
+                    floor_readable = self
+                        .is_entity_retrievable_held_in(&rtxn, &policy, &filter, &hit.id, &held)?;
+                    if !floor_readable {
                         return Ok(None);
                     }
                     crate::pipeline::capability_hit(&self.store_read(), &rtxn, hit.id)
                 })?;
-                auxiliary_suppressed += item.suppression();
+                if floor_readable {
+                    auxiliary_suppressed += item.suppression();
+                }
                 if let Some(current) = item.into_option() {
                     capabilities.push(current);
                 }
             }
             pack.capabilities = capabilities;
-            let previously_suppressed = pack.stats.claims_suppressed;
             let previous_count = pack.results.len() + pack.neighbors.len();
             let (results, result_suppressed, result_rows_suppressed) = self
                 .filter_context_entities(
@@ -117,8 +118,7 @@ impl ScopedRead<'_> {
                     &mut neighbors,
                     &results,
                 )?;
-            let suppressed = previously_suppressed
-                .saturating_add(auxiliary_suppressed)
+            let suppressed = auxiliary_suppressed
                 .saturating_add(result_rows_suppressed)
                 .saturating_add(neighbor_rows_suppressed)
                 .saturating_add(reachability_rows);
@@ -177,16 +177,19 @@ impl ScopedRead<'_> {
         let mut claims_suppressed = 0;
         let mut suppressed = 0;
         for mut entity in entities {
+            let mut floor_readable = false;
             let admission = self.admit_in(rtxn, &entity.id, || {
-                Ok(
-                    (self.is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?
-                        && self.context_entity_revision_is_readable_in(
-                            rtxn, policy, filter, &entity, held,
-                        )?)
-                    .then_some(()),
-                )
+                floor_readable =
+                    self.is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?;
+                Ok((floor_readable
+                    && self.context_entity_revision_is_readable_in(
+                        rtxn, policy, filter, &entity, held,
+                    )?)
+                .then_some(()))
             })?;
-            suppressed += admission.suppression();
+            if floor_readable {
+                suppressed += admission.suppression();
+            }
             if admission.suppression() > 0 && entity.entity_type == ENTITY_TYPE_CLAIM {
                 claims_suppressed += 1;
             }

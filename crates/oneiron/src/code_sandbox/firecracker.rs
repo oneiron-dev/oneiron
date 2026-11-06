@@ -120,6 +120,7 @@ impl FirecrackerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn super::microvm::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         cancel.check()?;
         // The OCI identity the host selected, kept before the boot artifacts
@@ -199,6 +200,7 @@ impl FirecrackerBackend {
             self.transport.as_deref(),
             self.spool.as_deref(),
             cancel,
+            output,
         );
         #[cfg(not(target_os = "linux"))]
         let result: Result<(MicroVmExit, Vec<SandboxProposalWrite>)> =
@@ -349,8 +351,9 @@ impl MicroVmBackend for FirecrackerBackend {
         image: &GuestImage,
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
+        output: &mut dyn super::microvm::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        self.boot(vm, image, budget, proxy, &StepCancellation::never())
+        self.boot(vm, image, budget, proxy, &StepCancellation::never(), output)
     }
 
     fn run_with_proxy_cancellable(
@@ -360,8 +363,9 @@ impl MicroVmBackend for FirecrackerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
         cancel: &StepCancellation,
+        output: &mut dyn super::microvm::MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
-        self.boot(vm, image, budget, proxy, cancel)
+        self.boot(vm, image, budget, proxy, cancel, output)
     }
 
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {

@@ -172,3 +172,21 @@ scratch application. Host intake turns each accepted `write`, `delete` and
 `rename` into a typed `SandboxProposalWrite` (`FileWrite`, `FileDelete`,
 `FileRename`), which the adapter wraps as a `SandboxProposalDelta` at
 `Proposed` approval.
+
+## Streamed step output
+
+After `ready`, the guest may send `output_text { target, start, frame }`,
+`output_bytes { path, frame }`, or `store_bytes { start, frame }` alongside its
+proposal stream. These frames do not spend logical requests. Each frame is bounded
+by the shared `MAX_CHUNK_BYTES`; `output_bytes` names only `/mnt/outputs` files.
+Text targets are `console`, `finish`, and `store`. Console and files append; a
+`start` frame replaces the previous finish or store value.
+
+The host passes each frame directly to the caller's output sink on the exchange's
+thread. A `receipt { accepted: true }` follows only after that sink stores the
+complete frame. `failure` reports a storage error and the exchange returns the
+original host error under the original cancellation token and deadline. A guest
+poisons its step after either failure or a transport error. Output does not alter
+`step_result`, the terminal status, workspace proposals, or the shared protocol
+version. Release the matching guest executable, rootfs/container agent, and engine
+together: an older guest still drops its output imports before sending any frame.

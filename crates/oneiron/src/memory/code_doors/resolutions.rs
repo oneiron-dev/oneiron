@@ -16,12 +16,36 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeProposalResolveRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
+        self.code_proposal_resolve(owner, input, None)
+    }
+
+    /// Submits a fresh redacted review of an approved conflict resolution.
+    /// Fresh owner attribution and the current conflict checks are retained;
+    /// the engine fills content without copying the original's authority.
+    pub fn code_proposal_resolve_rereview_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        original: EntityId,
+        input: CodeProposalResolveRequest,
+    ) -> MemoryResult<CodeProposalSubmitted> {
+        self.code_proposal_resolve(owner, input, Some(original))
+    }
+
+    fn code_proposal_resolve(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeProposalResolveRequest,
+        original: Option<EntityId>,
+    ) -> MemoryResult<CodeProposalSubmitted> {
         let actor = self.code_owner(owner)?;
         let repo = self.code_repo(input.change.repo)?;
         self.code_submission_sources(&input.change)?;
         self.code_readable(input.branch_subject, None)?;
         self.code_readable(input.conflict, Some(crate::registry::ENTITY_TYPE_CLAIM))?;
         self.code_conflict_task(input.conflict)?;
+        if let Some(original) = original {
+            self.code_readable(original, None)?;
+        }
         let repo_id = input.change.repo;
         let (mut request, catalog) = owner_submission(repo, actor, input.change);
         let RepoMutationOperation::CommitFile {
@@ -40,9 +64,14 @@ impl Memory<'_> {
             content,
             message,
         };
-        let row = self
-            .vault
-            .propose_repo_mutation_as_owner(owner, repo_id, request, catalog)?;
+        let row = match original {
+            Some(original) => self
+                .vault
+                .propose_repo_rereview_as_owner(owner, repo_id, original, request, catalog)?,
+            None => self
+                .vault
+                .propose_repo_mutation_as_owner(owner, repo_id, request, catalog)?,
+        };
         self.produced_from([row.id]);
         Ok(CodeProposalSubmitted {
             proposal: row.id,
