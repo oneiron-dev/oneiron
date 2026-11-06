@@ -74,6 +74,16 @@ but shorter than the raw credential, and both texts have the same
 non-whitespace character sequence. This distinction does not change the
 returned bytes, replacement order, or handling of malformed bodies.
 
+Initialization, retried-call JSON replies and stream reattachment do not
+retain raw JSON bytes. Their control reader feeds the HTTP response directly
+to the same first-answer parser, without collecting a raw-body Vec or opening
+a spool. A valid JSON body still checks every batch element and trailing
+byte. The first tools/call reply still retains its original spool. Event
+streams keep their existing reader and native body owner; an initializer
+drops an answer's unused raw owner just as before. A malformed JSON prefix
+can now close its response before the remaining bytes are drained; it still
+returns the same unreadable/rejected result, not a new policy refusal.
+
 The raw body is cleared before the reply becomes acknowledged, deferred,
 or handed to a question worker. An unreadable spool or failed clear write
 uses the existing `connector_reply_unreadable` ambiguous outcome at that
