@@ -192,7 +192,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         .iter()
                         .flat_map(|message| &message.content)
                         .filter_map(|part| {
-                            if let ContentPart::Text { text } = part {
+                            if let ContentPart::Text { text, .. } = part {
                                 Some(text.as_str())
                             } else {
                                 None
