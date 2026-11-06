@@ -44,18 +44,39 @@ impl RecordedCall {
     /// its own row's and those of the rows a callable it called made. A
     /// callable's answer also adds the rows the run's callables answered
     /// from (`callable`, joined as `RecordingJsHost::result_rows` joins
-    /// them). `None` when one of them kept no set.
+    /// them). Each outcome's own source witnesses join them too (FIX 7703
+    /// review fix): the verb rows do not list them. `None` when one of them
+    /// kept no set, or a made row's outcome does not decode.
     fn served_rows(
         &self,
         (skills, read): &(Vec<EntityId>, Option<Vec<EntityId>>),
     ) -> Option<Vec<EntityId>> {
         let own = agent_verb_rows_of(std::slice::from_ref(&self.row))?;
         let made = agent_verb_rows_of(&self.nested)?;
+        let mut witnessed = outcome_sources(&self.outcome);
+        for made in &self.nested {
+            witnessed.extend(outcome_sources(&made.recorded_outcome().ok()?));
+        }
+        let served = [own.as_slice(), made.as_slice(), witnessed.as_slice()].concat();
         if !matches!(self.row.effect, SelfEffect::SkillsCall) {
-            return Some([own.as_slice(), made.as_slice()].concat());
+            return Some(served);
         }
         let read = read.as_deref()?;
-        Some([own.as_slice(), made.as_slice(), read, skills.as_slice()].concat())
+        Some([served.as_slice(), read, skills.as_slice()].concat())
+    }
+}
+
+/// The records a recorded outcome names as its sources (FIX 7703 review
+/// fix): the records a fold answer's words were written from, and each
+/// memory search hit. A cached answer reaches the resumed guest only when
+/// the bound door still releases these records to its caller.
+fn outcome_sources(outcome: &SelfDispatchOutcome) -> Vec<EntityId> {
+    match outcome {
+        SelfDispatchOutcome::Fold(answer) => answer.word_sources(),
+        SelfDispatchOutcome::MemorySearch(search) => {
+            search.results.iter().map(|hit| hit.id).collect()
+        }
+        _ => Vec::new(),
     }
 }
 
