@@ -254,6 +254,13 @@ pub(crate) use citation_scrub::scrub_pending_citations;
 #[cfg(feature = "sync")]
 pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn};
 #[cfg(feature = "sync")]
+mod fork_downlink;
+#[cfg(feature = "sync")]
+pub(crate) use fork_downlink::{
+    authority_fork_frames_in_txn, fork_state_cites_withheld, install_authority_fork,
+    settle_authority_forks,
+};
+#[cfg(feature = "sync")]
 mod fork_upload;
 #[cfg(feature = "sync")]
 pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};

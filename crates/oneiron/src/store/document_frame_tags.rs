@@ -31,6 +31,14 @@ pub mod document_sub_tags {
     /// The authority's answer to one fork upload, sent only to the requesting
     /// connection.
     pub const NOTE_FORK_RECEIPT: u8 = 10;
+    /// One pending fork the NOTE's authority holds, for an own device: its
+    /// record and its document (FIX 12789). Authority to device only.
+    pub const NOTE_FORK_STATE: u8 = 11;
+    /// The forks a NOTE's authority holds pending, after their states: an own
+    /// device drops each fork the authority sent it that the set no longer
+    /// names. As a notice with no payload, it marks a fork change at the
+    /// authority.
+    pub const NOTE_FORK_SET: u8 = 12;
     /// One ordered piece of a logical document, verified whole before admission.
     pub const PART: u8 = 13;
 }

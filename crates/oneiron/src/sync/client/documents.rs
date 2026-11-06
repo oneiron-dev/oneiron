@@ -120,6 +120,35 @@ impl SyncClient {
                         .map_err(storage)?;
                     return Ok(Vec::new());
                 }
+                // The authority's pending forks (FIX 12789). A fork this
+                // replica cannot take stays at the authority and never
+                // costs the lane its text.
+                document_sub_tags::NOTE_FORK_STATE | document_sub_tags::NOTE_FORK_SET
+                    if federated.is_none() =>
+                {
+                    let taken = if frame.kind == document_sub_tags::NOTE_FORK_STATE {
+                        crate::note::install_authority_fork(
+                            &self.vault,
+                            frame.entity,
+                            frame.payload,
+                        )
+                    } else {
+                        crate::note::settle_authority_forks(
+                            &self.vault,
+                            frame.entity,
+                            frame.payload,
+                        )
+                    };
+                    match taken {
+                        Ok(()) => self.report_note_document(frame.entity).map_err(storage)?,
+                        Err(error) => tracing::warn!(
+                            %error,
+                            note = %frame.entity.to_hex(),
+                            "a NOTE fork from the authority was not taken"
+                        ),
+                    }
+                    return Ok(Vec::new());
+                }
                 document_sub_tags::ACK => return Ok(Vec::new()),
                 _ => {
                     return Err(TransportError::InvalidPayload(

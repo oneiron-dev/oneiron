@@ -240,6 +240,7 @@ impl Memory<'_> {
         })?;
         if receipt.outcome == NoteForkUploadOutcome::Accepted {
             self.vault().notify_note_document(note);
+            self.vault().notify_note_forks(note);
         }
         Ok(receipt)
     }
