@@ -1483,7 +1483,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/shadow_runner/store.rs` | src | m | 2 struct · 10 fn · 8 crate-vis | ShadowBodyStore, ShadowSourceHold | A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named… |
 | `src/code_run/shadow_runner/types.rs` | src | s | 4 struct · 2 enum · 4 fn · 5 re-export | ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowStatus, ShadowStepRun, ShadowWindowFullReason | The shadow runner's request, result and their parts (PR-S1): what a caller asks an arm to run, by immutable… |
 | `src/code_run/spawn_replay.rs` | src | m | 18 crate-vis | — | The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for… |
-| `src/code_run/storage/compaction.rs` | src | m | 18 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
+| `src/code_run/storage/compaction.rs` | src | m | 19 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
 | `src/code_run/storage/continuation.rs` | src | s | 7 crate-vis | — | A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the… |
 | `src/code_run/storage/folds.rs` | src | s | 3 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
@@ -4140,8 +4140,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/check_inputs.rs` | src | m | 11 struct · 3 enum · 2 trait · 9 fn · 1 type · 1 const | QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile, QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation +8 | The exact inputs one queue check runs on, their one digest, the receipt a run leaves and the host seam that… |
 | `src/merge_queue/check_requests.rs` | src | s | 1 fn · 3 crate-vis | — | The owner's checker requests and the bound diagnosis (FIX 6868) |
 | `src/merge_queue/check_store.rs` | src | m | 3 struct · 3 enum · 4 fn · 2 const · 19 crate-vis | QueueCheckConfiguration, QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus, QueueCheckWork | The checker's companion rows and their attempt lifecycle (FIX 6868) |
-| `src/merge_queue/check_tree.rs` | src | s | 4 crate-vis | — | A pinned Git tree as a queue check's input (FIX 6868): read from the object store through the shipped… |
+| `src/merge_queue/check_tree.rs` | src | s | 5 crate-vis | — | A pinned Git tree as a queue check's input (FIX 6868): read from the object store through the shipped… |
 | `src/merge_queue/checks.rs` | src | s | 2 fn · 2 crate-vis | — | Out-of-order check completion, all-path agreement and red-batch diagnosis |
+| `src/merge_queue/composition.rs` | src | s | 6 crate-vis | — | Line composition of disjoint same-file proposals (FIX 4360) |
 | `src/merge_queue/driver.rs` | src | m | 2 fn · 1 crate-vis | — | The merge queue's restart driver (FIX 6868, G2 PR2): one reducer over a checked queue's durable rows, run by… |
 | `src/merge_queue/driver_materialize.rs` | src | m | 7 crate-vis | — | The driver's custody of staged objects and saved paths, and its overlap preflight (FIX 6868, G2 PR2) |
 | `src/merge_queue/driver_store.rs` | src | m | 3 fn · 9 crate-vis | — | The queue driver's reads of the checker's rows and its own durable writes (FIX 6868, G2 PR2) |
@@ -4150,7 +4151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/initialize.rs` | src | s | 1 fn | — | Checked queue initialization on an owner-approved baseline (FIX 6868) |
 | `src/merge_queue/landing.rs` | src | m | 3 fn · 3 crate-vis | — | Crash-consistent gated landing and trailing-check green/rollback transitions |
 | `src/merge_queue/mirror_green.rs` | src | s | 3 crate-vis | — | The merge queue's green evidence for an origin mirror (FIX 6866 part 2; CALLS "FIX 6866 full-auto green") |
-| `src/merge_queue/mod.rs` | src | s | 1 struct · 1 fn · 10 re-export · 11 crate-vis | MergeQueue | Durable batched speculation over real detached worktrees |
+| `src/merge_queue/mod.rs` | src | s | 1 struct · 1 fn · 10 re-export · 13 crate-vis | MergeQueue | Durable batched speculation over real detached worktrees |
 | `src/merge_queue/plan.rs` | src | s | 2 struct · 5 fn · 1 const | FrozenCheckPlan, RepoCheckPlan | The repository check plan a checked queue freezes from its approved baseline (FIX 6868) |
 | `src/merge_queue/receipt_index.rs` | src | s | 2 crate-vis | — | Keyed reads of the checker's receipts (FIX 7349): a reused, bound or sealed receipt is found through one… |
 | `src/merge_queue/received_enqueue.rs` | src | s | 3 crate-vis | — | A received push's own entry into its merge queue (FIX 8268, CALL `REVIEW_POLICY_DEFAULT = LandOnGreen`) |
@@ -5059,7 +5060,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/conflict/write.rs` | src | m | 4 crate-vis | — | The checked repository conflict claim writer (moved from `conflict.rs` unchanged in behavior) and the merge… |
 | `src/repo_mutation/conflict_doors.rs` | src | s | 3 crate-vis | — | Owner-bound admission of real overlaps, retaining both proposed changes |
 | `src/repo_mutation/conflict_value.rs` | src | m | 3 const · 8 crate-vis | — | Closed MessagePack values for repository conflict claims |
-| `src/repo_mutation/document.rs` | src | s | 2 crate-vis | — | Review-approved repository file updates lower to idempotent document edits |
+| `src/repo_mutation/document.rs` | src | s | 3 crate-vis | — | Review-approved repository file updates lower to idempotent document edits |
 | `src/repo_mutation/external_import/host.rs` | src | s | 1 trait | ExternalGitSourceHost | The per-call transport an outside import borrows (FIX 6871): built by the serving host from the credential… |
 | `src/repo_mutation/external_import/lfs.rs` | src | s | 1 crate-vis | — | An outside import's Git-LFS objects (FIX 7596): after the exact fetch and before any send, every object the… |
 | `src/repo_mutation/external_import/mod.rs` | src | m | 2 enum · 1 fn · 3 const · 2 re-export · 6 crate-vis | ExternalImportRefPlan, ExternalStatusRoute | Exact outside import (FIX 6871, G7 PR1): one outside commit, fetched exactly and sent through the vault's… |
@@ -5085,11 +5086,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/proposal/settlement.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | RepoProposalDecision, RepoProposalSettlement | Review decisions are retained separately from execution |
 | `src/repo_mutation/proposal/submit.rs` | src | s | 1 fn · 3 crate-vis | — | The one checked proposer (moved from `proposal.rs`, FIX 6867 G1 PR2b): the trusted and owner proposals take… |
 | `src/repo_mutation/queue.rs` | src | m | 1 fn · 18 crate-vis | — | Preparation and execution of queued repository mutations |
+| `src/repo_mutation/queue/apply.rs` | src | m | 2 crate-vis | — | The execution body of one queued repository mutation (moved from `queue.rs`, FIX 4360): authorize, prepare… |
 | `src/repo_mutation/queue/operation.rs` | src | s | 3 crate-vis | — | The repo mutation operations' validation, write class and oplog subject (moved from `queue.rs`, G4 PR2) |
 | `src/repo_mutation/received_file.rs` | src | s | 9 crate-vis | — | A received push bundle (FIX 6869, G4 PR2): every file of ONE accepted pushed ref update as one reviewed… |
 | `src/repo_mutation/received_file/tree.rs` | src | s | 2 crate-vis | — | The old paths of the bundle tree helpers, which moved to `repo_mutation/bundle/tree.rs` under bundle names… |
-| `src/repo_mutation/reviewed_file.rs` | src | m | 6 crate-vis | — | The tested stack's per-member checks (moved from `reviewed_stack.rs`, G4 PR2): the tested change is exactly… |
-| `src/repo_mutation/reviewed_stack.rs` | src | m | 9 crate-vis | — | Atomic critic admission and exact-prefix replay for a tested proposal stack |
+| `src/repo_mutation/reviewed_composition.rs` | src | m | 11 crate-vis | — | Same-file composition inside a reviewed stack (FIX 4360) |
+| `src/repo_mutation/reviewed_file.rs` | src | m | 7 crate-vis | — | The tested stack's per-member checks (moved from `reviewed_stack.rs`, G4 PR2): the tested change is exactly… |
+| `src/repo_mutation/reviewed_stack.rs` | src | m | 11 crate-vis | — | Atomic critic admission and exact-prefix replay for a tested proposal stack |
 | `src/repo_mutation/secret_remediation.rs` | src | m | 3 struct · 3 enum · 2 fn · 1 re-export · 2 crate-vis | RepoSecretRemediation, RepoSecretRemediationAction, RepoSecretRemediationRequest, RepoSecretRemediationStatus, RepoSecretUnresolved, RepoSecretUnresolvedReason | Current-code remediation of marked secrets (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: "Proposal… |
 | `src/repo_mutation/secret_remediation/env.rs` | src | s | 1 crate-vis | — | Repository dotenv parsing and value classification, defined at the store layer |
 | `src/repo_mutation/secret_remediation/link.rs` | src | s | 3 crate-vis | — | The `repo.secret_remediation` links (FIX 7608 slice 6): value-free facts tying the marked keys in a… |
