@@ -34432,7 +34432,7 @@
      "path": "src/edit_settle/carry.rs",
      "purpose": "ARCH-0075 §4: a held answer proposal whose units change under it",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 4,
       "struct": 2
@@ -34471,12 +34471,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DiscardedDeck",
+      "DiscardedSettleWords"
+     ],
+     "path": "src/edit_settle/discarded_words.rs",
+     "purpose": "What a settlement keeps once the owner's discard took its artifact's payload off this machine (FIX 14534…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/edit_settle/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
@@ -34486,8 +34500,8 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 7
+      "crate-vis": 5,
+      "re-export": 8
      }
     },
     {
@@ -92041,7 +92055,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93072,7 +93086,7 @@
    },
    "over_bar": 170,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6563,
+   "source_files": 6564,
    "test_files": 895
   },
   "oneiron-android": {
