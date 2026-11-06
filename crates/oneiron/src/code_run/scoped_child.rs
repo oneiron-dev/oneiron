@@ -18,16 +18,23 @@
 //! ([`ScopedChildLoan::with_parent_attempt`], FIX 7507 PR3): its child then
 //! lives only while that lease holds, and a host attempt's child stands on
 //! that lease in place of a Grant (FIX 7732).
+//!
+//! A port call and a read of a lent input also stop at the child's live
+//! cutoff (FIX 8233): its runner binds a [`ScopedCallControl`], and each
+//! checks it at its own steps, not only at its admission.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
 use super::dispatcher::ReaderChildBinding;
+use super::result_read::READ_PIECE_BYTES;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, BorrowedAttemptLease};
 use crate::code_run::{
-    AgentVerbAnswer, AgentVerbRefusal, DelegatedSource, HostSelfDispatcher, ReaderJob, ReaderRoute,
-    SelfAgentVerbCall, valid_reader_key, vault_ref,
+    AgentVerbAnswer, AgentVerbRefusal, CodeRunRawOutput, DelegatedSource, HostSelfDispatcher,
+    READER_TASK_SETTLED, ReaderJob, ReaderRoute, ScopedCallControl, SelfAgentVerbCall,
+    valid_reader_key, vault_ref,
 };
 use crate::llm::Scope;
 use crate::memory::HostWriteOrigin;
@@ -313,7 +320,9 @@ pub trait ScopedChildPorts: Send + Sync {
 /// What a port adapter is handed for one call of a scoped child: the
 /// child's job, read on its own route. It reads the child's named inputs
 /// with every check a read of them takes, and nothing else: no vault, no
-/// storage and no other result.
+/// storage and no other result. It also gives the child's live cutoff and
+/// standing (FIX 8233), which an adapter that waits or loops checks at each
+/// step.
 pub struct ScopedChildCallContext<'c, 'a> {
     dispatcher: &'c HostSelfDispatcher<'a>,
     child: &'c ReaderChildBinding,
@@ -371,11 +380,42 @@ impl ScopedChildCallContext<'_, '_> {
         &self.spec.scope
     }
 
+    /// The child's live cutoff (FIX 8233), when its runner bound one: an
+    /// adapter that waits checks it at each step and stops there.
+    #[must_use]
+    pub const fn control(&self) -> Option<&ScopedCallControl> {
+        self.child.control.as_ref()
+    }
+
+    /// Whether the child may go on with the port call it was admitted to
+    /// (FIX 8233): its job live at its generation and before its cutoff, its
+    /// live cutoff included, and its parent's lease held. The answer's `Err`
+    /// is `reader_task_settled` or `scoped_child_parent_lease_lost`.
+    ///
+    /// # Errors
+    ///
+    /// The route's own read errors.
+    pub fn standing(&self) -> Result<std::result::Result<(), &'static str>> {
+        self.dispatcher.reader_job_standing()
+    }
+
+    /// Whether the child's live cutoff is reached now (FIX 8233). A child
+    /// its runner bound no control for has only its job's stored cutoff,
+    /// which its admission reads.
+    pub(crate) fn live_cutoff_reached(&self) -> bool {
+        self.control()
+            .is_some_and(|control| control.expired(Instant::now()))
+    }
+
     /// The lent input `reference` names, by its name or its handle, read as
     /// a read of it is while the job is live: in its owner's committed
     /// record, clean now, inside its range, released by the child's door.
     /// Any other reference names nothing (`scoped_child_input`). The
-    /// answer's `Err` is the read's refusal code.
+    /// answer's `Err` is the read's refusal code. Its range is read in the
+    /// result read's pieces, the child's live cutoff checked before each
+    /// piece, before the secret scan and before the text is released (FIX
+    /// 8233): a read it cuts answers `reader_task_settled`. The scan reads
+    /// the whole input, so a secret across a piece's edge is still found.
     ///
     /// # Errors
     ///
@@ -390,7 +430,7 @@ impl ScopedChildCallContext<'_, '_> {
             return Ok(Err("unknown_handle"));
         };
         if !self.dispatcher.reader_job_live()? {
-            return Ok(Err("reader_task_settled"));
+            return Ok(Err(READER_TASK_SETTLED));
         }
         let storage = &self.dispatcher.storage;
         let Some(output) = storage
@@ -425,15 +465,19 @@ impl ScopedChildCallContext<'_, '_> {
                 ));
             }
         }
-        let len = usize::try_from(end - start)
-            .map_err(|_| Error::ArithmeticOverflow("scoped input length"))?;
-        let bytes = storage
-            .read_code_run_raw_output_range(&output, start, len)?
-            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        let Some(bytes) = self.read_range(&output, start, end)? else {
+            return Ok(Err(READER_TASK_SETTLED));
+        };
+        if self.live_cutoff_reached() {
+            return Ok(Err(READER_TASK_SETTLED));
+        }
         // A body stored before its scan read every rule may hold a secret no
         // mark names (OF-067); no port is shown any of it.
         if crate::batch::secret_scan::write_payload_hit(&bytes).is_some() {
             return Ok(Err("tainted"));
+        }
+        if self.live_cutoff_reached() {
+            return Ok(Err(READER_TASK_SETTLED));
         }
         Ok(Ok(ScopedInputRead {
             name: name.to_owned(),
@@ -442,6 +486,40 @@ impl ScopedChildCallContext<'_, '_> {
             rows: source.rows.clone(),
             text: String::from_utf8_lossy(&bytes).into_owned(),
         }))
+    }
+
+    /// `output`'s bytes from `start` to `end`, cut at its body's end, read
+    /// in pieces of at most the result read's piece size (FIX 8233). The
+    /// child's live cutoff is checked before each piece: `None` once it is
+    /// reached. An empty range still reads its body's row once.
+    fn read_range(
+        &self,
+        output: &CodeRunRawOutput,
+        start: u64,
+        end: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let len = usize::try_from(end - start)
+            .map_err(|_| Error::ArithmeticOverflow("scoped input length"))?;
+        let mut bytes = Vec::with_capacity(len);
+        loop {
+            if self.live_cutoff_reached() {
+                return Ok(None);
+            }
+            let at = start + bytes.len() as u64;
+            let piece = self
+                .dispatcher
+                .storage
+                .read_code_run_raw_output_range(
+                    output,
+                    at,
+                    (len - bytes.len()).min(READ_PIECE_BYTES),
+                )?
+                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            bytes.extend_from_slice(&piece);
+            if piece.is_empty() || bytes.len() >= len {
+                return Ok(Some(bytes));
+            }
+        }
     }
 }
 
@@ -530,13 +608,15 @@ pub fn scoped_child_authority(
 }
 
 /// The refusal a read of a scoped child answers when its door refused it
-/// with `code` on its authority (FIX 7734): `scoped_child_authority_lapsed`
-/// or `scoped_child_parent_lease_lost`, per read, as a refusal the child
-/// sees, never an error that ends its run. `None` for any other code.
+/// with `code` on its authority (FIX 7734), `scoped_child_authority_lapsed`
+/// or `scoped_child_parent_lease_lost`, or on its job's end or its live
+/// cutoff (FIX 8233), `reader_task_settled`: per read, as a refusal the
+/// child sees, never an error that ends its run. `None` for any other code.
 pub(crate) fn scoped_child_read_refusal(code: &str) -> Option<&'static str> {
     [
         SCOPED_CHILD_AUTHORITY_LAPSED,
         SCOPED_CHILD_PARENT_LEASE_LOST,
+        READER_TASK_SETTLED,
     ]
     .into_iter()
     .find(|known| *known == code)
