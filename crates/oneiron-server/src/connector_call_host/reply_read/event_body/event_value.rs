@@ -37,6 +37,19 @@ pub(super) fn read(reader: impl Read) -> Result<Option<Value>, serde_json::Error
     Ok(None)
 }
 
+pub(super) fn read_str(event: &str) -> Result<Option<Value>, serde_json::Error> {
+    if !event
+        .trim_start_matches([' ', '\n', '\r', '\t'])
+        .starts_with('[')
+    {
+        return serde_json::from_str(event).map(Some);
+    }
+    let mut deserializer = serde_json::Deserializer::from_str(event);
+    deserializer.deserialize_seq(DiscardArray)?;
+    deserializer.end()?;
+    Ok(None)
+}
+
 struct DiscardArray;
 
 impl<'de> Visitor<'de> for DiscardArray {
