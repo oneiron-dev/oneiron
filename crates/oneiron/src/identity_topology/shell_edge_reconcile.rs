@@ -256,9 +256,34 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
     }
     let record = decode_identity_topology_event_body(&raw.body)
         .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
-    let action = match &record.action {
+    // FIX 10188: a manifest induces its whole decision's sources, and evicting
+    // one of its parts unmakes that decision as surely as evicting the
+    // manifest. A decision still waiting on a part induces nothing yet.
+    let part_of = match &record.action {
+        StoredIdentityOpAction::OperationPart { root, .. } => Some(*root),
+        _ => None,
+    };
+    let decision = match part_of {
+        Some(root) => {
+            match super::operation_parts::identity_topology_decision_for_store_in_txn(
+                store, rtxn, &root,
+            ) {
+                Ok(Some(decision)) => decision,
+                Ok(None) | Err(_) => return Ok(Some(BTreeSet::new())),
+            }
+        }
+        None => match super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+            store, rtxn, id, record,
+        )? {
+            Some(decision) => decision,
+            None => return Ok(Some(BTreeSet::new())),
+        },
+    };
+    let action = match &decision.action {
         StoredIdentityOpAction::Undo { target } => {
-            match identity_topology_event_for_store_in_txn(store, rtxn, target) {
+            match super::operation_parts::identity_topology_decision_for_store_in_txn(
+                store, rtxn, target,
+            ) {
                 Ok(Some(target_record)) => target_record.action,
                 Ok(None) | Err(_) => return Ok(Some(BTreeSet::new())),
             }
@@ -280,7 +305,9 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         | StoredIdentityOpAction::ProposalCancellation { .. }
         | StoredIdentityOpAction::AdmissionDisposition(_)
         | StoredIdentityOpAction::AuthorAttribution { .. }
-        | StoredIdentityOpAction::AuthorRedaction { .. } => BTreeSet::new(),
+        | StoredIdentityOpAction::AuthorRedaction { .. }
+        | StoredIdentityOpAction::OperationManifest { .. }
+        | StoredIdentityOpAction::OperationPart { .. } => BTreeSet::new(),
     }))
 }
 
@@ -437,8 +464,9 @@ impl Vault {
             .current_event
             .get(entity)
             .ok_or(Error::CorruptedIndex("identity topology fold"))?;
+        // The fold's current writer is a whole decision (FIX 10188).
         let record = self
-            .identity_topology_event_in_txn(rtxn, event_id)?
+            .identity_topology_decision_in_txn(rtxn, event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
         Ok(match (&record.action, state) {
             (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {

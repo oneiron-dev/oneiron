@@ -261,6 +261,7 @@ impl McpCodeModeProvider for OracleCodeProvider {
             global_tier: ModelTierRef("fixture-tier".to_owned()),
             determinism: CodeRunDeterminism::new(1_000, [7; CODE_RUN_RNG_SEED_LEN]),
             limits: EngineExecutorLimits::default(),
+            wake: None,
         })
     }
 }

@@ -85,8 +85,10 @@ impl Vault {
         let seal = resolve_seal_in_txn(self, wtxn, seal, Some(*event))?;
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
+        // The target read whole (FIX 10188): an undo reverts every source,
+        // head and mask of its decision, never one part of it.
         let record = self
-            .identity_topology_event_in_txn(&*wtxn, event)?
+            .identity_topology_decision_in_txn(&*wtxn, event)?
             .ok_or(Error::EntityNotFound)?;
         let (shelled, removed_edges) = match &record.action {
             // A counter-event is not undoable (r1: re-apply, don't unwind).
@@ -98,7 +100,9 @@ impl Vault {
             | StoredIdentityOpAction::ProposalCancellation { .. }
             | StoredIdentityOpAction::AdmissionDisposition(_)
             | StoredIdentityOpAction::AuthorAttribution { .. }
-            | StoredIdentityOpAction::AuthorRedaction { .. } => {
+            | StoredIdentityOpAction::AuthorRedaction { .. }
+            | StoredIdentityOpAction::OperationManifest { .. }
+            | StoredIdentityOpAction::OperationPart { .. } => {
                 return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 )));
