@@ -350,7 +350,11 @@ fn admit_part_head(
 /// (`KeptExportOutput::copy_frame`), into `doc`'s custody map as its parts,
 /// each carrying `output`'s witness and its holder's signature as `output`
 /// keeps it, never signed here (FIX 12373), each row that differs committed
-/// on its own.
+/// on its own. Its one caller passes only a copy that stands
+/// (`KeptExportOutput::stands`), whose part signatures
+/// `KeptExportOutput::proof` verified over this frame by the signer of the
+/// witness each part carries, so no part rides with a signature nobody
+/// verified.
 /// A copy past [`MAX_EXPORT_OUTPUT_PARTS`], the `u32` codec bound, and one
 /// kept without a signature for each of its parts, stay with their keepers:
 /// no part rides that cannot prove itself. Returns whether it wrote any.

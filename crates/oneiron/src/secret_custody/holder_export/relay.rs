@@ -22,7 +22,11 @@
 //! that rides in parts keeps, from the same commit, the signature of each
 //! part by the key that signed that result (`part_signature`), and every
 //! install that keeps a relayed copy keeps the signatures it came with, so
-//! it relays the parts onward while the holder is away.
+//! it relays the parts onward while the holder is away. Before any install
+//! keeps or relays such a copy, whole or joined, every one of its part
+//! signatures verifies over its own frame by that result's signer
+//! (`KeptExportOutput::proof`): a copy with one missing or bad is
+//! disproven, never kept, so no relay writes parts nobody verified.
 //!
 //! A relayed row is judged in three states (FIX 12352; the unknown-signer
 //! rule of CALLS CUSTODY_INPUT_PRUNE): proven ([`ProofState::Proven`]), the
@@ -33,6 +37,8 @@
 //! proves itself or its base window retires; and disproven, so it leaves.
 
 use super::OUTPUTS;
+#[cfg(feature = "sync")]
+use super::part_signature::{OutputPartBinding, parts_verify};
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityVaultId};
 use crate::authority::{
@@ -78,8 +84,9 @@ pub(crate) struct KeptExportOutput {
     pub(crate) witness: Vec<u8>,
     /// The signature of each numbered part the copy rides in, in order, by
     /// the key that signed its result (FIX 12373), kept and relayed as the
-    /// holder made them. Empty for a copy that rides whole, and for one
-    /// kept with no part evidence, which never rides in parts.
+    /// holder made them, each verified before a copy that rides in parts
+    /// stands (`Self::proof`). Empty for a copy that rides whole, and for
+    /// one kept with no part evidence, which never rides in parts.
     pub(crate) part_signatures: Vec<[u8; SIGNATURE_BYTES]>,
     /// The copy, sealed to the recipient machine alone.
     pub(crate) sealed: Vec<u8>,
@@ -176,8 +183,9 @@ impl KeptExportOutput {
     /// its witness and its part signatures are read, not judged:
     /// `Self::stands` judges the copy and its witness, a witness past its
     /// bound among them, so such a row is admitted, never kept and pruned,
-    /// never a refused update (L03 06:5x); each part proves its signature
-    /// where it rides (FIX 12373).
+    /// never a refused update (L03 06:5x). `Self::proof` verifies the part
+    /// signatures of a copy that rides in parts; each relayed part proves
+    /// its own where it rides (FIX 12373).
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let (signed, rest) = match bytes.strip_prefix(SIGNED_LABEL) {
             Some(rest) => (true, rest),
@@ -217,14 +225,45 @@ impl KeptExportOutput {
 
     /// What `fold` makes of this copy (FIX 12352): the state of its witness
     /// ([`assess_witness`]) when the signed result it carries names the
-    /// copy's digest and length, and disproven when it names another copy
-    /// or the witness is disproven. An unproven copy is never read or kept.
+    /// copy's digest and length and, for a copy that rides in parts, every
+    /// part signature verifies under that result ([`Self::parts_signed_by`]);
+    /// disproven when it names another copy, a part signature is missing or
+    /// does not verify, or the witness is disproven. An unproven copy is
+    /// never read or kept.
     #[cfg(feature = "sync")]
     pub(crate) fn proof(&self, fold: &AuthorityFold) -> ProofState {
         match assess_witness(fold, &self.request, &self.witness).candidate() {
-            Some((result, state)) if names_copy(&result.output, &self.sealed) => state,
+            Some((result, state))
+                if names_copy(&result.output, &self.sealed) && self.parts_signed_by(&result) =>
+            {
+                state
+            }
             _ => ProofState::Disproven,
         }
+    }
+
+    /// Whether this copy carries its holder's signature of every part it
+    /// rides in, each verifying by `result`'s own signer over `result`'s
+    /// vault and entry, the copy it names, this copy's request and sealing
+    /// second, the part count, the part's index and its run of this copy's
+    /// own frame ([`Self::copy_frame`], cut as its parts are), as a relayed
+    /// part proves itself (`part_signature`, FIX 12373). A copy that rides
+    /// whole needs none, so its signatures are not read.
+    #[cfg(feature = "sync")]
+    fn parts_signed_by(&self, result: &WitnessedResult) -> bool {
+        !Self::rides_in_parts(self.sealed.len() as u64)
+            || parts_verify(
+                &OutputPartBinding {
+                    vault_id: result.vault_id,
+                    request: self.request,
+                    result: result.entry,
+                    output: result.output,
+                    sealed_at: self.sealed_at,
+                },
+                &result.signer,
+                &self.copy_frame(),
+                &self.part_signatures,
+            )
     }
 
     /// Whether a signed result of this copy's request names it, as `fold`
@@ -253,12 +292,13 @@ impl KeptExportOutput {
     /// request's rows are ([`Self::request_rows_done`]), or `fold` disproves
     /// it ([`Self::proof`]): its witness is missing, does not verify, names
     /// another copy, disagrees with the result or the request `fold` folds,
-    /// or is signed by a key the carrier rule excludes here (FIX 12065,
-    /// 12312, 12352). Such a row is admitted and never kept. An unproven row
-    /// stays in its sealing month's base window, never kept, until it proves
-    /// itself or leaves on one of these signals or with that window; a row
-    /// its witness names stays while this vault has not folded its request
-    /// yet.
+    /// or is signed by a key the carrier rule excludes here, or the copy
+    /// rides in parts and a part signature is missing or does not verify
+    /// (FIX 12065, 12312, 12352, 12373). Such a row is admitted and never
+    /// kept. An unproven row stays in its sealing month's base window, never
+    /// kept, until it proves itself or leaves on one of these signals or
+    /// with that window; a row its witness names stays while this vault has
+    /// not folded its request yet.
     #[cfg(feature = "sync")]
     pub(crate) fn row_done(
         &self,
@@ -597,7 +637,8 @@ pub(crate) fn relayed_export_output_due_in_txn(
 /// in `wtxn` ([`relayed_export_output_due_in_txn`]) and `fold` holds no
 /// import mark of its request, both checked again here against `fold`, read
 /// in `wtxn`. It is kept with the witness and the part signatures it came
-/// with, never signed again here (FIX 12373). Returns whether it kept it.
+/// with, each verified when it rides in parts ([`KeptExportOutput::proof`]),
+/// never signed again here (FIX 12373). Returns whether it kept it.
 #[cfg(feature = "sync")]
 pub(crate) fn keep_relayed_export_output_in_txn(
     vault: &Vault,

@@ -32,7 +32,9 @@
 //! - A copy past one row rides in numbered parts by these same rules, each
 //!   part signed by its holder with the key that signed the result and
 //!   proven alone, and is joined before it is judged (FIX 12063, 12373,
-//!   `parts`).
+//!   `parts`). A whole row or joined copy of that length stands only with
+//!   every part signature it carries verified over its own frame by the
+//!   result's signer; one with any missing or bad is disproven and leaves.
 
 pub(super) mod parts;
 
@@ -121,7 +123,7 @@ pub(super) fn admit_export_output(
         ProofState::Disproven => {
             tracing::debug!(
                 request = row_key,
-                "an export secret supplement row its request's signed result does not name; it leaves at the next prune"
+                "an export secret supplement row its request's signed result does not name, or whose part signatures do not verify; it leaves at the next prune"
             );
         }
     }
