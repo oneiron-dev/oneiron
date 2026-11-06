@@ -109,8 +109,9 @@ impl Memory<'_> {
                 )
             })
             .collect();
+        let commit_hash = repo_ref.commit_hash().map(str::to_owned);
         // This mixed in-memory revision has no single supplied source-root anchor.
-        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, None, entries)?;
+        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, commit_hash, entries)?;
         Ok((snapshot, contents, documents))
     }
 

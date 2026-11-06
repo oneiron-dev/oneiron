@@ -260,6 +260,89 @@ impl DocxProjection {
         })
     }
 
+    /// Match the final carrier of a single delete against the live body.
+    /// The caller must also require this to be the terminal actor group.
+    pub fn terminal_final_delete_matches(
+        &self,
+        changes: &[DocxChange],
+        accepted_order: &[String],
+        expected: &[(String, &str)],
+    ) -> bool {
+        crate::within(self.limits, || {
+            let [DocxChange::Delete { block: deleted }] = changes else {
+                return false;
+            };
+            let Some((last_id, preceding_ids)) = accepted_order.split_last() else {
+                return false;
+            };
+            if last_id != deleted || !preceding_ids.iter().eq(expected.iter().map(|(id, _)| id)) {
+                return false;
+            }
+            let view = self.doc.read();
+            let Some((carrier, preceding)) = view.blocks.split_last() else {
+                return false;
+            };
+            if preceding.is_empty()
+                || preceding.len() != expected.len()
+                || carrier.id.to_string() != *deleted
+                || !matches!(carrier.paragraph_mark_status, TrackStatus::Normal)
+                || !paragraph_has_no_accepted_segments(carrier)
+                || carrier
+                    .segments
+                    .iter()
+                    .any(|segment| !matches!(segment, SegmentView::Text { .. }))
+            {
+                return false;
+            }
+            let canonical = &self.doc.snapshot().canonical;
+            if canonical.blocks.len() != view.blocks.len() {
+                return false;
+            }
+            for (block, tracked) in view.blocks.iter().zip(&canonical.blocks) {
+                let stemma::domain::BlockNode::Paragraph(paragraph) = &tracked.block else {
+                    return false;
+                };
+                if !matches!(block.block_status, TrackStatus::Normal)
+                    || tracked.move_id.is_some()
+                    || block.literal_prefix.is_some()
+                    || paragraph.literal_prefix.is_some()
+                    || paragraph.para_split
+                {
+                    return false;
+                }
+            }
+            for (at, (block, (id, text))) in preceding.iter().zip(expected).enumerate() {
+                if block.id.to_string() != *id
+                    || if at + 1 == preceding.len() {
+                        !matches!(block.paragraph_mark_status, TrackStatus::Deleted(_))
+                    } else {
+                        !matches!(block.paragraph_mark_status, TrackStatus::Normal)
+                    }
+                {
+                    return false;
+                }
+                let mut remaining = *text;
+                for segment in &block.segments {
+                    match segment {
+                        SegmentView::Text { text, status, .. } => {
+                            if matches!(status, TrackStatus::Normal | TrackStatus::Inserted(_)) {
+                                let Some(rest) = remaining.strip_prefix(text.as_str()) else {
+                                    return false;
+                                };
+                                remaining = rest;
+                            }
+                        }
+                        SegmentView::Opaque { .. } => return false,
+                    }
+                }
+                if !remaining.is_empty() {
+                    return false;
+                }
+            }
+            true
+        })
+    }
+
     /// Serialize the projection through the blocking gate. With no applied
     /// group, the source bytes unchanged (as an empty [`project_docx`]).
     pub fn finish(self) -> Result<Vec<u8>, DoceditError> {
