@@ -51,7 +51,7 @@ impl AccessSnapshot {
     }
 
     /// The access each of `offers` runs on, with the model it serves.
-    pub fn from_offers<'a>(offers: impl IntoIterator<Item = &'a OfferBinding>) -> Self {
+    pub fn from_offers(offers: impl IntoIterator<Item = &OfferBinding>) -> Self {
         let mut snapshot = Self::new();
         for offer in offers {
             snapshot.insert_offer(offer);
