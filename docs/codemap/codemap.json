@@ -41574,7 +41574,7 @@
      "path": "src/identity_topology/attribution.rs",
      "purpose": "Erasable authorship for immutable type-76 decisions",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -72111,7 +72111,7 @@
      "path": "src/store/checkpoint_payload/rows/restore.rs",
      "purpose": "Putting an opened compartment's rows back, through the one restore-only raw-row sink",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -83716,7 +83716,7 @@
      "path": "src/vault/entity_revision/storage/checkpoint/document.rs",
      "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
