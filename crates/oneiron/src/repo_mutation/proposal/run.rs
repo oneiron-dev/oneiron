@@ -69,6 +69,8 @@ impl Vault {
     /// run's, bound on the row. `check` first judges the run again, then
     /// writes its prepared native sources in the proposal's transaction.
     /// Its refusal writes nothing; its success value returns after commit.
+    /// A `repair_of` source is judged as its failed proposal replacement
+    /// in the same writer (FIX 4364); the run fence is unchanged.
     ///
     /// # Errors
     /// A request with no stamped writer, a base that is not the stamp's pin,
@@ -79,6 +81,7 @@ impl Vault {
         review: RepoProposalReview,
         base: RepoPinnedBase,
         stamp: RepoRunStamp,
+        repair_of: Option<crate::EntityId>,
         check: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<std::result::Result<T, R>>,
     ) -> Result<std::result::Result<(RepoProposal, T), R>> {
         if request.actor_id.is_none() || request.actor_class.is_none() {
@@ -95,12 +98,15 @@ impl Vault {
             review,
             ProposalBase::Pinned(base),
             Some(stamp),
-            |prepared| {
+            repair_of,
+            |prepared, repo| {
                 let mut txn = self.store.env.write_txn()?;
                 let source = match check(&mut txn)? {
                     Ok(source) => source,
                     Err(refused) => return Ok(Err(refused)),
                 };
+                let paths = crate::codebase::proposed_file_paths(&prepared.row.files);
+                self.require_registered_edit_in_txn(&txn, None, &repo.locator(), paths)?;
                 prepared.persist_in_txn(self, &mut txn)?;
                 txn.commit()?;
                 Ok(Ok((prepared.row, source)))

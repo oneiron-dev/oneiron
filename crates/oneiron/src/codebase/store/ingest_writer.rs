@@ -2,6 +2,12 @@
 //! FIX 6867 G1 PR2a): the owner's and trusted callers' import, unchanged,
 //! and a run's import of the paths its Grant reads, admitted again in the
 //! final writer.
+//!
+//! FIX 4299 (CODE-CUSTODY-01): a capture of a registered repository names
+//! its stable anchor ([`CaptureRepository`]); the final writer judges that
+//! anchor again, and the capture's scope derives from it. No caller's
+//! whitelist is read: a capture names no editable policy, and an
+//! unregistered one names no anchor.
 
 use std::convert::Infallible;
 use std::path::Path;
@@ -23,13 +29,15 @@ use crate::code_symbol::{
     CodeSymbolSource, code_symbol_document_in_txn, masked_repo_symbol_texts_in_txn,
     prepare_code_symbol_graph,
 };
+use crate::codebase::CaptureRepository;
 use crate::error::{CodeError, Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::temporal::TimeRange;
 
-/// A run's import claims no editable policy, as the owner door's does not.
+/// A run's import claims no editable policy, as the owner door's does not:
+/// a registered repository's whitelist is its own (FIX 4299).
 const NO_EDITABLE_WHITELIST: [&str; 0] = [];
 
 impl Vault {
@@ -52,6 +60,7 @@ impl Vault {
             hash_match_provider,
             after_first_pass,
             None,
+            None,
             |_| Ok(Ok::<(), Infallible>(())),
         )?;
         match imported {
@@ -64,13 +73,19 @@ impl Vault {
     /// `repo_path` (FIX 6867): only the paths `select` keeps reach the
     /// snapshot, its blobs and its symbols, and `admit` judges the run again
     /// in the final writer. A refusal there is the run's, and nothing is
-    /// written.
+    /// written. The capture belongs to the run's admitted anchor
+    /// `repository` (FIX 4299).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the run's import names its anchor beside its selection and admission"
+    )]
     pub(crate) fn ingest_local_repo_for_run<R>(
         &self,
         project_id: String,
         repo_path: &Path,
         commit: &str,
         timing: (TimeRange, u64),
+        repository: CaptureRepository,
         select: &dyn Fn(&str) -> bool,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
@@ -83,20 +98,24 @@ impl Vault {
             &NoopHostedMediaHashMatchProvider,
             || Ok(()),
             Some(select),
+            Some(repository),
             admit,
         )
     }
 
-    /// The owner's import of one exact commit of a served repository (FIX
-    /// 6869, G4 PR1): every path, through the same checked writer, with no
-    /// editable policy. `admit` judges the owner, the anchor and the admitted
-    /// source again in the final writer; a refusal there writes nothing.
+    /// The owner's import of one exact commit of a served or registered
+    /// repository (FIX 6869, G4 PR1; FIX 4299): every path, through the same
+    /// checked writer, with no editable policy, as a capture of its anchor
+    /// `repository`. `admit` judges the owner, and for a served import the
+    /// admitted source, again in the final writer, beside the anchor; a
+    /// refusal there writes nothing.
     pub(crate) fn ingest_served_repo_as_owner<R>(
         &self,
         project_id: String,
         repo_path: &Path,
         commit: &str,
         timing: (TimeRange, u64),
+        repository: CaptureRepository,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let config = RepoIngestConfig::new(repo_path, NO_EDITABLE_WHITELIST)?;
@@ -108,16 +127,18 @@ impl Vault {
             &NoopHostedMediaHashMatchProvider,
             || Ok(()),
             None,
+            Some(repository),
             admit,
         )
     }
 
-    /// The one import body both callers share. `select`, when given, keeps
-    /// the paths a run's import may read; `admit` runs first in the final
+    /// The one import body every caller shares. `select`, when given, keeps
+    /// the paths a run's import may read; `repository`, when given, is the
+    /// anchor the capture belongs to; `admit` runs first in the final
     /// writer.
     #[allow(
         clippy::too_many_arguments,
-        reason = "the moved import body keeps its own arguments beside the run's two"
+        reason = "the moved import body keeps its own arguments beside the selection, the anchor and the admission"
     )]
     fn ingest_local_repo_checked<R>(
         &self,
@@ -128,6 +149,7 @@ impl Vault {
         hash_match_provider: &(impl HostedMediaHashMatchProvider + ?Sized),
         after_first_pass: impl FnOnce() -> Result<()>,
         select: Option<&dyn Fn(&str) -> bool>,
+        repository: Option<CaptureRepository>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let (occurred, learned_at) = timing;
@@ -193,7 +215,8 @@ impl Vault {
         }
         check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
-        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?;
+        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?
+            .with_repository(repository.map(|capture| capture.anchor))?;
         // The read pass is useful for early quarantine but does not authorize
         // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
@@ -228,8 +251,8 @@ impl Vault {
             &blobs,
             &repo_ref,
             &commit_hash,
-            occurred,
-            learned_at,
+            (occurred, learned_at),
+            repository.as_ref(),
             &contents,
             admit,
         )
@@ -272,8 +295,8 @@ impl Vault {
         blobs: &[RepoIngestBlob],
         repo_ref: &RepoRef,
         commit_hash: &str,
-        occurred: TimeRange,
-        learned_at: u64,
+        (occurred, learned_at): (TimeRange, u64),
+        repository: Option<&CaptureRepository>,
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
@@ -283,17 +306,17 @@ impl Vault {
             if let Err(refused) = admit(wtxn)? {
                 return Ok(Err(refused));
             }
+            // The anchor the capture belongs to stands, with the folder this
+            // import read (FIX 4299).
+            if let Some(capture) = repository {
+                self.require_capture_repository_in_txn(wtxn, capture, repo_ref)?;
+            }
             // Repo-marked files stay in the snapshot; their index copies
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
             let (files, custody_report) =
                 self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, contents)?;
-            let filtered_snapshot = CodebaseSnapshot::new(
-                snapshot.project_id.clone(),
-                snapshot.repo_ref.clone(),
-                snapshot.commit_hash.clone(),
-                files,
-            )?;
+            let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
             let retained_paths = filtered_snapshot
                 .files
                 .iter()

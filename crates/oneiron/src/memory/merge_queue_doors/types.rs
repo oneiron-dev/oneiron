@@ -87,6 +87,17 @@ pub struct MergeQueueBatchView {
     /// The minimal failing group a red diagnosis kept.
     pub quarantine: Option<Quarantine>,
     pub selected_tests: AffectedTests,
+    /// Its `repo.queue_admission` receipt (FIX 4338): the stored fact that
+    /// the queue accepted this batch, a waiting one included. The batch
+    /// digest and the queue sequence are not it. Absent for a batch whose
+    /// proposals hold no submission admission receipt.
+    pub admission_receipt: Option<EntityId>,
+    /// Its `repo.queue_completion` receipt once terminal: green advanced,
+    /// rolled back, quarantined or cancelled. A landed head is not one.
+    pub completion_receipt: Option<EntityId>,
+    /// Each proposal's `repo.proposal_admission` receipt, in batch order,
+    /// as its queue admission bound them; empty without one.
+    pub proposal_admission_receipts: Vec<EntityId>,
 }
 
 /// The queue pointers: raw Git commits, not tested-tree records.

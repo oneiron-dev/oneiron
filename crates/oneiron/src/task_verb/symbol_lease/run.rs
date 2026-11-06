@@ -13,7 +13,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{LEASES, SymbolLease, blockers, load, observe_declaration, save, validate_declaration};
+use super::{
+    LEASES, SymbolLease, blockers, holds_at, load, observe_declaration, save, validate_declaration,
+};
 use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
@@ -215,6 +217,21 @@ pub(crate) fn symbol_blockers_in_txn(
         }
     }
     Ok(blocked)
+}
+
+/// Whether `task`'s current declaration, whoever made it, is held and
+/// unexpired in `txn` at `now`: a run's fresh declaration that replaces it
+/// ends what an accepted queue entry waits behind (FIX 4338).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn task_declaration_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    now: u64,
+) -> Result<bool> {
+    holds_at(&vault.store, txn, task, now)
 }
 
 /// Whether the declaration `declaration` still holds `task`, read in `txn`:

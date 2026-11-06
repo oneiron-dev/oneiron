@@ -87,20 +87,41 @@ impl MergeQueue<'_> {
         kind: BatchIndexKind,
         id: &str,
     ) -> Result<Vec<MergeBatch>> {
-        let prefix = index_prefix(&self.repo.identity().as_hex(), kind, id);
-        let mut batches = Vec::new();
-        for key in BATCH_INDEX.scan_keys(&self.vault.store, txn, prefix.as_bytes())? {
-            let Some(batch_id) = key.strip_prefix(&prefix).filter(|rest| !rest.contains(':'))
-            else {
-                continue;
-            };
-            let batch = BATCHES
-                .get(&self.vault.store, txn, &self.batch_key(batch_id))?
-                .ok_or(Error::CorruptedIndex(
-                    "a merge batch index row names no batch",
-                ))?;
-            batches.push(batch);
-        }
-        Ok(batches)
+        store_indexed_batches_in_txn(
+            &self.vault.store,
+            txn,
+            &self.repo.identity().as_hex(),
+            kind,
+            id,
+        )
     }
+}
+
+/// The batches of the queue of object store `repo_hex` filed under `kind`
+/// and `id`, read in `txn`, in batch key order: a reader that holds no open
+/// queue, such as a repair's failure check (FIX 4364), reads them here.
+///
+/// # Errors
+/// A store failure, or a row that names no batch.
+pub(super) fn store_indexed_batches_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    repo_hex: &str,
+    kind: BatchIndexKind,
+    id: &str,
+) -> Result<Vec<MergeBatch>> {
+    let prefix = index_prefix(repo_hex, kind, id);
+    let mut batches = Vec::new();
+    for key in BATCH_INDEX.scan_keys(store, txn, prefix.as_bytes())? {
+        let Some(batch_id) = key.strip_prefix(&prefix).filter(|rest| !rest.contains(':')) else {
+            continue;
+        };
+        let batch = BATCHES
+            .get(store, txn, &format!("{repo_hex}:{batch_id}"))?
+            .ok_or(Error::CorruptedIndex(
+                "a merge batch index row names no batch",
+            ))?;
+        batches.push(batch);
+    }
+    Ok(batches)
 }

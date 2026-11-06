@@ -343,6 +343,18 @@ impl Vault {
             self.refresh_code_document(session)?;
             return Ok(receipt);
         }
+        // A native edit passes the registered repository's retained
+        // whitelist, a rename's both names among it (FIX 4299).
+        let paths = [Some(edit.path.as_str()), edit.new_path.as_deref()]
+            .into_iter()
+            .chain(
+                metadata
+                    .map(|change| [Some(change.path.as_str()), change.new_path.as_deref()])
+                    .into_iter()
+                    .flatten(),
+            )
+            .flatten();
+        self.require_registered_edit_in_txn(&txn, None, &session.repo, paths)?;
         let old_doc = session.doc.clone();
         let result = (|| {
             let receipt = self

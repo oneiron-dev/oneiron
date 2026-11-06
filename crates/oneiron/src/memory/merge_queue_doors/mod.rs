@@ -48,7 +48,7 @@ use crate::EntityId;
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
 use crate::git_wire::{GitWire, GitWireRepoIdentity};
-use crate::merge_queue::{MergeBatch, MergeQueue, MergeQueuePointers};
+use crate::merge_queue::{MergeBatch, MergeQueue, MergeQueuePointers, QueueBatchReceipts};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 
 /// One registered repository a merge queue door acts on: its stored pointer
@@ -132,11 +132,30 @@ impl Memory<'_> {
             .vault
             .open_queue_for_artifact(repo.repo, &repo.repo_ref)?)
     }
+
+    /// `batch` as the wire carries it, with the receipts `queue` keeps for
+    /// it (FIX 4338), each read and checked, then read through the caller.
+    fn merge_queue_batch_view(
+        &self,
+        queue: &MergeQueue<'_>,
+        batch: MergeBatch,
+    ) -> MemoryResult<MergeQueueBatchView> {
+        let receipts = queue.batch_receipts(&batch)?;
+        for receipt in receipts
+            .admission
+            .iter()
+            .chain(&receipts.completion)
+            .chain(&receipts.proposals)
+        {
+            self.merge_queue_readable(*receipt)?;
+        }
+        Ok(batch_view(batch, receipts))
+    }
 }
 
 /// A batch as the wire carries it: ids and Git commits only. Proposal bytes,
 /// the retained snapshot and host worktree paths stay in the engine.
-fn batch_view(batch: MergeBatch) -> MergeQueueBatchView {
+fn batch_view(batch: MergeBatch, receipts: QueueBatchReceipts) -> MergeQueueBatchView {
     MergeQueueBatchView {
         batch_ref: batch.id,
         baseline_ref: batch.baseline_id,
@@ -162,6 +181,9 @@ fn batch_view(batch: MergeBatch) -> MergeQueueBatchView {
         slow_verdict_ref: batch.slow_verdict,
         quarantine: batch.quarantine,
         selected_tests: batch.selected_tests,
+        admission_receipt: receipts.admission,
+        completion_receipt: receipts.completion,
+        proposal_admission_receipts: receipts.proposals,
     }
 }
 

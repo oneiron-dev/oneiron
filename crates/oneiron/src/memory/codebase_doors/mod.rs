@@ -2,7 +2,9 @@
 //! Git tree, its pinned manifest, its frozen source bytes and exact-name Rust
 //! symbol definitions within it. Each projects an engine path that exists;
 //! none registers a repository, enforces an editable whitelist, grants repo
-//! membership, mints a receipt or answers a calls, imports or refs query.
+//! membership, mints a receipt or answers a calls, imports or refs query. A
+//! capture may name the repository `vault.repo.anchor.bind` registered
+//! (FIX 4299): it then belongs to that anchor, whose whitelist binds edits.
 //!
 //! Authority is the owner's live proof alone (`Memory::codebase_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4573 declarations.
+Census: 1263 facade rows, 4575 declarations.
 Inputs: 1192 of 1263 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1094 of 1263 fully typed, 169 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 123; unread shapes: 0.
@@ -12417,8 +12417,10 @@ class CodeProposalSubmitRequest(TypedDict):
     message: str
     op_provenance: CodeOpProvenance
     catalog: NotRequired[LensCatalog | None]
+    repair_of: NotRequired[EntityId | None]
 class CodeProposalSubmitted(TypedDict):
     proposal: EntityId
+    admission_receipt: EntityId
     repo: EntityId
     actor: EntityId
     session: EntityId
@@ -12493,6 +12495,11 @@ class RepoProposalSettlement(TypedDict):
     actor: EntityId
     decision: RepoProposalDecision
     settled_at: int
+class CodeProposalReplacementView(TypedDict):
+    receipt: EntityId
+    source: EntityId
+    replacement: EntityId
+    replacement_base: str
 class CodeProposalSettlementView(TypedDict):
     proposal: EntityId
     status: RepoProposalStatus
@@ -12503,6 +12510,10 @@ class CodeProposalSettlementView(TypedDict):
     parents: list[EntityId]
     mutation_seq: NotRequired[int | None]
     resolution: NotRequired[EntityId | None]
+    admission_receipt: NotRequired[EntityId | None]
+    attempt_receipts: list[EntityId]
+    repair_of: NotRequired[CodeProposalReplacementView | None]
+    replaced_by: NotRequired[CodeProposalReplacementView | None]
 class CodeProposalSettleRequest(TypedDict):
     proposal: EntityId
     decision: RepoProposalDecision
@@ -13564,6 +13575,7 @@ class CodeRepoPointer(TypedDict):
 class CodeSnapshotIngestRequest(TypedDict):
     project_id: str
     pointer: CodeRepoPointer
+    repository: NotRequired[EntityId | None]
 class CodeSnapshotView(TypedDict):
     repo: EntityId
     repo_ref: str
@@ -13572,6 +13584,7 @@ class CodeSnapshotView(TypedDict):
     snapshot: str
     scope_key: str
     files: list[CodeSnapshotFile]
+    repository: NotRequired[EntityId | None]
 class CodeSnapshotRequest(TypedDict):
     repo: EntityId
     snapshot: str
@@ -13627,6 +13640,9 @@ class MergeQueueBatchView(TypedDict):
     slow_verdict_ref: NotRequired[str | None]
     quarantine: NotRequired[Quarantine | None]
     selected_tests: AffectedTests
+    admission_receipt: NotRequired[EntityId | None]
+    completion_receipt: NotRequired[EntityId | None]
+    proposal_admission_receipts: list[EntityId]
 class MergeQueueBatchRequest(TypedDict):
     repo: EntityId
     batch_ref: str
@@ -13940,11 +13956,19 @@ class ConnectorWitnessReadGrantRevoked(TypedDict):
     reason: str
     revoked_at: int
 class RepoAnchorBindInput(TypedDict):
-    repo: str
+    repo: NotRequired[str | None]
+    local_folder: NotRequired[str | None]
     project: EntityId
+    anchor: NotRequired[EntityId | None]
+    editable: NotRequired[list[str] | None]
+class RepoRegistrationView(TypedDict):
+    source: str
+    editable: list[str]
 class RepoAnchorBindOutput(TypedDict):
-    repo: str
+    repo: NotRequired[str | None]
     anchor: GitPushRepo
+    portable: str
+    registration: NotRequired[RepoRegistrationView | None]
     changed: bool
 class RepoSnapshotsGetInput(TypedDict):
     repo: EntityId
@@ -14017,6 +14041,9 @@ class RepoQueueEntryView(TypedDict):
     expected_head: str
     landed_head: NotRequired[str | None]
     blockers: list[EntityId]
+    admission_receipt: NotRequired[EntityId | None]
+    completion_receipt: NotRequired[EntityId | None]
+    proposal_admission_receipts: list[EntityId]
 class RepoMergeQueueObserveOutput(TypedDict):
     work: EntityId
     repo: EntityId
@@ -14090,8 +14117,10 @@ class RepoProposalSubmitInput(TypedDict):
     content: list[int]
     message: str
     declaration: NotRequired[EntityId | None]
+    repair_of: NotRequired[EntityId | None]
 class RepoProposalSubmitOutput(TypedDict):
     proposal: EntityId
+    admission_receipt: EntityId
     work: EntityId
     path: str
     base_green: str

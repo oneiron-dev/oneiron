@@ -381,6 +381,7 @@ pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
 pub(crate) use symbol_lease::{
     declaration_holds_in_txn, declare_symbols_for_run_in_txn, release_symbols_for_run_in_txn,
     renew_symbols_for_run_in_txn, run_declaration_in_txn, symbol_blockers_in_txn,
+    task_declaration_holds_in_txn,
 };
 
 #[cfg(test)]

@@ -381,12 +381,7 @@ impl Vault {
             return Ok(Refused);
         };
         // The fork hash is recomputed from the manifest, never taken on trust.
-        let Ok(rebuilt) = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            snapshot.files.clone(),
-        ) else {
+        let Ok(rebuilt) = snapshot.rebuilt_with_files(snapshot.files.clone()) else {
             return Ok(Refused);
         };
         if rebuilt.fork_hash != hash
