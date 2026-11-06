@@ -298,6 +298,10 @@ fn check_window_update(
         crate::sync::ingest::admit_peer_origin_map(
             &candidate.get_map(crate::sync::ingest::PEER_ORIGIN_MAP),
         )?;
+        // FIX 12113: and every MESSAGE writer proof is filed under its row.
+        crate::sync::ingest::admit_writer_proof_map(
+            &candidate.get_map(crate::sync::ingest::MESSAGE_WRITER_MAP),
+        )?;
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
         // later exports reuse that root as encoded. Two Loro readers decode
@@ -372,6 +376,9 @@ fn check_window_update(
             )?);
             crate::sync::ingest::admit_peer_origin_map(
                 &root.get_map(crate::sync::ingest::PEER_ORIGIN_MAP),
+            )?;
+            crate::sync::ingest::admit_writer_proof_map(
+                &root.get_map(crate::sync::ingest::MESSAGE_WRITER_MAP),
             )?;
         }
         if misplaced {
@@ -478,6 +485,8 @@ fn check_window_update(
     );
     let peer_origins =
         ContainerID::new_root(crate::sync::ingest::PEER_ORIGIN_MAP, ContainerType::Map);
+    let writers =
+        ContainerID::new_root(crate::sync::ingest::MESSAGE_WRITER_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -513,6 +522,8 @@ fn check_window_update(
             );
         } else if op.container == peer_origins {
             crate::sync::ingest::admit_peer_origin_carrier(&map_key, &value)?;
+        } else if op.container == writers {
+            crate::sync::ingest::admit_writer_proof_carrier(&map_key, &value)?;
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
