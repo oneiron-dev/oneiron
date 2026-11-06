@@ -21,7 +21,6 @@ use reqwest::header::AUTHORIZATION;
 use serde_json::Value;
 
 use super::credential::WireReads;
-use super::mime::MimeMessage;
 use super::rest::{
     self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
     text_of,
@@ -251,13 +250,7 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(raw.trim_end_matches('='))
             .map_err(|_| refused("gmail_mail_raw_message_unreadable"))?;
-        let message = MimeMessage::parse(&bytes);
-        Ok(Some(MailAddressHeaders {
-            from: message.address_header("From"),
-            reply_to: message.address_header("Reply-To"),
-            to: message.address_header("To"),
-            cc: message.address_header("Cc"),
-        }))
+        Ok(Some(super::mime::raw_address_headers(&bytes)))
     }
 
     fn history(
