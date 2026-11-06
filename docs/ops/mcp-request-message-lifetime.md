@@ -6,7 +6,8 @@ Endpoint selection, the probe, holder proof and fallback keep their existing
 order. The holder never enters the socket driver, outbound queue or pending map.
 
 On the existing socket `Sent` event, the waiting caller moves the original `id`
-out and drops the remaining parsed fields alongside the original fallback body.
+out and drops the remaining parsed fields after the driver has released the
+original fallback body.
 This event follows the same successful socket send. It is not response-byte
 activity and starts or resets no reply idle timer.
 
