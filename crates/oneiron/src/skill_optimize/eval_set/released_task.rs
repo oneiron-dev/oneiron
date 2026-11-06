@@ -30,6 +30,21 @@ impl EvalReleasedTask {
         &self.input
     }
 
+    /// Whether this release owns a literal response grader. This inspects the
+    /// private task variant; it does not grade a dummy response.
+    #[must_use]
+    pub fn has_response_grader(&self) -> bool {
+        self.repair.is_some()
+    }
+
+    /// A native decision domain from the actual task, never its grader answer.
+    #[must_use]
+    pub fn response_contract(&self) -> Option<&crate::llm::decision::AnswerContract> {
+        self.repair
+            .as_ref()
+            .and_then(EvalRepairTask::response_contract)
+    }
+
     /// The sourced exact-byte check. Receipt tasks keep their existing scorer
     /// and return `None`; they are never silently scored by this grader.
     #[must_use]

@@ -15,8 +15,9 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::learning::{Retest, RetestScore, record_retest};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
-    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalSeat, EvalTaskInput,
-    HeldOutReplayNotes, JudgeRubric, MeasurementState, MeasurementUnavailable, seat_model_role,
+    EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalMeasurementSource,
+    EvalMeasurementSourceRead, EvalReleasedTask, EvalSeat, HeldOutReplayNotes, JudgeRubric,
+    MeasurementState, MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{BudgetExhaustionPolicy, Vault};
 
@@ -74,6 +75,7 @@ struct Job<'a> {
     judge: &'static ServeReplayJudge,
     row: EvalMeasurement,
     digest: [u8; 32],
+    source: EvalMeasurementSource<'a>,
     arms: JobArms,
     run: oneiron::llm::run_admission::RunAdmission,
     clock: RetrievalDeadline,
@@ -146,6 +148,7 @@ pub(super) fn run(
     if row.state != MeasurementState::Claimed {
         return Ok(());
     }
+    let source = vault.coach_eval_measurement_source(admitted)?;
     let run_id = format!("coach-eval-measurement:{}", row.digest);
     let guard = vault.policy_budget_guard(
         run_id.clone(),
@@ -159,6 +162,7 @@ pub(super) fn run(
         vault,
         judge,
         digest,
+        source,
         arms,
         run: server.ai.model_runtime().undeclared_run(run_id, guard),
         clock: RetrievalDeadline::after(MEASUREMENT_CLOCK),
@@ -184,11 +188,35 @@ impl Job<'_> {
             if started {
                 return Ok(Some(MeasurementUnavailable::UncertainLeg));
             }
-            let task = match self.vault.released_eval_task(&self.digest, &case)? {
+            let read = match self.source.released_eval_task(&case) {
+                Ok(read) => read,
+                Err(error) => {
+                    self.vault.record_eval_measurement_source_read(
+                        &self.digest,
+                        EvalMeasurementSourceRead {
+                            case,
+                            receipt: error.read_receipt.as_deref().cloned(),
+                            error_code: Some(error.code),
+                            at: self.vault.now_recorded_at(),
+                        },
+                    )?;
+                    return Ok(Some(MeasurementUnavailable::SourceReadFailed));
+                }
+            };
+            self.vault.record_eval_measurement_source_read(
+                &self.digest,
+                EvalMeasurementSourceRead {
+                    case,
+                    receipt: read.receipt,
+                    error_code: None,
+                    at: self.vault.now_recorded_at(),
+                },
+            )?;
+            let task = match read.task {
                 Ok(task) => task,
                 Err(reason) => return Ok(Some(reason)),
             };
-            if task.labels.is_empty() {
+            if task.input().labels.is_empty() && !task.has_response_grader() {
                 return Ok(Some(MeasurementUnavailable::NoLabel));
             }
             if let Some(reason) = self.measure_case(&task)? {
@@ -203,8 +231,9 @@ impl Job<'_> {
     /// cannot be complete, when a leg has no score.
     fn measure_case(
         &self,
-        task: &EvalTaskInput,
+        released: &EvalReleasedTask,
     ) -> oneiron::Result<Option<MeasurementUnavailable>> {
+        let task = released.input();
         let mut record = EvalCaseMeasurement {
             case: task.case,
             family: task.family,
@@ -228,7 +257,7 @@ impl Job<'_> {
         for leg in LEGS {
             let answered = match gap {
                 Some(reason) => EvalLegRecord::unavailable(reason),
-                None => self.leg(task, leg)?,
+                None => self.leg(released, leg)?,
             };
             gap = gap.or(answered.unavailable);
             match leg {
@@ -241,16 +270,17 @@ impl Job<'_> {
         record.recorded_at = Some(now);
         self.vault
             .record_eval_case_measurement(&self.digest, record.clone())?;
-        if gap.is_none() {
+        if gap.is_none() && !released.has_response_grader() {
             self.retest(&record, now)?;
         }
         Ok(gap)
     }
 
     /// One leg: the arm's answer, kept, then scored blind.
-    fn leg(&self, task: &EvalTaskInput, leg: Leg) -> oneiron::Result<EvalLegRecord> {
+    fn leg(&self, released: &EvalReleasedTask, leg: Leg) -> oneiron::Result<EvalLegRecord> {
+        let task = released.input();
         if let JobArms::Native(arms) = &self.arms {
-            return self.native_leg(arms, task, leg);
+            return self.native_leg(arms, released, leg);
         }
         let JobArms::Generative(arms) = &self.arms else {
             unreachable!()
@@ -291,16 +321,23 @@ impl Job<'_> {
             served,
             ..EvalLegRecord::default()
         };
-        match score::score(
-            self.vault,
-            self.judge,
-            &self.clock,
-            self.rubric.as_ref(),
-            task,
-            &prompt,
-            &answer,
-            &self.run,
-        )? {
+        let scored = match released.grade_response(&answer) {
+            Some(passed) => Scored::Score {
+                value: if passed { 1.0 } else { 0.0 },
+                judge: None,
+            },
+            None => score::score(
+                self.vault,
+                self.judge,
+                &self.clock,
+                self.rubric.as_ref(),
+                task,
+                &prompt,
+                &answer,
+                &self.run,
+            )?,
+        };
+        match scored {
             Scored::Score { value, judge } => {
                 record.score = Some(value);
                 record.judge = judge;
@@ -314,52 +351,75 @@ impl Job<'_> {
     fn native_leg(
         &self,
         arms: &NativeArms,
-        task: &EvalTaskInput,
+        released: &EvalReleasedTask,
         leg: Leg,
     ) -> oneiron::Result<EvalLegRecord> {
+        let task = released.input();
         let arm = match leg {
             Leg::Candidate => &arms.candidate,
             Leg::Incumbent | Leg::Retest => &arms.incumbent,
         };
-        let (bytes, served, scored) =
-            match arms.generate(self.server, self.judge, &self.run, arm, task, &self.clock) {
-                SeatGenerated::Text { text, served } => {
-                    let scored = seat_score::exact_match(&text, &task.labels);
-                    (text.into_bytes(), served, scored)
-                }
-                SeatGenerated::Embed {
-                    task: vector,
-                    anchors,
+        let (bytes, served, scored) = match arms.generate(
+            self.server,
+            self.judge,
+            &self.run,
+            arm,
+            task,
+            released.response_contract(),
+            &self.clock,
+        ) {
+            SeatGenerated::Text { text, served } => {
+                let scored = (!released.has_response_grader())
+                    .then(|| seat_score::exact_match(&text, &task.labels));
+                (text.into_bytes(), served, scored)
+            }
+            SeatGenerated::Embed {
+                task: vector,
+                anchors,
+                served,
+            } => {
+                let scored = (!released.has_response_grader())
+                    .then(|| seat_score::embed_similarity(&vector, &anchors, &task.labels));
+                (
+                    serde_json::to_vec(&vector).map_err(|_| {
+                        oneiron::Error::InvariantViolation("an eval embedding did not encode")
+                    })?,
                     served,
-                } => {
-                    let scored = seat_score::embed_similarity(&vector, &anchors, &task.labels);
-                    (
-                        serde_json::to_vec(&vector).map_err(|_| {
-                            oneiron::Error::InvariantViolation("an eval embedding did not encode")
-                        })?,
-                        served,
-                        scored,
-                    )
-                }
-                SeatGenerated::Spans { output, served } => {
+                    scored,
+                )
+            }
+            SeatGenerated::Spans { output, served } => {
+                let scored = (!released.has_response_grader()).then(|| {
                     let predicted = output
                         .spans
                         .iter()
                         .map(|span| span.label.clone())
                         .collect::<Vec<_>>();
-                    let scored = seat_score::tag_recall(&predicted, &task.labels);
-                    (
-                        serde_json::to_vec(&output).map_err(|_| {
-                            oneiron::Error::InvariantViolation("an eval span output did not encode")
-                        })?,
-                        served,
-                        scored,
-                    )
-                }
-                SeatGenerated::Unavailable(reason) => {
-                    return Ok(EvalLegRecord::unavailable(reason));
-                }
-            };
+                    seat_score::tag_recall(&predicted, &task.labels)
+                });
+                (
+                    serde_json::to_vec(&output).map_err(|_| {
+                        oneiron::Error::InvariantViolation("an eval span output did not encode")
+                    })?,
+                    served,
+                    scored,
+                )
+            }
+            SeatGenerated::Unavailable(reason) => {
+                return Ok(EvalLegRecord::unavailable(reason));
+            }
+        };
+        let scored = match released.grade_response(std::str::from_utf8(&bytes).map_err(|_| {
+            oneiron::Error::InvariantViolation("an eval native response was not UTF-8")
+        })?) {
+            Some(passed) => Scored::Score {
+                value: if passed { 1.0 } else { 0.0 },
+                judge: None,
+            },
+            None => scored.ok_or(oneiron::Error::InvariantViolation(
+                "an ungraded eval native response had no seat score",
+            ))?,
+        };
         let output = oneiron::compaction::output::store_output_sourced(
             self.vault,
             &bytes,

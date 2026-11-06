@@ -467,6 +467,99 @@ fn embed_failure(reason: EmbedQueryRefusal, clock: &RetrievalDeadline) -> Measur
     }
 }
 
+/// One native response under the task's declared domain. Choice IDs keep the
+/// existing exact-byte mapping; structured responses retain their native serde.
+fn response_decision(
+    server: &SyncServer,
+    judge: &'static ServeReplayJudge,
+    run: &RunAdmission,
+    arm: &NativeArm,
+    prompt: &str,
+    contract: &AnswerContract,
+    clock: &RetrievalDeadline,
+) -> SeatGenerated {
+    let wire_contract = match contract {
+        AnswerContract::Choice { options } => AnswerContract::Choice {
+            options: (0..options.len()).map(|index| index.to_string()).collect(),
+        },
+        contract => contract.clone(),
+    };
+    let question = match SKILL_OPTIMIZE_JUDGMENT.question(
+        &[b"eval_measurement_response", arm.model.as_str().as_bytes()],
+        prompt.to_owned(),
+        wire_contract,
+    ) {
+        Ok(question) => question,
+        Err(_) => return SeatGenerated::Unavailable(MeasurementUnavailable::GenerationFailed),
+    };
+    let mut state = json!({"task": prompt, "skill": arm.skill, "response_contract": contract});
+    if let AnswerContract::Choice { options } = contract {
+        state["options"] = json!(options);
+    }
+    let decisions = judge.decisions();
+    let ladder = match server.decision_ladder_for_model(&arm.model) {
+        Ok(ladder) => ladder,
+        Err(_) => return SeatGenerated::Unavailable(MeasurementUnavailable::NoExactModelRoute),
+    };
+    let decision = match ladder.ladder().run_with_run(
+        &question,
+        decisions.principal,
+        &[],
+        &state,
+        MODEL_DIAL,
+        &decisions.bands,
+        Reversibility::ReversibleRead,
+        clock,
+        run,
+    ) {
+        Ok(decision) => decision,
+        Err(error) => {
+            tracing::debug!(%error, "an eval measurement response decision failed");
+            return SeatGenerated::Unavailable(if is_budget_denied(&error) {
+                MeasurementUnavailable::BudgetExhausted
+            } else if clock.decision_time_left().is_zero() {
+                MeasurementUnavailable::ClockExhausted
+            } else {
+                MeasurementUnavailable::GenerationFailed
+            });
+        }
+    };
+    if decision.human_ask.is_some() {
+        return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
+    }
+    let answer = match (contract, decision.answer) {
+        (AnswerContract::Choice { options }, DecisionAnswer::Choice(index)) => {
+            let Some(value) = index
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| options.get(index))
+            else {
+                return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
+            };
+            DecisionAnswer::Choice(value.clone())
+        }
+        (_, answer) => answer,
+    };
+    if matches!(answer, DecisionAnswer::Abstain) || !contract.accepts(&answer) {
+        return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
+    }
+    let text = match answer {
+        DecisionAnswer::Choice(text) => text,
+        answer => match serde_json::to_string(&answer) {
+            Ok(text) => text,
+            Err(_) => return SeatGenerated::Unavailable(MeasurementUnavailable::GenerationFailed),
+        },
+    };
+    SeatGenerated::Text {
+        text,
+        served: decision
+            .receipt
+            .providers
+            .last()
+            .map(|pin| format!("{}@{}", pin.model, pin.version)),
+    }
+}
+
 impl NativeArms {
     /// One seat-native leg on `arm`, using only that arm's exact model.
     pub(super) fn generate(
@@ -476,6 +569,7 @@ impl NativeArms {
         run: &RunAdmission,
         arm: &NativeArm,
         task: &EvalTaskInput,
+        response_contract: Option<&AnswerContract>,
         clock: &RetrievalDeadline,
     ) -> SeatGenerated {
         let prompt = task_text(task);
@@ -563,6 +657,9 @@ impl NativeArms {
                 }
             }
             EvalSeat::Router | EvalSeat::Decision => {
+                if let Some(contract) = response_contract {
+                    return response_decision(server, judge, run, arm, &prompt, contract, clock);
+                }
                 let mut seen = BTreeSet::new();
                 let values = task
                     .labels
