@@ -5,18 +5,23 @@
 //! durable check requests through the host's independent checker and admits
 //! each finding through [`Vault::record_seal_check_outcome`], which projects
 //! it. The agent's own report never becomes a finding: a check the checker
-//! cannot make stays pending for a later night.
+//! cannot make stays pending for a later night. Each finding comes with the
+//! checker's protocol, so a completed random audit freezes its contract with
+//! it (FIX 3611).
 use super::coach::COACH_SEAL_CHECKS_FACET;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
-use crate::self_heal::audit::{SealCheckOutcome, SealCheckRequest};
+use crate::self_heal::audit::{CheckerProtocol, SealCheckOutcome, SealCheckRequest};
 use crate::{Error, Result, Vault};
 
 /// What the host's checker made of one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SealCheck {
     /// One finding per requested objective, by a judge that did not produce
-    /// the result.
-    Checked(SealCheckOutcome),
+    /// the result, under the checker's `protocol` (FIX 3611).
+    Checked {
+        outcome: SealCheckOutcome,
+        protocol: CheckerProtocol,
+    },
     /// A judge was asked and its answer did not examine each objective; the
     /// request stays pending, counts against the pass and goes behind the
     /// requests not asked since.
@@ -83,8 +88,8 @@ impl Vault {
             let Some(sealed) = self.sealed_attempt_receipt(request.attempt)? else {
                 continue;
             };
-            let outcome = match checker.check(&request, &sealed.executor, now)? {
-                SealCheck::Checked(outcome) => outcome,
+            let (outcome, protocol) = match checker.check(&request, &sealed.executor, now)? {
+                SealCheck::Checked { outcome, protocol } => (outcome, protocol),
                 SealCheck::Inconclusive => {
                     asked += 1;
                     report.inconclusive += 1;
@@ -98,7 +103,13 @@ impl Vault {
             };
             asked += 1;
             self.record_seal_check_asked(request.attempt, request.kind, now)?;
-            match self.record_seal_check_outcome(request.attempt, request.kind, &outcome, now) {
+            match self.record_checked_seal_outcome(
+                request.attempt,
+                request.kind,
+                &outcome,
+                protocol,
+                now,
+            ) {
                 Ok(_) => report.checked += 1,
                 Err(Error::InvalidClaimBody(reason)) => {
                     tracing::warn!(
