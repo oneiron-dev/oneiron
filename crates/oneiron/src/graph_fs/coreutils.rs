@@ -92,6 +92,21 @@ impl GraphFsResolver<'_, '_> {
         sort_by_time: bool,
         cursor: Option<&str>,
     ) -> Result<GraphFsCommandOutput> {
+        self.ls_with_reader(
+            path,
+            sort_by_time,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(crate) fn ls_with_reader(
+        &self,
+        path: &str,
+        sort_by_time: bool,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
@@ -114,7 +129,7 @@ impl GraphFsResolver<'_, '_> {
             );
         }
 
-        let page = self.readdir(&normalized, cursor)?;
+        let page = self.readdir_with_reader(&normalized, cursor, reader)?;
         let mut out = CommandOutputBuilder::new(self.options);
         let mut last_name = None;
         for entry in page.entries() {

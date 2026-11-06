@@ -198,12 +198,37 @@ impl Memory<'_> {
     }
 
     pub fn graph_fs_ls(&self, input: GraphFsLsRequest) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_ls_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same directory listing, with cooperative container-mask checkpoints.
+    pub fn graph_fs_ls_with_pacing(
+        &self,
+        input: GraphFsLsRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsOutput> {
+        self.graph_fs_ls_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_ls_with_reader(
+        &self,
+        input: GraphFsLsRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.ls", (&input.path, input.by_time))?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let result = tree.ls(&input.path, input.by_time, cursor.as_deref())?;
+        let result = tree.ls_with_reader(&input.path, input.by_time, cursor.as_deref(), reader)?;
         Ok(output(&tree, &input.mount, input.path, &call, result))
     }
 
