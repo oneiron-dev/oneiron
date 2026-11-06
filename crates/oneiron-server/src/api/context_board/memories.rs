@@ -331,6 +331,7 @@ pub(crate) async fn board_pins_section(
     memories: Option<&ContextBoardMemoriesControls>,
     room_id: Option<oneiron::EntityId>,
     hook_pins: &[oneiron::context_board::HookPin],
+    memories_storage: &mut super::super::context_pack::output_memory::RetainedMemoriesOutput,
 ) -> Result<Option<oneiron::MemoriesSection>, ApiError> {
     let pins = BoardPinSources {
         refs: bounded_pinned_refs(memories)?,
@@ -341,6 +342,7 @@ pub(crate) async fn board_pins_section(
     let Some(pinned) = board_pins_projection(&server.vault, auth, read, room_id, &pins)? else {
         return Ok(None);
     };
+    memories_storage.retain(Some(&pinned.section));
     pinned.receipt.record(&server.vault).await?;
     Ok(Some(pinned.section))
 }

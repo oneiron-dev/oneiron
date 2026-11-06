@@ -287,6 +287,7 @@ pub(crate) async fn run_context_pack_builder(
     response_limits: ContextPackResponseLimits,
     memories: Option<MemoriesRequest>,
     disclosure: Option<oneiron::DisclosureContext>,
+    memories_storage: &mut super::output_memory::RetainedMemoriesOutput,
 ) -> Result<
     (
         CoreContextPackResponse,
@@ -445,6 +446,7 @@ pub(crate) async fn run_context_pack_builder(
             let section = section.filter(|section| {
                 request.memory_board_budget.is_some() || !section.rows.is_empty()
             });
+            memories_storage.retain(section.as_ref());
             let (cursor, observed) = advance_memories_cursor(
                 server,
                 &request.session_scope_id,

@@ -57,7 +57,9 @@ pub(crate) async fn core_context_pack(
     // room's signed facets met in (FIX 643).
     let req = json_payload(payload)?;
     req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
-    let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
+    let mut memories_storage = super::output_memory::RetainedMemoriesOutput::new(&server.memory);
+    let (response, _, _) =
+        run_context_pack(&server, &auth, req, None, &mut memories_storage).await?;
     Ok(super::output_memory::context_json_response(
         &response,
         &server.memory,
@@ -75,6 +77,7 @@ pub(crate) async fn run_context_pack(
     auth: &CoreAuth,
     req: CoreContextPackRequest,
     memories: Option<MemoriesRequest>,
+    memories_storage: &mut super::output_memory::RetainedMemoriesOutput,
 ) -> Result<
     (
         CoreContextPackResponse,
@@ -279,6 +282,7 @@ pub(crate) async fn run_context_pack(
         },
         memories,
         disclosure,
+        memories_storage,
     )
     .await?;
     if track_plain_pack {
