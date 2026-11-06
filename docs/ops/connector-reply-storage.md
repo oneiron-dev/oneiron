@@ -54,6 +54,15 @@ Control and later stream reads retain their original in-memory path.
 Typed Values, non-data lines and spool-fallback data can still be arbitrarily
 large.
 
+For a spooled SSE event whose JSON starts with an ordinary array, the typed
+reader parses and wipes one element at a time, then validates the closing
+array and all trailing bytes. It never selects an answer nested in that
+array: an SSE array is still a dropped event, not an HTTP batch reply.
+Spool I/O errors still make the reply unreadable; malformed JSON still skips
+the event. Non-array input, including special maps that decode to arrays,
+and the in-memory fallback keep their native whole-Value parser. A single
+array element can still be arbitrarily large.
+
 For a file-backed top-level JSON array, clearing first parses, clears and
 wipes one complete message at a time, and validates the entire array and
 trailing bytes. If no parsed message changed, the same original body is
