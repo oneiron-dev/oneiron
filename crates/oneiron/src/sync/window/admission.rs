@@ -279,6 +279,11 @@ fn check_window_update(
             key,
             &candidate.get_map(crate::sync::office_proposals::OFFICE_PROPOSALS_MAP),
         )?;
+        // FIX 12470: and every typed body receipt.
+        crate::sync::typed_body_rows::admit_typed_body_row_map(
+            key,
+            &candidate.get_map(crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP),
+        )?;
         // FIX 6870: and every repo manifest head.
         crate::sync::repo_manifests::admit_repo_manifest_map(
             key,
@@ -353,6 +358,10 @@ fn check_window_update(
             crate::sync::office_proposals::admit_office_proposal_map(
                 key,
                 &root.get_map(crate::sync::office_proposals::OFFICE_PROPOSALS_MAP),
+            )?;
+            crate::sync::typed_body_rows::admit_typed_body_row_map(
+                key,
+                &root.get_map(crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP),
             )?;
             crate::sync::repo_manifests::admit_repo_manifest_map(
                 key,
@@ -455,6 +464,10 @@ fn check_window_update(
         crate::sync::office_proposals::OFFICE_PROPOSALS_MAP,
         ContainerType::Map,
     );
+    let typed_body_rows = ContainerID::new_root(
+        crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP,
+        ContainerType::Map,
+    );
     let repo_manifests = ContainerID::new_root(
         crate::sync::repo_manifests::REPO_MANIFESTS_MAP,
         ContainerType::Map,
@@ -490,6 +503,8 @@ fn check_window_update(
             crate::sync::message_docs::admit_message_doc_carrier(key, &map_key, &value)?;
         } else if op.container == office_proposals {
             crate::sync::office_proposals::admit_office_proposal_carrier(key, &map_key, &value)?;
+        } else if op.container == typed_body_rows {
+            crate::sync::typed_body_rows::admit_typed_body_row_carrier(key, &map_key, &value)?;
         } else if op.container == repo_manifests {
             crate::sync::repo_manifests::admit_repo_manifest_carrier(key, &map_key, &value)?;
         } else if op.container == withdrawn_cutoffs {

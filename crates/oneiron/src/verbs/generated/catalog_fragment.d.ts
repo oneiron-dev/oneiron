@@ -1463,7 +1463,7 @@ declare namespace Sdk {
   type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
   type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
   type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
-  type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases" | "office_proposals";
+  type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases" | "office_proposals" | "typed_body_rows";
   type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number };
   type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp";
   type RetainedWorkWaitSetRequest = { queue: RetainedWorkQueue; secs?: number | null };

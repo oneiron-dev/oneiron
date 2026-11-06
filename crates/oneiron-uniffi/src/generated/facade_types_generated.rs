@@ -22842,6 +22842,8 @@ pub enum QuarantineContainer {
     Leases,
     #[serde(rename = "office_proposals")]
     OfficeProposals,
+    #[serde(rename = "typed_body_rows")]
+    TypedBodyRows,
 }
 
 /// `oneiron::verbs::sync_quarantine::SyncHeldEditEvidence`.

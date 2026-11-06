@@ -282,6 +282,9 @@ fn birth_carried_in_txn(
         landed_at: None,
     };
     HEADS.put(&vault.store, txn, entity, &head)?;
+    // FIX 12470: a receipt that waited in a live window for this body finds
+    // it once this write commits.
+    crate::batch::queue_committed_rows(vault, txn, std::collections::BTreeSet::from([*entity]));
     Ok(true)
 }
 

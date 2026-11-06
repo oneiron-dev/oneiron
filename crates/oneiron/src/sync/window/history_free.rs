@@ -661,6 +661,9 @@ fn scrub_for_export(
     // FIX 2691: and the office proposals of an erased artifact.
     let office_proposals_scrubbed =
         crate::sync::office_proposals::scrub_office_proposals(vault, doc, Some(key))?;
+    // FIX 12470: and the typed body receipts of an erased body.
+    let typed_body_rows_scrubbed =
+        crate::sync::typed_body_rows::scrub_typed_body_rows(vault, doc, Some(key))?;
     // FIX 6870: and an erased repo's portable manifest.
     let repo_manifests_scrubbed =
         crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
@@ -690,6 +693,7 @@ fn scrub_for_export(
         || document_pins_scrubbed
         || message_docs_scrubbed
         || office_proposals_scrubbed
+        || typed_body_rows_scrubbed
         || repo_manifests_scrubbed
         || origin_claims_scrubbed
         || section_fit_scrubbed

@@ -2885,7 +2885,7 @@ export type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null;
 /** `oneiron::sync::federation_burst::types::FederationBurstPolicySetRequest` */
 export type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy }
 /** `oneiron::sync::quarantine::keys_classifier::QuarantineContainer` */
-export type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases" | "office_proposals"
+export type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases" | "office_proposals" | "typed_body_rows"
 /** `oneiron::verbs::sync_quarantine::SyncHeldEditEvidence` */
 export type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number }
 /** `oneiron::sync::federation_burst::schedule::RetainedWorkQueue` */

@@ -79,6 +79,7 @@ mod sweep_fence;
 #[cfg(test)]
 mod tests;
 pub mod transport;
+pub(crate) mod typed_body_rows;
 pub mod types;
 pub mod window;
 pub(crate) mod window_rows;
