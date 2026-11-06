@@ -174,12 +174,19 @@ pub(super) fn run_hook_pins(
 /// ([`crate::api::context_board::lane_pins_projection`]), each with the
 /// revision it served. Nothing is recorded: the receipt and the hook
 /// deliveries stay with a board that goes out. A read that fails logs and
-/// leaves the family `None` (unavailable).
+/// leaves the family `None` (unavailable). A turn program a verified slip
+/// woke passes that slip's `waking_key`, and its pins are read under it, so
+/// none the slip excludes is named.
 pub(crate) fn run_brief_pins(
     server: &SyncServer,
     actor: oneiron::WriteActor,
+    waking_key: Option<oneiron::claim::ScopedReadActorKey>,
 ) -> Option<Vec<oneiron::context_board::BriefWorkingHandle>> {
-    let projected = run_lane(server, actor).and_then(|read| {
+    let read = match waking_key {
+        Some(key) => Ok(server.vault.scoped_read(key)),
+        None => run_lane(server, actor),
+    };
+    let projected = read.and_then(|read| {
         let pins = run_hook_pins(server, &read)?;
         crate::api::context_board::lane_pins_projection(&read, &pins).map_err(super::mcp_api_error)
     });
