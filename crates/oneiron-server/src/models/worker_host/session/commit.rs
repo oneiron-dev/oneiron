@@ -301,7 +301,7 @@ async fn advance(
             Some(session) if admits => {
                 session.published = published.checkpoint;
                 session.generation = published.generation;
-                session.residency = published.residency;
+                session.observe(published.residency);
                 session.path = path;
                 session.phase = if candidate {
                     Phase::Candidate {
@@ -313,8 +313,18 @@ async fn advance(
                 session.basis = basis;
                 None
             }
-            Some(_) => worker.retire(&binding),
-            None => Some(worker.owe(vault, target, published.residency)),
+            Some(session) => {
+                // Unadmitted, so it retires; its row still keeps the fresh
+                // worker report it published against.
+                session.observe(published.residency);
+                worker.retire(&binding)
+            }
+            None => Some(worker.owe(
+                vault,
+                target,
+                published.residency,
+                Some(published.residency),
+            )),
         }
     };
     let kept = unkept.is_none();

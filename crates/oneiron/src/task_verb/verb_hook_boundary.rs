@@ -514,6 +514,7 @@ fn row_pre_with_saved(
     };
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
+        pre.with_read_capture(memory.read_capture());
     }
     Ok(ended)
 }
@@ -615,6 +616,13 @@ fn row_with_saved(
     run: impl FnOnce(Value) -> MemoryResult<Value>,
     require_saved: bool,
 ) -> MemoryResult<Value> {
+    // A call a budget window paced answers from its held row until its turn
+    // ran (FIX 8753), before any hook runs on it again.
+    if !require_saved
+        && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply(memory, verb)
+    {
+        return reply;
+    }
     let secret = CustodySecret::lift(verb, &mut args);
     // Bound on every call: a retry of a call an ask parked meets its saved
     // reference whether or not a hook takes the verb now. A credential

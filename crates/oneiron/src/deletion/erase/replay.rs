@@ -294,6 +294,14 @@ impl Vault {
             if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
                 HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
+            // No canonical row here names it, but a residence copy may: its
+            // own, or a cached NOTE's that cites it. Both go now its marker
+            // stands, and each NOTE whose copy went is a changed document
+            // (FIX 18400).
+            #[cfg(feature = "sync")]
+            let residence_changed = crate::note::erase_residence_copies_of_in_txn(self, wtxn, id)?;
+            #[cfg(not(feature = "sync"))]
+            let residence_changed: Vec<EntityId> = Vec::new();
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
@@ -345,7 +353,7 @@ impl Vault {
                     receipt_id: None,
                     sweep_key: None,
                 },
-                Vec::new(),
+                residence_changed,
                 cancelled,
             ));
         }
@@ -378,6 +386,9 @@ impl Vault {
         // the purge so local delete truth survives CRDT-map manipulation.
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
         crate::deletion::ActorErasureWriter::new(self, wtxn, *id).erase_planned_pack_revision()?;
+        crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
+            crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+        )?;
         let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut *wtxn, *id);
         crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
         crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;

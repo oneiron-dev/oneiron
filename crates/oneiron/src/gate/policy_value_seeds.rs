@@ -5,7 +5,8 @@
 //! authenticated owner or holder door authored names the same key and scope.
 //! An authored row that differs from the seed thus replaces it, never sits
 //! beside it as a second row in one slot, which would fail the manifest
-//! closed. Other trusted rows fold as they are.
+//! closed. Other trusted rows meet that selected baseline by the key's own
+//! narrowing order; they cannot replace an authored parent override.
 
 use std::collections::BTreeSet;
 
@@ -19,6 +20,7 @@ use crate::error::Result;
 pub(in crate::gate) struct SeededPolicyValueRows {
     seeded: Vec<PolicyValueRow>,
     authored: BTreeSet<(PolicyValueKey, PolicyRowScope)>,
+    narrowing: Vec<PolicyValueRow>,
 }
 
 impl SeededPolicyValueRows {
@@ -43,12 +45,12 @@ impl SeededPolicyValueRows {
                     .extend(rows.iter().map(|row| (row.key, row.scope)));
                 folded.extend(rows);
             }
-            PolicyRowOrigin::Narrowing => folded.extend(rows),
+            PolicyRowOrigin::Narrowing => self.narrowing.extend(rows),
         }
         Ok(())
     }
 
-    /// Appends the seeded rows no authored row replaced.
+    /// Selects the authored-or-seeded baseline, then applies trusted narrowing.
     pub(in crate::gate) fn finish(self, folded: &mut Vec<PolicyValueRow>) {
         let authored = self.authored;
         folded.extend(
@@ -56,5 +58,37 @@ impl SeededPolicyValueRows {
                 .into_iter()
                 .filter(|row| !authored.contains(&(row.key, row.scope))),
         );
+        for mut narrowing in self.narrowing {
+            // Precedence has no meet: retain its existing conflict handling.
+            if narrowing.key == PolicyValueKey::ScopePrecedence {
+                folded.push(narrowing);
+                continue;
+            }
+            let slot = (narrowing.key, narrowing.scope);
+            let Some(index) = folded.iter().position(|row| (row.key, row.scope) == slot) else {
+                // Only an authored baseline can release a parent's bound.
+                narrowing.override_parent = false;
+                folded.push(narrowing);
+                continue;
+            };
+            let baseline = &folded[index];
+            // A meet must not conceal a conflict among authored or seeded rows.
+            if folded
+                .iter()
+                .any(|row| (row.key, row.scope) == slot && row != baseline)
+            {
+                folded.push(narrowing);
+                continue;
+            }
+            let value = baseline.value.restrict(narrowing.value);
+            if value != baseline.value {
+                narrowing.value = value;
+                narrowing.override_parent = baseline.override_parent;
+                // Retain the actual deciding row's reference and explanation.
+                for row in folded.iter_mut().filter(|row| (row.key, row.scope) == slot) {
+                    *row = narrowing.clone();
+                }
+            }
+        }
     }
 }
