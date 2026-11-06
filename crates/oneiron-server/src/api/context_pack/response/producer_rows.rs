@@ -38,34 +38,40 @@ impl CoreContextPackResponse {
     /// pack serves, the rows a keyed replay of it re-admits, the
     /// CODE_ARTIFACT and units of each instruction file, every known
     /// contact its disclosure block stamps, and the reaction, message and
-    /// reactor of each reaction signal.
+    /// reactor of each reaction signal. They are also the rows of each
+    /// composed field a returned record carries: the messages a TURN's text
+    /// joins, and the reaction claims and named reactors of a MESSAGE's or
+    /// TURN's reaction lines.
     ///
-    /// `None` when a returned record carries words read from rows the
-    /// response does not keep: a MESSAGE's or TURN's reaction lines, which
-    /// count reaction claims, or a TURN's text, which its messages hold.
-    /// Its rows are then not all known. `None` too when a signal's id does
-    /// not parse. A served row whose id does not parse is the error
-    /// [`Self::served_rows`] returns.
+    /// `None` when a returned record carries such a field and the walk that
+    /// wrote it recorded no rows for it. Its rows are then not all known.
+    /// `None` too when a signal's id does not parse. A served row whose id
+    /// does not parse is the error [`Self::served_rows`] returns.
     pub(crate) fn producer_rows(&self) -> oneiron::Result<Option<Vec<oneiron::EntityId>>> {
         let mut rows = self.served_rows()?;
-        let composed_from_unlisted_rows = |entity: &super::CoreContextEntity| {
+        let composed = &self.composed_producers;
+        for entity in self.results.iter().chain(&self.neighbors) {
             let Some(fields) = entity.fields.as_ref() else {
-                return false;
+                continue;
             };
-            let reaction_lines = fields.contains_key(oneiron::reaction::REACTIONS_FIELD);
-            match entity.entity_type {
-                oneiron::registry::ENTITY_TYPE_TURN => reaction_lines || fields.contains_key("txt"),
-                oneiron::registry::ENTITY_TYPE_MESSAGE => reaction_lines,
-                _ => false,
+            let id = oneiron::EntityId::from_hex(&entity.id)?;
+            let turn = entity.entity_type == oneiron::registry::ENTITY_TYPE_TURN;
+            let conversation = turn || entity.entity_type == oneiron::registry::ENTITY_TYPE_MESSAGE;
+            for (carried, read_from) in [
+                (
+                    conversation && fields.contains_key(oneiron::reaction::REACTIONS_FIELD),
+                    composed.reaction_lines(&id),
+                ),
+                (turn && fields.contains_key("txt"), composed.turn_text(&id)),
+            ] {
+                if !carried {
+                    continue;
+                }
+                let Some(read_from) = read_from else {
+                    return Ok(None);
+                };
+                rows.extend_from_slice(read_from);
             }
-        };
-        if self
-            .results
-            .iter()
-            .chain(&self.neighbors)
-            .any(composed_from_unlisted_rows)
-        {
-            return Ok(None);
         }
         rows.extend(self.replay_admits());
         for handle in &self.instruction_files {

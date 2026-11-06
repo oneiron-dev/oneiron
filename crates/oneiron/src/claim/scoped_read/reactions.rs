@@ -1,6 +1,6 @@
 //! Reactions riding along with the conversation records a scoped read admits.
 use super::*;
-use crate::context_pack::ContextPack;
+use crate::context_pack::{ComposedFieldProducers, ContextPack};
 use crate::disclosure::DisclosureContext;
 use crate::reaction::{REACTIONS_FIELD, ReactionPill, ReactionSignal};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -23,7 +23,8 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<Vec<String>>> {
         let rtxn = self.grant_read_txn()?;
         let (policy, receipt) = self.reaction_walk_in(&rtxn)?;
-        let value = self.reaction_lines_in(&rtxn, &policy, None, record, counted)?;
+        let value =
+            self.reaction_lines_in(&rtxn, &policy, None, record, counted, &mut Vec::new())?;
         Ok(ScopedReadResult { value, receipt })
     }
 
@@ -52,8 +53,9 @@ impl ScopedRead<'_> {
         disclosure: Option<&DisclosureContext>,
         record: &EntityId,
         counted: &mut Vec<EntityId>,
+        named: &mut Vec<EntityId>,
     ) -> Result<Vec<String>> {
-        crate::reaction::grouped_lines_in(self.vault, rtxn, *record, |row| {
+        crate::reaction::grouped_lines_in(self.vault, rtxn, *record, named, |row| {
             let admitted = self.is_entity_readable_with_policy_in(rtxn, policy, &row.id)?
                 && self.disclosed_in(rtxn, disclosure, &row.id)?;
             if admitted {
@@ -106,6 +108,29 @@ impl ScopedRead<'_> {
         self.attach_reactions_quoting(pack, &HashMap::new(), disclosure, &mut Vec::new())
     }
 
+    /// [`Self::attach_reactions_under`], which also records in `producers`
+    /// the rows each record's attached lines are read from (FIX 1435): the
+    /// reaction claims the lines count and the reactors they name. They come
+    /// from the same walk that writes the lines. A record that gets no lines
+    /// records none. The receipt is the same.
+    pub fn attach_reactions_listing_producers(
+        &self,
+        pack: &mut ContextPack,
+        disclosure: Option<&DisclosureContext>,
+        producers: &mut ComposedFieldProducers,
+    ) -> Result<ScopedReadReceipt> {
+        self.attach_reactions_walk(
+            pack,
+            &HashMap::new(),
+            disclosure,
+            |record, counted, named, attached| {
+                if attached {
+                    producers.record_reaction_lines(record, counted.into_iter().chain(named));
+                }
+            },
+        )
+    }
+
     /// [`Self::attach_reactions_under`] for a pack whose TURNs took the place
     /// of matched messages (`quoted`, per TURN): a TURN's lines are followed
     /// by those of each message it quotes that this read may see. Each
@@ -118,26 +143,59 @@ impl ScopedRead<'_> {
         disclosure: Option<&DisclosureContext>,
         counted: &mut Vec<EntityId>,
     ) -> Result<ScopedReadReceipt> {
+        self.attach_reactions_walk(pack, quoted, disclosure, |_, claims, _, _| {
+            counted.extend(claims);
+        })
+    }
+
+    /// The one walk behind [`Self::attach_reactions_quoting`] and
+    /// [`Self::attach_reactions_listing_producers`]. For each MESSAGE or TURN
+    /// result, `walked` gets the record, the reaction claims its lines count,
+    /// the reactors they name, and whether the lines were attached.
+    fn attach_reactions_walk(
+        &self,
+        pack: &mut ContextPack,
+        quoted: &HashMap<EntityId, Vec<EntityId>>,
+        disclosure: Option<&DisclosureContext>,
+        mut walked: impl FnMut(EntityId, Vec<EntityId>, Vec<EntityId>, bool),
+    ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
         let (policy, receipt) = self.reaction_walk_in(&rtxn)?;
         for entity in &mut pack.results {
             if !matches!(entity.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 continue;
             }
-            let mut lines =
-                self.reaction_lines_in(&rtxn, &policy, disclosure, &entity.id, counted)?;
+            let (mut counted, mut named) = (Vec::new(), Vec::new());
+            let mut lines = self.reaction_lines_in(
+                &rtxn,
+                &policy,
+                disclosure,
+                &entity.id,
+                &mut counted,
+                &mut named,
+            )?;
             for message in quoted.get(&entity.id).into_iter().flatten() {
                 if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)?
                     && self.disclosed_in(&rtxn, disclosure, message)?
                 {
-                    lines.extend(
-                        self.reaction_lines_in(&rtxn, &policy, disclosure, message, counted)?,
-                    );
+                    lines.extend(self.reaction_lines_in(
+                        &rtxn,
+                        &policy,
+                        disclosure,
+                        message,
+                        &mut counted,
+                        &mut named,
+                    )?);
                 }
             }
-            if let (Some(fields), false) = (entity.fields.as_mut(), lines.is_empty()) {
-                fields.insert(REACTIONS_FIELD.to_owned(), serde_json::json!(lines));
-            }
+            let attached = match (entity.fields.as_mut(), lines.is_empty()) {
+                (Some(fields), false) => {
+                    fields.insert(REACTIONS_FIELD.to_owned(), serde_json::json!(lines));
+                    true
+                }
+                _ => false,
+            };
+            walked(entity.id, counted, named, attached);
         }
         Ok(receipt)
     }
