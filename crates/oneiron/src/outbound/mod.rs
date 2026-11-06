@@ -101,6 +101,7 @@ pub(crate) use self::reply_job::{
     connector_event_participant_ids, connector_witness_rows_in_txn,
     erase_connector_reply_bodies_by_authors_in_txn, erase_connector_reply_bodies_for_events_in_txn,
     erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+    surface_participant_ids,
 };
 pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
 pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};

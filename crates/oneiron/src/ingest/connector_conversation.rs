@@ -21,8 +21,9 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, MAX_TRANSCRIPT_PAGE_TURNS, MEMORY_CODE_NOT_FOUND,
-    MemoryError, MemoryResult, TranscriptMessage, WitnessAuthor, WitnessMessage, WitnessTurn,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, MAX_TRANSCRIPT_PAGE_TURNS, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult, TranscriptMessage, WitnessAuthor,
+    WitnessMessage, WitnessTurn,
 };
 use crate::surface_event::SurfaceConnectorPayload;
 
@@ -259,6 +260,7 @@ impl Vault {
         let receipt =
             self.memory(agent, EdgeActorClass::Agent)
                 .witness_imported(&turn, &stamp, |txn| {
+                    reject_erased_participants_in_txn(self, txn, agent, origin)?;
                     effect(txn, conversation)?;
                     if let Some(source) = archive_source {
                         super::connector_archive_link::record_in_txn(
@@ -283,6 +285,31 @@ impl Vault {
             read_grant_repair,
         })
     }
+}
+
+/// Refuses the witness when its agent, or anyone its exchange names, is
+/// hard-erased here (FIX 10897). An erase that committed after the worker
+/// read the words found no row of them to take and cleared the job that
+/// names them, so the words must not land after it; an erase that commits
+/// after the witness finds the rows through that job.
+fn reject_erased_participants_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    origin: &SurfaceConnectorPayload,
+) -> MemoryResult<()> {
+    let mut ids = crate::outbound::surface_participant_ids(origin);
+    ids.push(agent);
+    for id in ids {
+        if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "a participant of this connector exchange is erased",
+                &[],
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// One side of a connector exchange as it landed in its conversation.

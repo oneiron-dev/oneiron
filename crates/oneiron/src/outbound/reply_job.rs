@@ -632,22 +632,26 @@ fn connector_reply_job_key(agent: EntityId, event_id: &str) -> String {
 
 /// The participant ids a surface-born event names, without the replying agent.
 pub(crate) fn connector_event_participant_ids(event: &ConnectorEvent) -> Vec<EntityId> {
-    let mut ids = Vec::new();
-    if let Ok(origin) = SurfaceConnectorPayload::from_connector_event(event) {
-        let known = match &origin.counterparty {
-            SurfaceCounterpartyStamp::Known { counterparty_ref } => {
-                EntityId::from_hex(counterparty_ref).ok()
-            }
-            SurfaceCounterpartyStamp::Unknown { .. }
-            | SurfaceCounterpartyStamp::Unparsed { .. } => None,
-        };
-        ids.extend(
-            [origin.actor().ok(), origin.receiving_identity().ok(), known]
-                .into_iter()
-                .flatten(),
-        );
-    }
-    ids
+    SurfaceConnectorPayload::from_connector_event(event)
+        .map(|origin| surface_participant_ids(&origin))
+        .unwrap_or_default()
+}
+
+/// The participant ids a surface-born exchange names: its actor, receiving
+/// identity and known counterparty, without the replying agent.
+pub(crate) fn surface_participant_ids(origin: &SurfaceConnectorPayload) -> Vec<EntityId> {
+    let known = match &origin.counterparty {
+        SurfaceCounterpartyStamp::Known { counterparty_ref } => {
+            EntityId::from_hex(counterparty_ref).ok()
+        }
+        SurfaceCounterpartyStamp::Unknown { .. } | SurfaceCounterpartyStamp::Unparsed { .. } => {
+            None
+        }
+    };
+    [origin.actor().ok(), origin.receiving_identity().ok(), known]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 fn is_connector_reply_body_in_txn(
