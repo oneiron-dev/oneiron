@@ -154,7 +154,7 @@ fn counted_matching_mint_in_txn(
 ) -> Result<Option<AuthorityEntryHash>> {
     let names = |op: &AuthorityOp| match op {
         AuthorityOp::AgentGrantAct(record) => record.grant == standing.id,
-        AuthorityOp::SlipGrantRevoke { grant_ref } => *grant_ref == standing.id,
+        AuthorityOp::SlipGrantRevoke { grant_ref, .. } => *grant_ref == standing.id,
         AuthorityOp::MembershipExecution(record) => {
             record.withdrawn_grants.binary_search(&standing.id).is_ok()
         }
