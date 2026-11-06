@@ -86,7 +86,7 @@ impl SkillsSection {
     }
 
     pub fn board_section(&self) -> Result<BoardSection, BoardFrameError> {
-        BoardSection::new(
+        Ok(BoardSection::new(
             "SKILLS",
             vec![self.loaded.clone()],
             self.found.clone(),
@@ -95,7 +95,10 @@ impl SkillsSection {
                 pinned: false,
                 shed_rank: Some(ShedRank::CapabilityDiscovery),
             },
-        )
+        )?
+        .with_fold_summary(
+            super::layout::FoldSummary::total(self.found.len()).count("found", self.found.len()),
+        ))
     }
 }
 
