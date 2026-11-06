@@ -34,7 +34,7 @@ impl Vault {
         // A replacement that writes a secret the door can place lands its
         // handle (FIX 2372; OF-067): the operation, its stamp and its ingress
         // receipt then hold the edit as admitted, never the value.
-        let admitted = self.admit_code_edit_in_txn(wtxn, session.document_id, edit)?;
+        let admitted = self.admit_code_edit_in_txn(wtxn, &session.document_id, edit)?;
         let edit = admitted.as_ref().unwrap_or(edit);
         let candidate = doc_from_snapshot(
             &session
@@ -87,7 +87,7 @@ impl Vault {
         // The edited file, read whole by the write door under the owner's
         // switch before any snapshot or receipt is written (OF-067). Its
         // receipt binds the admitted edit's bytes, which a replay is judged
-        // against (`same_edit`): a secret the replacement's admission did not
+        // against (`same_edit_in_txn`): a secret the replacement's admission did not
         // place (one split across the file and the edit) refuses, unless the
         // file read the same way before the edit.
         let mut stood = false;
@@ -160,18 +160,19 @@ impl Vault {
     /// before it and the text it edits, as they stood.
     /// `edit` with its replacement admitted as the batch door admits a text
     /// field (FIX 2372): each secret the door's text rules place goes to
-    /// custody under `document` and leaves its handle. `None` when the
-    /// replacement is unchanged: the switch is off, it holds no hit, or a hit
-    /// it holds is one no span places, which the whole-file read below still
-    /// judges as before.
-    fn admit_code_edit_in_txn(
+    /// custody, under the document's carrier origin (the one its lifted keys
+    /// name), and leaves its handle; a value custody already holds keeps its
+    /// handle. `None` when the replacement is unchanged: the switch is off, it
+    /// holds no hit, or a hit it holds is one no span places, which the
+    /// whole-file read still judges as before.
+    pub(super) fn admit_code_edit_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
-        document: EntityId,
+        document: &[u8; 32],
         edit: &CodeFileEdit,
     ) -> Result<Option<CodeFileEdit>> {
         use crate::batch::secret_scan::{
-            Lifted, Part, SecretScanMode, admit_parts_in_txn, predict_masked_text,
+            Lifted, Part, SecretScanMode, admit_parts_in_txn, carrier_origin, predict_masked_text,
             scan_write_payload, secret_scan_mode_in_txn,
         };
         if edit.replacement.is_empty()
@@ -181,15 +182,37 @@ impl Vault {
         {
             return Ok(None);
         }
+        let (origin, place) = carrier_origin(&crate::side_table::CODE_DOCUMENT_HEAD, document)?;
         let mut admitted = edit.clone();
         let changed = admit_parts_in_txn(
             self,
             wtxn,
-            document,
-            &mut [("text:replacement", Part::Text(&mut admitted.replacement))],
+            origin,
+            &mut [(place.as_str(), Part::Text(&mut admitted.replacement))],
             &mut Lifted::default(),
         )?;
         Ok(changed.then_some(admitted))
+    }
+
+    /// Whether `held`, the edit an ingress receipt stores, is `offered` again
+    /// (FIX 2372): the same bytes, or `offered` with its replacement admitted
+    /// in this writer exactly as `held` holds it. A value custody already
+    /// holds keeps its handle, so only the same secret reads the same; a
+    /// different one takes a handle of its own and does not match, and the
+    /// caller's refusal drops what its admission wrote.
+    pub(super) fn same_edit_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        document: &[u8; 32],
+        held: &CodeFileEdit,
+        offered: &CodeFileEdit,
+    ) -> Result<bool> {
+        if held == offered {
+            return Ok(true);
+        }
+        Ok(self
+            .admit_code_edit_in_txn(wtxn, document, offered)?
+            .is_some_and(|admitted| admitted == *held))
     }
 
     fn validate_code_file_edit(
