@@ -165,23 +165,13 @@ pub(super) fn refold_world_edits(
                 continue;
             }
         }
-        let mut parents = entry
-            .parent_hashes
-            .iter()
-            .map(|parent| states.get(parent).or_else(|| stand_ins.get(parent)));
-        // Parents of two vaults stand for nothing (Sol P2 round 5, F6).
-        let merged = parents.next().flatten().and_then(|first| {
-            parents.try_fold(first.clone(), |merged, next| {
-                next.filter(|state| state.vault_id == merged.vault_id)
-                    .map(|state| merge_states(&merged, state))
-            })
-        });
-        if let Some(mut state) = merged.filter(|state| entry.vault_id == Some(state.vault_id)) {
-            let seq = state
-                .seqs
-                .entry(entry.signer_key().clone())
-                .or_insert(entry.seq);
-            *seq = (*seq).max(entry.seq);
+        if let Some(state) = crossed_state(
+            entry,
+            entry
+                .parent_hashes
+                .iter()
+                .map(|parent| states.get(parent).or_else(|| stand_ins.get(parent))),
+        ) {
             stand_ins.insert(hash, state);
         }
     }
@@ -196,6 +186,28 @@ pub(super) fn refold_world_edits(
             keep(states, issues, hash, state);
         }
     }
+}
+
+/// The state a crossed main-log row stands for: its parents' same-vault
+/// merge, bounded by its own vault and signed sequence.
+pub(super) fn crossed_state<'a>(
+    entry: &'a AuthorityLogEntry,
+    mut parents: impl Iterator<Item = Option<&'a FoldState>>,
+) -> Option<FoldState> {
+    // Parents of two vaults stand for nothing (Sol P2 round 5, F6).
+    let merged = parents.next().flatten().and_then(|first| {
+        parents.try_fold(first.clone(), |merged, next| {
+            next.filter(|state| state.vault_id == merged.vault_id)
+                .map(|state| merge_states(&merged, state))
+        })
+    });
+    let mut state = merged.filter(|state| entry.vault_id == Some(state.vault_id))?;
+    let seq = state
+        .seqs
+        .entry(entry.signer_key().clone())
+        .or_insert(entry.seq);
+    *seq = (*seq).max(entry.seq);
+    Some(state)
 }
 
 /// The states `entry`'s parents fold to here: each kept, or crossed and
