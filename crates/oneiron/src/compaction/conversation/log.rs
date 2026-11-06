@@ -235,6 +235,9 @@ fn read_log(
     // turn's ceilings, resolved before the snapshot: the room resolver opens
     // its own. Raw pins, a summary's evidence and its words are read under it.
     let scoped = vault.scoped_read(memory.read_key()?);
+    // FIX 6188: grant time is persisted before the snapshot, never inside it,
+    // so a grant that has expired is judged expired for these reads.
+    scoped.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let read: BTreeSet<EntityId> = turns.iter().map(|turn| turn.id).collect();
     // Summaries whose turns the reader reads, every one, whose evidence
@@ -599,6 +602,9 @@ pub fn read_action_pinned_log(
     }
     // The reader's whole key, as `read_chat_log` pins its turns (FIX 5031).
     let scoped = vault.scoped_read(memory.read_key()?);
+    // FIX 6188: grant time is persisted before the snapshot, never inside it,
+    // so a grant that has expired is judged expired for these reads.
+    scoped.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut sources = Vec::new();
     for &index in &held {
