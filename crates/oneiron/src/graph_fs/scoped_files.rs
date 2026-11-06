@@ -86,7 +86,7 @@ impl GraphFsResolver<'_, '_> {
                                         reader,
                                         self.options.page_byte_cap,
                                     )?;
-                                if mask(&mut value, &keys, reader)? {
+                                if mask(&mut value, &keys, reader, self.options.page_byte_cap)? {
                                     let mut output = PacedBodyIo::new(
                                         Vec::new(),
                                         reader,
@@ -110,7 +110,11 @@ impl GraphFsResolver<'_, '_> {
                                         reader,
                                         self.options.page_byte_cap,
                                     )?;
-                                if let Some(masked) = keys.masked_with_reader(text, reader)? {
+                                if let Some(masked) = keys.masked_with_reader(
+                                    text,
+                                    reader,
+                                    self.options.page_byte_cap,
+                                )? {
                                     *body = masked.into_bytes();
                                 }
                             }
@@ -264,6 +268,7 @@ fn mask(
     value: &mut rmpv::Value,
     keys: &crate::batch::secret_scan::LiftedKeys,
     reader: &ContainerReader,
+    scan_bytes: usize,
 ) -> Result<bool> {
     checkpoint(reader)?;
     match value {
@@ -271,17 +276,19 @@ fn mask(
             let Some(value) = text.as_str() else {
                 return Ok(false);
             };
-            let Some(masked) = keys.masked_with_reader(value, reader)? else {
+            let Some(masked) = keys.masked_with_reader(value, reader, scan_bytes)? else {
                 return Ok(false);
             };
             *text = masked.into();
             Ok(true)
         }
         rmpv::Value::Array(items) => items.iter_mut().try_fold(false, |changed, item| {
-            Ok(mask(item, keys, reader)? | changed)
+            Ok(mask(item, keys, reader, scan_bytes)? | changed)
         }),
         rmpv::Value::Map(items) => items.iter_mut().try_fold(false, |changed, (key, value)| {
-            Ok(mask(key, keys, reader)? | mask(value, keys, reader)? | changed)
+            Ok(mask(key, keys, reader, scan_bytes)?
+                | mask(value, keys, reader, scan_bytes)?
+                | changed)
         }),
         _ => Ok(false),
     }
