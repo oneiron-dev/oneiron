@@ -572,9 +572,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory/mod.rs` | src | m | 19 crate-vis | — | The `/v1/core/memory` routes: a memory timeline, its watch and the memory verbs |
 | `src/api/memory/owner_delete.rs` | src | s | 1 crate-vis | — | The owner's own named delete through `/v1/core/memory/verbs` (FIX 1465) |
 | `src/api/memory/watch.rs` | src | s | 4 crate-vis | — | — |
-| `src/api/memory_reason.rs` | src | L | 18 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
-| `src/api/memory_reason/answer_admission.rs` | src | s | 3 crate-vis | — | The reasoning read's answer boundary (OF-063, Engine ruling 1231): a deep composition crosses the engine's… |
-| `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
+| `src/api/memory_reason.rs` | src | m | 18 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
+| `src/api/memory_reason/answer_admission.rs` | src | s | 4 crate-vis | — | The reasoning read's answer boundary (OF-063, Engine ruling 1231): a deep composition crosses the engine's… |
+| `src/api/memory_reason/deep_admission.rs` | src | s | 10 crate-vis | — | — |
+| `src/api/memory_reason/evidence.rs` | src | s | 6 crate-vis | — | Retained citable evidence on the process memory line |
+| `src/api/memory_reason/host/call.rs` | src | s | 5 crate-vis | — | Native role calls with request-scoped accounting and session-private receipts |
+| `src/api/memory_reason/host/composition.rs` | src | s | 1 crate-vis | — | Whole-row composition passes with separate citation and producer cohorts |
+| `src/api/memory_reason/host/frame.rs` | src | s | 3 crate-vis | — | Best-effort sizing from all sampled model rows; never a provider bound |
+| `src/api/memory_reason/host/mod.rs` | src | s | 2 crate-vis | — | Request-scoped production memory reasoning over the configured model roles |
+| `src/api/memory_reason/host/sources.rs` | src | m | 5 crate-vis | — | Pinned cohort reads and per-destination source admission |
+| `src/api/memory_reason/host/usage.rs` | src | s | 2 crate-vis | — | Reported token facts, kept separate from the native line's charged units |
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/message_result.rs` | src | s | 2 crate-vis | — | `POST /v1/core/messages/{message}/result`: the result a MESSAGE carries in place of an answer too large to… |
@@ -1590,7 +1597,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/owner/vault_key.rs` | src | m | 20 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
 | `src/pipe_proof.rs` | src | s | 1 crate-vis | — | An inherited descriptor proven the pipe end a flag promises, before the command reads or writes it: a cold… |
-| `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 9 crate-vis | InvalidView, View | — |
+| `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 12 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 35 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
 | `src/replay_judge.rs` | src | m | 3 struct · 9 fn · 1 const · 1 re-export | JournalRow, PersonTime, ServeReplayJudge | The serve host's skill judge (OF-495) |
@@ -1678,7 +1685,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_hyde.rs` | src | m | 11 crate-vis | — | A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction |
 | `src/server/recall_hyde/wait.rs` | src | s | 2 crate-vis | — | Owned recall workers, so HyDE waits hold no shared blocking-pool thread |
-| `src/server/recall_rerank.rs` | src | m | 6 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
+| `src/server/recall_rerank.rs` | src | m | 7 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
 | `src/server/removal_delivery.rs` | src | s | 6 crate-vis | — | The host's side of removal-archive delivery (FIX 3215, 3396): the wakes that end a removed holder's held… |
 | `src/server/residence_work.rs` | src | s | 2 crate-vis | — | Physical obligations left by terminal bundle work; pending work is untouched |
 | `src/server/resident_pump.rs` | src | m | 5 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |

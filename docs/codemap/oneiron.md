@@ -23,10 +23,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/write_mix_bench.rs` | src | m | — | — | Agent write-mix bench for the vault's single writer (OF-536 group commit) |
 | `src/access_grant/codec.rs` | src | m | 2 fn · 1 const · 1 re-export · 26 crate-vis | — | Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec |
 | `src/access_grant/companion_admission.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const | CompanionGrantBounds, CompanionGrantIssuer, CompanionGrantOutcome | The companion grant writer that carries its issuer's bounds (FIX 8140) |
-| `src/access_grant/context.rs` | src | L | 3 struct · 3 fn · 5 crate-vis | AccessContext, AccessLimited, GrantedData | Relationship read authority built from live grants and stored membership evidence |
+| `src/access_grant/context.rs` | src | L | 3 struct · 3 fn · 11 crate-vis | AccessContext, AccessLimited, GrantedData | Relationship read authority built from live grants and stored membership evidence |
 | `src/access_grant/delegation.rs` | src | s | 2 const · 6 crate-vis | — | What a credential may delegate of an access grant (FIX 8140, 1379) |
 | `src/access_grant/erase.rs` | src | s | 1 crate-vis | — | Scrub an erased principal out of non-brief ACCESS_GRANT bodies (FIX 4980) |
-| `src/access_grant/mod.rs` | src | s | 6 re-export · 5 crate-vis | — | AccessGrant control-plane record substrate |
+| `src/access_grant/mod.rs` | src | s | 6 re-export · 6 crate-vis | — | AccessGrant control-plane record substrate |
 | `src/access_grant/owner_act.rs` | src | s | 5 crate-vis | — | The owner's typed grant/revoke acts on connector witness-read access grants (FIX 10980) |
 | `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 19 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
 | `src/access_grant/request.rs` | src | m | 2 struct · 2 enum · 8 fn · 2 crate-vis | AccessRequest, AccessRequestResponder, AccessRequestStatus, AddressedAnswer | Durable request/response lifecycle |
@@ -1219,7 +1219,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scope_stamp.rs` | src | m | 1 trait · 3 fn · 1 re-export · 3 crate-vis | ClaimRecordScope | Required record-position Scope stamps and the versioned CLAIM wire upgrade |
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
 | `src/claim/scoped_read/access_class.rs` | src | m | 2 crate-vis | — | FIX 11915 stage B: a CLAIM row's admission judged once per access class |
-| `src/claim/scoped_read/access_gate.rs` | src | m | 19 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
+| `src/claim/scoped_read/access_gate.rs` | src | m | 20 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | m | 1 struct · 10 fn · 1 re-export · 47 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/actor_key/weave_admin.rs` | src | s | 1 crate-vis | — | The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key… |
 | `src/claim/scoped_read/admission.rs` | src | m | 8 fn · 24 crate-vis | — | — |
@@ -1248,7 +1248,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/note_visibility.rs` | src | s | 3 crate-vis | — | Actor and class checks for private NOTE bodies in scoped reads |
 | `src/claim/scoped_read/owner_authority.rs` | src | s | 4 crate-vis | — | FIX 7461: a question's own locally built reader also reads what its own live owner authority admits (owner… |
 | `src/claim/scoped_read/pinned_reads.rs` | src | s | 1 fn | — | Manifest-derived safety pins bypass query relevance, never actor authority |
-| `src/claim/scoped_read/point_reads.rs` | src | m | 5 fn · 1 re-export · 13 crate-vis | — | The one receipted point-read entry: ids and short references, each at its own read frontier, answered from… |
+| `src/claim/scoped_read/point_reads.rs` | src | m | 6 fn · 1 re-export · 13 crate-vis | — | The one receipted point-read entry: ids and short references, each at its own read frontier, answered from… |
 | `src/claim/scoped_read/profile_sources.rs` | src | s | 1 crate-vis | — | Whether a companion profile reader's own credential keeps out the world its read names or one of the… |
 | `src/claim/scoped_read/reactions.rs` | src | s | 6 fn · 2 crate-vis | — | Reactions riding along with the conversation records a scoped read admits |
 | `src/claim/scoped_read/receipt.rs` | src | s | 1 fn · 2 re-export · 2 crate-vis | — | Mandatory read receipts |
