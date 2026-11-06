@@ -103,10 +103,26 @@ impl WindowManager {
                 )
             })
             .unwrap_or_default();
+        self.replace_window_bounded_with_retained_copies(
+            key, snapshot, evidence, admitted, bound, own_device, &copies,
+        )
+    }
+
+    /// Native replacement with holders already bound before repo translation.
+    pub(in crate::sync) fn replace_window_bounded_with_retained_copies(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        snapshot: &[u8],
+        evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+        admitted: impl FnOnce() -> bool,
+        bound: ReplacementByteBound,
+        own_device: Option<&OwnDeviceImport>,
+        copies: &[Arc<crate::embed::home_vectors::retained_copy::PreparedHomeClaimCopy>],
+    ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         crate::embed::home_vectors::copy_scope::with_home_claim_copies(
             &self.vault,
             key,
-            &copies,
+            copies,
             || {
                 self.land_window_replacement_bounded(
                     key, snapshot, evidence, admitted, bound, own_device,

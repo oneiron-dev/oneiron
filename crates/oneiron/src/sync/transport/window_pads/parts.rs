@@ -69,10 +69,12 @@ impl ReceivedWindowPadEnvelope {
             payload,
             refs,
             sidecar,
+            home_claim_copies,
             ..
         } = self.envelope;
         drop(refs);
         drop(sidecar);
+        drop(home_claim_copies);
         memory.shrink(memory.bytes().saturating_sub(payload.capacity() as u64));
         WindowPadPayload {
             bytes: Cow::Owned(payload),
@@ -141,6 +143,7 @@ fn decoded_capacity(envelope: &WindowPadEnvelope) -> u64 {
             .sidecar
             .as_ref()
             .map_or(0, |sidecar| sidecar.capsule.capacity() as u64)
+        + envelope.home_claim_copies.capacity() as u64
 }
 
 impl WindowPadAssembly {
