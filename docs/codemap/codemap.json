@@ -7816,7 +7816,7 @@
      "path": "src/batch/secret_scan/lift_history/accounting.rs",
      "purpose": "Canonical per-source counters for historical lift runs (FIX 10493)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -7840,13 +7840,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/lift_history/carriers.rs",
      "purpose": "Carriers no door rewrites",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -7924,7 +7924,7 @@
      "path": "src/batch/secret_scan/lift_history/proposals.rs",
      "purpose": "Closing a lift proposal (OF-067)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -50543,7 +50543,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 2
      }
     },
@@ -53296,7 +53296,7 @@
      "purpose": "Object plane: Vault adapter methods, shared expectation gate, key builders, record codec",
      "surface": {
       "const": 5,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "struct": 2
      }
@@ -68358,7 +68358,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 4,
       "fn": 8,
       "mod": 1,
