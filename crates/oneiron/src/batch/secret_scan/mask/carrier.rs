@@ -32,7 +32,7 @@ use crate::ports::ShortIdStoreRead;
 use crate::secret_record::CustodyWrite;
 use crate::side_table::SideTableDecl;
 use crate::store::Store;
-use crate::store::file_key_masks::masked_file_in_txn;
+use crate::store::file_key_masks::{masked_file_in_txn, masked_file_in_txn_with_reader};
 use crate::store::known_value_index::KnownValues;
 
 /// Domain of the id a lifted carrier row's custody records name as where
@@ -340,7 +340,12 @@ impl LiftedKeys {
             } else {
                 blake3::hash(text.as_bytes())
             };
-            let Some(file) = masked_file_in_txn(store, txn, hash.as_bytes())? else {
+            let file = if let Some((reader, scan_bytes)) = reader {
+                masked_file_in_txn_with_reader(store, txn, hash.as_bytes(), reader, scan_bytes)?
+            } else {
+                masked_file_in_txn(store, txn, hash.as_bytes())?
+            };
+            let Some(file) = file else {
                 continue;
             };
             for key in &file.keys {
