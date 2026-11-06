@@ -104,9 +104,8 @@ impl BigModel {
         let deadline = CallDeadline::caller_with_wait_cap(left, ladder.cooling_wait_budget(left));
         // A seat's answer names the rung model that served it; one model
         // alone answers or nothing does, so its pin names it already.
-        let (response, served, binding) = self
-            .runtime
-            .block_on(async {
+        let (response, served, binding) = crate::decision_host::run_native_read(&run, || {
+            self.runtime.block_on(async {
                 match &self.answerer {
                     Answerer::Seat(_) => ladder
                         .generate_recorded_by(&run, request, None, &|| true, deadline)
@@ -120,7 +119,8 @@ impl BigModel {
                         .map(|(response, binding)| (response, None, binding)),
                 }
             })
-            .map_err(|error| failed(format!("the seat failed: {error}")))?;
+        })
+        .map_err(|error| failed(format!("the seat failed: {error}")))?;
         // FIX 12516/12742: the completed call's evidence, before any parse —
         // even a typed abstain below records the provider terminal it read.
         // Outside a capture scope there is no caller and the capture is
