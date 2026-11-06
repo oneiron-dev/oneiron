@@ -1,4 +1,6 @@
 //! Child-owned frozen continuation state, kept as reply-bearing content.
+//! The child also inherits its source's compaction at the proved cut, and
+//! its frozen state names what it inherited by id (FIX 4198).
 
 use serde::{Deserialize, Serialize};
 
@@ -8,10 +10,10 @@ use super::{
     prove_in_txn, source_in_txn,
 };
 use crate::code_run::{
-    CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage, StoredRunContinuation,
-    actor_gone_in_txn, continuation_prefix_digest, continuation_seed_body_in_txn,
-    encode_code_run_replay_record, publish_continuation_output_in_txn, seed_continuation_run,
-    step_replay_capsules_in_txn,
+    CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage, InheritedCompaction, StartCompaction,
+    StoredRunContinuation, actor_gone_in_txn, continuation_prefix_digest,
+    continuation_seed_body_in_txn, encode_code_run_replay_record,
+    publish_continuation_output_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
 };
 use crate::engine_executor::record::{
     executor_config_marker_bytes, validate_executor_config_marker_in_txn,
@@ -45,6 +47,8 @@ struct FrozenSeed {
     prompt_fingerprint: String,
     cut: SourceCut,
     prefix_digest: [u8; 32],
+    /// What the seed inherited of the source's compaction (FIX 4198).
+    compaction: InheritedCompaction,
 }
 
 fn seed_path(run: EntityId) -> String {
@@ -52,10 +56,14 @@ fn seed_path(run: EntityId) -> String {
 }
 
 impl FrozenSeed {
+    /// The frozen state, the prefix row and the compaction a child seeds
+    /// from `proved`. The compaction the start captured is proved to the
+    /// copied prefix (FIX 4198): after a failed step that is the row the
+    /// failure left, and no later source state takes its place.
     fn from_start(
         proved: ProvedStart,
         row: &StoredRunContinuation,
-    ) -> Result<(Self, CodeRunReplayRecord), ContinuationRefusal> {
+    ) -> Result<(Self, CodeRunReplayRecord, StartCompaction), ContinuationRefusal> {
         let ProvedStart {
             body,
             prefix,
@@ -68,6 +76,7 @@ impl FrozenSeed {
             .ok_or(ContinuationRefusal::SourceMissing)?;
         let prefix_digest = continuation_prefix_digest(&prefix, cut.step, cut.bridge_start)?
             .ok_or(ContinuationRefusal::NoCheckpoint)?;
+        let compaction = body.compaction.kept_inside(&prefix);
         let state = Self {
             continuation_digest: continuation_digest(row),
             actor,
@@ -82,8 +91,9 @@ impl FrozenSeed {
             prompt_fingerprint: body.prompt_fingerprint,
             cut,
             prefix_digest,
+            compaction: compaction.inherited(),
         };
-        Ok((state, prefix))
+        Ok((state, prefix, compaction))
     }
 
     fn config(&self, template: &EngineExecutorConfig) -> EngineExecutorConfig {
@@ -124,6 +134,11 @@ pub(super) fn reopen(
             return Err(ContinuationRefusal::NoCheckpoint);
         }
         prove_seeded_source(vault, txn, row, child, &state)?;
+        // FIX 4198: the seed's inherited compaction is still the child's; it
+        // is reused as it is, never copied again over the child's own folds.
+        if !state.compaction.held_in_txn(vault, txn, child.run_id)? {
+            return Err(ContinuationRefusal::NoCheckpoint);
+        }
         state
     } else {
         // A child without this witness still has its original full proof path.
@@ -269,7 +284,7 @@ pub(super) fn create(
     if proved.digest != row.start_digest || actor_gone_in_txn(vault, &txn, &proved.actor) {
         return Err(ContinuationRefusal::NoCheckpoint);
     }
-    let (state, mut child) = FrozenSeed::from_start(proved, &row)?;
+    let (state, mut child, compaction) = FrozenSeed::from_start(proved, &row)?;
     let config = state.config(template);
     child.run_id = template.run_id;
     child.live_run = None;
@@ -313,6 +328,7 @@ pub(super) fn create(
         state.cut.bridge_start,
         state.actor,
         &inherited,
+        &compaction,
     )?;
     txn.commit().map_err(Error::from)?;
     // seed and marker keep their file pins until after this commit.

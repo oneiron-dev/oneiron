@@ -16,9 +16,12 @@
 //! just before the turn instruction.
 //!
 //! The child runs the source's task, model, locality, seat effort, tier,
-//! clock and limits. Its first seed keeps that frozen config as child-owned
-//! content, so reopening does not need the parent's start body again. The
-//! child's own content and all current lease, source and cut checks still
+//! clock and limits. It inherits the source's epochs and fold ledger as the
+//! start captured them, kept inside the copied prefix, so it neither renders
+//! that prefix whole nor compacts it again (FIX 4198). Its first seed keeps
+//! the frozen config as child-owned content, so reopening does not need the
+//! parent's start body again. The child's own content and all current
+//! lease, source and cut checks still
 //! apply. Its config marker binds the source's teaching fingerprint and this
 //! continuation's digest, so a teaching that drifted since, or another
 //! continuation, refuses through the marker check. A cut

@@ -1,5 +1,9 @@
 //! Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY.
 //! Raw outputs cannot write or impersonate this disjoint vault-meta keyspace.
+//! A continuation's child takes its source's rows at the cut as aliases that
+//! change only the run (FIX 4198, [`put_coverage_aliases_in_txn`]).
+
+use serde::{Deserialize, Serialize};
 
 use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::EpochMint;
@@ -133,6 +137,20 @@ impl CodeRunCompactionCoverage {
     pub(crate) fn calls(&self) -> u64 {
         self.calls
     }
+
+    /// Whether this row continues the chain whose last row is `prior`: the
+    /// first epoch, or the next epoch from the step after `prior`'s span,
+    /// its calls never fewer (FIX 4198).
+    pub(super) fn continues(&self, prior: Option<&Self>) -> bool {
+        match prior {
+            None => self.epoch == 1,
+            Some(prior) => {
+                prior.epoch.checked_add(1) == Some(self.epoch)
+                    && prior.last.checked_add(1) == Some(self.first)
+                    && prior.calls <= self.calls
+            }
+        }
+    }
 }
 
 impl RawValue for CodeRunCompactionCoverage {
@@ -142,6 +160,30 @@ impl RawValue for CodeRunCompactionCoverage {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         Ok(decode(bytes)?.0)
+    }
+}
+
+/// A row as a step start's body carries it (FIX 4198): its own frame, with
+/// no receipt, read back as strictly as the table reads it.
+impl Serialize for CodeRunCompactionCoverage {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        encode(self, None)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CodeRunCompactionCoverage {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let raw = Vec::<u8>::deserialize(deserializer)?;
+        decode(&raw)
+            .map(|(row, _)| row)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -362,6 +404,46 @@ fn put_coverage_in(
         return Err(Error::InvariantViolation(
             "injected executor coverage write failure",
         ));
+    }
+    Ok(())
+}
+
+/// Writes `rows`, a continuation's inherited coverage, as `child`'s, in
+/// `txn` (FIX 4198). Each alias changes only its run. Its summary, session,
+/// span, calls and digest stay, so [`verify_summary`] binds it as it bound
+/// the source's row. It carries no receipt: no pass runs or bills again.
+/// The rows must chain from epoch 1, and `child` must hold none yet.
+pub(super) fn put_coverage_aliases_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    child: EntityId,
+    rows: &[CodeRunCompactionCoverage],
+) -> Result<()> {
+    if !coverage_rows_in_txn(dbs, &*txn, child)?.is_empty() {
+        return Err(Error::ConcurrentWrite(
+            "code-run continuation coverage seed",
+        ));
+    }
+    let mut prior = None;
+    for row in rows {
+        let alias = CodeRunCompactionCoverage {
+            run_id: child,
+            ..*row
+        };
+        if !alias.continues(prior.as_ref()) {
+            return Err(Error::InvariantViolation(
+                "an inherited coverage row does not continue its chain",
+            ));
+        }
+        // A withdrawn summary still covers its steps; a corrupt binding refuses.
+        verify_summary(dbs, &*txn, &alias)?;
+        let key = (alias.run_id, alias.summary_id);
+        let written = WrittenCoverage {
+            row: alias,
+            writer: None,
+        };
+        WRITTEN.put(dbs, txn, &key, &written)?;
+        prior = Some(alias);
     }
     Ok(())
 }
