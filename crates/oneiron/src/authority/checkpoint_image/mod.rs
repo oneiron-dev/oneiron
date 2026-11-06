@@ -70,14 +70,23 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// 7907). 18: a replay delta keeps a map field's changed entries alone (FIX 11262). 19: anchors
 /// sign joins (FIX 8498). 20: the owner work fold keeps the owner's export supplement import marks
 /// (FIX 12062). 21: the fold keeps each repository's owner origin cuts (FIX 15740). 22: the fold
-/// keeps each predecessor device key's owner-named successor (FIX 11135).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 22;
+/// keeps each predecessor device key's owner-named successor (FIX 11135). 23: replay
+/// anchors use only the first parent and overflow keeps a whole-state suffix (FIX 11762).
+/// 24: residence compaction excludes the writing install's checkpoint metadata (FIX 18583).
+/// 25: a pact keeps the signed nonce and the consent epoch its scope commitment is keyed under
+/// (FIX 11730). 26: the fold counts a removal-archive consume's slip consumed (FIX 11862).
+/// 27: the fold admits carrier-signed membership execution records, an image carries their
+/// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 27;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
 pub const AUTHORITY_CHECKPOINT_V2_ID_CONTEXT: &str = "oneiron/authority/checkpoint-v2/id/v1";
-/// The largest encoded image a vault writes or decodes.
-pub const AUTHORITY_CHECKPOINT_V2_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// The encoded size past which a builder compacts its optional replay and
+/// residence evidence ([`AuthorityCheckpointV2::compact_optional_evidence`],
+/// FIX 11400): an optional-compaction trigger, not a total-image ceiling.
+/// Mandatory signed bodies may exceed this trigger.
+pub const AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES: usize = 64 * 1024 * 1024;
 /// The context of an archive's content id ([`authority_archive_id`]).
 pub const AUTHORITY_ARCHIVE_ID_CONTEXT: &str = "oneiron/authority/archive/id/v1";
 
@@ -192,8 +201,8 @@ pub struct AuthorityCheckpointV2 {
     /// mark that the image keeps none (FIX 3007, [`ReplayEvidence`]).
     pub(super) replay: ReplayEvidence,
     /// Whether the image dropped its residence directive and result bodies
-    /// to fit the size cap (FIX 11400,
-    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`]): true where [`Self::within_cap`]
+    /// past the optional-compaction trigger (FIX 11400,
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`]): true where [`Self::compact_optional_evidence`]
     /// dropped them, as before #4095 carried them, so a fold past it asks
     /// for that history as at fold 14. False, and omitted from the encoding,
     /// where the image keeps them.
@@ -243,7 +252,6 @@ pub(super) fn checkpoint_image_id(encoded: &[u8]) -> [u8; 32] {
 pub(super) fn covered_of(bytes: &[u8]) -> Result<Vec<AuthorityEntryHash>> {
     let body = bytes
         .strip_prefix(AUTHORITY_CHECKPOINT_V2_DOMAIN)
-        .filter(|_| bytes.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES)
         .ok_or_else(|| refused("checkpoint image framing"))?;
     let coverage: CoveredOnly =
         rmp_serde::from_slice(body).map_err(|_| refused("checkpoint image coverage"))?;
@@ -255,25 +263,19 @@ pub(super) fn covered_of(bytes: &[u8]) -> Result<Vec<AuthorityEntryHash>> {
 
 impl AuthorityCheckpointV2 {
     /// The canonical bytes: the v2 domain, then named MessagePack, after the
-    /// shape check. An image past the size cap does not encode.
+    /// shape check. There is no total-image policy ceiling.
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.shape()?;
         let mut bytes = AUTHORITY_CHECKPOINT_V2_DOMAIN.to_vec();
         rmp_serde::encode::write_named(&mut bytes, self)
             .map_err(|_| refused("checkpoint image does not encode"))?;
-        if bytes.len() > AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
-            return Err(refused("checkpoint image exceeds its size cap"));
-        }
         Ok(bytes)
     }
 
-    /// Strict decoding: the size cap, the domain, the whole body consumed,
-    /// the shape check, and canonical re-encoding. A decoded image is
-    /// checked, not trusted.
+    /// Strict decoding: the domain, the whole body consumed, the shape
+    /// check, and canonical re-encoding. A decoded image is checked, not
+    /// trusted. There is no total-image policy ceiling.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
-            return Err(refused("checkpoint image exceeds its size cap"));
-        }
         let body = bytes
             .strip_prefix(AUTHORITY_CHECKPOINT_V2_DOMAIN)
             .ok_or_else(|| refused("checkpoint image domain"))?;
@@ -323,26 +325,46 @@ impl AuthorityCheckpointV2 {
         matches!(self.per_parent.get(hash), Some(None)) || self.replay.rejected(hash)
     }
 
-    /// `self` as it encodes, its replay evidence dropped for
-    /// [`AUTHORITY_REPLAY_OVERFLOW`] where the image would otherwise pass
-    /// the size cap (CALLS AUTHORITY_REPLAY_OVERFLOW), then its residence
-    /// directive and result bodies dropped for
-    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] where it still would (FIX
-    /// 11400, CALLS AUTHORITY_RESIDENCE_BODY_OVERFLOW). An image that fits
-    /// keeps both; where both fallbacks still pass the cap the caller
-    /// refuses as today, with no new refusal here.
-    pub(super) fn within_cap(mut self) -> Result<Self> {
-        let size = rmp_serde::to_vec_named(&self)
-            .map_err(|_| refused("checkpoint image does not encode"))?
-            .len();
-        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
-            return Ok(self);
+    /// Bounds replay by its own encoded points, retaining a self-contained
+    /// parents-first suffix on overflow. Residence eligibility excludes replay
+    /// and writer-local metadata, so neither can newly drop residence bodies.
+    /// Mandatory signed bodies stay whole.
+    pub(super) fn compact_optional_evidence(mut self) -> Result<Self> {
+        if let ReplayEvidence::Rows(points) = &self.replay {
+            let partial = points.len() < self.covered.len() - self.per_parent.len();
+            if partial
+                || replay::replay_encoded_size(&self.replay)?
+                    > AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES
+            {
+                let parents: BTreeMap<_, _> = self
+                    .rows
+                    .iter()
+                    .filter(|(hash, _)| !self.per_parent.contains_key(*hash))
+                    .map(|(hash, row)| (*hash, row.parents.clone()))
+                    .collect();
+                self.replay =
+                    ReplayEvidence::full_state_suffix(&parents_first_of(&parents), &|hash| {
+                        self.replay.state_at(hash)
+                    })?;
+            }
         }
-        self.replay = AUTHORITY_REPLAY_OVERFLOW;
-        let size = rmp_serde::to_vec_named(&self)
-            .map_err(|_| refused("checkpoint image does not encode"))?
-            .len();
-        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
+        let kept = std::mem::replace(&mut self.replay, AUTHORITY_REPLAY_OVERFLOW);
+        // Root attestation substitutes these writer-local fields after rebuilding.
+        // They must not change which residence bodies either fold keeps.
+        let parent = self.parent.take();
+        let archives = std::mem::take(&mut self.archive_manifests);
+        let held = std::mem::take(&mut self.unresolved.held);
+        let missing = std::mem::take(&mut self.unresolved.missing);
+        let encoded =
+            rmp_serde::to_vec_named(&self).map_err(|_| refused("checkpoint image does not encode"));
+        self.replay = kept;
+        self.parent = parent;
+        self.archive_manifests = archives;
+        self.unresolved.held = held;
+        self.unresolved.missing = missing;
+        if encoded?.len() + AUTHORITY_CHECKPOINT_V2_DOMAIN.len()
+            <= AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES
+        {
             return Ok(self);
         }
         for row in self.rows.values_mut() {
@@ -377,6 +399,7 @@ impl AuthorityCheckpointV2 {
                 .iter()
                 .filter(|hash| !self.per_parent.contains_key(*hash))
                 .copied(),
+            &|hash| self.rows.get(hash).map(|row| row.parents.clone()),
         )?;
         self.shape_state()?;
         self.shape_held_back()?;
@@ -631,7 +654,7 @@ impl Vault {
     /// and, with `only`, of the held rows it names alone: the image a root
     /// rebuilds another host's from, to check it (FIX 4882). Its residence
     /// bodies fall back for [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] where it
-    /// would otherwise pass the cap (FIX 11400).
+    /// would otherwise pass the optional-compaction trigger (FIX 11400).
     pub(super) fn build_authority_checkpoint_v2_as_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -797,7 +820,7 @@ impl Vault {
                 .map_err(|_| refused("checkpoint image does not encode"))?,
         )
         .map_err(|_| refused("checkpoint image does not decode"))?
-        .within_cap()?;
+        .compact_optional_evidence()?;
         normalized.encode()?;
         Ok(normalized)
     }

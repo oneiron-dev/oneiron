@@ -31,7 +31,7 @@ impl ModelCallBinding {
                 locality: rung.offer.binding.locality,
                 prompt: rung.prompt.clone(),
             },
-            route: shadow_capture::route_pin(rung),
+            route: Some(shadow_capture::route_pin(rung)),
         }
     }
 }
@@ -62,7 +62,7 @@ impl OfferLadder {
             prompt: prompt.clone(),
         };
         let route = if self.exact_prompt().is_some() {
-            answered.and_then(shadow_capture::route_pin)
+            answered.map(shadow_capture::route_pin)
         } else {
             None
         };
