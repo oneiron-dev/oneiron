@@ -51,7 +51,7 @@ impl Drop for ModelPriceCapture {
 }
 
 impl VaultUsage {
-    /// Captures this run's native prepared settlements until the guard drops.
+    /// Captures this run's native prepared settlements until finish or drop.
     /// Callers must match the captured event to their actual physical call.
     pub(crate) fn capture_model_prices(self: &Arc<Self>, instance: EntityId) -> ModelPriceCapture {
         let rows = Arc::new(Mutex::new(Vec::new()));
