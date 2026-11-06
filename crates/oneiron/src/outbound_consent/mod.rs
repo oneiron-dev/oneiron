@@ -60,6 +60,7 @@ pub use self::connector_call_input::ConnectorCallInput;
 pub use self::connector_call_input_resume::{
     ConnectorResumeProtocol, ConnectorResumeState, OpenedConnectorResume,
 };
+pub(crate) use self::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,
 };
