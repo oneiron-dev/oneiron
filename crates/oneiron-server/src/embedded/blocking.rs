@@ -9,6 +9,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use anyhow::Context as _;
 use axum::body::Bytes;
+use oneiron_remote::HttpsSharedInvitationAcceptance;
 use oneiron_vault_contract::host::HostLimits;
 use oneiron_vault_contract::host_adapters::AppHost;
 use tokio::runtime::{Handle, Runtime};
@@ -18,7 +19,7 @@ use super::engine::{
     ensure_app_thread,
 };
 use super::failure::{EngineErrorKind, cause, failure};
-use crate::config::ServeConfig;
+use crate::config::{ServeConfig, SharedEnvConfig};
 
 /// An [`EmbeddedConnection`] from a [`BlockingEngine`], whose calls block an
 /// app thread on that engine's runtime.
@@ -122,6 +123,27 @@ impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
     /// The open vault, to share; refused once closed.
     pub fn vault(&self) -> anyhow::Result<Arc<oneiron::Vault>> {
         self.with_running(|running| Ok(Arc::clone(running.engine.vault())))
+    }
+
+    /// [`EmbeddedEngine::bootstrap_shared_env`] on this engine's runtime.
+    /// Keeps the caller's original acceptance and separate import result
+    /// and committed flag. Refused from an async task or once closed; a
+    /// stopped engine must be woken before joining.
+    pub fn bootstrap_shared_env(
+        &self,
+        acceptance: &Arc<HttpsSharedInvitationAcceptance>,
+        entry: &SharedEnvConfig,
+        target_serve: &ServeConfig,
+    ) -> anyhow::Result<(anyhow::Result<Arc<oneiron::Vault>>, bool)> {
+        self.with_running(|running| {
+            running
+                .runtime
+                .block_on(
+                    running
+                        .engine
+                        .bootstrap_shared_env(acceptance, entry, target_serve),
+                )
+        })
     }
 
     /// [`EmbeddedEngine::request`].
