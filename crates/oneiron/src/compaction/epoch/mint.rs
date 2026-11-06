@@ -10,7 +10,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 use crate::registry::ENTITY_TYPE_SUMMARY;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::vault::Vault;
