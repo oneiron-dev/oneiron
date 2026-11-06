@@ -253,7 +253,9 @@ impl Vault {
     ) -> Result<bool> {
         let id = &batch.key.0;
         let mut wtxn = self.store.env.write_txn()?;
-        let progress = match DISPATCH_BATCH.get(&self.store, &wtxn, &batch.key)? {
+        let stored = DISPATCH_BATCH.get(&self.store, &wtxn, &batch.key)?;
+        let started = stored.is_none();
+        let progress = match stored {
             Some(progress) => {
                 if progress.effect_channel != batch.effect_channel || progress.count != batch.count
                 {
@@ -268,7 +270,13 @@ impl Vault {
                 .paced_until
                 .is_some_and(|until| until > accounting_now)
         {
-            // Nothing to charge: the writer aborts and the row stands.
+            // Nothing to charge. An empty batch's first call still files its
+            // row, so the ref names this batch from then on; otherwise the
+            // writer aborts and the row stands.
+            if started {
+                DISPATCH_BATCH.put(&self.store, &mut wtxn, &batch.key, &progress)?;
+                wtxn.commit()?;
+            }
             progress.report(tally);
             return Ok(true);
         }
