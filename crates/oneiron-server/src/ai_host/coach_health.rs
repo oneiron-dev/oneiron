@@ -147,6 +147,7 @@ impl CoachHealthHost for HostModel<'_> {
                 response_format: ResponseFormat::Text,
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),

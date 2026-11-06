@@ -317,6 +317,7 @@ impl ConsolidationExecutor<'_> {
 /// messages yet.
 fn verdict_shell(call: &RoleCall<'_>, scope: &oneiron_model::llm::Scope) -> Result<LlmRequest> {
     let keyless = call.inference.selected_keyless();
+    let paid = call.inference.selected_paid();
     Ok(LlmRequest {
         model: call.model.clone(),
         envelope: CallEnvelope {
@@ -338,6 +339,7 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &oneiron_model::llm::Scope) -> Resu
                 crate::Error::InvalidConfig("consolidation host binding needs locality".into())
             })?,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: Vec::new(),

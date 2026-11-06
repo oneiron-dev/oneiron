@@ -677,6 +677,7 @@ impl Child {
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {

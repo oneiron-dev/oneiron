@@ -130,6 +130,7 @@ impl ConsolidationExecutor<'_> {
             );
         };
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let labels = window_labels(&window);
         let source = labels
             .label(LabelKind::Source, window.source)
@@ -155,6 +156,7 @@ impl ConsolidationExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }
             .with_purpose_defaults(),
             messages: vec![

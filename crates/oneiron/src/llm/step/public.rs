@@ -144,14 +144,23 @@ async fn submit(
         owner.revalidate_in_txn(vault, txn)?;
         let queue = AttemptQueue::new(vault);
         let mut row = match SUBMISSIONS.get(&vault.store, txn, &id)? {
-            Some(row) => {
+            Some(mut row) => {
                 // An erased row's request is gone: its key answers erased.
-                if row.actor != actor || (!erased(&row) && row.input != input) {
+                if row.actor != actor
+                    || (!erased(&row) && !same_apart_from_host_stamps(&row.input, &input))
+                {
                     return Err(Error::InvalidConfig(
                         "model-step key already names another request or retry policy".into(),
                     )
                     .into());
                 }
+                // The saved row never keeps the host-only stamps (serde skips
+                // them): this admission's fresh attestation rides the resumed
+                // request, so a paid on-device step resumes on its paid line
+                // (FIX 18407).
+                let envelope = &mut row.input.request.envelope;
+                envelope.host_keyless = input.request.envelope.host_keyless;
+                envelope.host_paid = input.request.envelope.host_paid;
                 row
             }
             None if execution.is_none() => return Ok(None),
@@ -396,7 +405,7 @@ fn terminal_result(vault: &Vault, txn: &heed::RoTxn<'_>, row: &Submission) -> bo
 /// Whether `submitted` is the step `frozen` froze, apart from the fields a
 /// raw call's admission writes from the host's current configuration: the
 /// purpose's default tier, the model's catalog locality, the world it
-/// clears, and the host-only keyless stamp.
+/// clears, and the host-only keyless and paid stamps.
 fn same_frozen_request(frozen: &ModelStepSubmit, submitted: &ModelStepSubmit) -> bool {
     let mut submitted = submitted.clone();
     let envelope = &mut submitted.request.envelope;
@@ -404,7 +413,19 @@ fn same_frozen_request(frozen: &ModelStepSubmit, submitted: &ModelStepSubmit) ->
     envelope.tier.purpose_default = frozen.request.envelope.tier.purpose_default.clone();
     envelope.locality = frozen.request.envelope.locality.clone();
     envelope.host_keyless = frozen.request.envelope.host_keyless;
+    envelope.host_paid = frozen.request.envelope.host_paid;
     submitted == *frozen
+}
+
+/// Whether `saved`, a submission read back from its row, and `submitted`
+/// are one request apart from the host-only keyless and paid stamps, which
+/// the row never keeps and each admission attests afresh (FIX 18407).
+fn same_apart_from_host_stamps(saved: &ModelStepSubmit, submitted: &ModelStepSubmit) -> bool {
+    let mut submitted = submitted.clone();
+    let envelope = &mut submitted.request.envelope;
+    envelope.host_keyless = saved.request.envelope.host_keyless;
+    envelope.host_paid = saved.request.envelope.host_paid;
+    submitted == *saved
 }
 
 /// Read this owner's persisted receipt without a model backend or new lease.

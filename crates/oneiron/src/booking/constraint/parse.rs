@@ -180,6 +180,7 @@ fn constraint_parse_llm_request(
             },
             locality: config.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             system_message(format!(
