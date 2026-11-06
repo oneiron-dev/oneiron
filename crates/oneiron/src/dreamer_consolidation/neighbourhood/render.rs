@@ -70,9 +70,10 @@ fn entity_line(label: CallLabel, name: Option<&str>) -> String {
 }
 
 fn claim_line(label: CallLabel, claim: &KnownClaim, rel: Option<&[CallLabel]>) -> String {
+    let topic = topic_key_suffix(claim);
     match rel {
         Some(rel) => format!(
-            "  claim {label} {} = {} [{}]\n",
+            "  claim {label} {} = {} [{}]{topic}\n",
             claim.predicate,
             claim.value,
             rel.iter()
@@ -80,8 +81,19 @@ fn claim_line(label: CallLabel, claim: &KnownClaim, rel: Option<&[CallLabel]>) -
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
-        None => format!("  claim {label} {} = {}\n", claim.predicate, claim.value),
+        None => format!(
+            "  claim {label} {} = {}{topic}\n",
+            claim.predicate, claim.value
+        ),
     }
+}
+
+fn topic_key_suffix(claim: &KnownClaim) -> String {
+    claim
+        .topic_key
+        .as_ref()
+        .map(|topic| format!(" topic_key={topic}"))
+        .unwrap_or_default()
 }
 
 /// What an entity line counts against a page's room: its length with the
@@ -102,7 +114,8 @@ pub(super) fn claim_line_bytes(claim: &KnownClaim) -> usize {
         claim.predicate,
         claim.value
     )
-    .len();
+    .len()
+        + topic_key_suffix(claim).len();
     match &claim.rel {
         Some(ids) => {
             line + format!(
