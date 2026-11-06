@@ -33,6 +33,15 @@ clock. A host without a registered document-memory port keeps the existing
 measuring-only behavior. No separate count queue, timer or default limit is
 introduced.
 
+The retained OPC exporter keeps its original initial reservation and measured
+carry-over. If the output vector needs capacity beyond the output share of
+that estimate, it reserves only the additional capacity on the same hold
+before growing or copying, then settles any allocator excess before copying.
+The ZIP record order, compression, format widths and caller's archive ceiling
+are unchanged. The local hold still hands allocated output to the server's
+existing accounting on return. This does not establish complete compression
+scratch, allocator-reallocation peak or retained-output accounting.
+
 Keep does not reject an already-prepared proposal because its total answer
 count exceeds the current batch size. Existing authority, source-version,
 manifest, consume-once, resource and transaction checks remain. In particular,
