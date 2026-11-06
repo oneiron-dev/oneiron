@@ -35,12 +35,12 @@ impl Budget {
     }
 }
 
-struct Backing {
+pub(super) struct Backing {
     budget: Budget,
     bytes: u64,
 }
 impl Backing {
-    fn new(budget: Budget) -> Self {
+    pub(super) fn new(budget: Budget) -> Self {
         Self { budget, bytes: 0 }
     }
 
@@ -57,6 +57,17 @@ impl Backing {
             }
         }
         self.bytes = bytes;
+        Ok(())
+    }
+
+    // Both guards belong to flows created with the same caller budget.
+    pub(super) fn absorb(&mut self, source: &mut Self) -> Result<()> {
+        let bytes = self
+            .bytes
+            .checked_add(source.bytes)
+            .ok_or(ContentTemplateError::Overflow)?;
+        self.bytes = bytes;
+        source.bytes = 0;
         Ok(())
     }
 }
@@ -135,6 +146,12 @@ impl<T> ScratchVec<T> {
 
     pub(super) fn drain(&mut self, range: std::ops::RangeFull) -> std::vec::Drain<'_, T> {
         self.values.drain(range)
+    }
+}
+impl ScratchVec<u8> {
+    pub(super) fn into_bytes_charged_to(mut self, destination: &mut Backing) -> Result<Vec<u8>> {
+        destination.absorb(&mut self.backing)?;
+        Ok(self.values)
     }
 }
 impl<T> AsRef<[T]> for ScratchVec<T> {

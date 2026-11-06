@@ -113,11 +113,11 @@ pub fn render_html_template(
     render_html_template_in(template, values, budget::Budget::UNADMITTED)
 }
 
-/// Native HTML rendering with traversal-container backing admitted on `memory`
-/// and cooperative checks of the caller's absolute `work_deadline`.
+/// Native HTML rendering with traversal/layout backing and owned run-text bytes
+/// admitted on `memory`, plus cooperative checks of `work_deadline`.
 ///
-/// This does not count the DOM, CSS/merge strings, layout/PDF payloads or
-/// external codec allocations. Individual parser/codec calls are not preempted.
+/// This does not count the DOM, CSS/merge or normalization strings, other PDF
+/// payloads or external codec allocations. Parser/codec calls are not preempted.
 /// Admission refusals retain their native PDF error; an elapsed work deadline
 /// is [`ContentTemplateError::WorkDeadline`], not a fabricated memory refusal.
 pub fn render_html_template_admitted(
