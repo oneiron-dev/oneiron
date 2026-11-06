@@ -47,10 +47,12 @@ fn output(
     path: String,
     call: &str,
     result: GraphFsCommandOutput,
-) -> GraphFsOutput {
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> MemoryResult<GraphFsOutput> {
     let next_cursor = result
         .next_cursor()
-        .map(|cursor| tree.seal_public_cursor(call, cursor));
+        .map(|cursor| tree.seal_public_cursor_with_reader(call, cursor, reader))
+        .transpose()?;
     let plan = match result.decision() {
         GraphFsCoreutilsDecision::Pushdown => GraphFsPlan::Pushdown,
         GraphFsCoreutilsDecision::Walk => GraphFsPlan::Walk,
@@ -63,7 +65,7 @@ fn output(
             GraphFsEncoding::Base64,
         ),
     };
-    GraphFsOutput {
+    Ok(GraphFsOutput {
         mount: descriptor(tree, request),
         path,
         output,
@@ -71,7 +73,7 @@ fn output(
         next_cursor,
         plan,
         read_receipt,
-    }
+    })
 }
 
 impl Memory<'_> {
@@ -181,9 +183,9 @@ impl Memory<'_> {
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key(verb, &input.path)?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
         let result = tree.cat_with_reader(&input.path, cursor.as_deref(), reader)?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_read_link(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsLinkView> {
@@ -227,9 +229,9 @@ impl Memory<'_> {
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.ls", (&input.path, input.by_time))?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
         let result = tree.ls_with_reader(&input.path, input.by_time, cursor.as_deref(), reader)?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_find(&self, input: GraphFsFindRequest) -> MemoryResult<GraphFsOutput> {
@@ -262,10 +264,10 @@ impl Memory<'_> {
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.find", (&input.path, input.newer_than))?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
         let result =
             tree.find_with_reader(&input.path, input.newer_than, cursor.as_deref(), reader)?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_grep(&self, input: GraphFsGrepRequest) -> MemoryResult<GraphFsOutput> {
@@ -304,7 +306,7 @@ impl Memory<'_> {
             "graph_fs.grep",
             (&input.path, &input.pattern, input.recursive),
         )?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
         let result = tree.grep_with_reader(
             &input.pattern,
             &input.path,
@@ -312,7 +314,7 @@ impl Memory<'_> {
             cursor.as_deref(),
             reader,
         )?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_head(&self, input: GraphFsHeadRequest) -> MemoryResult<GraphFsOutput> {
@@ -346,9 +348,9 @@ impl Memory<'_> {
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let lines = input.lines.unwrap_or(10);
         let call = call_key("graph_fs.head", (&input.path, lines))?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
         let result = tree.head_with_reader(&input.path, lines, cursor.as_deref(), reader)?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 
     pub fn graph_fs_wc(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsOutput> {
@@ -382,6 +384,6 @@ impl Memory<'_> {
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.wc", &input.path)?;
         let result = tree.wc_with_reader(&input.path, reader)?;
-        Ok(output(&tree, &input.mount, input.path, &call, result))
+        output(&tree, &input.mount, input.path, &call, result, reader)
     }
 }
