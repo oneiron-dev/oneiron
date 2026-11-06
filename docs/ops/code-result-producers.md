@@ -49,8 +49,10 @@ A newly measured body's manifest carries `text_encoding: "utf-8"` only when
 `BodyFacts.text` confirms that its whole final byte stream is valid UTF-8. The
 meter checks across frame boundaries; an unfinished final code point is not
 classified as text. Measurement follows custody sweeps and their final tail, so this is a
-fact about the stored bytes, not the producer's original value. A binary body,
-a context-only reference, or a projection with no measured body keeps `None`.
+fact about the stored bytes, not the producer's original value. It records the
+engine's validated UTF-8 reading; it does not recover a producer-declared
+charset. A binary body, a context-only reference, or a projection with no
+measured body keeps `None`.
 
 Encoding publishes with the existing manifest and is a required nullable replay
 field. Cards include it only when known. It is not a grant, producer-origin proof,
