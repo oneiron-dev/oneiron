@@ -22,7 +22,7 @@ use super::model::{
 };
 
 use super::readdir::{
-    normalize_path_with_reader, parse_entity_id, path_components, sealed_is_absent,
+    normalize_path_with_reader, parse_entity_id, path_components_with_reader, sealed_is_absent,
 };
 
 use super::paging::{CommandOutputBuilder, SealedPosition, TemporalCursor};
@@ -568,7 +568,9 @@ impl GraphFsResolver<'_, '_> {
             if !sealed_is_absent(self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id))? {
                 continue;
             }
-            let Some(line) = self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id)? else {
+            let Some(line) =
+                self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id, reader)?
+            else {
                 continue;
             };
             if !out.try_push(line.as_bytes()) {
@@ -594,6 +596,7 @@ impl GraphFsResolver<'_, '_> {
         rtxn: &heed::RoTxn<'_>,
         path: &str,
         id: &EntityId,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<String>> {
         let entity_type = self.entity_type_in(rtxn, id)?;
         let is_claim = entity_type == Some(ENTITY_TYPE_CLAIM);
@@ -608,17 +611,25 @@ impl GraphFsResolver<'_, '_> {
             "/claims" | "/claims/by-id" if is_claim => format!("/claims/{}", id.to_hex()),
             "/entities" => format!("/entities/{}", id.to_hex()),
             path if path.starts_with("/entities/") && path.ends_with(&id.to_hex()) => {
-                path.to_owned()
+                copy_text_parts(&[path], reader, self.options.page_byte_cap)?
             }
             _ => return Ok(None),
         };
-        Ok(Some(format!("{output}\n")))
+        Ok(Some(copy_text_parts(
+            &[&output, "\n"],
+            reader,
+            self.options.page_byte_cap,
+        )?))
     }
 
-    pub(super) fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
-        let components = path_components(path)?;
+    pub(super) fn coreutils_path_visible(
+        &self,
+        path: &str,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<bool> {
+        let components = path_components_with_reader(path, reader, self.options.page_byte_cap)?;
         if self.snapshot.is_some() {
-            return self.snapshot_visible(path);
+            return self.snapshot_visible(path, reader);
         }
         match components.as_slice() {
             ["claims", "by-id"] | ["claims", "by-time"] | ["claims", "by-time", _] => Ok(true),
