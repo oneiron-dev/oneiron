@@ -17,12 +17,12 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use super::SessionHintCarrier;
-use crate::session::SessionHint;
+use super::{QueuedSessionHint, SessionHintCarrier};
+use crate::session::{SessionHint, SessionHintEffect};
 
 #[derive(Debug, Default)]
 pub(super) struct SessionHintQueue {
-    hints: VecDeque<SessionHintCarrier>,
+    hints: VecDeque<QueuedSessionHint>,
     /// The ticket the next producer that has to wait takes.
     next_ticket: u64,
     /// The waiting ticket whose turn it is; `next_ticket` while none waits.
@@ -36,28 +36,52 @@ impl SessionHintQueue {
     /// Activity for one key arriving within `coalesce_floor_ms`. `false` when
     /// the allocator has no room for a new entry; the queue is then as it was.
     pub(super) fn keep(&mut self, carrier: SessionHintCarrier, coalesce_floor_ms: u64) -> bool {
+        self.keep_with_completion(carrier, &mut None, coalesce_floor_ms)
+    }
+
+    /// [`Self::keep`] with the tracked completion the kept envelope owns
+    /// afterwards. A `false` return leaves `completion` intact — a tracked
+    /// waiter keeps its sender across failed keeps and retries with it.
+    pub(super) fn keep_with_completion(
+        &mut self,
+        carrier: SessionHintCarrier,
+        completion: &mut Option<std::sync::mpsc::Sender<SessionHintEffect>>,
+        coalesce_floor_ms: u64,
+    ) -> bool {
         if carrier.hint == SessionHint::Activity
             && let Some(last) = self.hints.back_mut()
-            && last.hint == SessionHint::Activity
-            && last.key == carrier.key
+            && last.carrier.hint == SessionHint::Activity
+            && last.carrier.key == carrier.key
             && carrier
                 .first
                 .arrival_ms
-                .saturating_sub(last.last.arrival_ms)
+                .saturating_sub(last.carrier.last.arrival_ms)
                 < coalesce_floor_ms
         {
-            last.aggregate_activity(carrier.first.claimed_ms, carrier.first.arrival_ms);
+            last.carrier
+                .aggregate_activity(carrier.first.claimed_ms, carrier.first.arrival_ms);
             return true;
         }
         if self.hints.try_reserve(1).is_err() {
             return false;
         }
-        self.hints.push_back(carrier);
+        let envelope = match completion.take() {
+            Some(sender) => QueuedSessionHint::tracked(carrier, sender),
+            None => QueuedSessionHint::untracked(carrier),
+        };
+        self.hints.push_back(envelope);
         true
     }
 
-    pub(super) fn pop_front(&mut self) -> Option<SessionHintCarrier> {
+    pub(super) fn pop_front(&mut self) -> Option<QueuedSessionHint> {
         self.hints.pop_front()
+    }
+
+    /// Drops every queued envelope WITHOUT touching the waiter line: tracked
+    /// waiters read the dropped senders as closed, while producers still in
+    /// line leave through their own receiver-gone check.
+    pub(super) fn clear(&mut self) {
+        self.hints.clear();
     }
 
     /// Whether no producer waits for room.

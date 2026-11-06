@@ -11,6 +11,19 @@ use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use std::collections::BTreeSet;
 
+/// A live-entity read's store error or body-admission error.
+#[derive(Debug)]
+pub(crate) enum BodyReadError<E> {
+    Store(crate::Error),
+    Admission(E),
+}
+
+impl<E> From<crate::Error> for BodyReadError<E> {
+    fn from(error: crate::Error) -> Self {
+        Self::Store(error)
+    }
+}
+
 impl Vault {
     /// [`EntityStore::port_entity_get`] read through `store`, a room's view
     /// included. A NOTE's document, an entity document and an LFS chunk's
@@ -21,43 +34,85 @@ impl Vault {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityRecord>> {
-        let Some(mut row) = store.port_entity_record(txn, id)? else {
+        match self
+            .live_entity_in_txn_with_body_admission(store, txn, id, |_| Ok::<(), crate::Error>(()))
+        {
+            Ok(Some((row, _guard))) => Ok(Some(row)),
+            Ok(None) => Ok(None),
+            Err(BodyReadError::Store(error)) => Err(error),
+            Err(BodyReadError::Admission(error)) => Err(error),
+        }
+    }
+
+    /// [`Self::live_entity_in_txn`] with file-plane and plain inline ASSET
+    /// body bytes admitted before their output allocation. Record-head and
+    /// NOTE projections keep their read path without invoking `admit`.
+    /// The guard rides with the row through the caller's remaining checks.
+    pub(crate) fn live_entity_in_txn_with_body_admission<G, E>(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        admit: impl FnOnce(u64) -> std::result::Result<G, E>,
+    ) -> std::result::Result<Option<(EntityRecord, Option<G>)>, BodyReadError<E>> {
+        let Some(raw) = store
+            .entities()
+            .get(txn, id.as_bytes())
+            .map_err(crate::Error::from)?
+        else {
             return Ok(None);
         };
-        if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(crate::secret_record::reject_secret_custody_byte());
+        let (header, body) = super::lmdb_query::decode_record_parts(&raw)?;
+        if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(BodyReadError::Store(
+                crate::secret_record::reject_secret_custody_byte(),
+            ));
         }
         // Withdrawn words, a stale body of any kind, or a recorded source
         // that no longer stands read as absent.
-        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&self.store, txn, id, row.entity_type)?
-            || !super::safe_read::body_readable_in_txn(
-                store,
-                txn,
-                id,
-                &row.body,
-                super::safe_read::BodyStale::Withdrawn,
-            )?
-        {
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+            &self.store,
+            txn,
+            id,
+            header.entity_type,
+        )? || !super::safe_read::body_readable_in_txn(
+            store,
+            txn,
+            id,
+            body,
+            super::safe_read::BodyStale::Withdrawn,
+        )? {
             return Ok(None);
         }
         // A file-plane ASSET reads as its body, read from its file and
         // checked; the raw ports keep the manifest its row holds (FIX 3677).
-        if row.entity_type == ENTITY_TYPE_ASSET
-            && let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, &row.body)?
+        let (body, guard) = if header.entity_type == ENTITY_TYPE_ASSET
+            && let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, body)?
         {
-            row.body = self.asset_file_body(txn, &manifest)?;
-            return Ok(Some(row));
-        }
-        if crate::entity_doc::has_record_head(&self.store, txn, id)? {
-            if row.entity_type == ENTITY_TYPE_NOTE {
+            let guard = admit(manifest.facts.len).map_err(BodyReadError::Admission)?;
+            (self.asset_file_body(txn, &manifest)?, Some(guard))
+        } else if crate::entity_doc::has_record_head(&self.store, txn, id)? {
+            if header.entity_type == ENTITY_TYPE_NOTE {
                 crate::note::ensure_citations_ready(&self.store, txn, *id)?;
             }
-            row.body = crate::entity_doc::resolve_record_body(&self.store, txn, id, &row.body)?;
-            return Ok(Some(row));
-        }
-        row.body = crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
-            .into_owned();
-        Ok(Some(row))
+            (
+                crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?,
+                None,
+            )
+        } else {
+            let projected =
+                crate::note::live_body_in_txn(&self.store, txn, id, header.entity_type, body)?;
+            let guard = if header.entity_type == ENTITY_TYPE_ASSET {
+                Some(admit(projected.len() as u64).map_err(BodyReadError::Admission)?)
+            } else {
+                None
+            };
+            (projected.into_owned(), guard)
+        };
+        Ok(Some((
+            super::lmdb_query::record_from_parts(header, body),
+            guard,
+        )))
     }
 }
 
@@ -78,7 +133,7 @@ impl EntityStore for Vault {
     fn port_entity_delete(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
         // The public delete facade still owns publish/receipt/sweep ordering.
         let (existed, vector, graph, neighbors) =
-            crate::batch::deindex_entity(&self.store, txn, id)?;
+            crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(self), txn, id)?;
         crate::store::ppr_cache_invalidation::invalidate_ppr_for_delete(
             &self.store,
             txn,

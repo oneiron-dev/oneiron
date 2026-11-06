@@ -36,8 +36,8 @@ use crate::authority::AuthorityFold;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::home_handoff_custody::{
-    Content, Installed, KeyRef, LiveTarget, ReceiveWriter, SessionBinding, TransitSeal,
-    VerifiedHolder, export, holder_retired, holder_retirements, install_received, open_content,
+    Installed, KeyRef, KeyState, LiveTarget, ReceiveWriter, SessionBinding, TransitSeal,
+    VerifiedHolder, export, holder_retired, holder_retirements, install_received, key_state,
     retire,
 };
 
@@ -291,14 +291,11 @@ pub(crate) fn retire_held(vault: &Vault, requester: EntityId, keys: &[String]) -
 }
 
 /// Whether this node keeps no live copy of key `key`: retired here, or
-/// never held. Probed by opening nothing under it: a retired key reads as
-/// erased and a missing one as unavailable, while a live one refuses the
-/// empty bytes.
+/// never held. A staged retirement is not proof that its live key is gone;
+/// a custody fault leaves the holder's debt pending.
 fn no_live_copy(vault: &Vault, key: KeyRef) -> bool {
-    matches!(
-        open_content(&vault.store, key, &[], &[]),
-        Ok(Content::Erased | Content::Unavailable(_))
-    )
+    key_state(&vault.store, key)
+        .is_ok_and(|state| matches!(state, KeyState::Retired | KeyState::Missing))
 }
 
 /// The holder's half: those of `keys` this node keeps no live copy of.

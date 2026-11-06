@@ -6,6 +6,7 @@ use super::{DocAuthorization, EntityDoc, TextField, storage};
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, EntityStoreRead, TombstoneStoreRead};
 use crate::scope_summary::ScopeSummaryMetadata;
+use crate::store::StoreRead;
 use crate::{EntityId, Vault, WriteActor};
 
 fn summary_doc(
@@ -13,20 +14,39 @@ fn summary_doc(
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<(storage::Head, EntityDoc)> {
-    let state = vault.store.port_deletion_state(txn, entity)?;
+    summary_doc_through_in(&vault.store.read(), txn, entity)
+}
+
+fn summary_doc_through_in(
+    dbs: &StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<(storage::Head, EntityDoc)> {
+    let state = dbs.port_deletion_state(txn, entity)?;
     if state.deleted
-        || vault
-            .store
+        || dbs
             .port_entity_record(txn, entity)?
             .is_none_or(|row| row.entity_type != crate::registry::ENTITY_TYPE_SUMMARY)
     {
         return Err(Error::EntityNotFound);
     }
     let head = storage::ENTITY_DOC_HEAD
-        .get(&vault.store, txn, &crate::side_table::HexId(*entity))?
+        .get(dbs, txn, &crate::side_table::HexId(*entity))?
         .ok_or(Error::EntityNotFound)?;
-    let doc = storage::load(&vault.store, txn, &head)?;
+    let doc = storage::load(dbs, txn, &head)?;
     Ok((head, doc))
+}
+
+// A generic metadata clear and an empty native memo read identically.
+fn keep_memo(doc: &EntityDoc) -> Result<String> {
+    let metadata = doc.metadata()?;
+    match metadata.get("keep") {
+        None | Some(rmpv::Value::Nil) => Ok(String::new()),
+        Some(value) => value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(Error::CorruptedIndex("summary keep metadata")),
+    }
 }
 
 pub(crate) fn summary_meta_in_txn(
@@ -34,19 +54,22 @@ pub(crate) fn summary_meta_in_txn(
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<ScopeSummaryMetadata> {
-    let (_, doc) = summary_doc(vault, txn, entity)?;
+    summary_meta_through_in(&vault.store.read(), txn, entity)
+}
+
+pub(crate) fn summary_meta_through_in(
+    dbs: &StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<ScopeSummaryMetadata> {
+    let (_, doc) = summary_doc_through_in(dbs, txn, entity)?;
     let meta = doc.doc.get_map("meta");
     Ok(ScopeSummaryMetadata {
         purpose: storage::decode(
             &map_get_bytes(&meta, "purpose")
                 .ok_or(Error::CorruptedIndex("summary purpose metadata"))?,
         )?,
-        keep: doc
-            .metadata()?
-            .get("keep")
-            .and_then(rmpv::Value::as_str)
-            .ok_or(Error::CorruptedIndex("summary keep metadata"))?
-            .to_owned(),
+        keep: keep_memo(&doc)?,
         derivation: storage::decode(
             &map_get_bytes(&meta, "derivation")
                 .ok_or(Error::CorruptedIndex("summary derivation metadata"))?,
@@ -128,9 +151,12 @@ pub(crate) fn birth_summary_in_txn(
         &row.body,
         &pointer,
     )?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, &entity, &pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        &entity,
+        &pointer,
+    )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -165,6 +191,9 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, summary, actor)?;
             self.authorize_shared_content_write_in_txn(txn, *summary, &actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, summary)? {
+                return Err(refusal);
+            }
             let (mut head, doc) = summary_doc(self, txn, summary)?;
             if doc.frontier() != frontier {
                 return Err(Error::ConcurrentWrite(
@@ -267,14 +296,8 @@ pub(crate) fn open_summary_proposal(
         let (_, live) = summary_doc(vault, txn, &request.entity)?;
         if let Some(keep) = keep {
             let base = live.fork(&request.base)?;
-            let base_keep = base
-                .metadata()?
-                .get("keep")
-                .and_then(rmpv::Value::as_str)
-                .map(str::to_owned);
-            if summary_meta_in_txn(vault, txn, &request.entity)?.keep != keep
-                || base_keep.as_deref() != Some(keep)
-            {
+            let base_keep = keep_memo(&base)?;
+            if summary_meta_in_txn(vault, txn, &request.entity)?.keep != keep || base_keep != keep {
                 return Err(Error::ConcurrentWrite("summary keep memo changed").into());
             }
         }
@@ -306,8 +329,17 @@ pub(crate) fn open_summary_proposal(
         }
         // Pending output is still retained text. Its sources must reach the
         // entity's complete fork set when one of them is erased.
-        for source in &sources {
-            crate::ports::record_derived_edge_in_txn(&vault.store, txn, &request.entity, source)?;
+        for record in &bundle.forks {
+            let fork = EntityId::from_hex(&record.fork)?;
+            for source in &sources {
+                crate::ports::record_fork_dependency_in_txn(
+                    &vault.store,
+                    txn,
+                    &request.entity,
+                    source,
+                    &fork,
+                )?;
+            }
         }
         Ok::<_, oneiron_contracts::memory::MemoryError>((bundle, landed))
     })?;

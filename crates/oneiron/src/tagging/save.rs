@@ -379,7 +379,7 @@ pub(crate) fn save_shadow_output_in_txn(
     model: &str,
     now: u64,
 ) -> Result<Option<TurnTags>> {
-    let config = vault.config.tagging.as_ref().ok_or_else(|| {
+    let config = vault.tagging_marker_config().ok_or_else(|| {
         Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
     })?;
     let TurnInput::Ready { input: current, .. } = turn_text_in_txn(vault, txn, &turn)? else {
@@ -405,11 +405,11 @@ pub(crate) fn save_shadow_output_in_txn(
         envelope: envelope(
             &input_hash(input),
             model,
-            config,
+            &config,
             output.stack_sha16.as_deref(),
         ),
     };
-    save_in_txn(vault, txn, answer, config, now)?;
+    save_in_txn(vault, txn, answer, &config, now)?;
     tag_set_in_txn(&vault.store, txn, &turn)
 }
 

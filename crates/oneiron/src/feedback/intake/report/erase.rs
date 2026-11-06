@@ -59,9 +59,10 @@ fn hard_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
 
 /// Removes `id` from every cluster: the cluster it roots goes whole, an
 /// emptied one goes, and every other it was in is remade from the members
-/// left. One whose members no longer agree on their dimensions cannot be
-/// remade and is unusable to intake: it goes whole too, so the erase
-/// always lands. The root leg reads directly; the member leg reads through
+/// left. If their dimensions disagree, keep the members matching the
+/// stored centroid's dimension, which intake uses to select this cluster.
+/// An empty or still unusable cluster goes whole, so the erase always lands.
+/// The root leg reads directly; the member leg reads through
 /// the by-member index (FIX 10835). A cluster row that does not decode is
 /// left as it is (FIX 10836); a storage fault still fails the erase.
 fn forget_member_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
@@ -101,9 +102,24 @@ fn forget_member_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId)
             CLUSTERS.put(store, txn, &root, &cluster)?;
             CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
         } else {
-            CLUSTERS.delete(store, txn, &root)?;
+            // Intake selects this dimension before reading the members.
+            // Keep its coherent survivors rather than dropping them with strays.
+            let dimensions = cluster.centroid.len();
+            let before = cluster_member_ids(&cluster);
+            cluster
+                .members
+                .retain(|_, vector| vector.len() == dimensions);
+            let after = cluster_member_ids(&cluster);
+            for removed in before.difference(&after) {
+                CLUSTER_BY_MEMBER.delete(store, txn, &(*removed, root))?;
+            }
+            if !cluster.members.is_empty() && recompute_centroid(&mut cluster).is_ok() {
+                CLUSTERS.put(store, txn, &root, &cluster)?;
+            } else {
+                CLUSTERS.delete(store, txn, &root)?;
+                drop_cluster_membership(store, txn, &root, &cluster)?;
+            }
             CLUSTER_BY_MEMBER.delete(store, txn, &(*id, root))?;
-            drop_cluster_membership(store, txn, &root, &cluster)?;
         }
     }
     Ok(())

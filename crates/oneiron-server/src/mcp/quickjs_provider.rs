@@ -1,10 +1,11 @@
 //! Production MCP provider over the hash-pinned engine QuickJS component.
 
 use super::{
-    McpCodeModeProvider, ModelCallBackend, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter,
-    RunCompactionSeat,
+    McpCodeModeProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
+    PlannedRoute, ReaderMeter, RunCompactionSeat,
 };
 use crate::ai_host::live_lease::LiveLeaseState;
+use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{
     CodeRunDeterminism, CompactionHostBinding, GatedActorWrite, ReaderJob, ScopedChildHosts,
@@ -38,6 +39,16 @@ const CHECKED_IN_MANIFEST: &str =
 /// The checked-in component, verified against its reviewed SHA-256 pin and
 /// readiness-probed. Compiles the component, so call it off the async runtime.
 pub fn checked_in_quickjs_runtime() -> oneiron::Result<QuickJsRuntimeFactory> {
+    checked_in_quickjs_runtime_with_wall(None)
+}
+
+/// The checked-in component with an optional per-step wall: `None` keeps
+/// `ComponentBudget::default()`'s own wall, the sole default; `Some` replaces
+/// only the wall. Verified and probed as above, so call it off the async
+/// runtime.
+pub fn checked_in_quickjs_runtime_with_wall(
+    step_wall: Option<std::time::Duration>,
+) -> oneiron::Result<QuickJsRuntimeFactory> {
     let invalid =
         || oneiron::Error::InvalidConfig("QuickJS manifest has no first-party pin".into());
     let manifest: serde_json::Value =
@@ -50,7 +61,11 @@ pub fn checked_in_quickjs_runtime() -> oneiron::Result<QuickJsRuntimeFactory> {
     for (index, byte) in pin.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
     }
-    QuickJsRuntimeFactory::from_component(CHECKED_IN_COMPONENT, pin, ComponentBudget::default())
+    let mut budget = ComponentBudget::default();
+    if let Some(wall) = step_wall {
+        budget.wall_time = wall;
+    }
+    QuickJsRuntimeFactory::from_component(CHECKED_IN_COMPONENT, pin, budget)
 }
 
 /// The lease the executor hands every call. The backend below admits and
@@ -74,6 +89,7 @@ pub struct McpQuickJsProvider {
     runtime: Arc<QuickJsRuntimeFactory>,
     backend: Arc<dyn LlmBackend>,
     model_call_backend: Option<ModelCallBackend>,
+    model_list_backend: Option<ModelListBackend>,
     lease: BudgetLease,
     config: EngineExecutorConfig,
     /// Builds each run's compaction seat; none keeps every window raw.
@@ -131,7 +147,10 @@ fn injected_meter(
     receipts: Arc<dyn RunReceiptSink>,
 ) -> ReaderMeter {
     Arc::new(
-        move |meter: BudgetGuard, payer: Option<PayerPerson>, _lease: Option<LiveLeaseState>| {
+        move |meter: BudgetGuard,
+              payer: Option<PayerPerson>,
+              _lease: Option<LiveLeaseState>,
+              _listed: Vec<AgentModel>| {
             Arc::new(InjectedRuns::funded(
                 Arc::clone(&backend),
                 meter,
@@ -154,7 +173,8 @@ fn injected_planned(
         move |meter: BudgetGuard,
               payer: Option<PayerPerson>,
               planned: &PlannedModel,
-              _lease: Option<LiveLeaseState>| {
+              _lease: Option<LiveLeaseState>,
+              _listed: Vec<AgentModel>| {
             Arc::new(
                 InjectedRuns::funded(Arc::clone(&backend), meter, Arc::clone(&receipts), payer)
                     .with_plan(planned.clone()),
@@ -208,6 +228,7 @@ impl McpQuickJsProvider {
             runtime,
             backend,
             model_call_backend: None,
+            model_list_backend: None,
             lease,
             config,
             compaction: None,
@@ -247,6 +268,13 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_model_call_backend(mut self, backend: ModelCallBackend) -> Self {
         self.model_call_backend = Some(backend);
+        self
+    }
+
+    /// The ordinary backend copied with one run's frozen model list.
+    #[must_use]
+    pub(crate) fn with_model_list_backend(mut self, backend: ModelListBackend) -> Self {
+        self.model_list_backend = Some(backend);
         self
     }
 
@@ -425,6 +453,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
             .as_ref()
             .map(|build| build(principal, session))
     }
+    fn backend_with_model_list(&self, listed: Vec<AgentModel>) -> Option<Arc<dyn LlmBackend>> {
+        self.model_list_backend.as_ref().map(|build| build(listed))
+    }
     fn compaction(
         &self,
         host: CompactionHostBinding,
@@ -463,23 +494,25 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
+        listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, None))
+            .map(|build| build(meter, payer, None, listed))
     }
     fn reader_backend_with_lease(
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
         lease: Option<LiveLeaseState>,
+        listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         if self.injected.is_some() {
             return None;
         }
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, lease))
+            .map(|build| build(meter, payer, lease, listed))
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()
@@ -494,10 +527,11 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
         planned: &PlannedModel,
+        listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         self.planned_meter
             .as_ref()
-            .map(|build| build(meter, payer, planned, None))
+            .map(|build| build(meter, payer, planned, None, listed))
     }
     fn planned_backend_with_lease(
         &self,
@@ -505,13 +539,14 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         payer: Option<PayerPerson>,
         planned: &PlannedModel,
         lease: Option<LiveLeaseState>,
+        listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         if self.injected.is_some() {
             return None;
         }
         self.planned_meter
             .as_ref()
-            .map(|build| build(meter, payer, planned, lease))
+            .map(|build| build(meter, payer, planned, lease, listed))
     }
     fn planned_compaction(
         &self,
@@ -542,9 +577,19 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig> {
         self.run_config(vault, run_id, task, || {
-            Ok(vault
+            vault
                 .get_code_run_replay_record(&run_id)?
-                .map(|record| record.determinism.frozen_unix_ms))
+                .map(|record| {
+                    record
+                        .determinism
+                        .map(|determinism| determinism.frozen_unix_ms)
+                        .ok_or_else(|| {
+                            oneiron::Error::InvalidConfig(
+                                "code run has unknown determinism".to_owned(),
+                            )
+                        })
+                })
+                .transpose()
         })
     }
     /// A session-bound run's first start is its room's record's: a resumed

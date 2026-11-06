@@ -41,7 +41,9 @@ mod root;
 mod root_doors;
 mod root_issue;
 mod root_work;
+mod sealed_update;
 mod session;
+mod side_row;
 mod state;
 mod vault_doors;
 mod vault_key;
@@ -61,7 +63,9 @@ pub use self::bundle::{
     retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
-pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant};
+pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
+#[cfg(feature = "sync")]
+pub(crate) use self::content::purge_world_mirrors_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
 pub use self::doors::WorldKeyStatus;
@@ -113,8 +117,8 @@ pub use self::pads::PromotedWorldPad;
 pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
-    destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,
-    pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
+    destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, legal_hold_pad_world_in_txn,
+    note_world_deleted_in_txn, pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
     reject_held_pad_world_in_txn, world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn,
     world_pad_windows_in_txn,
 };
@@ -123,18 +127,25 @@ pub(crate) use self::page_seal::{
     read_sealed, seal_read_only,
 };
 pub use self::page_seal::{
-    PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
-    page_seal_custody_path, page_seal_incarnations, page_seal_vault_id,
-    refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation,
+    PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, finish_restore_archive_mirror,
+    new_delivered_page_seal, new_page_seal, page_seal_custody_path, page_seal_incarnations,
+    page_seal_vault_id, refuse_unfinished_sealed_creation, remove_unfinished_sealed_creation,
     reopen_delivered_page_seal, unlock_page_seal, vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
-pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
+pub use self::root::{
+    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
+pub(crate) use self::sealed_update::{
+    OpenedWorldUpdate, SEALED_UPDATE_PART_BYTES, SealedUpdateKind, open_world_update,
+    seal_world_message,
+};
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
+pub(crate) use self::side_row::{WorldSideRowBinding, open_side_row, seal_side_row};
 pub use self::state::{WorldPadAvailability, WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};

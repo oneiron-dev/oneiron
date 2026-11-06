@@ -36,6 +36,7 @@
 
 mod asker;
 mod connector_reply;
+pub(super) mod feedback_triage;
 mod model_step;
 mod project_brief;
 mod requester;
@@ -60,6 +61,9 @@ use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::store::agent_record::AGENT_DEF_BODY_KEYS;
+use crate::store::attempt_manifest::{
+    erase_manifest_revision_pins, scrub_hard_erased_manifest_revisions_in_txn,
+};
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::write_envelope::WriteActor;
 use crate::{
@@ -233,11 +237,12 @@ fn names_no_agent(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result
 ///
 /// Storage errors, and a matching payload that cannot be rewritten.
 pub(crate) fn erase_attempt_payload_actor_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    erase_attempt_payload_actors_in_txn(store, txn, &BTreeSet::from([*actor]))
+    let store = write.store;
+    erase_attempt_payload_actors_in_txn(write, txn, &BTreeSet::from([*actor]))
 }
 
 /// Leaves every attempt payload whose dispatch target is among `actors`
@@ -258,12 +263,33 @@ pub(crate) fn erase_attempt_payload_actor_in_txn(
 ///
 /// Storage errors, and a matching payload that cannot be rewritten.
 pub(crate) fn erase_attempt_payload_actors_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
 ) -> Result<()> {
+    erase_attempt_payload_actors_owned_in_txn(write, txn, actors).map(|_| ())
+}
+
+/// Original accepted source subsets from the one native payload pass.
+/// Queue construction only; these facts do not grant erase authority.
+pub(crate) struct ErasedByoaPayloads(BTreeMap<AttemptId, BTreeSet<EntityId>>);
+
+impl ErasedByoaPayloads {
+    pub(crate) fn sources(&self) -> &BTreeMap<AttemptId, BTreeSet<EntityId>> {
+        &self.0
+    }
+}
+
+/// The same payload pass, retaining every task-owned BYOA row for the sealed
+/// erase/restore continuation. Incidental staged-job pinners are not owners.
+pub(in crate::attempt_queue) fn erase_attempt_payload_actors_owned_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+) -> Result<ErasedByoaPayloads> {
+    let store = write.store;
     if actors.is_empty() {
-        return Ok(());
+        return Ok(ErasedByoaPayloads(BTreeMap::new()));
     }
     let mut owners = BTreeSet::new();
     for actor in actors {
@@ -272,7 +298,10 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         }
     }
     // A BYOA row's task is the TASK its `task_ref` names, as canonical hex.
-    let tasks: BTreeSet<String> = actors.iter().map(EntityId::to_hex).collect();
+    let tasks: BTreeMap<String, EntityId> = actors
+        .iter()
+        .map(|actor| (actor.to_hex(), *actor))
+        .collect();
     // The planned intents an asker's erase took; the intents' own erase ran
     // first in this transaction (FIX 9181).
     let asker_intents =
@@ -281,6 +310,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let mut byoa = ByoaRows::default();
     let mut reply_jobs = Vec::new();
     let mut reply_body_events = BTreeSet::new();
+    let mut pin_candidates = BTreeSet::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -289,6 +319,14 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
+        if record.manifest.iter().any(|entry| {
+            entry
+                .revision
+                .as_ref()
+                .is_some_and(|(entity, _)| actors.contains(entity))
+        }) {
+            pin_candidates.insert(id);
+        }
         if let Some(event_id) =
             connector_reply::frozen_connector_event_id_for_erase(&record, actors)
         {
@@ -305,6 +343,10 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
                     record.payload = action.encode()?;
                     rewrites.push((raw.into_owned(), record));
                 }
+            }
+        } else if record.kind == crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND {
+            if feedback_triage::rewrite_in_txn(store, txn, &mut record)? {
+                rewrites.push((raw.into_owned(), record));
             }
         } else if record.kind == BYOA_ATTEMPT_KIND {
             byoa.gather(&raw, record, &tasks);
@@ -337,23 +379,56 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     }
     erase_program_admission_payloads_in_txn(store, txn, actors, &mut rewrites)?;
     model_step::erase_failure_reasons_in_txn(store, txn, actors, &mut rewrites)?;
-    let jobs = byoa.erase_copies(store, txn, &mut rewrites)?;
+    let (jobs, owned) = byoa.erase_copies(store, txn, &mut rewrites)?;
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
-    crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
-    crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
+    crate::dispatch_byoa::erase_staged_input_in_txn(write, txn, &jobs, actors)?;
+    crate::outbound::erase_connector_reply_results_in_txn(write, txn, &reply_jobs)?;
     crate::outbound::erase_connector_reply_bodies_for_events_in_txn(
-        store,
+        write,
         txn,
         &reply_body_events,
     )?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
+    // Payload rewrites win; a pin-only candidate is read only when no
+    // existing rewrite carries that row, so each archive mark moves once.
+    for (_, record) in &mut rewrites {
+        pin_candidates.remove(&record.id);
+        erase_manifest_revision_pins(&mut record.manifest, |entity| actors.contains(entity));
+    }
+    for id in pin_candidates {
+        let Some(raw) = store.attempt_records.get(txn, id.as_bytes())? else {
+            continue;
+        };
+        let Ok(mut record) = decode_record(&raw, id) else {
+            continue;
+        };
+        if erase_manifest_revision_pins(&mut record.manifest, |entity| actors.contains(entity)) {
+            rewrites.push((raw.into_owned(), record));
+        }
+    }
+    flush_rewrites_in_txn(store, txn, rewrites)?;
+    Ok(ErasedByoaPayloads(owned))
+}
+
+fn flush_rewrites_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    rewrites: Vec<(Vec<u8>, AttemptRecord)>,
+) -> Result<()> {
     // The erase authors nothing, so the plain encoder writes the row: the
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
     for (before, record) in rewrites {
+        if record.kind == crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND
+            && record.dedupe_key.is_none()
+        {
+            let original = decode_record(&before, record.id)?;
+            super::AttemptQueue::from_store(store)
+                .delete_owned_dedupe_entries_for_record(txn, &original)?;
+        }
         let after = encode_record(&record)?;
         store
             .attempt_records
@@ -411,8 +486,8 @@ fn erase_program_admission_payloads_in_txn(
 #[derive(Default)]
 struct ByoaRows {
     rows: BTreeMap<AttemptId, ByoaRow>,
-    /// The rows whose `task_ref` names an erased TASK.
-    tasks: BTreeSet<AttemptId>,
+    /// Original task/typed matches, before any CliAttempt source expansion.
+    sources: BTreeMap<AttemptId, BTreeSet<EntityId>>,
 }
 
 /// One kept BYOA row: its stored bytes, the row, and its payload when that
@@ -424,23 +499,17 @@ struct ByoaRow {
 }
 
 impl ByoaRows {
-    fn gather(&mut self, raw: &[u8], record: AttemptRecord, tasks: &BTreeSet<String>) {
+    fn gather(&mut self, raw: &[u8], record: AttemptRecord, tasks: &BTreeMap<String, EntityId>) {
         let payload = decode_byoa_attempt_payload(&record.payload).ok();
-        let task = record
-            .task_ref
-            .as_ref()
-            .is_some_and(|task| tasks.contains(task));
-        let typed = payload
-            .as_ref()
-            .is_some_and(|payload| dev_refs_match(payload, tasks));
+        let sources = matched_byoa_sources(&record, payload.as_ref(), tasks);
         let refers = payload
             .as_ref()
             .is_some_and(|payload| payload.work.is_some() || pins(payload).next().is_some());
-        if !task && !typed && !refers {
+        if sources.is_empty() && !refers {
             return;
         }
-        if task || typed {
-            self.tasks.insert(record.id);
+        if !sources.is_empty() {
+            self.sources.insert(record.id, sources);
         }
         let id = record.id;
         self.rows.insert(
@@ -462,9 +531,9 @@ impl ByoaRows {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         rewrites: &mut Vec<(Vec<u8>, AttemptRecord)>,
-    ) -> Result<BTreeSet<[u8; 32]>> {
-        let mut owned = self.tasks.clone();
-        for id in &self.tasks {
+    ) -> Result<(BTreeSet<[u8; 32]>, BTreeMap<AttemptId, BTreeSet<EntityId>>)> {
+        let mut owned = self.sources.clone();
+        for (id, sources) in &self.sources {
             let source = self
                 .rows
                 .get(id)
@@ -483,10 +552,14 @@ impl ByoaRows {
                 };
                 self.rows.insert(source, row);
             }
-            owned.insert(source);
+            // Only the original child's matches flow to its one-hop source.
+            owned
+                .entry(source)
+                .or_default()
+                .extend(sources.iter().copied());
         }
         let mut jobs = BTreeSet::new();
-        for id in &owned {
+        for id in owned.keys() {
             if let Some(payload) = self.rows.get(id).and_then(|row| row.payload.as_ref()) {
                 jobs.extend(pins(payload).map(|pin| pin.blake3));
             }
@@ -497,7 +570,7 @@ impl ByoaRows {
                 mut record,
                 payload,
             } = row;
-            let own = owned.contains(&id);
+            let own = owned.contains_key(&id);
             match payload {
                 Some(mut payload) => {
                     let changed = erase_byoa_payload(&mut payload, own, &jobs);
@@ -525,7 +598,7 @@ impl ByoaRows {
                 None => {}
             }
         }
-        Ok(jobs)
+        Ok((jobs, owned))
     }
 }
 
@@ -549,16 +622,27 @@ fn read_byoa_row(store: &Store, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<
     }))
 }
 
-/// Whether a dev-runner payload names an erased actor, diagnostic or evidence
-/// row by a typed reference (FIX 7621). No staged job text enters this match.
-fn dev_refs_match(payload: &ByoaAttemptPayload, erased: &BTreeSet<String>) -> bool {
-    let Some(refs) = payload.dev_refs.as_ref() else {
-        return false;
-    };
-    std::iter::once(&refs.actor)
-        .chain(refs.diagnostics.iter())
-        .chain(refs.evidence.iter())
-        .any(|id| erased.contains(&bytes_to_hex_lower(id)))
+/// The exact accepted erase sources that own this row, before payload scrubbing.
+fn matched_byoa_sources(
+    record: &AttemptRecord,
+    payload: Option<&ByoaAttemptPayload>,
+    tasks: &BTreeMap<String, EntityId>,
+) -> BTreeSet<EntityId> {
+    let mut sources = BTreeSet::new();
+    if let Some(actor) = record.task_ref.as_ref().and_then(|task| tasks.get(task)) {
+        sources.insert(*actor);
+    }
+    if let Some(refs) = payload.and_then(|payload| payload.dev_refs.as_ref()) {
+        for raw in std::iter::once(&refs.actor)
+            .chain(refs.diagnostics.iter())
+            .chain(refs.evidence.iter())
+        {
+            if let Some(actor) = tasks.get(&bytes_to_hex_lower(raw)) {
+                sources.insert(*actor);
+            }
+        }
+    }
+    sources
 }
 
 /// The staged jobs `payload` pins: its CLI connector's and its bound work's.
@@ -703,6 +787,7 @@ pub(crate) fn scrub_hard_erased_payload_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) {
+    scrub_hard_erased_manifest_revisions_in_txn(store, txn, &mut record.manifest);
     if record.kind == TURN_ACTION_ATTEMPT_KIND {
         // A turn action whose requester bears the marker writes back no
         // slip (FIX 10668), as the pass leaves it.

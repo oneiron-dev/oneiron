@@ -62,6 +62,7 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Row::VaultSecretsCodeRunLifts
+        | Row::VaultIngestAgUiImport
         | Row::VaultModelsManifestRead
         | Row::VaultModelsManifestReplace
         | Row::VaultModelsOneironerBind
@@ -130,6 +131,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCommitmentsFulfill
         | Row::VaultCommitmentsRelease
         | Row::VaultCommitmentsSupersede
+        | Row::VaultCommitmentsReminderRouteGet
+        | Row::VaultCommitmentsReminderRouteSet
         | Row::VaultPersonasPreview
         | Row::VaultPersonasExport
         | Row::VaultPersonasEdit
@@ -174,6 +177,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSkillsRestore
         | Row::VaultSkillsRulesSet
         | Row::VaultSkillsCodeAutoInstallSet
+        | Row::VaultSkillsFitSet
+        | Row::VaultSkillsAdvisoryAskSet
         | Row::VaultSkillsPermissionsApprove
         | Row::VaultSkillsOptimizeStart
         | Row::VaultSkillsOptimizeResult
@@ -453,6 +458,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstBaseline
         | Row::VaultFederationBurstPolicy
         | Row::VaultFederationBurstPolicySet
+        | Row::VaultSyncRetainedWorkWaitSet
+        | Row::VaultSyncQuarantineHeldEdits
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
@@ -494,6 +501,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultWeaveOwnerDigestRender
         | Row::VaultInboxConcernsReview
         | Row::VaultInboxLens
+        | Row::VaultProactivityDigest
         | Row::VaultInboxGroups
         | Row::VaultBudgetsLeaseOpen
         | Row::VaultBudgetsLease
@@ -539,6 +547,10 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCoachTrainingOffersPilotsComplete
         | Row::VaultCoachTrainingOffersPilotsGet
         | Row::VaultCoachTrainingOffersSources
+        | Row::VaultDraftersList
+        | Row::VaultDraftersStatus
+        | Row::VaultDraftersPolicySet
+        | Row::VaultDraftersRevert
         | Row::VaultCodeSymbolsDeclare
         | Row::VaultCodeSymbolsRenew
         | Row::VaultCodeSymbolsRelease
@@ -645,7 +657,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersDrainCommit
         | Row::VaultCustodyMembersDrainFolder
         | Row::VaultCustodyMembersReenrol
-        | Row::VaultMessageStreamsRefused => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultMessageStreamsRefused
+        | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
@@ -730,6 +743,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultOffRecordDiscard
         | Row::VaultOffRecordRecall
         | Row::VaultOffRecordNotesCreate
+        | Row::VaultOffRecordArtifactsSave
         | Row::VaultOffRecordClaimsUpsert
         | Row::SelfOffRecordExecute
         | Row::SelfOffRecordResultsList
@@ -767,7 +781,7 @@ pub(in crate::api::facade) fn door_admits(
         Row::VaultArtifactsReviewSlides => slide_reviewer(server, auth).map(drop),
         Row::VaultArtifactsAsk | Row::VaultArtifactsAdmit => artifact_asker(server, auth).map(drop),
         Row::SelfMemoryDiaryQuery | Row::SelfMemoryPadsRead | Row::SelfMemoryPadsAdminReads => {
-            diary_reader(server, auth).map(drop)
+            diary_reader(server, auth, verb).map(drop)
         }
         Row::VaultDecisionsAsksAnswer
         | Row::VaultDecisionsAsksClimb

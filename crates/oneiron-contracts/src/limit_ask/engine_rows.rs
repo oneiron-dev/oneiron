@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 136] = [
+    pub const ALL: [Self; 145] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -88,6 +88,7 @@ impl EngineLimit {
         Self::SealAnswerBytes,
         Self::SealMemoryAsks,
         Self::SealCrlBytes,
+        Self::SealOcspBytes,
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
@@ -142,6 +143,14 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::CodebaseManifestFiles,
+        Self::RequestedResultRows,
+        Self::EmbeddingDimensions,
+        Self::MemoryReasonEvidenceRows,
+        Self::MemoryReasonTokens,
+        Self::ContextEdgeHops,
+        Self::ContextNeighbors,
+        Self::ContextSelectedEdges,
     ];
 
     /// The config key that sets the row.
@@ -229,6 +238,7 @@ impl EngineLimit {
             Self::SealAnswerBytes => "limits.seal_answer_bytes",
             Self::SealMemoryAsks => "limits.seal_memory_asks",
             Self::SealCrlBytes => "limits.seal_crl_bytes",
+            Self::SealOcspBytes => "limits.seal_ocsp_bytes",
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
@@ -283,6 +293,14 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
+            Self::RequestedResultRows => "limits.requested_result_rows",
+            Self::EmbeddingDimensions => "limits.embedding_dimensions",
+            Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
+            Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::ContextEdgeHops => "limits.context_edge_hops",
+            Self::ContextNeighbors => "limits.context_neighbors",
+            Self::ContextSelectedEdges => "limits.context_selected_edges",
         }
     }
 
@@ -366,14 +384,14 @@ impl EngineLimit {
             Self::BlockedDetailBytes => 4096,
             Self::SealReferenceBytes => 256,
             Self::TripwireThreshold => 1024,
-            // The batch, principal, image byte and image count ceilings the
-            // e-sign sweeps, principals and signature upload refused past
-            // before Rule 5.
+            // The old sweep and principal refusal ceilings remain ask points.
             Self::EsignSweepDocuments => 100,
             Self::EsignSigningPrincipals => 256,
-            Self::EsignSignatureInputBytes => 2 << 20,
-            Self::EsignSignaturePngBytes => 2 << 20,
-            Self::EsignSignatureDocumentBytes => 64 << 20,
+            // The owner's signature-image byte ask points (ABC 57, 60, 61).
+            Self::EsignSignatureInputBytes => 256 << 20,
+            Self::EsignSignaturePngBytes => 256 << 20,
+            Self::EsignSignatureDocumentBytes => 4 << 30,
+            // The former recipient-image count ceiling is only an ask point.
             Self::EsignSignatureRecipientImages => 16,
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).
@@ -413,6 +431,7 @@ impl EngineLimit {
             // worth of reservations.
             Self::SealMemoryAsks => 256,
             Self::SealCrlBytes => 8 << 20,
+            Self::SealOcspBytes => 1 << 20,
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,
             Self::SealPreparedStreamBytes => 64 << 20,
@@ -492,6 +511,30 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // The legacy codebase snapshot manifest's threshold (FIX 74).
+            Self::CodebaseManifestFiles => 10_000_000,
+            // Two to the twentieth: far above any page a door serves in
+            // ordinary use. Past it the row asks, and the whole requested
+            // count is served.
+            Self::RequestedResultRows => 1_048_576,
+            // Two to the twentieth: far above any width a vault opens with
+            // in ordinary use. Past it the row asks, and the vault serves
+            // as opened.
+            Self::EmbeddingDimensions => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonEvidenceRows => 1_048_576,
+            // A configurable question boundary, not a ceiling: far above a
+            // question served in ordinary use. Past it the row asks, and the
+            // whole question is served.
+            Self::MemoryReasonTokens => 16_777_216,
+            // Owner-ruled ABC row 11 (FIX 62).
+            Self::ContextEdgeHops => 1_024,
+            // Owner-ruled ABC row 12 (FIX 63).
+            Self::ContextNeighbors => 1_048_576,
+            // Owner-ruled ABC row 13 (FIX 64).
+            Self::ContextSelectedEdges => 1_048_576,
         }
     }
 }

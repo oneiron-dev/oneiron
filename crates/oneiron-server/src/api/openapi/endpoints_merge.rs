@@ -118,6 +118,7 @@ pub(crate) fn openapi_document() -> Value {
     super::signing_paths::merge_signing_paths(&mut spec);
     super::signing_paths::merge_editor_paths(&mut spec);
     super::voice_bank_paths::merge_voice_bank_paths(&mut spec);
+    super::pairing_paths::merge_pairing_paths(&mut spec);
     merge_typed_rest_bodies(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);
