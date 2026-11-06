@@ -303,6 +303,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::DeviceSuccession(succession) => {
             super::device_succession::device_succession_value(succession)
         }
+        AuthorityOp::MembershipExecution(record) => {
+            super::membership_execution::membership_execution_value(record)
+        }
     }
 }
 
