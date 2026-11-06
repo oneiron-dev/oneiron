@@ -57,8 +57,9 @@ impl SyncClient {
         match sub_tag {
             window_sub_tags::UPDATE => {
                 let window = self.ensure_window(key.as_str())?;
-                let Some(admitted) = self.payload_as_admitted(payload, Some(&window.doc)) else {
-                    return Ok(SealedCheck::Admitted);
+                let admitted = match self.payload_as_admitted(payload, Some(&window.doc))? {
+                    Translated::Bytes(admitted) => admitted,
+                    Translated::Held => return Ok(SealedCheck::Held),
                 };
                 let payload: &[u8] = &admitted;
                 // A base window's import reads no staged world row.
@@ -107,10 +108,11 @@ impl SyncClient {
             }
             window_sub_tags::REPLACEMENT => {
                 let window = self.window(key.as_str());
-                let Some(admitted) =
-                    self.payload_as_admitted(payload, window.as_ref().map(|window| &window.doc))
-                else {
-                    return Ok(SealedCheck::Admitted);
+                let admitted = match self
+                    .payload_as_admitted(payload, window.as_ref().map(|window| &window.doc))?
+                {
+                    Translated::Bytes(admitted) => admitted,
+                    Translated::Held => return Ok(SealedCheck::Held),
                 };
                 let payload: &[u8] = &admitted;
                 let evidence = self.staged_entity_evidence()?;
@@ -138,18 +140,46 @@ impl SyncClient {
 
     /// `payload` as its import door reads it, `context` the window it imports
     /// into: its repo copies translated onto the sources this device holds,
-    /// with nothing recorded (FIX 7608 slice 4). `None` when it holds on a
-    /// ruled cause or its translation fails here: its door judges it once its
-    /// pads are in, as it always did (FIX 10474). The recorded translation
-    /// runs again after the pads install.
+    /// with nothing recorded (FIX 7608 slice 4). A copy edit that holds on its
+    /// ruled cause imports nothing, so no capsule installs for it, and a
+    /// translation that fails here fails its door too, before anything
+    /// installs (FIX 10474). The recorded translation runs again at the door.
     pub(super) fn payload_as_admitted<'p>(
         &self,
         payload: &'p [u8],
         context: Option<&LoroDoc>,
-    ) -> Option<Cow<'p, [u8]>> {
-        crate::sync::selector::repo_sync_frame_as_admitted(&self.vault, payload, context)
-            .ok()
-            .flatten()
+    ) -> Result<Translated<'p>, TransportError> {
+        Ok(
+            match crate::sync::selector::repo_sync_frame_as_admitted(&self.vault, payload, context)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
+            {
+                Some(bytes) => Translated::Bytes(bytes),
+                None => Translated::Held,
+            },
+        )
+    }
+
+    /// Records the hold of `payload`, a sealed window payload of `key` whose
+    /// copy edit holds, through its door's own admission over the window it
+    /// imports into, with no capsule installed (FIX 10474). `false` when the
+    /// door admits it after all: it then installs and imports as any other.
+    pub(super) fn record_held_window_payload(
+        &self,
+        key: &WindowKey,
+        payload: &[u8],
+    ) -> Result<bool, TransportError> {
+        let window = self.window(key.as_str());
+        let admitted = crate::sync::selector::admit_repo_sync_frame(
+            &self.vault,
+            key.as_str(),
+            payload,
+            window.as_ref().map(|window| &window.doc),
+        )
+        .map_err(|error| TransportError::Storage(error.to_string()))?;
+        Ok(matches!(
+            admitted,
+            crate::sync::selector::RepoSyncAdmission::Held
+        ))
     }
 
     /// Keeps `envelope`, a sealed world update of `key` whose isolated check
@@ -246,18 +276,38 @@ impl SyncClient {
                 self.deferred_sealed_updates.remove(index);
                 continue;
             }
-            let checked = {
+            let translated = {
                 let payload: &[u8] = &self.deferred_sealed_updates[index].envelope.payload;
                 match self.payload_as_admitted(payload, Some(&live.doc)) {
-                    // Its door judges it once its pads are in.
-                    None => Ok(()),
-                    Some(admitted) => check_window_update_with_staged_worlds(
-                        &self.vault,
-                        &live.doc,
-                        &admitted,
-                        &key,
-                        evidence,
-                    ),
+                    Ok(Translated::Bytes(admitted)) => Ok(Some(
+                        check_window_update_with_staged_worlds(
+                            &self.vault,
+                            &live.doc,
+                            &admitted,
+                            &key,
+                            evidence,
+                        ),
+                    )),
+                    Ok(Translated::Held) => Ok(None),
+                    Err(error) => Err(error),
+                }
+            };
+            let checked = match translated {
+                Ok(Some(checked)) => checked,
+                // A held copy edit imports nothing: its door records the hold
+                // and no capsule installs.
+                Ok(None) => {
+                    let payload: &[u8] = &self.deferred_sealed_updates[index].envelope.payload;
+                    if self.record_held_window_payload(&key, payload)? {
+                        self.deferred_sealed_updates.remove(index);
+                        progressed = true;
+                        continue;
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    self.deferred_sealed_updates.remove(index);
+                    return Err(error);
                 }
             };
             match checked {

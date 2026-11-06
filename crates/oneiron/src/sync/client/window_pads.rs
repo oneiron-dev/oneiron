@@ -63,6 +63,26 @@ enum SealedCheck {
     Waits,
     /// Refused, with what answers it: nothing installs.
     Answered(Vec<Vec<u8>>),
+    /// A held copy edit: it imports nothing, so its capsule does not install;
+    /// its door records the hold.
+    Held,
+}
+
+/// A sealed payload as its import door reads it (FIX 7608 slice 4, FIX
+/// 10474).
+enum Translated<'p> {
+    /// The bytes it imports.
+    Bytes(Cow<'p, [u8]>),
+    /// A copy edit that holds on its ruled cause: nothing of it imports.
+    Held,
+}
+
+/// A whole window state that holds a copy edit is not imported, as its door
+/// refuses it.
+fn held_whole_state() -> TransportError {
+    TransportError::Storage(
+        "a whole window state holds a copy edit on its ruled cause; it is not imported".into(),
+    )
 }
 
 /// The refusal an own-device update's import door gives.
@@ -409,6 +429,12 @@ impl SyncClient {
                     return Ok(ControlFlow::Break(answers));
                 }
                 SealedCheck::Answered(answer) => return Ok(ControlFlow::Break(answer)),
+                SealedCheck::Held => {
+                    if self.record_held_window_payload(key, &envelope.payload)? {
+                        return Ok(ControlFlow::Break(Vec::new()));
+                    }
+                    // Its door admits it after all: it installs as any other.
+                }
             }
         }
         // FIX 10480: a sealed update's pads are read over the document it
@@ -465,17 +491,20 @@ impl SyncClient {
         // A bulk state is read over the window it lands in, when that is open.
         let readiness = {
             let window = self.window(key.as_str());
-            if envelope.form == WindowPadForm::Sealed
-                && let Some(doc) = window.as_ref().map(|window| &window.doc).or(cold)
-                && let Some(admitted) = self.payload_as_admitted(&envelope.payload, None)
-            {
-                check_window_update_residence_with_vault(&self.vault, doc, &admitted, key)
-                    .map_err(|error| {
-                        TransportError::from_window_admission(
-                            &error,
-                            "bulk window residence denied",
-                        )
-                    })?;
+            if envelope.form == WindowPadForm::Sealed {
+                let admitted = match self.payload_as_admitted(&envelope.payload, None)? {
+                    Translated::Bytes(admitted) => admitted,
+                    Translated::Held => return Err(held_whole_state()),
+                };
+                if let Some(doc) = window.as_ref().map(|window| &window.doc).or(cold) {
+                    check_window_update_residence_with_vault(&self.vault, doc, &admitted, key)
+                        .map_err(|error| {
+                            TransportError::from_window_admission(
+                                &error,
+                                "bulk window residence denied",
+                            )
+                        })?;
+                }
             }
             admit_window_pads(
                 &self.vault,
@@ -523,9 +552,11 @@ impl SyncClient {
                     &empty
                 }
             };
-            if let Some(admitted) = self.payload_as_admitted(&envelope.payload, None)
-                && let Err(error) = check_promotion_snapshot(&self.vault, doc, &admitted)
-            {
+            let admitted = match self.payload_as_admitted(&envelope.payload, None)? {
+                Translated::Bytes(admitted) => admitted,
+                Translated::Held => return Err(held_whole_state()),
+            };
+            if let Err(error) = check_promotion_snapshot(&self.vault, doc, &admitted) {
                 tracing::warn!(%window, kind = ?error.kind(), "promotion snapshot refused");
                 return Ok(None);
             }
