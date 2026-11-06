@@ -249,6 +249,8 @@ impl FactHookRunner {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         use std::sync::Arc;
+        use tokio::sync::oneshot::{self, error::TryRecvError};
+
         // Subscribed before the first pass, so a commit between that pass and
         // the first wait still wakes the loop.
         let mut changes = vault.subscribe_proactivity_changes();
@@ -264,9 +266,16 @@ impl FactHookRunner {
             runner.verdict.clone(),
             Arc::new(move || wake.notify_one()),
         )));
-        tokio::spawn(async move {
+        let (coordinator, mut coordinator_closed) = oneshot::channel::<()>();
+        let completion = tokio::spawn(async move {
             let mut shutdown_closed = false;
             loop {
+                if matches!(
+                    coordinator_closed.try_recv(),
+                    Ok(()) | Err(TryRecvError::Closed)
+                ) {
+                    shutdown_closed = true;
+                }
                 let stopping = shutdown_closed || *shutdown.borrow();
                 let pending = retained
                     .lock()
@@ -307,6 +316,9 @@ impl FactHookRunner {
                     continue;
                 }
                 tokio::select! {
+                    _ = &mut coordinator_closed, if !stopping => {
+                        shutdown_closed = true;
+                    }
                     changed = shutdown.changed(), if !stopping => {
                         if changed.is_err() {
                             shutdown_closed = true;
@@ -317,6 +329,13 @@ impl FactHookRunner {
                     () = tokio::time::sleep(HOOK_RUNNER_TICK) => {}
                 }
             }
+        });
+        // Aborting the coordinator stops admission without aborting owned
+        // completions. Capture the sender before the coordinator's first poll.
+        tokio::spawn(async move {
+            let result = completion.await;
+            drop(coordinator);
+            result.expect("fact hook completion task failed");
         })
     }
 }
