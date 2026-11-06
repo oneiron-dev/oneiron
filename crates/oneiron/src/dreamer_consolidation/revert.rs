@@ -458,16 +458,16 @@ fn summary_by(body: &[u8], dreamer: EntityId) -> bool {
         .is_ok_and(|summary| summary.actor == dreamer.to_hex())
 }
 
-/// The NOTE's kind when the Dreamer wrote it.
+/// The NOTE's kind when the Dreamer wrote it: its stored core names both
+/// its kind and its author (FIX 7783).
 fn note_by_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    note: &EntityId,
+    _note: &EntityId,
     body: &[u8],
     dreamer: EntityId,
 ) -> Result<Option<String>> {
-    let live = crate::note::live_body_in_txn(&vault.store, txn, note, ENTITY_TYPE_NOTE, body)?;
-    let Ok(note) = crate::note::decode_note_body_in_txn(&vault.store, txn, &live) else {
+    let Ok(note) = crate::note::decode_note_core_in_txn(&vault.store, txn, body) else {
         return Ok(None);
     };
     Ok(note

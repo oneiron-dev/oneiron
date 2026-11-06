@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::{NoteBody, encode_note_body};
+use super::{NoteCore, encode_note_core};
 use crate::batch::secret_scan::{SecretScanMode, scan_write_payload, secret_scan_mode_in_txn};
 use crate::claim::ClaimSource;
 use crate::consent::{
@@ -432,10 +432,9 @@ impl Vault {
             .collect::<Result<Vec<_>>>()?;
         let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
         for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
-            let body = encode_note_body(&NoteBody {
+            let body = encode_note_core(&NoteCore {
                 kind,
                 author_ref: super::NoteActor::Actor(author),
-                markdown: note.markdown.clone(),
                 source_revision_ref: revision(folder, &note.path, &note.markdown),
             })?;
             let mut birth = self
@@ -449,6 +448,7 @@ impl Vault {
                     },
                     at,
                     &body,
+                    &note.markdown,
                 )
                 .edge(id, EdgeKind::AuthoredBy, &author, 1.0);
             if let Some(world) = &world {

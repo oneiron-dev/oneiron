@@ -29,17 +29,10 @@ impl ScopedRead<'_> {
         policy: &crate::gate::PolicyManifestResolution,
         grant: Option<&oneiron_authority::federation::Scope>,
     ) -> Result<bool> {
-        // A migrated NOTE retains author metadata but stores markdown on its
-        // document plane. Apply the same privacy rule to that logical body,
-        // read where this read reads the row: a room's NOTE has its own. Its
-        // kind, author, link and consent are judged on base.
-        #[cfg(feature = "sync")]
-        let resolved = crate::entity_doc::resolve_record_body(&self.store_read(), txn, id, bytes)?;
-        #[cfg(feature = "sync")]
-        let bytes = resolved.as_slice();
-        #[cfg(not(feature = "sync"))]
-        let _ = id;
-        let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
+        // The NOTE's stored core carries every fact this rule reads: its
+        // kind and author (FIX 7783). Its kind, author, link and consent are
+        // judged on base.
+        let Ok(body) = crate::note::decode_note_core_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
         // A NOTE placed in worlds reads, on every path below, only where the
@@ -157,12 +150,7 @@ impl ScopedRead<'_> {
             if raw.entity_type != crate::registry::ENTITY_TYPE_NOTE {
                 continue;
             }
-            #[cfg(feature = "sync")]
-            let body =
-                crate::entity_doc::resolve_record_body(&self.vault.store, txn, &id, &raw.body)?;
-            #[cfg(not(feature = "sync"))]
-            let body = std::borrow::Cow::Borrowed(raw.body.as_slice());
-            if crate::note::decode_note_body_in_txn(&self.vault.store, txn, &body)
+            if crate::note::decode_note_core_in_txn(&self.vault.store, txn, &raw.body)
                 .is_ok_and(|note| note.kind == crate::note::NoteKind::Diary)
                 && self.is_entity_retrievable_held_in(txn, &policy, requested, &id, &held)?
             {

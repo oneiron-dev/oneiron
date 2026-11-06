@@ -390,10 +390,13 @@ fn hydrate_selected_note_fields(
         crate::note::ensure_citations_ready(store.base(), rtxn, *id)?;
     }
     if !(note && options.read_mode == crate::vault::ReadMode::Live) {
-        if crate::batch::export::write_door_refuses_body(body) {
+        // A NOTE's selected revision is its birth row, read with its birth
+        // text (FIX 7783).
+        let body = crate::note::birth_body_from_in_txn(store, rtxn, id, entity_type, body)?;
+        if crate::batch::export::write_door_refuses_body(&body) {
             return Ok(HashMap::new());
         }
-        return Ok(decode_entity_fields(body, true).unwrap_or_default());
+        return Ok(decode_entity_fields(&body, true).unwrap_or_default());
     }
     let body =
         crate::note::live_body_from_in_txn(store.base(), store, rtxn, id, entity_type, body)?;

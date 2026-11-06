@@ -10,7 +10,7 @@ use crate::ingest::{
 };
 use crate::memory::support::id_from_optional_hex;
 use crate::memory::{CommitReceipt, Memory, MemoryError, MemoryResult};
-use crate::note::{NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget, encode_note_body};
+use crate::note::{NoteCore, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget, encode_note_core};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -208,10 +208,9 @@ impl Memory<'_> {
         };
         self.vault
             .check_auto_note_birth(&envelope.kind, self.actor_class, &envelope.markdown)?;
-        let body = encode_note_body(&NoteBody {
+        let body = encode_note_core(&NoteCore {
             kind: envelope.kind.clone(),
             author_ref: crate::note::NoteActor::Actor(self.actor),
-            markdown: envelope.markdown.clone(),
             source_revision_ref: envelope.source_revision_ref,
         })?;
         let note_id = self.vault.store.clock.entity_id()?;
@@ -238,7 +237,14 @@ impl Memory<'_> {
                 .vault
                 .batch_in()
                 .mask(envelope.mask)
-                .put_authored_note(&note_id, &self.actor, occurred, at, &body)
+                .put_authored_note(
+                    &note_id,
+                    &self.actor,
+                    occurred,
+                    at,
+                    &body,
+                    &envelope.markdown,
+                )
                 .edge(
                     &note_id,
                     EdgeKind::AuthoredBy,
@@ -375,10 +381,9 @@ pub(crate) fn append_dissent_in_txn(
     let kind = NoteKind::parse(crate::note::DISSENT_NOTE_KIND).expect("shipped kind");
     vault.check_auto_note_birth_in_txn(txn, &kind, actor.actor_class(), &markdown)?;
     let unlinked = unlinked_prose_in_txn(vault, txn, actor, &markdown)?;
-    let body = encode_note_body(&NoteBody {
+    let body = encode_note_core(&NoteCore {
         kind,
         author_ref: crate::note::NoteActor::Actor(writer),
-        markdown,
         source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
     })?;
     let note_id = vault.store.clock.entity_id()?;
@@ -388,7 +393,7 @@ pub(crate) fn append_dissent_in_txn(
     content.apply_batch(
         vault
             .batch_in()
-            .put_authored_note(&note_id, &writer, occurred, at, &body)
+            .put_authored_note(&note_id, &writer, occurred, at, &body, &markdown)
             .edge(
                 &note_id,
                 EdgeKind::AuthoredBy,
@@ -449,10 +454,9 @@ pub(crate) fn append_agent_diary_in_txn(
         .ok_or(crate::error::Error::CorruptedIndex("diary owner header"))?;
     crate::provenance::validate_actor_class(header.entity_type, agent.actor_class())?;
     let unlinked = unlinked_prose_in_txn(vault, txn, agent, &markdown)?;
-    let body = encode_note_body(&NoteBody {
+    let body = encode_note_core(&NoteCore {
         kind: NoteKind::Diary,
         author_ref: crate::note::NoteActor::Actor(owner_ref),
-        markdown,
         source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
     })?;
     let note_id = vault.store.clock.entity_id()?;
@@ -461,7 +465,7 @@ pub(crate) fn append_agent_diary_in_txn(
     content.apply_batch(
         vault
             .batch_in()
-            .put_authored_note(&note_id, &owner_ref, occurred, at, &body)
+            .put_authored_note(&note_id, &owner_ref, occurred, at, &body, &markdown)
             .edge(
                 &note_id,
                 EdgeKind::AuthoredBy,
