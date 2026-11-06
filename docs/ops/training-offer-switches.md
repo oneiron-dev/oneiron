@@ -18,10 +18,16 @@ and recipient, so a repeated record preserves seen and acknowledged state and
 never recreates a deleted notice. The event time is the binding's application
 time, not the time the original staged offer was approved.
 
-The existing `vault.coach.training_offers.undo` owner door takes the offer id.
-Undo still requires a live owner proof and refuses to overwrite a binding that
-changed since the switch. The notice does not itself grant that authority or
-change a consumer's rendering.
+The notification's `actions` list offers the existing
+`vault.coach.training_offers.undo` verb with the offer id. It is computed when
+this owner reads the notice, using a live owner proof and the current switch
+receipt and manifest in one read transaction. An already-undone switch, a
+non-applied switch, a changed binding, or a caller without owner authority offers
+no tap. The notice itself grants no authority.
+
+A client can render that registered action without inventing an undo endpoint.
+The undo door still revalidates the owner, binding and staged space move when
+called; listing an action does not reserve the binding against later changes.
 
 ## Remaining policy work
 
