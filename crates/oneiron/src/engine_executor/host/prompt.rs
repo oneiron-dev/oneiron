@@ -11,10 +11,13 @@ pub(in crate::engine_executor) fn executor_system_prompt(wire: &str) -> String {
     let wire = wire.trim_end();
     let [host_verbs, verbs, runtime_types] = executor_declarations().map(|file| file.text);
     let revision = crate::task_verb::sdk::code_mode_catalog_fragment().revision;
+    // FIX 15011: the wake opener's protocol, once, in the stable grammar.
+    let wake = crate::context_board::TURN_WAKE_GRAMMAR;
     format!(
         "You are Oneiron's engine-native executor.\n{wire}\n\
          The guest runs inside the CODE-1 Wasmtime WIT component boundary.\n\
          Clock and random values are host-controlled imports for replay determinism.\n\
+         {wake}\n\
          Use the prompt-side host verb types below as documentation only; runtime effects arrive \
          as typed host imports. The verb catalog is revision {revision}:\n\n\
          {host_verbs}\n{verbs}\n{runtime_types}"

@@ -133,6 +133,34 @@ pub enum StoredIdentityOpAction {
         /// nothing.
         applied: Option<EntityId>,
     },
+    /// The root record of a merge, split or facet decision stored across
+    /// bounded records (FIX 10188). It carries the decision's envelope (seq,
+    /// consent, source) and names its payload: the decision's own inline
+    /// record body, cut into `parts` [`Self::OperationPart`] records. Its
+    /// signed admission binds that payload through `digest`, so the decision
+    /// is read, folded, receipted and undone only whole
+    /// ([`super::operation_parts`]); a reader that holds only some parts
+    /// sees no decision at all.
+    OperationManifest {
+        /// The decision's wire kind: merge, split or facet.
+        kind: &'static str,
+        /// Number of operation parts, at least one.
+        parts: u32,
+        /// Total payload length in bytes.
+        length: u64,
+        /// Digest of the payload, bound to this manifest's id.
+        digest: [u8; 32],
+    },
+    /// One bounded slice of a manifest's payload (FIX 10188). Inert on its
+    /// own: no fold action, no receipt, no seal of its own.
+    OperationPart {
+        /// The manifest this part belongs to.
+        root: EntityId,
+        /// Position of this slice in the payload.
+        index: u32,
+        /// The slice.
+        payload: Vec<u8>,
+    },
 }
 
 impl StoredIdentityOpAction {
@@ -150,6 +178,8 @@ impl StoredIdentityOpAction {
             Self::AdmissionDisposition(_) => super::wire_keys::EVENT_KIND_ADMISSION_DISPOSITION,
             Self::AuthorAttribution { .. } => super::wire_keys::EVENT_KIND_AUTHOR_ATTRIBUTION,
             Self::AuthorRedaction { .. } => super::wire_keys::EVENT_KIND_AUTHOR_REDACTION,
+            Self::OperationManifest { .. } => super::wire_keys::EVENT_KIND_OPERATION_MANIFEST,
+            Self::OperationPart { .. } => super::wire_keys::EVENT_KIND_OPERATION_PART,
         }
     }
 
@@ -168,7 +198,9 @@ impl StoredIdentityOpAction {
             | Self::ProposalResolution { .. }
             | Self::AdmissionDisposition(_)
             | Self::AuthorAttribution { .. }
-            | Self::AuthorRedaction { .. } => None,
+            | Self::AuthorRedaction { .. }
+            | Self::OperationManifest { .. }
+            | Self::OperationPart { .. } => None,
         }
     }
 
@@ -201,7 +233,9 @@ impl StoredIdentityOpAction {
             | Self::ProposalResolution { .. }
             | Self::AdmissionDisposition(_)
             | Self::AuthorAttribution { .. }
-            | Self::AuthorRedaction { .. } => None,
+            | Self::AuthorRedaction { .. }
+            | Self::OperationManifest { .. }
+            | Self::OperationPart { .. } => None,
         }
     }
 
@@ -267,7 +301,11 @@ impl StoredIdentityOpAction {
             },
             Self::AdmissionDisposition(_)
             | Self::AuthorAttribution { .. }
-            | Self::AuthorRedaction { .. } => IdentityTopologyAction::Disposition,
+            | Self::AuthorRedaction { .. }
+            // FIX 10188: a manifest folds only through its assembled
+            // decision, and a part never folds.
+            | Self::OperationManifest { .. }
+            | Self::OperationPart { .. } => IdentityTopologyAction::Disposition,
             Self::ProposalResolution {
                 proposal, outcome, ..
             } => IdentityTopologyAction::ResolveProposal {
