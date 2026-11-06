@@ -64,6 +64,7 @@ mod jobs;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
+mod run_replay;
 // FIX 780, 6083: a program's media jobs on its run's line.
 mod run_line;
 // FIX 1816: a video job charged by its length.
@@ -310,6 +311,8 @@ pub struct MediaRuntime {
     host: Option<Arc<HostAccount>>,
     /// The jobs held here: running, or ended and not kept yet.
     jobs: Mutex<BTreeMap<String, Held>>,
+    /// Keyed non-job calls still in flight, shared before any second admission.
+    replay_runs: run_replay::ReplayRuns,
     /// Where the jobs are kept, so a restart loses none (FIX-LIST 465).
     store: Option<JobStore>,
     /// Each job seat's rungs, by engine id: the rung a kept job is taken up

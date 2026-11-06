@@ -49,6 +49,11 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
             "identity-topology authorship is written only by its carrier".to_owned(),
         ));
     }
+    if key.starts_with("it:proposer-scope:") {
+        return Err(Error::InvalidConfig(
+            "identity-topology proposer handles are written only by the proposal writer".to_owned(),
+        ));
+    }
     if [
         crate::side_table::DELETION_ROW_FENCE.prefix,
         crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
