@@ -39,7 +39,7 @@ use oneiron::skill_optimize::union_source_rows;
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::serve::{Admit, Served, product_of};
-use super::{LiveAdmission, ServedCompactionBackend};
+use super::{AnsweringRungSlot, LiveAdmission, ServedCompactionBackend};
 
 /// The words that turn the house compaction call into the agent's own: the
 /// home the call wears follows them. The one hook a ruling on this text
@@ -120,6 +120,10 @@ pub(super) struct SelfCompactionBackend {
     host: CompactionHostBinding,
     /// How the run's live rung is read at a breakpoint (FIX 4465 C).
     admission: Arc<dyn LiveAdmission>,
+    /// The slot the run's answering rungs fill, held for the run's life
+    /// (FIX 4933); `None` until its first call, and for an answer that
+    /// holds its one answering rung itself.
+    answering: Mutex<Option<Arc<AnsweringRungSlot>>>,
     /// What the last breakpoint read for its flight (FIX 6029).
     staged: Mutex<Option<Staged>>,
     flight: Mutex<Option<Frozen>>,
@@ -139,6 +143,7 @@ impl SelfCompactionBackend {
             definition,
             host,
             admission,
+            answering: Mutex::new(None),
             staged: Mutex::new(None),
             flight: Mutex::new(None),
         }
@@ -423,6 +428,17 @@ impl CompactionBackend for SelfCompactionBackend {
             summary_token_budget,
             how,
         )
+    }
+
+    /// Holds the slot the run's answering rungs fill, once (FIX 4933).
+    fn hold_answering_rungs(&self, live: &LlmRequest) {
+        let mut held = self
+            .answering
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if held.is_none() {
+            *held = self.admission.hold_answering_rungs(live);
+        }
     }
 
     fn prepare_live_flight(

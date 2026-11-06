@@ -40,6 +40,11 @@ impl EngineNativeExecutor<'_> {
         let Some(seat) = self.compaction.take() else {
             return Ok(Ok(None));
         };
+        // FIX 4933: the step's call goes out next; a writer that forks the
+        // live context holds the slot the rung that answers it fills.
+        if let Some((driver, _, _)) = seat.swap_seat() {
+            driver.backend().hold_answering_rungs(request);
+        }
         let byline = seat.swap_seat().map(|(_, byline, _)| byline);
         // A run whose compaction is off folds nothing: its asks end with why,
         // which `self.folds()` shows.

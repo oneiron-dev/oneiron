@@ -7,6 +7,19 @@ use oneiron::code_run::LiveForkRung;
 
 use super::*;
 
+impl LadderRung {
+    /// This rung as a live fork names it (FIX 4933): its provider, its
+    /// place in the configured ladder, its wire model and its offer.
+    pub(super) fn live_fork_rung(&self) -> LiveForkRung {
+        LiveForkRung {
+            provider: self.provider.clone(),
+            position: self.position,
+            wire_model: self.wire_model.clone(),
+            offer: self.offer.binding.clone(),
+        }
+    }
+}
+
 impl OfferLadder {
     /// The rung `request`'s walk would send it to now, and the request as
     /// that rung sends it, its prompt first: the first rung the walk does
@@ -18,13 +31,7 @@ impl OfferLadder {
         let routes = self.rests.world_routes(request);
         let index = (0..self.rungs.len()).find(|index| self.takes_now(*index, request, &routes))?;
         let rung = &self.rungs[index];
-        let captured = LiveForkRung {
-            provider: rung.provider.clone(),
-            position: rung.position,
-            wire_model: rung.wire_model.clone(),
-            offer: rung.offer.binding.clone(),
-        };
-        Some((captured, rung.bind(request.clone())))
+        Some((rung.live_fork_rung(), rung.bind(request.clone())))
     }
 
     /// Whether the walk would send `request` to the rung at `index` now.

@@ -529,6 +529,7 @@ impl StepRunner {
             let binding = ModelCallBinding {
                 rung: answer.rung.clone(),
                 route: answer.route.clone(),
+                answering: None,
             };
             let no_record = no_record_at_arrival
                 || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));

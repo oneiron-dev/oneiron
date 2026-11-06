@@ -128,6 +128,11 @@ pub trait CompactionBackend: Send + Sync {
     > {
         None
     }
+    /// Before each of its run's calls, `live` as the executor sends it (FIX
+    /// 4933): a backend that forks the live context holds the slot the rung
+    /// that answers it fills, so a breakpoint forks the latest completed
+    /// call. Every other backend does nothing.
+    fn hold_answering_rungs(&self, _live: &oneiron_model::llm::LlmRequest) {}
     /// [`Self::prepare_flight`] for a flight that carries the live fork its
     /// driver admitted (FIX 4465 C). The backend holds the fork, unchanged,
     /// for the flight's calls until [`Self::end_flight`]. A backend that
