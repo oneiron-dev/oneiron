@@ -139,6 +139,14 @@ pub(super) fn facade_invoke_in_turn(
         };
         let memory = facade_task_decisions(server, verb, memory)?;
         let memory = facade_rewrites_admitted(server, auth, &value, memory);
+        let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
+            match super::owner_binding::facade_owner(server, auth, verb).ok() {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            }
+        } else {
+            memory
+        };
         // Settlement's run of the call enters its boundary here as the drain's.
         let _drain = call.drain().map(VerbAskDrainPermit::enter);
         Ok(match call.room_turn()? {

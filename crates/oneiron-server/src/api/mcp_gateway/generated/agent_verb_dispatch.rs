@@ -16792,6 +16792,14 @@ async fn execute_agent_verb_row_on(
         "vault.artifacts.view" => {
             let input: oneiron::blob_artifact::ArtifactRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            let owner = actor
+                .auth
+                .as_ref()
+                .and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());
+            let memory = match owner {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            };
             let output = oneiron::task_verb::sdk::vault_artifacts_view(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -18503,6 +18511,14 @@ async fn execute_agent_verb_row_on(
         "vault.artifacts.export" => {
             let input: oneiron::blob_artifact::ArtifactExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            let owner = actor
+                .auth
+                .as_ref()
+                .and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());
+            let memory = match owner {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            };
             let output = oneiron::task_verb::sdk::vault_artifacts_export(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
