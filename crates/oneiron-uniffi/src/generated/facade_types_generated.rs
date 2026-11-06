@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1265 facade rows, 4598 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
+// UniFFI census: 1266 facade rows, 4599 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1218.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -22594,12 +22594,16 @@ pub struct SharedMemberAddRequest {
     pub member: String,
     #[serde(rename = "role", default, skip_serializing_if = "Option::is_none")]
     pub role: Option<FederationGrantRole>,
-    #[serde(
-        rename = "holder_key",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub holder_key: Option<String>,
+}
+
+/// `oneiron::verbs::shared_members::InvitationSlipRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InvitationSlipRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "invitation")]
+    pub invitation: String,
 }
 
 /// `oneiron::verbs::shared::InvitationSlip`.
@@ -22613,31 +22617,25 @@ pub struct InvitationSlip {
     pub expires_at: u64,
 }
 
-/// `oneiron::verbs::shared::SharedMemberInvited`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SharedMemberInvited {
-    #[serde(rename = "receipt")]
-    pub receipt: SharedActExecutionReceipt,
-    #[serde(
-        rename = "credential",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub credential: Option<InvitationSlip>,
-}
-
-/// `oneiron::verbs::shared_members::InvitationSlipRequest`.
+/// `oneiron::verbs::shared_members::InvitationCodeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct InvitationSlipRequest {
+pub struct InvitationCodeRequest {
     #[serde(rename = "vault_id")]
     pub vault_id: String,
     #[serde(rename = "member")]
     pub member: String,
     #[serde(rename = "invitation")]
     pub invitation: String,
-    #[serde(rename = "holder_key")]
-    pub holder_key: String,
+}
+
+/// `oneiron::verbs::shared_members::InvitationCode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InvitationCode {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
 }
 
 /// `oneiron::verbs::shared::SharedMemberRoleRequest`.
