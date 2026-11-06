@@ -3,16 +3,15 @@
 //! `execute_mcp_native_read` and `execute_native_read_input` are its call
 //! surface.
 
+use super::super::served_rows::stop_release_rows;
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, McpRowSurface, McpServed, mcp_facade_error,
     mcp_hook_stop_result,
 };
 use crate::mcp::{McpGeneratedVerbTool, McpVerbToolArgs};
 use crate::server::SyncServer;
-use oneiron::EntityId;
 use oneiron::code_run::vault_read::VaultReadMethod;
 use oneiron::context_board::CapabilityHit;
-use oneiron::runtime_hooks::VerbHookStop;
 use serde_json::Value;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -72,35 +71,6 @@ pub(super) async fn execute_mcp_native_read(
         McpCarrierPolicy::DrainWithCapabilities(capabilities),
         None,
     )))
-}
-
-/// The rows a native read's hook `stop` is released by. A retry that gets
-/// the answer an ask's settlement already ran restores into `served` the
-/// rows that saved answer was derived from (FIX 1435). An answer saved with
-/// none is released by no listed row, so off this device it is withheld as
-/// a result whose rows are unknown is, never released as an empty set. Any
-/// other stop is released by the rows `served` lists.
-fn stop_release_rows<'s>(
-    server: &SyncServer,
-    actor: &McpCallContext,
-    stop: &VerbHookStop,
-    served: &'s mut McpServed,
-) -> Option<&'s [EntityId]> {
-    if !matches!(stop, VerbHookStop::Completed { .. }) {
-        return served.rows();
-    }
-    let saved = actor.invocation.and_then(|invocation| {
-        server
-            .vault
-            .verb_hook_saved_producers(invocation)
-            .inspect_err(
-                |error| tracing::warn!(%error, "a drained native read's rows did not read"),
-            )
-            .ok()
-            .flatten()
-    })?;
-    served.extend(saved);
-    served.rows()
 }
 
 /// The native read `method` of `tool` on `request` for `actor`, through its
