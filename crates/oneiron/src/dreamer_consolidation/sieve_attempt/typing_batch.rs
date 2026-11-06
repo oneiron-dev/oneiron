@@ -142,8 +142,13 @@ impl ConsolidationExecutor<'_> {
                 .await;
             // Every generation that finished is spent, whatever the batch's
             // outcome (FIX 11554).
-            for (hash, usage) in &read.steps {
+            for (index, (hash, usage, _)) in read.steps.iter().enumerate() {
                 if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
+                    for (_, usage, memoized) in &read.steps[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
             }
@@ -191,8 +196,12 @@ impl ConsolidationExecutor<'_> {
             }
             // Each span keeps the call's receipts and an equal share of what
             // it actually spent: shared cost, not a per-span measure.
-            let hashes: Vec<[u8; 32]> = read.steps.iter().map(|(hash, _)| *hash).collect();
-            let spent: u64 = read.steps.iter().map(|(_, usage)| usage_units(usage)).sum();
+            let hashes: Vec<[u8; 32]> = read.steps.iter().map(|(hash, _, _)| *hash).collect();
+            let spent: u64 = read
+                .steps
+                .iter()
+                .map(|(_, usage, _)| usage_units(usage))
+                .sum();
             let shares = equal_shares(spent, batch.len());
             let mut decisions = decisions.into_iter();
             let mut refused_reading = false;
