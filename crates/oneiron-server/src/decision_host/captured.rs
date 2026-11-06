@@ -58,8 +58,10 @@ impl SystemOneRung {
         {
             return Ok(DecisionReadOutcome::Answered(abstain));
         }
+        let mut question = call.question.clone();
+        question.text = call.question_text().into_owned();
         let request = SeatRequest {
-            question: call.question.clone(),
+            question,
             state: call.state.clone(),
             images: call.images.to_vec(),
             audio: call.audio.to_vec(),
@@ -93,13 +95,12 @@ impl SystemOneRung {
             {
                 let prepared = self
                     .runtime
-                    .block_on(self.seat.prepare_read(
-                        request.clone(),
-                        call.deadline.decision_time_left(),
-                    ))
+                    .block_on(
+                        self.seat
+                            .prepare_read(request.clone(), call.deadline.decision_time_left()),
+                    )
                     .map_err(|_| failed("the native request failed to build"))?;
-                let admission =
-                    extraction_admission_request(&prepared, context, &catalog)?;
+                let admission = extraction_admission_request(&prepared, context, &catalog)?;
                 self.vault
                     .authorize_raw_inference(
                         admission,
