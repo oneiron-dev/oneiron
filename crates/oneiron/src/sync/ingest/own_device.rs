@@ -21,9 +21,10 @@
 //! no origin beside them (FIX 12113): the lane also asks for the writer's
 //! proof of the exact bytes (`message_writer`), which the import carries in
 //! the window beside the row, and names the machine that proof verifies.
-//! Nothing here outlives the import: recovery, window open and every later
-//! pass replay persisted bytes with no live proof of who sent them, so none
-//! of them mints a lane.
+//! That proof is durable, so a later window pass that retries a row the
+//! import left waiting on a dependency (FIX 20830) reads it from the window
+//! and mints the lane again for the exact bytes it verifies. A trusted
+//! recovery pass and a ladder run outside a window's own passes mint none.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -120,7 +121,9 @@ fn is_message(blob: &[u8]) -> bool {
 /// Runs `land`, which imports `update` into `doc`, the live document of the
 /// window `key`. Under `import`, each MESSAGE row `update` itself inserts
 /// takes the own-device lane in the doors `land` runs on this thread. With no
-/// import, no door `land` runs mints a lane, whatever import encloses it.
+/// import, no door `land` runs mints one from a span, whatever import
+/// encloses it; a row whose window carries a writer proof that verifies is
+/// the writer's either way (FIX 20830).
 pub(in crate::sync) fn with_own_device_import<T>(
     vault: &Vault,
     import: Option<&OwnDeviceImport>,
@@ -234,13 +237,14 @@ fn may_insert_message(key: &WindowKey, doc: &LoroDoc, meta: &ImportBlobMetadata)
     key.world().is_none() && !doc.oplog_vv().includes_vv(&meta.partial_end_vv)
 }
 
-/// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: an
-/// own-device import on this thread brought exactly these bytes into the
-/// window `ctx` lands, no federation peer's import brought them, and the
-/// writer proof the window carries beside them verifies (FIX 12113). A
+/// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: the
+/// writer proof the window `ctx` lands carries beside these exact bytes
+/// verifies (FIX 12113), and no federation peer's import brought them. An
+/// own-device import on this thread that brought them names its proof; a
+/// window pass that retries the row reads it from the window (FIX 20830). A
 /// trusted recovery pass, a ladder run outside a window's own passes, a put
-/// of other bytes than the ones sent, and a row with no proof that verifies
-/// take none.
+/// of other bytes than the ones in the window, and a row with no proof that
+/// verifies take none.
 pub(super) fn lane_in_txn(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -267,9 +271,22 @@ pub(super) fn lane_in_txn(
                     .map(|proof| (span.machine, proof.clone()))
             })
     });
-    let Some((relay, proof)) = relayed else {
-        return Ok(None);
+    // A row this import did not bring, one a later pass retries after it
+    // waited on a dependency or an older operation this import completed, is
+    // the writer's on the proof its window carries for these exact bytes
+    // (FIX 20830): the proof, not a live connection, says an own machine
+    // wrote them.
+    let (relay, proof) = match relayed {
+        Some((relay, proof)) => (Some(relay), proof),
+        None => (
+            None,
+            ctx.carrier_doc()
+                .and_then(|doc| super::message_writer::carried_proof(doc, id)),
+        ),
     };
+    if relay.is_none() && proof.is_none() {
+        return Ok(None);
+    }
     // A federation peer's row stays the peer's, whichever own machine relays
     // it: the origin its window carries for these bytes is recorded by now.
     if super::peer_row_in_txn(ctx.vault, wtxn, ctx.window_key, id, blob)? {
@@ -286,7 +303,7 @@ pub(super) fn lane_in_txn(
     let (Some(machine), Some(proof)) = (writer, proof) else {
         tracing::debug!(
             ?relay,
-            "an own machine relayed a MESSAGE row with no writer proof that verifies"
+            "a MESSAGE row in a window pass with no writer proof that verifies"
         );
         return Ok(None);
     };
