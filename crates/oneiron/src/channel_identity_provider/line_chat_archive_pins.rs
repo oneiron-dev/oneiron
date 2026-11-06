@@ -4,8 +4,8 @@
 mod lifetime;
 mod prune;
 pub(crate) use lifetime::{
-    line_chat_archive_releases_owed_in_txn, release_line_chat_archive_pin_in_txn,
-    settle_line_chat_archive_releases_in_txn,
+    erase_line_chat_source_observations_in_txn, line_chat_archive_releases_owed_in_txn,
+    release_line_chat_archive_pin_in_txn, settle_line_chat_archive_releases_in_txn,
 };
 pub(crate) use prune::prune_line_chat_archive_pins_in_txn;
 
