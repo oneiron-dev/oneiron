@@ -1,13 +1,11 @@
 //! Advisory typed openings: the narrative reader remains free to open any TURN.
 
 use std::ops::ControlFlow;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::super::executor::{ConsolidationDecisions, Decider, ScopedRead};
 use super::super::roles::{DREAMER_VERDICT_ROLE, RoleCall, bind_reasoning};
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
-use super::arc_open_backend::FreshBackend;
 use super::arc_open_questions::OpenQuestion;
 use super::window::framed_tokens;
 use super::{CallLabelMap, EntityId, ScopeSummaryEvidence, ScopeSummaryExecutor};
@@ -146,12 +144,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let run = role.sourced.and_then(|sourced| sourced.run());
             let sources: Vec<_> = rows.iter().copied().chain(labels.rows()).collect();
             let route = role.call_backend(Some(sources));
-            let backend = FreshBackend {
-                inner: route.get(),
-                fresh: AtomicBool::new(false),
-            };
             let call = RoleCall {
-                backend: &backend,
+                backend: route.get(),
                 model: role.model,
                 inference: role.inference,
                 sourced: None,
@@ -290,18 +284,21 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     tracing::warn!("arc opening native settlement has non-token pricing units");
                 }
             }
-            let fresh = backend.fresh.load(Ordering::Relaxed);
             for usage in &cut_usage {
                 charges.record_usage(usage);
             }
-            for (hash, usage, ..) in &spent {
-                if let Err(error) =
-                    charges.record_terminal(ctx.vault, step.attempt_id, *hash, usage)
-                {
-                    if fresh {
-                        charges.record_usage(usage);
+            for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
+                if let Some(binding) = binding {
+                    if let Err(error) = charges.record_terminal(ctx.vault, *binding, usage) {
+                        for (_, usage, _, memoized) in &spent[index..] {
+                            if !*memoized {
+                                charges.record_usage(usage);
+                            }
+                        }
+                        return Ok(ControlFlow::Break(charges.park_on_error(&error)));
                     }
-                    return Ok(ControlFlow::Break(charges.park_on_error(&error)));
+                } else {
+                    charges.record_usage(usage);
                 }
             }
             match decided {

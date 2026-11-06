@@ -155,11 +155,24 @@ impl SystemOneRung {
                 (run, guard.reserve_units())
             }
         };
-        let permit = run
+        let run = if context
+            .and_then(|context| context.native_source.as_ref())
+            .is_some()
+        {
+            run.capturing_settlements()
+        } else {
+            run
+        };
+        let mut permit = run
             .admit_paid(&self.connector, reserve)
             .map_err(|_| failed("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| failed("refused at dispatch"))?;
+        if let Some(source) = context.and_then(|context| context.native_source.as_ref())
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
         if pack.deadline.decision_time_left().is_zero() {
             if pack.run.is_none() {
                 permit
@@ -415,7 +428,7 @@ impl SystemOneRung {
         // A call that carries its caller's run measures on it (FIX 10443).
         if let Some(run) = call.run {
             return self
-                .decide_on_run(call, request, run, context.is_some(), prepared)
+                .decide_on_run(call, request, run, context, prepared)
                 .map(DecisionReadOutcome::Answered);
         }
         // Inside a verdict, use the caller's own line and room payer (FIX 1123,
@@ -429,11 +442,24 @@ impl SystemOneRung {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(Some(call.evidence.to_vec()));
-        let permit = run
+        let run = if context
+            .and_then(|context| context.native_source.as_ref())
+            .is_some()
+        {
+            run.capturing_settlements()
+        } else {
+            run
+        };
+        let mut permit = run
             .admit_paid(&self.connector, guard.reserve_units())
             .map_err(|_| failed("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| failed("refused at dispatch"))?;
+        if let Some(source) = context.and_then(|context| context.native_source.as_ref())
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
         // A measurement admitted after the work time is spent never starts.
         if call.deadline.decision_time_left().is_zero() {
             permit
@@ -502,21 +528,26 @@ impl SystemOneRung {
         call: &DecisionCall<'_>,
         request: SeatRequest,
         run: &RunAdmission,
-        capturing: bool,
+        context: Option<&DecisionCallContext<'_>>,
         prepared: Option<PreparedSystemOneRead<'_>>,
     ) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
         let run = run.sourced(Some(call.evidence.to_vec()));
-        let run = if capturing {
+        let run = if context.is_some() {
             run.capturing_settlements()
         } else {
             run
         };
-        let permit = run
+        let mut permit = run
             .admit_paid(&self.connector, run.declaration().budget().reserve_units)
             .map_err(|_| failed("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| failed("refused at dispatch"))?;
+        if let Some(source) = context.and_then(|context| context.native_source.as_ref())
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
         // A measurement admitted after the work time is spent never starts; the
         // dispatched permit's drop keeps its reservation as spend, as the own-meter
         // path's settlement does.
