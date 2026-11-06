@@ -263,6 +263,7 @@ impl BrokerMedia {
             },
             path: join(&self.prefix, &path),
             content_type: Some(JSON.to_owned()),
+            headers: BTreeMap::new(),
             body: json_bytes(&body)?,
         })
     }
