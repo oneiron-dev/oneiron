@@ -88,7 +88,8 @@ impl EngineNativeExecutor<'_> {
     /// The step's model request, and where it shows the step before's
     /// console whole, the slot a callable's counterfactual renders each
     /// branch's observation into (FIX 3608): only a full view that no fold
-    /// or frame stands in for has one.
+    /// or frame stands in for has one, in a request with no brief of the
+    /// run's results.
     pub(super) fn build_llm_request(
         &mut self,
         config: &EngineExecutorConfig,
@@ -282,6 +283,10 @@ impl EngineNativeExecutor<'_> {
         // Past a swap, the run's results are named once more beside the
         // frame that replaced the turns that bound them.
         if swapped && let Some(brief) = self.bindings_brief(record)? {
+            // The brief lists the step before's own results too, which no
+            // branch of a callable's counterfactual rebuilds: the request
+            // keeps no console slot (FIX 3608).
+            console_slot = None;
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text { text: brief }],

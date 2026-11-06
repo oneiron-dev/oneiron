@@ -57,7 +57,8 @@ impl ExposureSlot {
 /// step's observation into, whole and at the full tier, as one text part.
 /// A callable's counterfactual renders each branch's observation through
 /// the same formatter and puts it there. A console the builder showed any
-/// other way (an overview, a stub, a fold or a frame) has no slot.
+/// other way (an overview, a stub, a fold or a frame) has no slot. Nor has
+/// a console in a request that lists the run's results in a brief.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsoleSlot {
     /// The step whose observation the message renders.
