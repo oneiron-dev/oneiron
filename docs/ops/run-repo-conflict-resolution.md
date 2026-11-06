@@ -29,6 +29,19 @@ On landing, this uses the existing typed `ResolveConflictFile` operation.
 Each file contributes its resolution claim. The existing native writer closes
 the open conflict only after the retained active resolution claims cover all
 conflicted paths, and links every contributing per-file receipt. One file does
-not claim to resolve the other paths. Automatic overlap-handoff selection and
-resolution records for ordinary combined proposals remain separate queue
-behavior; this door does not replace those proposals or add a typed-only gate.
+not claim to resolve the other paths. This door does not replace ordinary
+combined proposals or add a typed-only gate.
+
+An automatic overlap handoff links only a reconciliation TASK's proposal that
+actually covers a conflicted path. It keeps the source batches until the
+historically accepted GREEN batches cover every conflicted path. Several
+per-file batches can contribute; unrelated TASK output and an unlanded tail do
+not complete the handoff. Ordinary `CommitFile`, `CommitFiles` and `ReceivedFiles`
+proposals remain eligible alongside typed resolutions.
+
+The queue reads each batch's original slow verdict and stored input receipt to
+recover its accepted landed mask, tree and commit. A later GREEN or a changed
+reviewed stack does not replace that evidence. Ordinary queue resolutions feed
+the same native resolution-claim writer and aggregate closer. Repeating a batch
+reuses its recorded contribution; a typed claim already closed during landing
+does not make the queue forget its reconciliation.

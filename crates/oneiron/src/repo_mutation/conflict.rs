@@ -3,6 +3,7 @@
 //! `conflict_value` owns the claim values; `write` owns the checked claim writer.
 
 // The checked claim writer, shared with the merge queue's overlap handoff.
+mod queue;
 mod write;
 
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
