@@ -8,9 +8,10 @@
 //!
 //! 1. THE COST GATE. `minimal` and `standard` are model-free, so they reach no
 //!    host, spend nothing, and report `tokensUsed: 0`. `deep` requires an
-//!    attached [`DeepRetrievalHost`] — a backend AND the budget guard that
-//!    mints its lease — and is refused with `DEEP_RETRIEVAL_UNAVAILABLE`
-//!    otherwise rather than silently served at standard effort.
+//!    [`DeepRetrievalHost`] — an explicitly attached backend, or a production
+//!    backend built for this request from the configured model roles — AND
+//!    its budget guard. With neither it is refused with
+//!    `DEEP_RETRIEVAL_UNAVAILABLE`, never silently served at standard effort.
 //! 2. THE EXTRACTIVE ANSWER. For the model-free tiers the evidence answers for
 //!    itself, following `memory::chat`'s pattern: render the retrieved rows in
 //!    the requested format, else fall back to the first row's text, and cite
@@ -37,7 +38,6 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
-use oneiron::claim::ScopedRead;
 use oneiron::llm::BudgetLease;
 use oneiron::memory::AnswerAdmission;
 use oneiron::retrieval_depth::{
@@ -47,20 +47,22 @@ use oneiron::retrieval_depth::{
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use oneiron::{Effort, EntityId};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use utoipa::ToSchema;
 
 use super::{json_payload, parse_entity_id_param, scoped_read_for_core_auth};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
-use crate::projection::View;
 use crate::server::{QueryDoor, SyncServer, query_caller};
 
 mod answer_admission;
 mod deep_admission;
+mod evidence;
+mod host;
 mod render;
 pub(crate) use answer_admission::MemoryReasonCompositionRefusal;
 pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
+use evidence::{collect_evidence, evidence_text};
 use render::render_evidence;
 
 /// Evidence rows a reasoning read retrieves when the caller names no limit.
@@ -213,10 +215,14 @@ pub(crate) struct MemoryReasonResponse {
     /// direct pass with no reasoning to report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<MemoryReasonTrace>,
-    /// ACTUAL backend spend: decompose + rerank + compose, summed from what
-    /// the backend reported. `0` whenever no backend ran.
+    /// Reported backend tokens across decompose, rerank and compose.
+    /// A lower bound when `tokensUsageComplete` is false; never reserved units.
+    /// `0` whenever no backend ran.
     #[schema(example = 0)]
     pub(crate) tokens_used: u64,
+    /// False when a dispatched physical call did not report its full usage.
+    /// `tokensUsed` then contains only the reported portion, never a reservation.
+    pub(crate) tokens_usage_complete: bool,
     /// Retrieval execution quality, independent of answer confidence and evidence count.
     #[schema(value_type = String)]
     pub(crate) quality: RetrievalQuality,
@@ -245,6 +251,9 @@ pub(crate) struct MemoryReasonResponse {
 /// One retrieved, actor-admitted evidence row.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MemoryReasonEvidence {
+    /// The exact native frontier behind the citable projection.
+    pub(crate) id: EntityId,
+    pub(crate) revision: oneiron::memory::RevisionRef,
     /// The row's citable short id.
     pub(crate) short_id: String,
     /// Registry kind string.
@@ -291,6 +300,16 @@ pub(crate) struct MemoryReasonComposition {
 
 /// Host-injected deep reasoning: the deep search seam plus composition.
 pub(crate) trait MemoryReasonBackend: DeepSearchBackend {
+    /// Whether every physical call's usage is known, independently of charges.
+    fn usage_complete(&self) -> bool {
+        false
+    }
+
+    /// Destination-bound source reads made by this request's host.
+    fn read_receipts(&self) -> Vec<oneiron::claim::ScopedReadReceipt> {
+        Vec::new()
+    }
+
     /// Composes one answer from the retrieved evidence, under the lease the
     /// budget guard minted for this read. Errors report this call's spent
     /// tokens, just like the deep search methods; the host settles the total.
@@ -374,6 +393,11 @@ pub(crate) async fn companion_memory_reason(
     payload: Result<Json<MemoryReasonRequest>, JsonRejection>,
 ) -> Result<Json<MemoryReasonResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    let anonymous_at_arrival = crate::api::call_receipt::session_is_anonymous_for(
+        &server,
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(&auth),
+    );
     let request = json_payload(payload)?;
     server
         .check_retrieval_query(
@@ -393,73 +417,93 @@ pub(crate) async fn companion_memory_reason(
 
     // Refused BEFORE the vault is touched: an unavailable tier must not cost a
     // read whose results are then discarded.
-    let admission = admit_deep_retrieval(&server, request.depth)?;
-
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
-    server.vault.measure_limit_for(
-        oneiron::limit_ask::EngineLimit::MemoryReasonEvidenceRows,
-        limit as u64,
-        auth.principal_entity(),
-    );
-    server.vault.measure_limit_for(
-        oneiron::limit_ask::EngineLimit::MemoryReasonTokens,
-        token_budget as u64,
-        auth.principal_entity(),
-    );
-    let depth_request = DepthSearchRequest {
-        deadline: None,
-        probe: SearchProbe::Text {
-            query: query.clone(),
-        },
-        effort: request.depth,
-        limit,
-        session_scope: Some(&scope),
-        lease: admission.as_ref().map(DeepAdmission::lease),
-        backend: admission.as_ref().map(DeepAdmission::search_backend),
-        token_budget: Some(token_budget as u64),
-    };
-    let result = (|| {
-        let retrieved = scoped_read.search_with_effort(&depth_request);
-        if let Some(admission) = admission.as_ref() {
-            admission.record_usage(retrieved.as_ref().map_or_else(
-                |failure| failure.tokens_used,
-                |retrieved| retrieved.tokens_used,
-            ));
-        }
-        let mut retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
-        let remaining = (token_budget as u64)
-            .checked_sub(retrieved.tokens_used)
-            .ok_or_else(|| {
-                ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
-            })?;
-        let mut bodies = crate::projection::BodyBudget::new(
-            &server.vault,
-            server.config.limits.projection_body_bytes,
-        );
-        let (evidence, evidence_omitted) =
-            collect_evidence(&server.vault, &scoped_read, &mut retrieved, &mut bodies)?;
-        let answered = answer_from(
-            &request,
-            &query,
-            remaining,
-            &evidence,
-            admission.as_ref(),
-            &server.vault,
+    crate::server::blocking(|| {
+        let admission = deep_admission::admit_memory_reason(
+            &server,
             &auth,
+            request.depth,
+            token_budget as u64,
+            &scope,
+            anonymous_at_arrival,
         )?;
-        let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
-        let mut response = reason_response(request.depth, &retrieved, answered, tokens_used);
-        response.limit_clamped = limit_clamped;
-        response.evidence_omitted = evidence_omitted;
-        Ok(Json(response))
-    })();
-    // The closure contains every fallible step after retrieval starts. Even
-    // projection or composition errors must settle the usage already recorded.
-    match admission.as_ref() {
-        Some(admission) => admission.finish(result),
-        None => result,
-    }
-    .map_err(Into::into)
+
+        let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+        server.vault.measure_limit_for(
+            oneiron::limit_ask::EngineLimit::MemoryReasonEvidenceRows,
+            limit as u64,
+            auth.principal_entity(),
+        );
+        server.vault.measure_limit_for(
+            oneiron::limit_ask::EngineLimit::MemoryReasonTokens,
+            token_budget as u64,
+            auth.principal_entity(),
+        );
+        let depth_request = DepthSearchRequest {
+            deadline: None,
+            probe: SearchProbe::Text {
+                query: query.clone(),
+            },
+            effort: request.depth,
+            limit,
+            session_scope: Some(&scope),
+            lease: admission.as_ref().map(DeepAdmission::lease),
+            backend: admission.as_ref().map(DeepAdmission::search_backend),
+            token_budget: Some(token_budget as u64),
+        };
+        let result = (|| {
+            let retrieved = scoped_read.search_with_effort(&depth_request);
+            if let Some(admission) = admission.as_ref() {
+                admission.record_usage(retrieved.as_ref().map_or_else(
+                    |failure| failure.tokens_used,
+                    |retrieved| retrieved.tokens_used,
+                ));
+            }
+            let mut retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
+            let remaining = (token_budget as u64)
+                .checked_sub(retrieved.tokens_used)
+                .ok_or_else(|| {
+                    ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
+                })?;
+            let mut bodies = crate::projection::BodyBudget::new(
+                &server.vault,
+                server.config.limits.projection_body_bytes,
+            );
+            let (evidence, evidence_omitted) = collect_evidence(
+                &server.vault,
+                &scoped_read,
+                &mut retrieved,
+                &mut bodies,
+                &server.memory,
+            )?;
+            let answered = answer_from(
+                &request,
+                &query,
+                remaining,
+                evidence.as_slice(),
+                admission.as_ref(),
+                &server.vault,
+                &auth,
+            )?;
+            let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
+            let mut response = reason_response(request.depth, &retrieved, answered, tokens_used);
+            if let Some(admission) = admission.as_ref() {
+                response.tokens_usage_complete = admission.host.backend.usage_complete();
+                response
+                    .narrowing
+                    .extend(admission.host.backend.read_receipts());
+            }
+            response.limit_clamped = limit_clamped;
+            response.evidence_omitted = evidence_omitted;
+            Ok(Json(response))
+        })();
+        // The closure contains every fallible step after retrieval starts. Even
+        // projection or composition errors must settle the usage already recorded.
+        match admission.as_ref() {
+            Some(admission) => admission.finish(result),
+            None => result,
+        }
+        .map_err(Into::into)
+    })
 }
 
 /// Project the engine report without inferring execution health from answer gaps.
@@ -478,6 +522,7 @@ fn reason_response(
         gaps: answered.gaps,
         reasoning: trace_for(effort, retrieved),
         tokens_used,
+        tokens_usage_complete: true,
         quality: retrieved.retrieval_quality.quality,
         degradation: retrieved.retrieval_quality.degradation.clone(),
         confidence_adjustment: retrieved.retrieval_quality.confidence_adjustment,
@@ -548,108 +593,6 @@ fn trace_for(effort: Effort, retrieved: &DepthSearchResult) -> Option<MemoryReas
         signals_used: retrieved.signals_used.clone(),
         candidates_scanned: retrieved.candidates_scanned,
     })
-}
-
-/// Projects admitted hits into citable evidence rows, and the rows whose
-/// bodies `bodies` could not hold.
-///
-/// Every row goes back through the actor-keyed projection, so a hit the
-/// ranking produced but the projection cannot read is dropped here rather than
-/// cited as a source with no content behind it. A row past the body budget is
-/// not decoded, cited or read into the answer: it comes back in the second
-/// list, its marker naming the read that returns it whole.
-fn collect_evidence(
-    vault: &oneiron::Vault,
-    scoped_read: &ScopedRead<'_>,
-    retrieved: &mut DepthSearchResult,
-    bodies: &mut crate::projection::BodyBudget<'_>,
-) -> Result<(Vec<MemoryReasonEvidence>, Vec<Value>), ApiError> {
-    let refs: Vec<_> = retrieved
-        .hits
-        .iter()
-        .filter_map(|hit| {
-            retrieved.revisions.get(&hit.id).map(|revision| {
-                oneiron::claim::PointRead::id(hit.id)
-                    .at(oneiron::memory::ReadMode::Pinned(*revision))
-            })
-        })
-        .collect();
-    let requested = retrieved
-        .narrowing
-        .last()
-        .map(|receipt| receipt.applied.as_filter());
-    let projected = scoped_read
-        .read(&refs, requested.as_ref())
-        .map_err(|_| ApiError::internal_server_error("memory reason projection failed"))?;
-    retrieved.narrowing.push(projected.receipt);
-    let mut evidence = Vec::with_capacity(refs.len());
-    let mut omitted = Vec::new();
-    for (read, row) in refs.into_iter().zip(projected.value) {
-        let Some(oneiron::claim::ReadRow {
-            id,
-            entity_type: kind,
-            learned_at,
-            body: Some(body),
-            ..
-        }) = row
-        else {
-            continue;
-        };
-        let mode = read.mode;
-        if !bodies.admits(body.len()) {
-            omitted.push(bodies.omitted(&id, kind, learned_at, &body, View::Summary, mode));
-            continue;
-        }
-        let Value::Object(fields) =
-            crate::projection::project_entity_parts(&id, kind, learned_at, &body, View::Full)
-        else {
-            continue;
-        };
-        let short_id = vault
-            .pinned_short_ref_with_mode(&id, mode)
-            .map_err(|_| ApiError::internal_server_error("memory citation pin failed"))?;
-        evidence.push(MemoryReasonEvidence {
-            kind: string_field(&fields, "kind").unwrap_or_else(|| "UNKNOWN".to_owned()),
-            text: evidence_text(&fields),
-            confidence: evidence_confidence(&fields),
-            short_id,
-        });
-    }
-    Ok((evidence, omitted))
-}
-
-fn string_field(fields: &Map<String, Value>, key: &str) -> Option<String> {
-    fields
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .filter(|value| !value.trim().is_empty())
-}
-
-/// The row's text, preferring the claim value, then the common content keys,
-/// then the projection's own label. Non-string values are rendered as compact
-/// JSON so a structured value is still shown rather than silently dropped.
-fn evidence_text(fields: &Map<String, Value>) -> String {
-    for key in ["val", "content", "text", "txt", "body"] {
-        match fields.get(key) {
-            Some(Value::String(text)) if !text.trim().is_empty() => return text.clone(),
-            Some(Value::Null) | Some(Value::String(_)) | None => {}
-            Some(other) => return other.to_string(),
-        }
-    }
-    string_field(fields, "label").unwrap_or_default()
-}
-
-/// The row's calibrated confidence.
-///
-/// `conf` is the claim codec's own calibrated-absolute field. A structural
-/// record carries none and is `1.0`: the caller named a stored fact, and
-/// nothing about it is a ranked guess.
-fn evidence_confidence(fields: &Map<String, Value>) -> f32 {
-    fields
-        .get("conf")
-        .and_then(Value::as_f64)
-        .map_or(1.0, |confidence| confidence.clamp(0.0, 1.0) as f32)
 }
 
 struct AnsweredRead {

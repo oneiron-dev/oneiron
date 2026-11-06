@@ -1,5 +1,6 @@
 //! Dispatcher organ with dispatch, execute, authorize, and capture doors.
 
+pub(crate) mod capture_fact;
 mod terminal;
 
 use std::sync::Arc;

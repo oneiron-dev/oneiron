@@ -176,6 +176,20 @@ pub struct AuthorityFold {
     pub(crate) checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy,
     /// The owner's home node picks and the one in force here (DOOR-101).
     pub(crate) home_pick: super::home_pick::FoldedHomePick,
+    /// Each repository's origin cuts, keyed by its portable id, and the cut
+    /// in force here (FIX 15740).
+    #[serde(
+        default,
+        skip_serializing_if = "super::origin_cut::FoldedOriginCuts::is_empty"
+    )]
+    pub(crate) origin_cuts: super::origin_cut::FoldedOriginCuts,
+    /// Each predecessor device key's successor the owner named, keyed by its
+    /// succession target (FIX 11135).
+    #[serde(
+        default,
+        skip_serializing_if = "super::device_succession::FoldedDeviceSuccessions::is_empty"
+    )]
+    pub(crate) device_successions: super::device_succession::FoldedDeviceSuccessions,
     /// Each person's conversation training opt-out choices, keyed by the
     /// PERSON (FIX 4489, FIX 5502).
     pub(crate) conversation_training: super::conversation_training::FoldedConversationTraining,
@@ -222,7 +236,7 @@ pub struct AuthorityFold {
 }
 
 /// What bounds this install's view beside the roster rule (Astra #1430).
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct InstallBound {
     /// The machine revisions, world edits and grant travel choices this
     /// install holds back: each revision that landed restriction only, and
@@ -233,7 +247,20 @@ pub(super) struct InstallBound {
     /// bounds this view changes (`install_fold::NoVouch`). A cached view
     /// lasts no longer.
     pub(super) no_vouch_deadline: Option<u64>,
+    /// Report-only vouch-only owner-work hashes (FIX 4633): `None` while no
+    /// report was computed, `Some` once `NoVouch::cap` compares the folds.
+    /// Runtime-only: never serialized, never compared, never an authority.
+    #[serde(skip)]
+    pub(super) vouch_only_owner_work: Option<BTreeSet<AuthorityEntryHash>>,
 }
+
+impl PartialEq for InstallBound {
+    fn eq(&self, other: &Self) -> bool {
+        self.held_back == other.held_back && self.no_vouch_deadline == other.no_vouch_deadline
+    }
+}
+
+impl Eq for InstallBound {}
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -292,13 +319,15 @@ impl AuthorityFold {
 
     /// Whether anything this fold projects rests on how this install counts
     /// machines: an edited world, a chosen grant, a checkpoint policy choice,
-    /// a home pick, a person's conversation training choice or a setting's
-    /// act. With none, staleness and holds change nothing a caller reads.
+    /// a home pick, an origin cut, a person's conversation training choice or
+    /// a setting's act. With none, staleness and holds change nothing a caller reads.
     pub(super) fn rests_on_counting(&self) -> bool {
         !self.worlds.is_empty()
             || !self.grant_travel.is_empty()
             || !self.checkpoint_policy.live.is_empty()
             || !self.home_pick.live.is_empty()
+            || self.origin_cuts.rests_on_counting()
+            || self.device_successions.rests_on_counting()
             || self.conversation_training.rests_on_counting()
             || self.conversation_training_vault.rests_on_counting()
             || self.policy_settings.rests_on_counting()
@@ -400,6 +429,21 @@ pub(super) struct FoldState {
     pub(super) checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState,
     /// The vault's home picks, merged the same way (DOOR-101).
     pub(super) home_pick: super::home_pick::HomePickChoiceState,
+    /// Each repository's origin cuts, merged the same way, one frontier per
+    /// portable id (FIX 15740). An image carries it only when some cut
+    /// folded.
+    #[serde(
+        default,
+        skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
+    )]
+    pub(super) origin_cut: super::origin_cut::OriginCutChoiceState,
+    /// Each predecessor device key's successions, merged the same way (FIX
+    /// 11135).
+    #[serde(
+        default,
+        skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
+    )]
+    pub(super) device_succession: super::device_succession::DeviceSuccessionChoiceState,
     /// Each person's conversation training opt-out choices, merged the same
     /// way (FIX 4489, FIX 5502).
     pub(super) conversation_training: super::conversation_training::ConversationTrainingChoiceState,
@@ -680,6 +724,11 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &right.checkpoint_policy,
     );
     super::owner_choice::merge_owner_choices(&mut merged.home_pick, &right.home_pick);
+    super::owner_choice::merge_owner_choices(&mut merged.origin_cut, &right.origin_cut);
+    super::owner_choice::merge_owner_choices(
+        &mut merged.device_succession,
+        &right.device_succession,
+    );
     super::owner_choice::merge_owner_choices(
         &mut merged.conversation_training,
         &right.conversation_training,

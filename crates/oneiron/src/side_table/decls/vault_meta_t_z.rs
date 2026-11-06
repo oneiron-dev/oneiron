@@ -307,6 +307,8 @@ side_tables! {
     /// the send is on, to the reader's primary route. Key: id16 (reader).
     WEAVE_DIGEST_CHANNEL_OVERRIDE: VaultMeta b"weave:digest_channel_override:v1:" Named Engine
         => crate::outbound::erase_weave_digest_channel_override_actor_in_txn;
+    /// Empty lens-rerender intent after erasure. Key: the full saved digest key.
+    WEAVE_DIGEST_RERENDER: VaultMeta b"weave:digest_rerender:v1:" Raw;
     /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
     /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
     /// (owner) + id16 (change).
@@ -316,6 +318,8 @@ side_tables! {
     WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named;
     /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
     WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
+    /// The newest live lens of one reader. Key: reader kind byte + id16.
+    WEAVE_LIVE: VaultMeta b"weave:live:v1:" Raw;
     /// Weave digest schedule of one reader. Key: reader kind byte + id16.
     WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
     /// One immutable wrong-item label filed from a live weave report. Key: family byte
@@ -330,6 +334,13 @@ side_tables! {
     /// One usage row per web connector call: provider, tool, key source, latency, cost and the
     /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
     WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
+    /// A workflow leaf's custodied tool transcript pointer and exact settled state. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT: VaultMeta b"workflow:tool_checkpoint:v1:" Named Authored
+        [refs: &[&[Field("content")], &[Field("retained")]]]
+        [accepts: crate::agent_dispatch::workflow_tool_checkpoint_accepts_masked]
+        => crate::agent_dispatch::erase_workflow_tool_actor_in_txn;
+    /// Content-free saved-tool fence, retained even when its payload cannot open. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT_FENCE: VaultMeta b"workflow:tool_checkpoint_fence:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw
