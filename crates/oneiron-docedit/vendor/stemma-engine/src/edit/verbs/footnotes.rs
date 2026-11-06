@@ -72,7 +72,8 @@ use super::super::{
     ContentFragment, ParagraphContent, apply_opaque_delete, apply_replace_paragraph_text,
     apply_segment_replace_paragraph, collect_anchor_inventory, extract_text_sections,
     find_opaque_flat_index, has_structural_markers, next_revision, normalize_expect_punctuation,
-    paragraph_visible_text, set_exact_replacement_marks, validate_preserved_inlines,
+    paragraph_visible_text, reposition_segment_replacement_markers, set_exact_replacement_marks,
+    validate_preserved_inlines,
 };
 use super::super::{EditError, MaterializationMode};
 use super::super::{find_block_index, validate_block_is_editable};
@@ -82,7 +83,7 @@ use crate::domain::{
     ProofRef, RevisionInfo, StyleProps, TrackedBlock, TrackedSegment, TrackingStatus,
 };
 use crate::semantic_hash::check_block_guard;
-use crate::tracked_model::{inject_structural_markers_at_offsets, project_block_for_accept_reject};
+use crate::tracked_model::project_block_for_accept_reject;
 
 /// Which note family a `*Note` verb targets. Maps to the reference opaque kind
 /// and the story collection. See the module doc for why this small enum is
@@ -620,9 +621,8 @@ pub(crate) fn apply_edit_runs(
 
     // Pop ONLY the genuine auto-number glyph (footnoteRef/endnoteRef by wire
     // tag). Any other leading decoration (a bookmark start, a foreign marker)
-    // is an ordinary structural marker and stays for the offset-preserving
-    // clone below — blindly popping it would move it to offset 0 and, worse,
-    // duplicate it on reject (once prepended, once in the restored original).
+    // is an ordinary structural marker retained once by the segment builder.
+    // Popping it would move it away from its original position.
     let autonumber = match para_mut.segments.first_mut() {
         Some(seg)
             if seg
@@ -670,21 +670,8 @@ pub(crate) fn apply_edit_runs(
     // is never itself part of a block insertion.
     apply_segment_replace_paragraph(para_mut, content, revision, None, rev_counter);
     set_exact_replacement_marks(para_mut, content);
-
-    if carry_markers
-        && let Some(pos) = para_mut
-            .segments
-            .iter()
-            .position(|seg| matches!(seg.status, TrackingStatus::Inserted(_)))
-    {
-        // The Deleted tombstone keeps its own marker copies (reject-all ==
-        // original); clone them into the Inserted segment so accept-all keeps
-        // them too. An empty replacement has no Inserted segment: its markers
-        // stay tombstone-only, the same full-deletion law the word-diff path
-        // applies when every token deletes.
-        let mut inserted = vec![para_mut.segments[pos].clone()];
-        inject_structural_markers_at_offsets(&mut inserted, &marker_source, None);
-        para_mut.segments[pos] = inserted.into_iter().next().expect("non-empty");
+    if carry_markers {
+        reposition_segment_replacement_markers(para_mut, &marker_source);
     }
 
     if let Some(deco) = autonumber {

@@ -179,8 +179,8 @@ both outer modes via a text-only settle that flips the fresh `Inserted` segment
 and drops the `Deleted` tombstone, leaving paragraph formatting/change metadata,
 `para_id`, author/date, threading/resolve sidecar, all other blocks, and body
 anchors verbatim; no `w:ins`/`w:del` is authored into comments.xml, and the
-edited comment's full content hash is recomputed. An empty replacement drops its
-markers with its tombstone, the same full-deletion law as the note path. Existing
+edited comment's full content hash is recomputed. An empty replacement retains
+its Normal structural markers while removing the old text. Existing
 create/reply/delete behavior, the shared builder, and the exact-marks helper are
 byte-unchanged. No contract schema bump, no new error, format, default, cap, or
 Loro change. No Word-runtime comparison is claimed.
@@ -244,3 +244,14 @@ text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
+
+The note/comment run marker correction (2026-11-07) repositions each retained
+Normal marker once between the old and replacement text readings, using the
+existing offset-placement helper only to plan the target positions. The planning
+copies are discarded, so accepted, rejected and unresolved output retain one
+marker identity rather than emitting both originals and replacement copies.
+The exact-marks pass still runs before any replacement text is split; the shared
+segment builder, marker offset law and note auto-number behavior are unchanged.
+The comment-cell text settle also retains structural markers from a deleted
+text segment as Normal markers, including when the replacement is empty. It
+adds no refusal and does not change any other paragraph or cell.
