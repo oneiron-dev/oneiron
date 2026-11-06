@@ -339,19 +339,27 @@ server memory line. It records the vector's actual capacity after collecting
 MEMORIES ids and after each extension with capability hits and named board rows.
 The vector stays charged while the session lock is awaited and while the read set
 observes those ids. It drops after the original observation block, before its
-holder. Errors and cancellation also drop the ids before the holder. The read
-set's own point-read vector has a distinct local holder on the same memory line.
-Its capacity callback first records the original id-only collection before the
-row read, so a read failure drops that vector before releasing its holder. After
-a successful read, a second callback records the returned vector's actual slots
-and each owned body byte-vector's capacity before the original row loop consumes
-them. These are distinct allocations; the second callback adds their storage to
-the same local holder without rebasing the earlier point-read charge. The original
-row buffers drop inside the read-set method before the caller releases that
-holder. The ordinary method and its other callers keep their behavior. Decoded
-records, deletion metadata's possible heap storage, successor-read vectors,
-retained maps and later replay vectors remain separate allocations. Allocation
-and reallocation peaks are not covered by these post-allocation holders.
+holder. Errors and cancellation also drop the ids before the holder.
+
+The read set uses a separate local holder for each native point-read vector and
+returned row batch, on that same server memory line. The capacity callback returns
+the holder after recording the original id-only collection before the row read.
+After a successful read, another holder records the returned vector's actual slots
+and each owned body byte-vector's capacity before the original loop consumes them.
+Each holder is declared before its buffer, so the buffer drops first on success,
+read failure or unwind. These holders do not accumulate freed batches for the rest
+of the request.
+
+The same callback follows the private lifecycle path into each successor lookup.
+It records that lookup's own target vector before its read, then its returned
+batch after a successful read. Both holders stay inside that lookup; the original
+kind filter, ambiguous-successor return and receipt restriction are unchanged.
+Ordinary public observation methods use a no-op callback and keep their signatures
+and behavior. The original inbound-edge collection and filtering are unchanged;
+its temporary edge vector and optional short-id strings remain separate storage.
+Decoded records, deletion metadata's possible heap storage, retained maps and
+later replay vectors also remain separate allocations. Allocation and
+reallocation peaks are not covered by these post-allocation holders.
 
 
 ## Chat capture buffer custody
