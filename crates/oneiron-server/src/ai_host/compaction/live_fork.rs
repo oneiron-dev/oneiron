@@ -34,7 +34,7 @@ use oneiron::llm::{
 use oneiron::skill_optimize::union_source_rows;
 
 use super::self_writer::SelfWriterFrame;
-use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
+use super::serve::{Dispatch, Served, Unserved, admission_refused, request_input_tokens};
 use super::{CompactionMeter, LiveAdmission, ServedCompactionBackend, output_tokens};
 use crate::ai_host::CHAT_ROLE;
 use crate::models::{AnsweringRung, ModelCallBinding, RoleCall};
@@ -224,10 +224,14 @@ impl ServedCompactionBackend {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
         while_warm: bool,
-    ) -> Result<Option<Served<Vec<CompactionHomeRef>>>, CompactionRefusal> {
+    ) -> Result<Option<Served<Vec<CompactionHomeRef>>>, Unserved<Vec<CompactionHomeRef>>> {
         let started = Instant::now();
         let unsent = |refusal: CompactionRefusal| {
-            if while_warm { Ok(None) } else { Err(refusal) }
+            if while_warm {
+                Ok(None)
+            } else {
+                Err(Unserved::from(refusal))
+            }
         };
         let llm = match self.fork_request(fork, request, retry) {
             Ok(llm) => llm,
