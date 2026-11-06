@@ -461,7 +461,7 @@ pub(crate) fn retire_carried_ask(call: &mut CodeRunBridgeCall, original: bool) -
     if call.request_erased() {
         return Ok(());
     }
-    let carried = swap_spawn_ask(call, erased_ask());
+    let carried = swap_spawn_ask(call, erased_ask(SpawnErasure::TargetErased));
     if !carried.is_some_and(|ask| ask.is_nil() || ask.is_str() || is_erased_ask(&ask)) {
         return Err(invalid_code_run_replay(
             "a retired spawn ask does not fit its call",
@@ -473,7 +473,7 @@ pub(crate) fn retire_carried_ask(call: &mut CodeRunBridgeCall, original: bool) -
     {
         for (key, value) in fields {
             if key.as_str() == Some(ASK_KEY) && value.is_str() {
-                *value = erased_ask();
+                *value = erased_ask(SpawnErasure::TargetErased);
             }
         }
     }
