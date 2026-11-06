@@ -646,7 +646,7 @@ impl Vault {
         put_output_in_txn(self, txn, &enactment.request, binding, check)?;
         if let Some(digest) = enactment.input {
             if let Some(carrier) = input_carrier_in_txn(&self.store, txn, &digest)? {
-                retire_input_carriers_in_txn(self, txn, &[carrier]);
+                retire_input_carriers_in_txn(&self.store, txn, &[carrier]);
             }
             drop_input_in_txn(self, txn, &digest)?;
         }

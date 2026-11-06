@@ -90,17 +90,22 @@ impl DreamerWakeDriver<'_> {
                 retry_at,
                 step_hashes,
             } => {
-                self.store.defer_selection(
-                    admitted,
-                    SettleDreamerBudget {
-                        budget_id: line.clone(),
-                        child_attempt: attempt_id,
-                        actual_units: completed_units,
-                        now: input.now,
-                    },
-                    retry_at,
-                    &step_hashes,
-                )?;
+                let budget = SettleDreamerBudget {
+                    budget_id: line.clone(),
+                    child_attempt: attempt_id,
+                    actual_units: completed_units,
+                    now: input.now,
+                };
+                // A try the frozen preparation did not hold ran nothing: its
+                // next run is its first, not a selection retry that widens
+                // over its conversations' TURNs.
+                if stage == Some(super::dispatch::BACKLOG_DEFERRED_STAGE) {
+                    self.store
+                        .defer_backlog(admitted, budget, retry_at, &step_hashes)?;
+                } else {
+                    self.store
+                        .defer_selection(admitted, budget, retry_at, &step_hashes)?;
+                }
                 let stage = stage.unwrap_or("deferred");
                 self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
                 self.write_attempt_milestone(

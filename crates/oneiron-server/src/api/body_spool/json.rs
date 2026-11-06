@@ -128,9 +128,9 @@ pub(super) fn decode_object<T: DeserializeOwned>(
 /// Decodes an object containing only the declared string members. Names
 /// are matched as unescaped runs, so neither unknown names nor values
 /// become a rebuilt DTO head.
-pub(super) fn decode_string_object(
+pub(super) fn decode_string_object<const N: usize>(
     reader: impl BufRead,
-    bulk: &mut [BulkMember<'_>],
+    bulk: &mut [BulkMember<'_>; N],
 ) -> Decoded<()> {
     let mut scan = Scanner { reader };
     scan.skip_whitespace()?;
@@ -142,10 +142,7 @@ pub(super) fn decode_string_object(
         loop {
             scan.skip_whitespace()?;
             scan.expect(b'"')?;
-            let mut names = bulk
-                .iter()
-                .map(|member| Some(member.name.as_bytes()))
-                .collect::<Vec<_>>();
+            let mut names = bulk.each_ref().map(|member| Some(member.name.as_bytes()));
             scan.string(&mut |run| {
                 for name in &mut names {
                     *name = (*name).and_then(|remaining| remaining.strip_prefix(run));

@@ -190,7 +190,14 @@ binds the gate-decision key custody the restored vault keeps, so it is archived:
 reads, but refuses every write, erase and key retirement, which would otherwise reach the
 restored vault's keys. A restore that stops part-way through the swap (a crash, a power cut)
 leaves the same rule: whichever vault sits at the vault's path is the live one, and the other
-opens archived. To use the archived vault again, activate it:
+opens archived. On a later restore, sealed staging left by an interrupted swap is claimed
+as the previous vault only when both page-seal mirrors identify the post-swap state. After
+that rename, the archive mirror is narrowed to the previous vault's verified incarnation,
+keeping its carried key wraps. A mirror rewrite failure is logged and does not undo the
+claim; the archive's next sealed open can still narrow it. Plain, ambiguous, or locked
+staging stays whole and is named in the restore's `staging_notes`.
+
+To use the archived vault again, activate it:
 
 ```sh
 oneiron restore --activate /path/to/vault.pre-restore-<UTC time>
@@ -1345,9 +1352,16 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 
 The Coach reads the open inbox with a triage skill you bind, and files what it finds as
 proposals in your run tray. It never closes, moderates or deletes a note. Bind the skill first:
-`GET /v1/owner/feedback/triage/binding` returns `{skill, revision}`, and `PUT` with
-`{"skill": "<SKILL id>", "seen": <revision>}` binds it (`"skill": null` unbinds; a stale `seen`
-is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
+`GET /v1/owner/feedback/triage/binding` returns
+`{skill, enqueue_on_intake, revision, set_at}`. `PUT` with
+`{"skill": "<SKILL id>", "enqueue_on_intake": false, "seen": <revision>}` binds it
+(`"skill": null` unbinds; a stale `seen` is refused). The required
+`enqueue_on_intake` boolean defaults to false while never set, keeping manual/nightly
+batching. Set it true to queue the same ordinary sweep as each new inbox note lands;
+running work retains one coalesced later sweep. Turning it off leaves already admitted
+work intact. This is scheduling under the owner's setting, not anonymous authority.
+The repo's `skills/feedback-triage/SKILL.md` is a starting skill. Details:
+[`Feedback triage on intake`](feedback-triage-intake.md).
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
 already going is joined. If that sweep is already running, the request also retains one later

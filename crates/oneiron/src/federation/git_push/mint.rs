@@ -15,6 +15,7 @@
 //! and touches GitPush rows only; a repeat the authority log already names
 //! changes nothing and signs nothing.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::authority::{ActSurface, AgentGrantAct, AgentGrantActRef};
@@ -141,6 +142,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -210,7 +212,12 @@ impl Vault {
                 txn,
                 owner,
                 surface,
-                AgentGrantAct::Revoke { grant: grant_ref },
+                AgentGrantAct::Revoke {
+                    grant: grant_ref,
+                    // A GitPush revoke acknowledges no topology decision:
+                    // explicit empty set, never a default (FIX 5114).
+                    acknowledged_topology: BTreeSet::new(),
+                },
             )?;
             // The withdrawal stays known here and reaches its peers, in this
             // writer (FIX-LIST 5107, 10772).

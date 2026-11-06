@@ -45,7 +45,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"retrieval_trace_key:",
                 b"tasks.create.rate.",
                 b"own_rate.",
-                b"vault_cleanup.scan",
                 b"self_heal:signed:",
                 b"booking:anti_abuse:v1:rate\0",
                 b"booking:anti_abuse:v1:cache\0",
@@ -167,6 +166,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"rb:n:",
                 b"rb:s:",
                 b"rb:u:",
+                // Each proposing actor's opaque handle is this vault's own
+                // erasable map (FIX 9870): no image may keep who stands
+                // behind a signed handle.
+                b"it:proposer-scope:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

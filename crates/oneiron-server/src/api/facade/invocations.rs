@@ -242,10 +242,15 @@ impl DoorInvocationClaim {
         crate::idempotency::run_under_intent(&self.store_key, run).await
     }
 
-    /// Saves a successful JSON outcome, releases a failed one, and wakes the
-    /// live waiters in either case. A storage error is logged and leaves the
-    /// durable intent standing rather than permitting a second run.
+    /// Saves a successful JSON outcome, releases a failed or hook-pending
+    /// one, and wakes the live waiters in either case. A pending ask is not
+    /// an accepted asynchronous job: the next same-id retry must reach the
+    /// hook again. A storage error leaves the durable intent standing.
     pub(crate) fn finish(self, outcome: InvocationOutcome) {
+        if FacadeApiError::is_pending_ask(outcome.status, &outcome.body) {
+            self.finish_failed(outcome);
+            return;
+        }
         let keep = outcome.status < 400;
         self.finish_with(outcome, keep);
     }
