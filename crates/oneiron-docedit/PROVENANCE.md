@@ -301,3 +301,23 @@ earlier nested table. No old-id reader, new address field or format version is
 added. Paragraph counters, XML content, tracking, formatting, materialization
 and the direct-only story-cell editing surface are unchanged. This fixes the
 native producer identity only; it does not add nested story-cell editing.
+
+
+## Nested story paragraph reads (FIX 14487, 2026-11-07)
+
+`src/docx_body/stories.rs` now appends native nested-cell paragraphs to the
+existing named-story scoped read, after every old top-level and direct-cell
+result. Each new block carries its actual paragraph id and accepted inline
+text. It is not a replacement target for the enclosing cell. The shared
+paragraph reader keeps the existing tracked, literal-prefix and inline-anchor
+locks, with tracked block/row/cell and vertical-merge continuation ancestry
+carried through every nested level. Locked descendants remain readable.
+
+The all-story read is factored without changing its results. A scoped call
+still parses once inside the caller's archive/resource context and reads all
+stories before selecting the exact scope. Missing stories stay empty; omitted
+scope still calls the unchanged body-only reader. Public types, native edit
+verbs, first-direct paragraph selection, materialization and core live-unit
+handling are unchanged. This is the native scoped-reader slice only, not whole
+nested ParagraphAsk/live-pin/projection or FIX 14487 closure. No test, compiler
+or runtime/Word result is claimed.
