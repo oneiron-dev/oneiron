@@ -67,7 +67,14 @@ impl Bridge {
             use std::io::Write;
             let _ = writer.write_all(&bytes);
         }
-        rx.recv().map_err(io::Error::other)
+        let reply = rx.recv().map_err(io::Error::other)?;
+        if reply.errno == libc::EAGAIN
+            && let Some(floor) = reply.floor.as_deref().and_then(crate::known_floor)
+        {
+            use std::io::Write;
+            let _ = writeln!(io::stderr().lock(), "oneiron fence: {floor}");
+        }
+        Ok(reply)
     }
 
     /// Sends one complete scan, in chunks, while the bridge is connected. A
