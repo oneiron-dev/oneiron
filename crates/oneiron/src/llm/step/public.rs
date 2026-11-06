@@ -257,15 +257,16 @@ async fn submit(
                 "saved model step lost its captured recovery".into(),
             ))
         })?;
-        super::execute::recover_step(&context, &row.step_hash, &row.input.request, recovery, None)
+        super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
     row.result = Some(match outcome {
         Ok(StepOutcome::Finished {
-            response, memoized, ..
+            binding,
+            response,
+            memoized,
+            ..
         }) => {
-            let claim = step_index_lookup(vault, id, &row.step_hash)?.ok_or(
-                Error::InvalidClaimBody("finished model step has no terminal claim"),
-            )?;
+            let claim = binding.claim_id;
             let json = if matches!(
                 row.input.request.envelope.response_format,
                 ResponseFormat::Json { .. }
