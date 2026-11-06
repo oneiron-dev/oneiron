@@ -192,7 +192,22 @@ impl GraphFsResolver<'_, '_> {
             }
             let after =
                 scope.seal_bytes_with(entry.name().as_bytes(), quantum, || checkpoint(reader))?;
-            if !page.try_push_after(entry.clone(), after) {
+            let copied_entry = GraphFsEntry {
+                name: copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?,
+                kind: entry.kind,
+                target: entry
+                    .target
+                    .as_deref()
+                    .map(|target| copy_text_parts(&[target], reader, self.options.page_byte_cap))
+                    .transpose()?,
+                cursor: entry
+                    .cursor
+                    .as_deref()
+                    .map(|cursor| copy_text_parts(&[cursor], reader, self.options.page_byte_cap))
+                    .transpose()?,
+                byte_len: entry.byte_len,
+            };
+            if !page.try_push_after(copied_entry, after) {
                 next = last
                     .as_ref()
                     .map(|last| {
