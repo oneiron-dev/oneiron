@@ -138,18 +138,7 @@ impl PageRequests {
         request: HttpRequest,
     ) -> Result<(String, u16, Vec<(String, Vec<u8>)>, SpooledBody), Unanswered> {
         let url = Url::parse(&request.url).map_err(Unanswered::failed)?;
-        // An address literal resolves nothing, so the client's guard never
-        // sees it: it is checked here, before anything is sent. A name's
-        // origin is checked here too, its addresses by the resolver.
-        let literal = url
-            .host_str()
-            .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
-            .and_then(|host| host.parse::<IpAddr>().ok());
-        let checked = match literal {
-            Some(ip) => self.operation.check(&request.url, ip),
-            None => self.operation.check_origin(&url),
-        };
-        checked.map_err(Unanswered::Refused)?;
+        self.admit_hosted(&url).map_err(Unanswered::Refused)?;
         let method =
             reqwest::Method::from_bytes(request.method.as_bytes()).map_err(Unanswered::failed)?;
         let mut builder = self.client.request(method, url).body(request.body);
@@ -182,6 +171,22 @@ impl PageRequests {
             error => Unanswered::failed(error),
         })?;
         Ok((url, status, headers, body))
+    }
+
+    /// The render's guard's verdict on `url` before anything is sent to it.
+    /// An address literal resolves nothing, so the client's guard never sees
+    /// it: it is judged here by its address. A name's origin is judged here
+    /// too, its addresses by the resolver. A refusal is kept for the render,
+    /// which it ends.
+    fn admit_hosted(&self, url: &Url) -> Result<(), HostedEgressRefusal> {
+        let literal = url
+            .host_str()
+            .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+            .and_then(|host| host.parse::<IpAddr>().ok());
+        match literal {
+            Some(ip) => self.operation.check(url.as_str(), ip),
+            None => self.operation.check_origin(url),
+        }
     }
 
     /// `error`, a refusal where the render's guard failed its connection,
@@ -243,14 +248,24 @@ impl BrowserRequestHandler for PageRequests {
     /// A navigation to an origin other than a same-site crawl's pinned one
     /// is refused before it is sent (FIX 4734). The render keeps a
     /// main-frame refusal, which ends it; an in-page frame's refused
-    /// document fails alone, and the page renders on without it. A render
-    /// with no pin admits every navigation here, and its guard still checks
-    /// each request as it is sent.
+    /// document fails alone, and the page renders on without it. The guard's
+    /// hosted refusal comes first and ends the render in any frame. A render
+    /// with no pin admits every other navigation here, and its guard still
+    /// checks each request as it is sent.
     fn admit_navigation(&self, url: &str, frame: NavigationFrame) -> Result<(), BrowserError> {
+        let parsed = Url::parse(url);
+        // The guard judges the destination first, pinned or not and in any
+        // frame: an address literal, a private network or an unlisted
+        // operator origin is refused here as its request would be, and the
+        // refusal is kept for the render and ends it, never only the frame.
+        if let Ok(destination) = &parsed {
+            self.admit_hosted(destination)
+                .map_err(|refused| Self::request_error(Unanswered::Refused(refused)))?;
+        }
         let Some(pin) = &self.operation.pin else {
             return Ok(());
         };
-        let checked = Url::parse(url)
+        let checked = parsed
             .map_err(|_| {
                 RendererError::cross_site_redirect(format!(
                     "a navigation to an unparsable URL is outside the same-site crawl's pinned origin {pin}; refused before contact"
