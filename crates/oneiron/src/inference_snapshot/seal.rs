@@ -240,7 +240,12 @@ fn seal_chunk(
         &mut SysRng,
         ciphertext,
     )
-    .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    .map_err(|error| match error {
+        oneiron_crypto::Error::OutOfMemory => {
+            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+        }
+        _ => refused("sealing an inference snapshot failed"),
+    })?;
     let mut frame = Vec::new();
     frame
         .try_reserve_exact(envelope.len())
