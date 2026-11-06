@@ -8,9 +8,9 @@ use crate::batch::secret_scan::ContainerReader;
 use crate::error::Result;
 use oneiron_store::batch::secret_scan::container::{ReadProgress, withheld};
 
-/// Prints the lines of `bytes` from `from`, each as `render` makes it (`None`
-/// skips it), until `max_lines` are printed or the page is full. A line
-/// longer than a whole page prints across pages, cut on a character
+/// Prints the lines of `bytes` from `from`, with a prefix from `prefix`
+/// (`None` skips it) and a newline, until `max_lines` are printed or the page
+/// is full. A line longer than a whole page prints across pages, cut on a character
 /// boundary. Returns how many lines it finished, and where the next page
 /// resumes when the page filled first.
 pub(super) fn page_lines(
@@ -20,7 +20,7 @@ pub(super) fn page_lines(
     max_lines: usize,
     reader: &ContainerReader,
     scan_bytes: usize,
-    mut render: impl FnMut(&str) -> Option<String>,
+    mut prefix: impl FnMut(&str) -> Option<String>,
 ) -> Result<(usize, Option<LinePosition>)> {
     let mut finished = 0;
     let mut at = from;
@@ -36,8 +36,8 @@ pub(super) fn page_lines(
         };
         let mut text = String::new();
         lossy_for_each(line, reader, scan_bytes, |chunk| text.push_str(chunk))?;
-        if let Some(rendered) = render(&text) {
-            if let Some(printed) = out.push_line(&rendered, at.printed) {
+        if let Some(prefix) = prefix(&text) {
+            if let Some(printed) = out.push_line_parts(&[&prefix, &text, "\n"], at.printed) {
                 at.printed = printed;
                 return Ok((finished, Some(at)));
             }

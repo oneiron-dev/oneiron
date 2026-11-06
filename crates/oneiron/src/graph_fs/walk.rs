@@ -362,7 +362,7 @@ impl GraphFsResolver<'_, '_> {
                     usize::MAX,
                     reader,
                     self.options.page_byte_cap,
-                    |line| line.contains(pattern).then(|| format!("{path}:{line}\n")),
+                    |line| line.contains(pattern).then(|| format!("{path}:")),
                 )?;
                 walk.total += matched;
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))

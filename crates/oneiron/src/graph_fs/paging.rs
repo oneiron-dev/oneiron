@@ -220,25 +220,58 @@ impl CommandOutputBuilder {
     /// as much as fits, cut on a character boundary, on an empty one, so a
     /// line longer than any page prints across pages.
     pub(super) fn push_line(&mut self, line: &str, printed: usize) -> Option<usize> {
-        let printed = if line.is_char_boundary(printed) {
-            printed
+        self.push_line_parts(&[line], printed)
+    }
+
+    /// Pushes a line from borrowed parts with the same rendered-byte cursor.
+    pub(super) fn push_line_parts(&mut self, parts: &[&str], printed: usize) -> Option<usize> {
+        let len = parts.iter().map(|part| part.len()).sum::<usize>();
+        let mut at = printed;
+        let mut boundary = printed == 0;
+        for part in parts {
+            if at <= part.len() {
+                boundary = part.is_char_boundary(at);
+                break;
+            }
+            at -= part.len();
+        }
+        let printed = if boundary { printed } else { 0 };
+        let rest_len = len - printed;
+        let fits = self.entries < self.max_entries
+            && self.bytes.len().saturating_add(rest_len) <= self.byte_cap;
+        if !fits {
+            self.full = true;
+            if self.entries > 0 {
+                return Some(printed);
+            }
+        }
+        let mut remaining = if fits {
+            rest_len
         } else {
-            0
+            self.byte_cap.min(rest_len)
         };
-        let rest = &line[printed..];
-        if self.try_push(rest.as_bytes()) {
-            return None;
+        let mut skipped = printed;
+        let mut copied = 0;
+        for part in parts {
+            if skipped >= part.len() {
+                skipped -= part.len();
+                continue;
+            }
+            let rest = &part[skipped..];
+            skipped = 0;
+            let mut end = remaining.min(rest.len());
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.bytes.extend_from_slice(&rest.as_bytes()[..end]);
+            copied += end;
+            remaining -= end;
+            if end < rest.len() {
+                break;
+            }
         }
-        if self.entries > 0 {
-            return Some(printed);
-        }
-        let mut end = self.byte_cap.min(rest.len());
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.bytes.extend_from_slice(&rest.as_bytes()[..end]);
         self.entries += 1;
-        Some(printed + end)
+        if fits { None } else { Some(printed + copied) }
     }
 
     pub(super) fn entries(&self) -> usize {

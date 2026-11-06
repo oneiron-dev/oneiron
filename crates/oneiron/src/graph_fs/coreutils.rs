@@ -332,7 +332,7 @@ impl GraphFsResolver<'_, '_> {
                 lines.saturating_sub(from.printed),
                 reader,
                 self.options.page_byte_cap,
-                |line| Some(format!("{line}\n")),
+                |_| Some(String::new()),
             )?;
             next_cursor = next.map(|at| {
                 scope.seal(&HeadPosition {
