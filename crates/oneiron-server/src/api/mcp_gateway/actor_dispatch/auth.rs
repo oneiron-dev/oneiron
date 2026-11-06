@@ -110,22 +110,38 @@ pub(super) async fn registered_actor(
         .capability_slip_now()
         .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
     let mut registry = server.mcp_registry.lock().await;
+    let actor = registry_actor(&mut registry, server, credential, &auth, now)
+        .map_err(mcp_actor_resolution_error)?;
+    drop(registry);
+    admitted_context(server, actor, auth, mode, request_id, session, room_turn)
+}
+
+/// The registration `credential` names in `registry`, judged at `now` on
+/// the vault's authority clock. The registry is memory: it learns a
+/// credential when one is redeemed over HTTP. A live paired slip it has not
+/// seen gets its record now, by the same rule, once the slip verifies as
+/// `auth` — so a restart or a credential minted on the stopped vault does
+/// not lock an agent out. A parked code run's re-entry after a restart
+/// finds its caller's registration the same way (FIX 4606).
+pub(in crate::api::mcp_gateway) fn registry_actor(
+    registry: &mut crate::mcp::McpConnectorActorRegistry,
+    server: &SyncServer,
+    credential: &str,
+    auth: &crate::auth::CoreAuth,
+    now: u64,
+) -> Result<McpResolvedActor, McpConnectorActorResolutionError> {
     let ceiling_exists = |actor_class: &str, actor_ref: &str| {
         server
             .vault
             .gate_actor_ceiling_exists(actor_class, actor_ref)
             .unwrap_or(false)
     };
-    // The registry is memory: it learns a credential when one is redeemed over
-    // HTTP. A live paired slip it has not seen gets its record now, by the
-    // same rule, once the slip verifies — so a restart or a credential minted
-    // on the stopped vault does not lock an agent out.
-    let mut actor = match registry.resolve(credential, now, ceiling_exists) {
+    match registry.resolve(credential, now, ceiling_exists) {
         Err(McpConnectorActorResolutionError::UnknownCredential)
             if crate::api::pairing::register_live_paired_mcp(
-                &mut registry,
+                &mut *registry,
                 credential,
-                &auth,
+                auth,
                 server,
             ) =>
         {
@@ -133,8 +149,21 @@ pub(super) async fn registered_actor(
         }
         resolved => resolved,
     }
-    .map_err(mcp_actor_resolution_error)?;
-    drop(registry);
+}
+
+/// The call `auth`, the instrument a call verified, makes through `actor`,
+/// the registration its credential resolved: once `auth` may act through
+/// it ([`mcp_proof_admits`]), in `session` and the room turn `room_turn`,
+/// its writes landing where that session places them.
+pub(in crate::api::mcp_gateway) fn admitted_context(
+    server: &Arc<SyncServer>,
+    mut actor: McpResolvedActor,
+    auth: crate::auth::CoreAuth,
+    mode: McpSurfaceMode,
+    request_id: &str,
+    session: Option<oneiron::EntityId>,
+    room_turn: Option<oneiron::EntityId>,
+) -> Result<McpCallContext, McpGatewayError> {
     mcp_proof_admits(server, &actor, &auth)?;
     let session_ref = session.map(|session| session.to_hex());
     actor.auth = Some(auth.in_off_record_session(session_ref.as_deref()));
