@@ -52,7 +52,8 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::store::local_replica::{
-    KeepControls, KeepReason, remove_local_members_in_txn, remove_local_replica_window_in_txn,
+    KeepControls, KeepReason, discard_bundle_payload_in_txn, remove_local_members_in_txn,
+    remove_local_replica_window_in_txn,
 };
 use crate::sync::WindowKey;
 
@@ -138,6 +139,9 @@ pub struct WorldEviction {
     pub cached_items_removed: usize,
     /// Thin read caches a legal hold keeps.
     pub cached_items_held: usize,
+    /// Sealed updates this install made of the worlds and the home had not
+    /// stored, which the owner's discard took.
+    pub sealed_sends_discarded: usize,
 }
 
 /// The home's version vector of world window `window_key`, as this device
@@ -185,8 +189,9 @@ pub fn evict_worlds_placed_elsewhere(vault: &Vault) -> Result<WorldEviction> {
 /// goes too, with that work and every edge it touches (Engine 11-06 08:34 =
 /// A); a pending tombstone still travels, as an id. Then every CLAIM of the
 /// world its claim posting list names, still in one of its windows, goes the
-/// same way. What a legal hold, a control or the fold's own records keep
-/// stays.
+/// same way, and so does each row of the world alone that sits in a BASE
+/// window (`world_base_rows`). What a legal hold, a control or the fold's own
+/// records keep stays.
 ///
 /// # Errors
 /// An owner proof that no longer stands; [`Error::InvalidConfig`] while this
@@ -234,6 +239,8 @@ fn evict(
     let (removed, held) = evict_cached_items(vault, worlds)?;
     report.cached_items_removed = removed;
     report.cached_items_held = held;
+    // Every member the passes' writes take, for the bundles that span them.
+    let mut taken = BTreeSet::new();
     for window in local_world_windows(vault, worlds)? {
         if matches!(confirmation, Confirmation::Home) && !home_holds_window(vault, &window)? {
             report.windows_unconfirmed += 1;
@@ -246,8 +253,9 @@ fn evict(
             None => report.windows_busy += 1,
             Some(step) => {
                 let step = step?;
-                report.removed += step.removed;
+                report.removed += step.removed.len();
                 report.kept += step.kept;
+                taken.extend(step.removed);
                 match step.progress {
                     Progress::Complete => report.windows_evicted += 1,
                     Progress::Busy => report.windows_busy += 1,
@@ -262,20 +270,41 @@ fn evict(
     if matches!(confirmation, Confirmation::Owner) {
         for world in worlds {
             let leftover = discard_leftover_claims(vault, *world)?;
-            report.removed += leftover.removed;
+            report.removed += leftover.removed.len();
             report.kept += leftover.kept;
             report.windows_busy += leftover.windows_busy;
+            taken.extend(leftover.removed);
+            // And its rows that sit in BASE windows (Engine call 1 = A).
+            let base = super::world_base_rows::discard_base_rows(vault, *world)?;
+            report.removed += base.removed.len();
+            report.kept += base.kept;
+            report.windows_busy += base.windows_busy;
+            taken.extend(base.removed);
+        }
+        // A bundle whose members two of those writes took goes once all have
+        // (call 4 = A).
+        if !taken.is_empty() {
+            vault.with_write_txn_grouped(|wtxn| {
+                discard_bundle_payload_in_txn(&vault.store, wtxn, &taken)
+            })?;
         }
     }
     if report.windows_busy == 0
         && report.windows_unconfirmed == 0
         && report.windows_with_local_members == 0
     {
-        vault.with_write_txn_grouped(|wtxn| {
+        report.sealed_sends_discarded = vault.with_write_txn_grouped(|wtxn| {
+            let mut discarded = 0;
             for world in worlds {
                 crate::world_keys::purge_world_mirrors_in_txn(&vault.store, wtxn, *world)?;
+                // The owner's discard takes its unsent sealed updates of the
+                // world too, once nothing of it waits here (call 3 = A).
+                if matches!(confirmation, Confirmation::Owner) {
+                    discarded +=
+                        super::sealed_updates::discard_world_outbox_in_txn(vault, wtxn, *world)?;
+                }
             }
-            Ok(())
+            Ok(discarded)
         })?;
     }
     Ok(report)
@@ -484,7 +513,7 @@ fn keep_controls(confirmation: Confirmation) -> KeepControls {
 /// The world CLAIMs a discard took after their windows' rows went.
 #[derive(Default)]
 struct Leftover {
-    removed: usize,
+    removed: Vec<EntityId>,
     kept: usize,
     windows_busy: usize,
 }
@@ -536,7 +565,7 @@ fn discard_leftover_claims(vault: &Vault, world: EntityId) -> Result<Leftover> {
                 None => leftover.windows_busy += 1,
                 Some(step) => {
                     let step = step?;
-                    leftover.removed += step.removed.len();
+                    leftover.removed.extend_from_slice(&step.removed);
                     leftover.kept += step.kept.len();
                 }
             }
@@ -562,7 +591,7 @@ enum Progress {
 
 /// What one window's eviction did.
 struct WindowStep {
-    removed: usize,
+    removed: Vec<EntityId>,
     kept: usize,
     progress: Progress,
 }
@@ -574,7 +603,7 @@ fn evict_window(
 ) -> Result<WindowStep> {
     let discard = matches!(confirmation, Confirmation::Owner);
     let keep = keep_controls(confirmation);
-    let mut removed = 0;
+    let mut removed = Vec::new();
     loop {
         let step = vault.with_write_txn_grouped(|txn| {
             if !discard {
@@ -617,7 +646,7 @@ fn evict_window(
                 });
             }
         };
-        removed += step.removed.len();
+        removed.extend_from_slice(&step.removed);
         let local = step
             .kept
             .iter()
