@@ -106,7 +106,7 @@ pub(super) fn tier_verdict_sourced(
     tier_verdict_sourced_in_txn(vault, &rtxn, skill, record)
 }
 
-fn tier_verdict_sourced_in_txn(
+pub(super) fn tier_verdict_sourced_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
