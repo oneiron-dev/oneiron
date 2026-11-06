@@ -183,10 +183,30 @@ impl Flow {
         if text.is_empty() {
             return Ok(());
         }
-        let (bytes, _, unmappable) = encoding_rs::WINDOWS_1252.encode(text);
-        if unmappable || text.chars().any(char::is_control) {
+        if text.chars().any(char::is_control) {
             return Err(ContentTemplateError::Font);
         }
+        let mut encoded = ScratchVec::<u8>::new(&self.budget);
+        let bytes: &[u8] = if text.is_ascii() {
+            text.as_bytes()
+        } else {
+            let mut encoder = encoding_rs::WINDOWS_1252.new_encoder();
+            let bound = encoder
+                .max_buffer_length_from_utf8_without_replacement(text.len())
+                .ok_or(ContentTemplateError::Overflow)?;
+            encoded.extend(std::iter::repeat_n(0, bound))?;
+            let (result, _, written) =
+                encoder.encode_from_utf8_without_replacement(text, &mut encoded, true);
+            match result {
+                encoding_rs::EncoderResult::InputEmpty => &encoded[..written],
+                encoding_rs::EncoderResult::Unmappable(_) => {
+                    return Err(ContentTemplateError::Font);
+                }
+                encoding_rs::EncoderResult::OutputFull => {
+                    return Err(ContentTemplateError::Overflow);
+                }
+            }
+        };
         let cell = style.size * 0.6;
         for chunk in bytes.chunks(((self.width() / cell).floor() as usize).max(1)) {
             self.budget.checkpoint()?;
