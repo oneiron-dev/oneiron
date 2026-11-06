@@ -23,10 +23,7 @@ const ATTEMPT_PREDICATE: &str = "team.member.dispatch";
 struct DispatchProjection {
     attempt: AttemptId,
     created_at: u64,
-    actor: EntityId,
-    project: Option<EntityId>,
-    type_ref: crate::task_type::TaskTypeRef,
-    team: Option<crate::agent_dispatch::TeamRunStamp>,
+    team: crate::agent_dispatch::TeamRunStamp,
 }
 
 impl DispatchProjection {
@@ -36,10 +33,7 @@ impl DispatchProjection {
         Ok(Self {
             attempt: record.id,
             created_at: record.created_at,
-            actor: input.target.agent_definition_ref()?,
-            project: input.project_ref,
-            type_ref: input.type_ref,
-            team: input.team,
+            team: input.team.ok_or_else(unavailable)?,
         })
     }
 }
@@ -117,6 +111,7 @@ pub(crate) struct TeamAttemptCapture {
     key: ScopedReadActorKey,
     position: CapturePosition,
     envelope: WriteEnvelope,
+    team: crate::agent_dispatch::TeamRunStamp,
 }
 
 impl TeamAttemptCapture {
@@ -125,6 +120,7 @@ impl TeamAttemptCapture {
         selected: &crate::memory::ClaimScope,
         envelope: WriteEnvelope,
         key: ScopedReadActorKey,
+        team: &crate::agent_dispatch::TeamRunStamp,
     ) -> Option<Self> {
         let position = CapturePosition::resolve(vault, selected)?;
         vault.scoped_read(key.clone()).persist_grant_clock().ok()?;
@@ -132,6 +128,7 @@ impl TeamAttemptCapture {
             key,
             position,
             envelope,
+            team: team.clone(),
         })
     }
 
@@ -154,7 +151,14 @@ impl TeamAttemptCapture {
         record: &AttemptRecord,
         now: u64,
     ) -> Result<AttemptRecord> {
-        let projection = DispatchProjection::of(record)?;
+        let projection = DispatchProjection {
+            attempt: record.id,
+            created_at: record.created_at,
+            team: self.team.clone(),
+        };
+        if DispatchProjection::of(record)? != projection {
+            return Err(unavailable());
+        }
         let mut child = vault.store.env.nested_write_txn(parent)?;
         let postcommit = VadPostcommitScope::new(vault, &child);
         let (claim, body) = capture_claim_in_txn(
