@@ -984,9 +984,10 @@ pub(crate) async fn describe_self_for_auth(
         // the session it names, read as its credential reads its board's,
         // the clock and the skills this session loaded, with every field no
         // host resolves named on one unavailable line, never stated as a
-        // value. A session label binds no dispatch attempt, so the run and
-        // parent ceilings and the run's comm reach are among them, as is the
-        // budget, as no run line binds a credential's call.
+        // value. A session label binds no dispatch attempt and proves no
+        // replay ownership, so the run and parent ceilings, the run's comm
+        // reach and its replay bindings are among them, as is the budget, as
+        // no run line binds a credential's call.
         None => {
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
