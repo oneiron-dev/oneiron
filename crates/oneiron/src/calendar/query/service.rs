@@ -117,6 +117,20 @@ fn search_events_in(
             continue;
         }
         if let Some(window) = range {
+            // A floating or all-day EVENT matches by its civil span and names
+            // its days or wall times, with no UTC instant (FIX 17869).
+            if let Some(named) =
+                super::occurrences::civil_occurrences_named(&row, window, &exceptions, &withheld)?
+            {
+                for (at, civil) in named {
+                    if intersects(at, window) {
+                        let mut occurrence = view.clone();
+                        occurrence.civil = Some(civil);
+                        matched.push((page_key(Some(at), row.id), occurrence));
+                    }
+                }
+                continue;
+            }
             for at in super::occurrences::occurrences(&row, window, &exceptions, &withheld)? {
                 if intersects(at, window) {
                     let mut occurrence = view.clone();
@@ -176,6 +190,9 @@ fn project(row: &CalendarEventRow) -> Result<CalendarEventView> {
         end_utc: row.occurred.map(|at| at.end),
         calendar_systems: row.facts.systems().to_vec(),
         blocks_time: row.facts.blocks_time(),
+        civil: row.facts.civil_extent().and_then(|(start, length)| {
+            super::civil::civil_span(row.facts.civil_all_day(), start, length)
+        }),
     })
 }
 
