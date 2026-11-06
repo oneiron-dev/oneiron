@@ -1,8 +1,8 @@
 //! Generic EntityDoc validation with owned indexes over one canonical snapshot.
 
 use super::{
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, id, invalid, pointer, strict,
-    validate_history,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, entity_history::HistoryValidation, id,
+    invalid, pointer, strict,
 };
 use crate::error::Result;
 use crate::recovery::canonical::{
@@ -15,6 +15,9 @@ use std::ops::Bound::{Excluded, Unbounded};
 pub(in crate::recovery) struct EntityDocumentRows {
     stage: Stage,
     next: usize,
+    history: HistoryValidation,
+    history_complete: bool,
+    fork_next: usize,
     previous: Option<[u8; 16]>,
     last_proposal: Option<[u8; 16]>,
     proposals: BTreeMap<[u8; 16], Proposal>,
@@ -87,7 +90,9 @@ impl EntityDocumentRows {
                         self.start(Stage::Proposals);
                         continue;
                     };
-                    self.validate_row_history(snapshot, row)?;
+                    if !self.validate_row_history(snapshot, row)? {
+                        return Ok(false);
+                    }
                 }
                 Stage::Proposals => {
                     let entry = match self.last_proposal {
@@ -165,36 +170,48 @@ impl EntityDocumentRows {
         &mut self,
         snapshot: &CanonicalSnapshot,
         row: &CanonicalEntityDocument,
-    ) -> Result<()> {
-        validate_history(row)?;
-        let first_row = self.next;
-        for (fork_index, fork) in row
-            .history
-            .iter()
-            .flat_map(|history| &history.forks)
-            .enumerate()
-        {
-            if !self.forks.insert(fork.fork) {
-                return Err(invalid("entity document fork duplicated"));
+    ) -> Result<bool> {
+        if !self.history_complete {
+            if !self.history.advance_row(row)? {
+                return Ok(false);
             }
-            let proposal = self
-                .proposals
-                .entry(fork.proposal)
-                .or_insert_with(|| Proposal {
-                    first_row,
-                    first_fork: fork_index,
-                    members: BTreeSet::new(),
-                });
-            let first = proposal.first(snapshot);
-            if (first.proposal_len, first.proposal_settled, first.actor)
-                != (fork.proposal_len, fork.proposal_settled, fork.actor)
-                || first.proposal_opener_lineage != fork.proposal_opener_lineage
-                || !proposal.members.insert(fork.proposal_index)
-            {
-                return Err(invalid("entity document proposal bundle"));
-            }
+            self.history_complete = true;
+            return Ok(false);
         }
-        Ok(())
+        let Some(fork) = row
+            .history
+            .as_ref()
+            .and_then(|history| history.forks.get(self.fork_next))
+        else {
+            self.history = HistoryValidation::default();
+            self.history_complete = false;
+            self.fork_next = 0;
+            return Ok(true);
+        };
+        let first_row = self.next;
+        let fork_index = self.fork_next;
+        if !self.forks.insert(fork.fork) {
+            return Err(invalid("entity document fork duplicated"));
+        }
+        let proposal = self
+            .proposals
+            .entry(fork.proposal)
+            .or_insert_with(|| Proposal {
+                first_row,
+                first_fork: fork_index,
+                members: BTreeSet::new(),
+            });
+        let first = proposal.first(snapshot);
+        if (first.proposal_len, first.proposal_settled, first.actor)
+            != (fork.proposal_len, fork.proposal_settled, fork.actor)
+            || first.proposal_opener_lineage != fork.proposal_opener_lineage
+            || !proposal.members.insert(fork.proposal_index)
+        {
+            return Err(invalid("entity document proposal bundle"));
+        }
+
+        self.fork_next += 1;
+        Ok(false)
     }
 
     fn validate_entity(
