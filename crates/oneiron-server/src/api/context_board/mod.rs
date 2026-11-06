@@ -17,7 +17,7 @@ mod prefix;
 mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
-pub(crate) use run_self::{BriefHostFacts, describe_self_for_run};
+pub(crate) use run_self::{BriefHostFacts, brief_pins_family, describe_self_for_run};
 mod layout;
 mod scratchpad;
 mod session;
@@ -982,12 +982,14 @@ pub(crate) async fn describe_self_for_auth(
         // comm reach of the slip it presented, the first beside the read key
         // it was admitted on, the policy's class ceilings, the scratchpad of
         // the session it names, read as its credential reads its board's,
-        // the clock and the skills this session loaded, with every field no
-        // host resolves named on one unavailable line, never stated as a
-        // value. A session label binds no dispatch attempt and proves no
-        // replay ownership, so the run and parent ceilings, the run's comm
-        // reach and its replay bindings are among them, as is the budget, as
-        // no run line binds a credential's call.
+        // the pins its own board for that session admits now with no pin
+        // list, room or branch of its own, the clock and the skills this
+        // session loaded, with every field no host resolves named on one
+        // unavailable line, never stated as a value. A session label binds no
+        // dispatch attempt and proves no replay ownership, so the run and
+        // parent ceilings, the run's comm reach and its replay bindings are
+        // among them, as is the budget, as no run line binds a credential's
+        // call.
         None => {
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
@@ -1001,6 +1003,7 @@ pub(crate) async fn describe_self_for_auth(
                 scratchpad: scratchpad::scratchpad_memory(server, auth)
                     .ok()
                     .and_then(|memory| run_self::scratchpad_family(&memory, session_id)),
+                pins: run_self::credential_pins_family(server, auth, session_id),
             };
             let state = run_self::resolved_state(server, agent, None, &read_set, &host).map_err(
                 |error| {

@@ -10,11 +10,12 @@
 //! owner's agent Grants that stand for the agent, the run, credential and
 //! parent ceilings and the communication limits its host holds the facts
 //! for ([`BriefHostFacts`]), the policy's class ceilings, the scratchpad of
-//! the session its host binds, the result names the run its host binds has
-//! bound, the line the run's entry spends on, the clock and the skills the
-//! run's own session loaded. Every field no host resolves is left out of the
-//! brief and named on one unavailable line
-//! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
+//! the session its host binds, the pins its host's board admits now, the
+//! result names the run its host binds has bound, the line the run's entry
+//! spends on, the clock and the skills the run's own session loaded. Every
+//! field no host resolves is left out of the brief and named on one
+//! unavailable line ([`oneiron::context_board::SelfBrief::render`]), never
+//! stated as a value.
 
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
@@ -30,11 +31,11 @@ use crate::server::SyncServer;
 /// What the host that resolves a brief holds for it (FIX 17594, Engine
 /// ruling 21:47), each `None` where it holds none: the run ceiling of the
 /// dispatch attempt its run's entry in flight serves, the credential
-/// ceiling and signed comm reach of the verified slip it admitted, and the
-/// scratchpad of the session it binds. A credential's call is bound to no
-/// attempt, so it holds no run ceiling; an ordinary pumped run holds no
-/// verified slip, so it holds neither credential value, and binds no
-/// scratchpad session.
+/// ceiling and signed comm reach of the verified slip it admitted, the
+/// scratchpad of the session it binds, and the pins its board admits for
+/// the reader now. A credential's call is bound to no attempt, so it holds
+/// no run ceiling; an ordinary pumped run holds no verified slip, so it
+/// holds neither credential value, and binds no scratchpad session.
 #[derive(Debug, Default)]
 pub(crate) struct BriefHostFacts {
     pub(crate) run_ceiling: Option<BriefRunCeiling>,
@@ -45,6 +46,71 @@ pub(crate) struct BriefHostFacts {
     /// The working set's scratchpad family as the host read it for the
     /// session it binds ([`scratchpad_family`]).
     pub(crate) scratchpad: Option<Vec<BriefWorkingHandle>>,
+    /// The working set's pins family as the host's board projection read it
+    /// at describe time ([`brief_pins_family`]).
+    pub(crate) pins: Option<Vec<BriefWorkingHandle>>,
+}
+
+/// The working set's pins family (FIX 17594, WORKING SET A) from the
+/// pins-only MEMORIES a board's own pin projection just read for its reader
+/// (`None` when it admitted no row): each pin it admitted and disclosed,
+/// with the revision its read served
+/// ([`oneiron::MemoriesSection::brief_pin_handles`]), and an empty family
+/// when it admitted none. The projection admits and discloses afresh, so no
+/// pin a reader can no longer see is shown, and nothing is recorded: the
+/// disclosure receipt and the hook deliveries stay with a board that goes
+/// out. A row that names no entity logs and leaves the family `None`
+/// (unavailable).
+pub(crate) fn brief_pins_family(
+    section: Option<&oneiron::MemoriesSection>,
+) -> Option<Vec<BriefWorkingHandle>> {
+    section
+        .map_or(Ok(Vec::new()), oneiron::MemoriesSection::brief_pin_handles)
+        .inspect_err(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the self brief's pins did not read; the brief names them unavailable"
+            );
+        })
+        .ok()
+}
+
+/// The pins family (FIX 17594, WORKING SET A) of a credential's
+/// describe(self) for `session`: the pins the caller's own board for that
+/// session carries when its request names no pin list, no room and no
+/// branch, read as that board reads them
+/// ([`super::board_pins_projection`]): the policy manifest's pins and the
+/// rows of the hook blocks that reach the session, under the caller's own
+/// read and the disclosure clamp of the caller alone. A read that fails
+/// logs and leaves the family `None` (unavailable).
+pub(super) fn credential_pins_family(
+    server: &SyncServer,
+    auth: &crate::auth::CoreAuth,
+    session: &str,
+) -> Option<Vec<BriefWorkingHandle>> {
+    let projected = server
+        .vault
+        .board_hook_pins(session, None)
+        .map_err(|error| crate::api::core_engine_error("board hook blocks failed", error))
+        .and_then(|hooks| {
+            let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+            let pins = super::BoardPinSources {
+                refs: &[],
+                manifest: true,
+                hooks: &hooks,
+            };
+            super::board_pins_projection(&server.vault, auth, read, None, &pins)
+        });
+    match projected {
+        Ok(pins) => brief_pins_family(pins.as_ref().map(|pins| &pins.section)),
+        Err(error) => {
+            tracing::warn!(
+                code = ?error.code(),
+                "the self brief's pins did not read; the brief names them unavailable"
+            );
+            None
+        }
+    }
 }
 
 /// The working set's scratchpad family (FIX 17594, WORKING SET A) for
@@ -125,8 +191,9 @@ pub(crate) async fn describe_self_for_run(
 /// dispatch attempt, so are the replay bindings when the run holds no
 /// replay record or its read fails, so are the credential ceiling and the
 /// credential's comm reach when it verified no slip, so is the scratchpad
-/// when it binds no session, and so are the budget lease and budget when no
-/// line binds the run's entry.
+/// when it binds no session, so are the pins when its board's pin read
+/// fails, and so are the budget lease and budget when no line binds the
+/// run's entry.
 /// [`oneiron::context_board::SelfBrief::render`] leaves each `None` field
 /// out and names it unavailable. A credentialed agent's describe(self) with
 /// no installed snapshot resolves its brief here too, over its own
@@ -264,7 +331,7 @@ pub(super) fn resolved_state(
         skill_index,
         working_set: BriefWorkingSet {
             scratchpad: host.scratchpad.clone(),
-            pins: None,
+            pins: host.pins.clone(),
             replay,
         },
     })

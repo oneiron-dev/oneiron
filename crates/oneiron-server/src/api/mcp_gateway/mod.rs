@@ -42,7 +42,9 @@ use self::admission::{
     mcp_validated_call_args,
 };
 pub(crate) use self::board_observations::run_session_reads;
-pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup, ride_run_carrier};
+pub(crate) use self::board_setup::{
+    McpBoardOmissions, execute_mcp_setup, ride_run_carrier, run_brief_pins,
+};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
