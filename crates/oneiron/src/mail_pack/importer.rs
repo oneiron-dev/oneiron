@@ -165,6 +165,10 @@ impl Step<'_> {
 
     fn land_headers(&mut self, provider_id: &str) -> MemoryResult<()> {
         if self.known(provider_id)? {
+            // A message named again in another folder carries it too.
+            if let Some(listed) = self.wire.listed_labels(provider_id) {
+                merge_labels(self.vault, self.source, provider_id, &listed, self.at)?;
+            }
             self.report.same += 1;
             return Ok(());
         }
@@ -513,6 +517,31 @@ impl Step<'_> {
         }
         Ok(())
     }
+}
+
+/// Adds `listed` to the labels of the live copy of `provider_id`.
+fn merge_labels(
+    vault: &Vault,
+    source: EntityId,
+    provider_id: &str,
+    listed: &[String],
+    at: u64,
+) -> Result<()> {
+    let held = {
+        let txn = vault.store.env.read_txn()?;
+        OCCURRENCES.get(&vault.store, &txn, &occurrence_key(source, provider_id))?
+    };
+    let Some(held) = held.filter(|held| matches!(held.presence, MailPresence::Present)) else {
+        return Ok(());
+    };
+    if listed.iter().all(|label| held.labels.contains(label)) {
+        return Ok(());
+    }
+    let mut labels = held.labels;
+    labels.extend(listed.iter().cloned());
+    labels.sort();
+    labels.dedup();
+    update_labels(vault, source, provider_id, &labels, at)
 }
 
 impl Vault {
