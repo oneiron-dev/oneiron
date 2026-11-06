@@ -72,14 +72,6 @@ impl AppliedRecordDocument {
         self.installed.matches_stored_in_txn(store, txn)
     }
 
-    pub(crate) fn into_entity(self) -> crate::EntityId {
-        let Self {
-            installed,
-            content_writes,
-        } = self;
-        drop(content_writes);
-        installed.entity()
-    }
 }
 
 impl std::fmt::Debug for AppliedRecordDocument {

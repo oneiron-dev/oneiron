@@ -128,6 +128,7 @@ fn carrier_superseded(carriers: &loro::LoroMap, key: &str, blob: &[u8]) -> bool 
 pub(super) struct EntityMaterialization {
     // Retained outside the writer so its failure can flag each lost op for rematerialization.
     applied_ops: Vec<(EntityId, Vec<u8>)>,
+    native_records: Vec<(Vec<u8>, crate::batch::AppliedRecordDocument)>,
     revision_changes: Vec<crate::vault::EntityRevisionChange>,
     // Watched rows written where none existed, announced only after commit.
     born: Vec<(EntityId, Vec<u8>)>,
@@ -148,6 +149,7 @@ impl EntityMaterialization {
     ) -> crate::Result<()> {
         let Self {
             applied_ops,
+            native_records,
             revision_changes,
             born,
             floor_written,
@@ -252,11 +254,14 @@ impl EntityMaterialization {
             }
             let steps = ingest_rows_in_savepoint(ingest, wtxn, &rows)?;
             for ((&(_, value), step), (previous_revision, unborn)) in
-                rows.iter().zip(&steps).zip(before)
+                rows.iter().zip(steps).zip(before)
             {
                 let (Some(id), Some(blob)) = (step.written(), value) else {
                     continue;
                 };
+                if let crate::sync::ingest::EntityStep::NativeRecordApplied(applied) = step {
+                    native_records.push((blob.to_vec(), applied));
+                }
                 if unborn {
                     born.push((id, blob.to_vec()));
                 }
@@ -329,6 +334,7 @@ pub(super) fn materialize_entities_with_changes(
     });
     let EntityMaterialization {
         applied_ops,
+        native_records,
         revision_changes,
         born,
         floor_written,
@@ -398,15 +404,14 @@ pub(super) fn materialize_entities_with_changes(
 
     let committed = result.is_ok();
     if let Err(e) = result {
-        // ONE-1147: the whole batch txn aborted — every applied op's write
-        // (and any quarantine row staged alongside) is lost while the ops
-        // stay committed in the CRDT doc. Flag each affected id with the
-        // durable entity-scoped rm: marker so the drain re-runs forward
-        // remat for this window. Ids whose COMMITTED bytes already equal
-        // the op's bytes are skipped: nothing was lost for them, and an
-        // at-parity marker could never discharge (discharge requires the
-        // actual healing re-write to land — never mere byte-parity, which
-        // a failed GDPR purge also exhibits).
+        // ONE-1147: the grouped writer reported an error. A later callback
+        // may fail after commit, so compare the actual committed state.
+        // Native puts retain their real complete outputs: physical parity
+        // alone cannot prove that their HEAD and document rows survived.
+        // Ordinary puts keep their existing parity/echo comparison. Flag
+        // lost outputs with the same entity-scoped rm: marker so the drain
+        // re-runs forward remat; a marker clears only after a real healing
+        // write, never mere byte-parity (which a failed purge also exhibits).
         //
         // Layering: markers are BEST-EFFORT durability on an already-failing
         // env — a marker write that itself fails (env down hard) is logged
@@ -414,10 +419,31 @@ pub(super) fn materialize_entities_with_changes(
         // pinned open order remains the backstop.
         let mut seen = HashSet::new();
         let mut marked = 0usize;
+        let lost_native = {
+            let committed_view = vault.store.env.read_txn();
+            native_records
+                .iter()
+                .filter(|(_, record)| match &committed_view {
+                    Ok(txn) => !record.matches_stored_in_txn(&vault.store, txn).unwrap_or(false),
+                    Err(_) => true,
+                })
+                .map(|(_, record)| record.entity())
+                .collect::<Vec<_>>()
+        };
+        for id in lost_native {
+            if seen.insert(id) && set_remat_marker_logged(vault, window_key, &id) {
+                marked += 1;
+            }
+        }
         for (id, blob) in &applied_ops {
-            // Parity-check BEFORE dedupe: a src/id whose first op is at
-            // parity must not shadow a later diverged op for the same id.
-            if committed_entity_state_matches(vault, id, blob) || !seen.insert(*id) {
+            // Only this exact native put uses the complete-output comparison.
+            // Another ordinary put of the same entity keeps its own parity
+            // check before dedupe, even when an earlier native put matched.
+            if native_records.iter().any(|(native_raw, record)| {
+                record.entity() == *id && native_raw.as_slice() == blob.as_slice()
+            }) || committed_entity_state_matches(vault, id, blob)
+                || !seen.insert(*id)
+            {
                 continue;
             }
             if set_remat_marker_logged(vault, window_key, id) {
