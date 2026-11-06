@@ -68,8 +68,10 @@ fn row_at<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]> {
 
 /// Reads from `current`, for each archive row the authority carry kept in
 /// `image`, its exact descriptor and digest holder, and opens its file when
-/// the image carries none of its digest; the instance row the file is bound
-/// under joins the image's rows. A row whose descriptor `current` no longer
+/// the image carries no file of its digest under the instance the live rows
+/// bind (a key row alone carries no bytes: one a released digest left
+/// behind is no file); the instance row the file is bound under joins the
+/// image's rows. A row whose descriptor `current` no longer
 /// holds as named, or whose digest the image binds under another instance,
 /// goes. `image_owners` are the archive owners of the archive rows the
 /// image kept before the carry replaced them.
@@ -82,6 +84,19 @@ pub(super) fn carry_live(
     current: &Vault,
     image_owners: BTreeSet<EntityId>,
 ) -> Result<LiveArchives> {
+    // Each body file the image carries, by digest and the instance it is
+    // sealed under.
+    let image_files: BTreeSet<([u8; 32], [u8; 16])> = image
+        .bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (digest, _))| {
+            image
+                .sealed_bodies
+                .get(&(index as u64))
+                .map(|sealed| (*digest, sealed.instance))
+        })
+        .collect();
     let rows = image
         .databases
         .get_mut("vault_meta")
@@ -135,7 +150,26 @@ pub(super) fn carry_live(
             .transpose()?;
         let file = match (&image_key, &live_key) {
             // The image lands this file under the instance the live rows name.
-            (Some(image_key), Some(live_key)) if image_key == live_key => None,
+            (Some(image_key), Some(live_key))
+                if image_key == live_key && image_files.contains(&(digest, live_key.instance)) =>
+            {
+                None
+            }
+            // The image binds the same instance but carries no file of it:
+            // the live file lands under it.
+            (Some(image_key), Some(live_key)) if image_key == live_key => {
+                let Some(file) = dir.open_reader(&digest, binding.body.bytes, Some(live_key))?
+                else {
+                    tracing::warn!(
+                        receipt = %binding.receipt.to_hex(),
+                        "a kept removal archive's file is gone from the live vault; its row goes \
+                         (FIX 3679)"
+                    );
+                    gone.insert(row);
+                    continue;
+                };
+                Some(file)
+            }
             (Some(_), _) => {
                 tracing::warn!(
                     receipt = %binding.receipt.to_hex(),
