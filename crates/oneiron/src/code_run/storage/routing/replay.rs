@@ -13,6 +13,7 @@ use super::super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
 };
 use super::super::response_erase::fence_replay_in_txn;
+use super::super::response_owners::stamp_response_owner_in_txn;
 use super::*;
 use crate::side_table::RoutedDbs;
 
@@ -82,5 +83,43 @@ impl SessionBinding<'_> {
                     also(txn, write)
                 }),
         }
+    }
+
+    /// [`Self::put_replay_record_if_generation_with_heal`] with no heal, as
+    /// `actor`'s run `run`. On an on-record stretch the record lands in base,
+    /// so the same transaction fences it and stamps its owner there, as the
+    /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
+    /// by its owner row, and a write after that erase stays erased. An
+    /// overlay row stamps its owner in the overlay, in the same writer, so
+    /// the room's waits know whose run it is (FIX 6586).
+    pub(in crate::code_run::storage) fn put_owned_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        run: EntityId,
+        actor: EntityId,
+    ) -> Result<CodeRunReplayGeneration> {
+        use crate::side_table::RoutedDbs;
+        REPLAY_RECORDS.encode_value(record)?;
+        let next_generation = record.generation()?;
+        self.answered(|| {
+            self.session
+                .routed_side_txn(&self.route, |wtxn, read, write| {
+                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
+                    replay_generation_matches(current.as_ref(), expected)?;
+                    match write {
+                        RoutedDbs::Base(vault) => {
+                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
+                            let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
+                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
+                        }
+                        RoutedDbs::Session(_) => {
+                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
+                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
+                        }
+                    }
+                })
+        })?;
+        Ok(next_generation)
     }
 }
