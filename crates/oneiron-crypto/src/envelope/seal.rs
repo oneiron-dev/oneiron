@@ -19,7 +19,7 @@ use rand_core::TryCryptoRng;
 use sha2::Sha256;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::{Envelope, Header, Kdf, Purpose, WrapParams, WrapType, hybrid};
+use super::{Envelope, Header, Kdf, Purpose, WrapParams, WrapType, copy_fallible, hybrid};
 use crate::codec::check_len;
 use crate::error::{Error, Result};
 use crate::keys::{
@@ -495,15 +495,6 @@ fn aad_with_extra(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
     aad.extend_from_slice(&len.to_be_bytes());
     aad.extend_from_slice(extra_aad);
     Ok(aad)
-}
-
-fn copy_fallible(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut copied = Vec::new();
-    copied
-        .try_reserve_exact(bytes.len())
-        .map_err(|_| Error::OutOfMemory)?;
-    copied.extend_from_slice(bytes);
-    Ok(copied)
 }
 
 fn aad_with_extra_fallible(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
