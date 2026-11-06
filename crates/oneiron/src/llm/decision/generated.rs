@@ -98,10 +98,11 @@ pub enum GeneratedStep<'a> {
 
 /// What a generated pack gave its caller.
 pub enum GeneratedDecisions {
-    /// Each question's decision in order, and each generation's request hash and usage.
+    /// Each question's decision in order, and each generation's request hash, usage and
+    /// whether the durable step was memoized.
     Decided {
         decisions: Vec<TypedDecision>,
-        steps: Vec<([u8; 32], LlmUsage)>,
+        steps: Vec<([u8; 32], LlmUsage, bool)>,
     },
     /// The durable step suspended the attempt; it parked, and replays on resume.
     Trapped,
@@ -168,7 +169,7 @@ impl DecisionLadder<'_> {
     }
 
     /// [`Self::run_pack_generated`], each generation that finished pushed onto `spent`
-    /// (its request hash and usage) as it finishes, so a caller books what the pack spent
+    /// (its request hash, usage and memoized flag) as it finishes, so a caller books what the pack spent
     /// even when a later step traps, misses or fails. With `labels`, every request shows
     /// the table's labels and its reply reads back through the same table (FIX 7506).
     #[expect(
@@ -186,7 +187,7 @@ impl DecisionLadder<'_> {
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         labels: Option<&dyn DecisionWireLabels>,
     ) -> DurableStepResult<GeneratedDecisions> {
         self.run_pack_generated_spent_with_run(
@@ -224,7 +225,7 @@ impl DecisionLadder<'_> {
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         labels: Option<&dyn DecisionWireLabels>,
         run: Option<&RunAdmission>,
     ) -> DurableStepResult<GeneratedDecisions> {
@@ -266,7 +267,7 @@ impl DecisionLadder<'_> {
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         labels: Option<&dyn DecisionWireLabels>,
         run: Option<&RunAdmission>,
         context: &DecisionCallContext<'_>,
@@ -306,7 +307,7 @@ impl DecisionLadder<'_> {
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         labels: Option<&dyn DecisionWireLabels>,
         run: Option<&RunAdmission>,
         context: Option<&DecisionCallContext<'_>>,
@@ -412,7 +413,7 @@ async fn read(
     rung: &GeneratedRung<'_>,
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
-    steps: &mut Vec<([u8; 32], LlmUsage)>,
+    steps: &mut Vec<([u8; 32], LlmUsage, bool)>,
     labels: Option<&dyn DecisionWireLabels>,
     context: Option<&DecisionCallContext<'_>>,
 ) -> DurableStepResult<Reply> {
@@ -426,7 +427,7 @@ async fn read(
         labels,
     ))?;
     let hash = request.canonical_hash()?;
-    let response = match rung.step {
+    let (response, memoized) = match rung.step {
         GeneratedStep::Durable { step, guard } => {
             let outcome = match context {
                 Some(context) => {
@@ -443,7 +444,7 @@ async fn read(
                         GenerationOutcome::Cut { usage } => {
                             let started = usage.is_some();
                             if let Some(usage) = usage {
-                                steps.push((hash, usage));
+                                steps.push((hash, usage, false));
                             }
                             return Ok(Reply::AllowanceCut { started });
                         }
@@ -452,14 +453,16 @@ async fn read(
                 None => call_as_step(step, rung.backend, guard, request).await?,
             };
             match outcome {
-                StepOutcome::Finished { response, .. } => response,
+                StepOutcome::Finished {
+                    response, memoized, ..
+                } => (response, memoized),
                 StepOutcome::Trapped { .. } => return Ok(Reply::Trapped),
             }
         }
         GeneratedStep::Raw { lease } => match context {
             None => {
                 match within_work_time(call.deadline, rung.backend.generate(request, lease)).await {
-                    Some(Ok(response)) => response,
+                    Some(Ok(response)) => (response, false),
                     Some(Err(error)) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
                     None => return Ok(Reply::Answers(Err(cut()))),
                 }
@@ -472,7 +475,7 @@ async fn read(
                     GenerationOutcome::Completed(rung.backend.generate(request, lease).await)
                 };
                 match within_work_time(call.deadline, generation).await {
-                    Some(GenerationOutcome::Completed(Ok(response))) => response,
+                    Some(GenerationOutcome::Completed(Ok(response))) => (response, false),
                     Some(GenerationOutcome::Completed(Err(error))) => {
                         return Ok(Reply::Unread(GeneratedMiss::Backend(error)));
                     }
@@ -491,7 +494,7 @@ async fn read(
             .await
             {
                 Some(answered) => match answered? {
-                    GenerationOutcome::Completed(Ok(response)) => response,
+                    GenerationOutcome::Completed(Ok(response)) => (response, false),
                     GenerationOutcome::Completed(Err(miss)) => return Ok(Reply::Unread(miss)),
                     GenerationOutcome::Cut { .. } => {
                         return Ok(Reply::AllowanceCut { started: false });
@@ -501,7 +504,7 @@ async fn read(
             }
         }
     };
-    steps.push((hash, response.usage.clone()));
+    steps.push((hash, response.usage.clone(), memoized));
     Ok(Reply::Answers(
         answers(&response, &asked, pack.paired, labels)
             .and_then(|answers| joined(answers, call.questions.len(), pack.person)),

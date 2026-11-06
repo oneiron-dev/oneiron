@@ -295,8 +295,17 @@ export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 
+/** Caller-selected worlds, within the caller's existing read authority. */
+export type RecallWorlds =
+  | { kind: "all" }
+  | { kind: "base" }
+  | { kind: "world"; worldRef: string; includeBase: boolean }
+  | { kind: "worlds"; worldRefs: string[]; includeBase: boolean }
+
 /** Recall scoping: narrowing only; unset is the vault floor. */
 export type RecallScope = {
+  /** Explicit world selection; mutually exclusive with `worldRef`. */
+  worlds?: RecallWorlds
   worldRef?: string
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
@@ -393,6 +402,8 @@ export type MemoryItem = {
   stale?: MemoryStaleStamp
   world?: string
   facet?: string
+  /** The claim's explicit project audience, not a topic or a WORLD. */
+  projectRef?: string
   salience?: number
   /** A conversation record's current reactions, one grouped line per glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item. */
   reactions: string[]
@@ -755,6 +766,7 @@ class RecallResidence(TypedDict):
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
+    narrowing: Facade.ScopedReadReceipt
     scope_honesty: ScopeHonesty
     retrieval_meta: RetrievalMeta
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
@@ -4238,6 +4250,8 @@ class Oneiron:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...
         @property
+        def board(self) -> "Oneiron._SelfBoardVerbs": ...
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
         def standing(self) -> "Oneiron._SelfStandingVerbs": ...
@@ -4311,6 +4325,19 @@ class Oneiron:
             """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
         def seal(self, spec: Facade.ScratchpadSealRequest) -> Facade.ScratchpadWriteReply:
             """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
+    class _SelfBoardVerbs:
+        def layout(self, spec: Facade.EmptyRequest) -> Facade.BoardLayoutState:
+            """The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."""
+        def fold(self, spec: Facade.BoardFoldRequest) -> Facade.BoardLayoutState:
+            """Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."""
+        def unfold(self, spec: Facade.BoardSectionRequest) -> Facade.BoardLayoutState:
+            """Unfolds one section of the bound actor's context board; applies at the next turn."""
+        def size(self, spec: Facade.BoardSizeRequest) -> Facade.BoardLayoutState:
+            """Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."""
+        def filter(self, spec: Facade.BoardFilterRequest) -> Facade.BoardLayoutState:
+            """Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."""
+        def replace(self, spec: Facade.BoardReplaceRequest) -> Facade.BoardLayoutState:
+            """Replaces the whole layout the bound actor's next turn applies to its context board."""
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...

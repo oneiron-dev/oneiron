@@ -152,7 +152,11 @@ fn predictor(stream: &Stream, data: Vec<u8>, limits: &WorkLimits) -> Result<Vec<
     // organ: admitted, not refused (FIX 7980)
     let width = columns
         .checked_mul(colors)
-        .filter(|width| limits.stream_decode_bytes.is_none_or(|bound| *width <= bound))
+        .filter(|width| {
+            limits
+                .stream_decode_bytes
+                .is_none_or(|bound| *width <= bound)
+        })
         .ok_or(WorkError::Invalid(InputInvalidCode::TooLarge))?;
     if !data.len().is_multiple_of(width + 1) {
         return Err(WorkError::Invalid(InputInvalidCode::MalformedPdf));

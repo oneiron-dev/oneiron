@@ -76,7 +76,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mask/text_spans.rs` | src | s | 2 fn | — | The spans the door's text rules place (OF-560): in a text, in each run of text in a file's bytes, and at… |
 | `src/batch/secret_scan/mask/wipe.rs` | src | s | 3 struct · 9 fn | PlanOps, PlanTree, PlanValues | Wiping owners for what a mask plan copies (FIX 1101) |
 | `src/batch/secret_scan/provider_tokens.rs` | src | s | 2 enum · 1 fn · 1 const | Body, KeyShape | The provider rules of [`super::detect`]: a known provider's key, read at a token's start and at each later… |
-| `src/batch/secret_scan/release_read.rs` | src | s | 1 struct · 1 fn · 2 const | HeaderLine | The release scan over a body read as it streams (FIX 5392, FIX 3677): what [`super::scan_file_content`]… |
+| `src/batch/secret_scan/release_read.rs` | src | s | 1 struct · 2 fn · 1 const | HeaderLine | The release scan over a body read as it streams (FIX 5392, FIX 3677): what [`super::scan_file_content`]… |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 2 enum · 7 fn | Encoding, JoinedText | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
 | `src/batch/secret_scan/wordlist.rs` | src | s | 1 static | — | BIP39 English word list (bitcoin/bips bip-0039), sorted for shape checks |
 | `src/batch/shared_vault_write.rs` | src | s | 2 enum · 2 fn | OrgAdminPower, SharedVaultWrite | A requested shared-vault mutation and the closed organization-administration vocabulary it names |

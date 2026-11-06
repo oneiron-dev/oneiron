@@ -33,6 +33,9 @@ thread_local! {
 
 type InFlight = Arc<Mutex<HashMap<InvocationId, Holder>>>;
 type Claims = Arc<Mutex<HashMap<InvocationId, Arc<ClaimSlot>>>>;
+
+mod session_claims;
+pub(super) use session_claims::SessionInvocationClaims;
 /// The process's sandbox, or why it did not build.
 type Sandbox = std::result::Result<Arc<dyn HookBodyRuntime>, String>;
 
@@ -386,6 +389,7 @@ pub struct InvocationClaim {
     claims: Claims,
     invocation: InvocationId,
     slot: Arc<ClaimSlot>,
+    session_claims: Option<Claims>,
 }
 
 impl InvocationClaim {
@@ -394,15 +398,43 @@ impl InvocationClaim {
     pub fn finish(self, outcome: InvocationOutcome) {
         self.slot.end(Some(outcome));
     }
+
+    /// Shares a reply with current waiters without retaining it for a later
+    /// request. A failed session call releases its claim as a durable one does.
+    pub fn finish_unkept(mut self, outcome: InvocationOutcome) {
+        if let Some(claims) = self.session_claims.take() {
+            remove_claim(&claims, self.invocation, &self.slot);
+        }
+        self.slot.end(Some(outcome));
+    }
 }
 
 impl Drop for InvocationClaim {
     fn drop(&mut self) {
-        self.claims
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.invocation);
+        remove_claim(&self.claims, self.invocation, &self.slot);
+        if let Some(claims) = &self.session_claims {
+            let completed = self
+                .slot
+                .ended
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+                .is_some_and(Option::is_some);
+            if !completed {
+                remove_claim(claims, self.invocation, &self.slot);
+            }
+        }
         self.slot.end(None);
+    }
+}
+
+fn remove_claim(claims: &Claims, invocation: InvocationId, expected: &Arc<ClaimSlot>) {
+    let mut held = claims.lock().unwrap_or_else(PoisonError::into_inner);
+    if held
+        .get(&invocation)
+        .is_some_and(|slot| Arc::ptr_eq(slot, expected))
+    {
+        held.remove(&invocation);
     }
 }
 
@@ -547,26 +579,7 @@ impl Vault {
     /// concurrent request from a nested boundary, so the doors close it.
     #[must_use]
     pub fn claim_invocation(&self, invocation: InvocationId, body: [u8; 32]) -> InvocationEntry {
-        let claims = &self.verb_hook_state.claims;
-        let mut held = claims.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(slot) = held.get(&invocation) {
-            return if slot.body == body {
-                InvocationEntry::Busy(InvocationWait(Arc::clone(slot)))
-            } else {
-                InvocationEntry::Conflict
-            };
-        }
-        let slot = Arc::new(ClaimSlot {
-            body,
-            ended: Mutex::new(None),
-            woken: Condvar::new(),
-        });
-        held.insert(invocation, Arc::clone(&slot));
-        InvocationEntry::Claimed(InvocationClaim {
-            claims: Arc::clone(claims),
-            invocation,
-            slot,
-        })
+        claim_in(&self.verb_hook_state.claims, invocation, body, None)
     }
 
     /// Tells the verb hooks a binding or the switch changed, so the next
@@ -576,4 +589,32 @@ impl Vault {
             .generation
             .fetch_add(1, Ordering::AcqRel);
     }
+}
+
+fn claim_in(
+    claims: &Claims,
+    invocation: InvocationId,
+    body: [u8; 32],
+    session_claims: Option<Claims>,
+) -> InvocationEntry {
+    let mut held = claims.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(slot) = held.get(&invocation) {
+        return if slot.body == body {
+            InvocationEntry::Busy(InvocationWait(Arc::clone(slot)))
+        } else {
+            InvocationEntry::Conflict
+        };
+    }
+    let slot = Arc::new(ClaimSlot {
+        body,
+        ended: Mutex::new(None),
+        woken: Condvar::new(),
+    });
+    held.insert(invocation, Arc::clone(&slot));
+    InvocationEntry::Claimed(InvocationClaim {
+        claims: Arc::clone(claims),
+        invocation,
+        slot,
+        session_claims,
+    })
 }

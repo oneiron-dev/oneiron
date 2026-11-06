@@ -81,7 +81,7 @@ impl Decider<'_> {
     /// `questions` over `read`'s state through the host's ladder, `read`'s role generation
     /// the dial's first read, on the time the pass has left, any ask going to `read.to` for
     /// the work `read.correlation` names. Each generation that finished is pushed onto
-    /// `spent` (its request hash and usage) as it finishes, whatever the pack's outcome. None
+    /// `spent` (its request hash, usage and memoized flag) as it finishes, whatever the pack's outcome. None
     /// when the step trapped: the attempt is parked.
     ///
     /// Every read shows the pack through `labels` (FIX 7506): the generation's questions by
@@ -96,7 +96,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         self.decide_scoped_on_run(read, questions, labels, spent, None)
             .await
@@ -109,7 +109,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         run: Option<&RunAdmission>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let mut receipts = Vec::new();
@@ -128,7 +128,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         run: Option<&RunAdmission>,
         context: &DecisionCallContext<'_>,
         receipts: &mut Vec<RunReceipt>,
@@ -146,7 +146,7 @@ impl Decider<'_> {
         read: ScopedRead<'_>,
         questions: &[DecisionQuestion],
         labels: &CallLabelMap,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, bool)>,
         run: Option<&RunAdmission>,
         context: Option<&DecisionCallContext<'_>>,
         receipts: &mut Vec<RunReceipt>,

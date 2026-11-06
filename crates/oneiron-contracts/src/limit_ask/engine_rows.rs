@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 142] = [
+    pub const ALL: [Self; 145] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -148,6 +148,9 @@ impl EngineLimit {
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::ContextEdgeHops,
+        Self::ContextNeighbors,
+        Self::ContextSelectedEdges,
     ];
 
     /// The config key that sets the row.
@@ -295,6 +298,9 @@ impl EngineLimit {
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::ContextEdgeHops => "limits.context_edge_hops",
+            Self::ContextNeighbors => "limits.context_neighbors",
+            Self::ContextSelectedEdges => "limits.context_selected_edges",
         }
     }
 
@@ -523,6 +529,12 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            // Owner-ruled ABC row 11 (FIX 62).
+            Self::ContextEdgeHops => 1_024,
+            // Owner-ruled ABC row 12 (FIX 63).
+            Self::ContextNeighbors => 1_048_576,
+            // Owner-ruled ABC row 13 (FIX 64).
+            Self::ContextSelectedEdges => 1_048_576,
         }
     }
 }

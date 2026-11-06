@@ -433,6 +433,9 @@ impl LimitsConfig {
             shared_merge_evidence_rows,
             memory_reason_evidence_rows,
             memory_reason_tokens,
+            context_edge_hops,
+            context_neighbors,
+            context_selected_edges,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -704,6 +707,9 @@ impl LimitsConfig {
                 memory_reason_evidence_rows,
             ),
             (EngineLimit::MemoryReasonTokens, memory_reason_tokens),
+            (EngineLimit::ContextEdgeHops, context_edge_hops),
+            (EngineLimit::ContextNeighbors, context_neighbors),
+            (EngineLimit::ContextSelectedEdges, context_selected_edges),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
