@@ -1342,6 +1342,8 @@ class Oneiron:
         @property
         def productivity(self) -> "Oneiron._VaultProductivityVerbs": ...
         @property
+        def ingest(self) -> "Oneiron._VaultIngestVerbs": ...
+        @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
             """Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
@@ -3894,6 +3896,14 @@ class Oneiron:
             """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
         def tree(self, spec: Facade.ProductivityTreeRequest) -> Facade.ScopedReadResult[Facade.ProductivityTree | None]:
             """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
+    class _VaultIngestVerbs:
+        @property
+        def ag_ui(self) -> "Oneiron._VaultIngestAgUiVerbs": ...
+    class _VaultIngestAgUiVerbs:
+        def import_(self, spec: Facade.AgUiFileImport) -> Facade.AgUiFileReceipt:
+            """The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."""
+        def read(self, input: Facade.AgUiFileReadInput) -> Facade.AgUiFileRead:
+            """Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."""
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""

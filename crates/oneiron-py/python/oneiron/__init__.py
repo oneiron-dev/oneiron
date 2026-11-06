@@ -912,6 +912,9 @@ class Oneiron:
         def productivity(self) -> "Oneiron._VaultProductivityVerbs":
             return Oneiron._VaultProductivityVerbs(self._client)
         @property
+        def ingest(self) -> "Oneiron._VaultIngestVerbs":
+            return Oneiron._VaultIngestVerbs(self._client)
+        @property
         def esign(self) -> "Oneiron._VaultEsignVerbs":
             return Oneiron._VaultEsignVerbs(self._client)
         def batch(self, spec):
@@ -5282,6 +5285,21 @@ class Oneiron:
         def tree(self, spec):
             """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
             return json.loads(_translate(lambda: self._client.vault_productivity_tree(json.dumps(spec))))
+    class _VaultIngestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def ag_ui(self) -> "Oneiron._VaultIngestAgUiVerbs":
+            return Oneiron._VaultIngestAgUiVerbs(self._client)
+    class _VaultIngestAgUiVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def import_(self, spec):
+            """The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."""
+            return json.loads(_translate(lambda: self._client.vault_ingest_ag_ui_import(json.dumps(spec))))
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."""
+            return json.loads(_translate(lambda: self._client.vault_ingest_ag_ui_read(json.dumps(input, allow_nan=False))))
     class _VaultEsignVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

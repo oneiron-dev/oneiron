@@ -1059,6 +1059,8 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultProductivityCreate,
     VaultProductivityTree,
+    VaultIngestAgUiImport,
+    VaultIngestAgUiRead,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
@@ -2332,6 +2334,8 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultProductivityCreate,
         Self::VaultProductivityTree,
+        Self::VaultIngestAgUiImport,
+        Self::VaultIngestAgUiRead,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
@@ -3638,6 +3642,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultProductivityCreate => "vault.productivity.create",
             Self::VaultProductivityTree => "vault.productivity.tree",
+            Self::VaultIngestAgUiImport => "vault.ingest.ag_ui.import",
+            Self::VaultIngestAgUiRead => "vault.ingest.ag_ui.read",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
@@ -4895,6 +4901,8 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
                 | Self::VaultProductivityTree
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -6197,6 +6205,8 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
                 | Self::VaultProductivityTree
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -7613,6 +7623,8 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultConversationsCreate
@@ -8428,6 +8440,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
+                | Self::VaultIngestAgUiImport
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -9663,6 +9676,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
             Self::VaultProductivityTree => &["spec"],
+            Self::VaultIngestAgUiImport => &["spec"],
+            Self::VaultIngestAgUiRead => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -10937,6 +10952,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
             Self::VaultProductivityTree => &["spec"],
+            Self::VaultIngestAgUiImport => &["spec"],
+            Self::VaultIngestAgUiRead => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -14239,6 +14256,12 @@ impl AgentVerb {
             }
             Self::VaultProductivityTree => {
                 "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."
+            }
+            Self::VaultIngestAgUiImport => {
+                "The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."
+            }
+            Self::VaultIngestAgUiRead => {
+                "Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."
             }
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
