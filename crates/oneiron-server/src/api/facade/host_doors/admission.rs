@@ -553,9 +553,11 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeSymbolsRenew
         | Row::VaultCodeSymbolsRelease
         | Row::VaultCodeProposalSubmit
+        | Row::VaultCodeProposalRereview
         | Row::VaultCodeConflictRecord
         | Row::VaultCodeConflictView
         | Row::VaultCodeProposalResolve
+        | Row::VaultCodeProposalResolveRereview
         | Row::VaultCodeProposalReview
         | Row::VaultCodeProposalSettle
         | Row::VaultCodeProposalSettlement
