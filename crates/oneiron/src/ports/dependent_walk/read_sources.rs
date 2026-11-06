@@ -1,6 +1,6 @@
 //! Original staleness walk reads with opt-in borrowed physical inputs.
-//! Calendar-origin subcalls remain unobserved; these events
-//! alone never certify the complete staleness predicate or permission.
+//! Calendar-origin subcalls share the same observer. These events alone never
+//! certify the complete staleness predicate or permission.
 use super::{
     BTreeSet, CarriedWorlds, EntityId, EntityMetadataHeader, ManifestDbs, Result, RoTxn, SETTLED,
     SourceSpan, WALK, row_key,
@@ -86,7 +86,9 @@ pub(super) fn direct_withdrawal_in(
             crate::ports::stale_reads::side_row(SETTLED, dbs, txn, &(*document, row), observer)?;
         if let Some(worlds) = walk.worlds_for(&row, settled)
             && !(entity_type == Some(crate::registry::ENTITY_TYPE_EVENT)
-                && crate::calendar::origin::survives_source_deletion(dbs, txn, *node)?)
+                && crate::calendar::origin::survives_source_deletion_observed(
+                    dbs, txn, *node, observer,
+                )?)
         {
             withdrawn
                 .get_or_insert_with(CarriedWorlds::default)
