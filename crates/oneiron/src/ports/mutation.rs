@@ -29,27 +29,35 @@ pub(crate) fn audit_mutation_in_txn(
     txn: &mut heed::RwTxn<'_>,
     mutation: MutationAudit<'_>,
 ) -> Result<()> {
+    let record = prepare_mutation_audit_in_txn(store, txn, mutation)?;
+    store.port_changelog_append(txn, &record)
+}
+
+/// Allocate the audit record at the mutation's native transaction position.
+/// Recording its time can write the clock floors in this writer.
+pub(crate) fn prepare_mutation_audit_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    mutation: MutationAudit<'_>,
+) -> Result<ChangeLogRecord> {
     let id = store.clock.ulid()?;
     let recorded_at = recorded_at_in_txn(store, txn)?;
-    store.port_changelog_append(
-        txn,
-        &ChangeLogRecord {
-            id,
-            entity: mutation.entity,
-            op: mutation.op,
-            actor_principal: match mutation.actor_principal {
-                Some(actor) => actor,
-                None => storage_service_principal()?,
-            },
-            // A principal's person is a separate relationship. Never infer equality.
-            actor_person: None,
-            occurred_at: mutation.occurred_at,
-            recorded_at,
-            input_hash: *blake3::hash(mutation.input).as_bytes(),
-            patch: None,
-            reason: mutation.reason.map(str::to_owned),
+    Ok(ChangeLogRecord {
+        id,
+        entity: mutation.entity,
+        op: mutation.op,
+        actor_principal: match mutation.actor_principal {
+            Some(actor) => actor,
+            None => storage_service_principal()?,
         },
-    )
+        // A principal's person is a separate relationship. Never infer equality.
+        actor_person: None,
+        occurred_at: mutation.occurred_at,
+        recorded_at,
+        input_hash: *blake3::hash(mutation.input).as_bytes(),
+        patch: None,
+        reason: mutation.reason.map(str::to_owned),
+    })
 }
 
 pub(crate) struct EntityPutAudit<'a> {
