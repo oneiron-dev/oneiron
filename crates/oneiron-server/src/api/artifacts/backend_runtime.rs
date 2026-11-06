@@ -1,4 +1,4 @@
-//! One HTTP/1 exchange over the native untrusted guest's owned stdio.
+//! Request-owned HTTP/1 exchanges with the native untrusted guest.
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -25,8 +25,12 @@ use crate::server::SyncServer;
 
 #[path = "backend_actions.rs"]
 mod actions;
+#[cfg(target_os = "linux")]
+#[path = "backend_loopback.rs"]
+mod native;
 
 pub(super) struct StagedBackend {
+    pub transport: super::BackendTransport,
     pub identity: oneiron::artifact_hosting::ArtifactBackendSource,
     pub directory: tempfile::TempDir,
     pub source: std::path::PathBuf,
@@ -86,6 +90,7 @@ struct SessionGuard {
     directory: Option<tempfile::TempDir>,
     permit: Option<tokio::sync::OwnedSemaphorePermit>,
     connection: Option<AbortHandle>,
+    stdin: Option<Box<dyn Write + Send>>,
     input: Option<JoinHandle<io::Result<u64>>>,
     output: Option<JoinHandle<io::Result<u64>>>,
     runtime: tokio::runtime::Handle,
@@ -99,12 +104,14 @@ impl Drop for SessionGuard {
         let lease = self.lease.take();
         let directory = self.directory.take();
         let permit = self.permit.take();
+        let stdin = self.stdin.take();
         let input = self.input.take();
         let output = self.output.take();
         // Native lease drop stops/reaps the process and wakes pipe IO. Aborting
         // Hyper closes the duplex peer, including a worker waiting on its body.
         self.runtime.spawn_blocking(move || {
             drop(lease);
+            drop(stdin);
             if let Some(input) = input {
                 let _ = input.join();
             }
@@ -145,7 +152,72 @@ impl HttpBody for BackendBody {
     }
 }
 
+struct StartedBackend {
+    transport: SessionTransport,
+    directory: tempfile::TempDir,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    relay: Arc<dyn EgressRelay>,
+}
+
+fn start(
+    profile: ArtifactBackendConfig,
+    staged: StagedBackend,
+    server: Arc<SyncServer>,
+    runtime: tokio::runtime::Handle,
+) -> io::Result<StartedBackend> {
+    profile.validate().map_err(io::Error::other)?;
+    let spec = profile.spec(staged.source).map_err(io::Error::other)?;
+    let backend = oneiron::code_sandbox::microvm::select_backend_for_session(
+        oneiron::code_sandbox::SandboxGuestTier::Untrusted,
+        profile.runtime,
+        &profile.image,
+    )
+    .map_err(io::Error::other)?;
+    let relay: Arc<dyn EgressRelay> = Arc::new(AppActionEgress {
+        server,
+        identity: staged.identity,
+        runtime,
+    });
+    let transport = backend
+        .start_session(&spec, &staged.command, relay.clone())
+        .map_err(io::Error::other)?;
+    relay.record_session(&transport.manifest)?;
+    Ok(StartedBackend {
+        transport,
+        directory: staged.directory,
+        permit: staged.permit,
+        relay,
+    })
+}
+
 pub(super) async fn forward(
+    profile: ArtifactBackendConfig,
+    staged: StagedBackend,
+    request: Request,
+    server: Arc<SyncServer>,
+) -> Result<Response, EnvelopedApiError> {
+    match staged.transport {
+        super::BackendTransport::Http1Stdio => {
+            forward_stdio(profile, staged, request, server).await
+        }
+        super::BackendTransport::Http1Loopback { address } => {
+            #[cfg(target_os = "linux")]
+            {
+                native::forward(profile, staged, request, server, address).await
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = address;
+                Err(transport_error(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "native loopback backends require Linux",
+                )))
+            }
+        }
+    }
+}
+
+async fn forward_stdio(
     profile: ArtifactBackendConfig,
     staged: StagedBackend,
     request: Request,
@@ -154,29 +226,16 @@ pub(super) async fn forward(
     let capacity = profile.bridge_buffer_bytes;
     let runtime = tokio::runtime::Handle::current();
     let relay_runtime = runtime.clone();
-    let (transport, directory, permit) = tokio::task::spawn_blocking(move || {
-        profile.validate().map_err(io::Error::other)?;
-        let spec = profile.spec(staged.source).map_err(io::Error::other)?;
-        let backend = oneiron::code_sandbox::microvm::select_backend_for_session(
-            oneiron::code_sandbox::SandboxGuestTier::Untrusted,
-            profile.runtime,
-            &profile.image,
-        )
-        .map_err(io::Error::other)?;
-        let relay: Arc<dyn EgressRelay> = Arc::new(AppActionEgress {
-            server,
-            identity: staged.identity,
-            runtime: relay_runtime,
-        });
-        let transport = backend
-            .start_session(&spec, &staged.command, relay.clone())
-            .map_err(io::Error::other)?;
-        relay.record_session(&transport.manifest)?;
-        Ok::<_, io::Error>((transport, staged.directory, staged.permit))
-    })
-    .await
-    .map_err(transport_error)?
-    .map_err(transport_error)?;
+    let StartedBackend {
+        transport,
+        directory,
+        permit,
+        relay,
+    } = tokio::task::spawn_blocking(move || start(profile, staged, server, relay_runtime))
+        .await
+        .map_err(transport_error)?
+        .map_err(transport_error)?;
+    drop(relay);
     let SessionTransport {
         mut reader,
         mut writer,
@@ -188,6 +247,7 @@ pub(super) async fn forward(
         directory: Some(directory),
         permit: Some(permit),
         connection: None,
+        stdin: None,
         input: None,
         output: None,
         runtime: runtime.clone(),

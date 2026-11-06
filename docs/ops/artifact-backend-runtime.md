@@ -1,4 +1,4 @@
-# Published artifact backends over HTTP/1 stdio
+# Published artifact backends over HTTP/1
 
 **Source implementation, not a deployment or runtime proof.** The native
 Firecracker path transfers the projected directory bytes before starting the
@@ -18,7 +18,8 @@ There are no image or resource defaults, and this section does not reuse
 `[browser]`. Ordinary serve, embedded serve through `build_server`, and managed
 serve pass the same profile to their server. The explicit `max_concurrent_sessions` host budget
 covers staging, running and cleanup together. A request owns its permit until
-the native process is reaped and both dedicated IO workers have joined.
+the native process is reaped and its dedicated stdio workers have joined.
+Stdio mode has two pipe workers; loopback mode has one stdout drain worker.
 The workers do not occupy Tokio blocking-pool slots needed for native cleanup.
 An embedder constructing a server
 directly can use the fallible `SyncServer::with_artifact_backend`.
@@ -63,6 +64,45 @@ contract, not an adapter for an arbitrary process listening on a TCP port.
 The guest sees admitted regular-file projections under read-only `/app`.
 Executable bits are retained; snapshot symlink metadata is not recreated as
 host symlinks. Writable temporary storage is the native guest's bounded tmpfs.
+
+
+### A declared native HTTP port
+
+On Linux, a backend can instead declare an exact fenced loopback target:
+
+```json
+{
+  "transport": {"http1_loopback": {"address": "127.0.0.1:8080"}},
+  "command": ["/usr/bin/python3", "/app/server.py"]
+}
+```
+
+The address and port are required; the example is not a default. The command
+serves HTTP/1 on that target inside the guest's native fence. The host uses the
+same session's `SessionLease::connect_loopback`, not host TCP, another session,
+a public listener or a private preview's Draft-only lease. The returned Unix
+stream and its original host-floor descriptor permit stay together through
+async HTTP IO. Native VM framing preserves directional half-close.
+
+The host holds the original stdin open and drains stdout as application output,
+not as the HTTP protocol. The drain worker and its buffer are admitted on the
+same relay floor before allocation. The buffer uses the explicit
+`bridge_buffer_bytes` value. The host retains those permits through the drain;
+the native transport retains its own descriptor, worker and buffer permits.
+
+Starting a command does not prove that its declared port is already bound.
+Only `ECONNREFUSED` is retried while the lease reports running and the request
+still waits, at the existing native IO polling cadence of 250 ms. There is no
+opening deadline. Cancellation ends a pending open; other errno values and
+unsupported backends remain errors. There is no stdio or host-TCP fallback.
+The native lease can retain VM custody after command exit, so this is not a
+new command-exit detector or a promise that startup will eventually succeed.
+
+This mode needs the matching guest/rootfs with port-55 ingress and matching
+artifact pins. This source does not build, deploy or repin those artifacts.
+Like stdio mode, it starts one isolated session per HTTP exchange and keeps it
+through the response body. It does not install a shared persistent app process,
+cache a session across requests, create an expiry policy, or grant engine access.
 
 On KVM hosts the existing selector still chooses Firecracker. The host makes a
 private archive from every caller-selected read-only directory. Descendant host
@@ -154,8 +194,8 @@ are rebuilt. Backend responses are no-store and use a path-scoped
 connect/form CSP for this app, with no frames or workers. This does not relax
 the API-origin or static-artifact policies.
 
-The response body owns the native session lease. The two blocking IO bridges
-own only its pipes. Completion, error, request cancellation or response drop
+The response body owns the native session lease. The stdio bridge workers,
+or the loopback mode's stdout drain, own only their pipes. Completion, error, request cancellation or response drop
 aborts the HTTP connection, drops the native lease off the async worker, and
 joins the pipe workers before removing scratch. Native lease drop supplies
 process stop/reap. In the native VM the stdout copier is joined and its output
@@ -211,7 +251,7 @@ hold its own key and present its own credential and proof. An app label,
 snapshot hash, reader federation grant or owner credential is not that authority.
 There is no permissive network egress proxy in this runtime.
 
-Persistent/declared-port applications, direct browser cookie and DOM-storage
+Persistent app processes across requests, direct browser cookie and DOM-storage
 isolation, automatic cloud app-host dispatch and an end-to-end runtime proof of
 grant-bearing engine calls remain work under OF-356.
 This implementation does not claim that the whole published-backend row is
