@@ -86,14 +86,24 @@ pub(super) fn hints_in_txn(
     (kind, name): (u8, &str),
     admit: Option<&Admit<'_, '_>>,
 ) -> Result<Vec<SummedHint>> {
+    hints_matching_in_txn(store, txn, (kind, name), |source| match admit {
+        Some(admit) => admit.reads_source(txn, &source.turn, &source.message),
+        None => Ok(true),
+    })
+}
+
+fn hints_matching_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    (kind, name): (u8, &str),
+    mut reads_source: impl FnMut(&SourceAnchor) -> Result<bool>,
+) -> Result<Vec<SummedHint>> {
     let mut summed = Vec::new();
     for ((_, _, entity), stored) in HINTS.scan_from(store, txn, &hint_prefix(kind, name))? {
         let mut hint: Option<IdentityHint> = None;
         let mut sources = Vec::new();
         for each in stored.sources {
-            if let Some(admit) = admit
-                && !admit.reads_source(txn, &each.source.turn, &each.source.message)?
-            {
+            if !reads_source(&each.source)? {
                 continue;
             }
             let hint = hint.get_or_insert_with(|| IdentityHint {
@@ -210,17 +220,59 @@ pub(crate) fn hinted_mention_scoped_in_txn(
     end: usize,
     candidates: &[EntityId],
 ) -> Result<Option<EntityId>> {
-    let Some(read) = read else {
+    hinted_mention_for_readers_in_txn(
+        vault,
+        txn,
+        read.map(std::slice::from_ref),
+        kind,
+        name,
+        text,
+        start,
+        end,
+        candidates,
+    )
+}
+
+/// Picks only from hint sources and candidates every original reader admits
+/// in this writer. An absent reader keeps the full candidate set.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hinted_mention_for_readers_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    reads: Option<&[crate::claim::ScopedRead<'_>]>,
+    kind: u8,
+    name: &str,
+    text: &str,
+    start: usize,
+    end: usize,
+    candidates: &[EntityId],
+) -> Result<Option<EntityId>> {
+    let Some(reads) = reads.filter(|reads| !reads.is_empty()) else {
         return Ok(None);
     };
-    let admit = Admit::in_txn(read, txn)?;
-    let mut hints = BTreeMap::new();
-    for (entity, hint, _) in hints_in_txn(&vault.store, txn, (kind, name), Some(&admit))? {
-        if candidates.contains(&entity)
-            && super::admission::candidate_in_txn(vault, &admit, txn, &entity)?
-        {
-            hints.insert(entity, hint);
+    let admits = reads
+        .iter()
+        .map(|read| Admit::in_txn(read, txn))
+        .collect::<Result<Vec<_>>>()?;
+    let summed = hints_matching_in_txn(&vault.store, txn, (kind, name), |source| {
+        for admit in &admits {
+            if !admit.reads_source(txn, &source.turn, &source.message)? {
+                return Ok(false);
+            }
         }
+        Ok(true)
+    })?;
+    let mut hints = BTreeMap::new();
+    'candidate: for (entity, hint, _) in summed {
+        if !candidates.contains(&entity) {
+            continue;
+        }
+        for admit in &admits {
+            if !super::admission::candidate_in_txn(vault, admit, txn, &entity)? {
+                continue 'candidate;
+            }
+        }
+        hints.insert(entity, hint);
     }
     Ok(pick(
         &hints,

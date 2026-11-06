@@ -61,12 +61,21 @@ impl QueuedHintRead {
         }
     }
 
-    pub(super) fn open<'v>(&self, vault: &'v Vault) -> MemoryResult<Option<ScopedRead<'v>>> {
+    pub(super) fn open<'v>(&self, vault: &'v Vault) -> MemoryResult<Option<Vec<ScopedRead<'v>>>> {
         match self {
             Self::Caller {
                 readers,
                 unknown: false,
-            } if readers.len() == 1 => readers[0].open(vault),
+            } if !readers.is_empty() => {
+                let mut opened = Vec::with_capacity(readers.len());
+                for reader in readers {
+                    let Some(read) = reader.open(vault)? else {
+                        return Ok(None);
+                    };
+                    opened.push(read);
+                }
+                Ok(Some(opened))
+            }
             _ => Ok(None),
         }
     }
