@@ -8,7 +8,8 @@
 //! reference it no longer binds, is not landed. The ladder then judges the
 //! carrier as it judges any (tombstones, delete markers, residence, a
 //! release fence, the echo), and lands the row through the replicated
-//! door, at the tier the transfer's lane lands it at (FIX 12118). The rows it
+//! door, at the tier the transfer's lane lands it at (FIX 12118). A body the
+//! client's proven home served leaves its proof ([`super::home_proof`]). The rows it
 //! writes are the window's own: the live mirror never rewrites the carrier
 //! with them. A landed row wakes what waits on it and notifies the live
 //! queries as Observer B's ingest does (FIX 5489).
@@ -83,6 +84,23 @@ pub(super) fn land(
         if landed {
             note_delivered_in_txn(vault, wtxn, body.id, &carrier)?;
             let revision = revision_for_mode_in_txn(&vault.store, wtxn, &body.id, ReadMode::Live)?;
+            // The client's proven home served these bytes for this revision
+            // of the row: the owner's discard of a world copy may let this
+            // one go while the row stays at it (FIX 14534).
+            if let (Some(home), Some(revision)) = (peer.home, revision) {
+                super::home_proof::record_in_txn(
+                    &vault.store,
+                    wtxn,
+                    body.id,
+                    &super::home_proof::HomeBodyProof {
+                        home,
+                        carrier_blake3: body.carrier_blake3,
+                        body_blake3: body.body_blake3,
+                        len: body.len,
+                        revision,
+                    },
+                )?;
+            }
             if previous_revision != revision {
                 change = Some(EntityRevisionChange {
                     entity: body.id,
