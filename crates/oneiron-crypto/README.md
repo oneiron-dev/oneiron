@@ -132,9 +132,10 @@ the same bytes as `seal`, and `open` is `open_with_aad` with empty `X`.
 seals directly into it, and moves that buffer into the envelope. This lets the
 caller reserve ciphertext storage fallibly without a separate plaintext copy.
 The supplied buffer is wiped on error. This path reserves its combined AAD
-fallibly and returns `Error::OutOfMemory` if that allocation fails. Header and
-key derivation may still allocate; `seal` and `seal_with_aad` keep their existing
-allocation path.
+fallibly and returns `Error::OutOfMemory` if that allocation fails. It also
+reserves its nonce, identifier copies and canonical header buffer fallibly.
+Key derivation and wrapping primitives may still allocate; `seal` and
+`seal_with_aad` keep their existing allocation path.
 
 ### Passphrase stretch outside envelopes
 
